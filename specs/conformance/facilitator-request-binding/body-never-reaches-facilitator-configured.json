@@ -1,0 +1,9 @@
+{
+  "title": "A different POST body never reaches the facilitator, with a configured resource",
+  "provenance": "Modeled from @x402/core 2.30.0 chunk-U5TAZTKB.mjs lines 516-519 and 564-567: the /verify and /settle request bodies contain only x402Version, paymentPayload and paymentRequirements. paymentPayload comes from extractPayment() (line 3304), which decodes only the PAYMENT-SIGNATURE header. No field for the request body exists anywhere in this shape.",
+  "limits": "The vector's request_a.body and request_b.body fields are recorded for a human reader; the model intentionally has no parameter that would let a body value influence the computed wire message, because the real source has no such path either.",
+  "request_a": { "path": "/orders", "configured_resource": "https://seller.example/orders", "method": "POST", "body": "{\"item\":\"small\",\"qty\":1}" },
+  "request_b": { "path": "/orders", "configured_resource": "https://seller.example/orders", "method": "POST", "body": "{\"item\":\"large\",\"qty\":500}" },
+  "claim": "collapses-to-same-message",
+  "note": "One order and a five-hundred-unit order produce the same facilitator message. This is not conditional on the configured resource; see the companion auto-resource vector."
+}

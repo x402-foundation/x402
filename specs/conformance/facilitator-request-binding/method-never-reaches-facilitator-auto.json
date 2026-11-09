@@ -1,0 +1,9 @@
+{
+  "title": "A different HTTP method never reaches the facilitator, even WITHOUT a configured resource",
+  "provenance": "Same source lines as method-never-reaches-facilitator-configured.json. req.originalUrl carries path and query, never the method, so this gap is also unconditional.",
+  "limits": "Same model limits as the other vectors in this set.",
+  "request_a": { "path": "/action", "configured_resource": null, "method": "GET" },
+  "request_b": { "path": "/action", "configured_resource": null, "method": "POST" },
+  "claim": "collapses-to-same-message",
+  "note": "Removing the configured resource does not help here, unlike in the query case, because the method was never part of req.originalUrl in the first place."
+}

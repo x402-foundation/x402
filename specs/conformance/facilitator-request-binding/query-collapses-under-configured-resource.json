@@ -1,0 +1,9 @@
+{
+  "title": "A configured resource string discards the query string before the facilitator ever sees it",
+  "provenance": "Modeled from @x402/core 2.30.0 chunk-U5TAZTKB.mjs line 2722 (url: routeConfig.resource || adapter.getUrl()). Fetched via npm pack 9 November 2026.",
+  "limits": "This is a model of the published source, not a captured live request. It shows what the code computes, not that it was observed on a running server.",
+  "request_a": { "path": "/report", "query": "account=alice", "configured_resource": "https://seller.example/report", "method": "GET" },
+  "request_b": { "path": "/report", "query": "account=bob", "configured_resource": "https://seller.example/report", "method": "GET" },
+  "claim": "collapses-to-same-message",
+  "note": "Two requests for two different accounts produce byte-identical /verify and /settle bodies, because the configured resource string replaces req.originalUrl entirely."
+}
