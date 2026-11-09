@@ -463,6 +463,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     const client = this.getClient(network);
 
     let finalized: FinalizedTransaction;
+    let submissionAcknowledged = false;
     try {
       const submitted: SuiExecutorResult =
         sponsored && this.executeTransaction
@@ -507,6 +508,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
         };
       }
 
+      submissionAcknowledged = true;
       finalized = await client.core.waitForTransaction({
         digest: submitted.Transaction.digest,
         include: { balanceChanges: true },
@@ -514,10 +516,11 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     } catch (error) {
       const found = await this.lookup(client, digest);
       if (!found) {
-        // Outcome unknown: report the digest so the caller can reconcile.
+        // An acknowledged submission can use core's automatic pending retry.
+        // A locally computed digest alone does not establish that it was broadcast.
         return {
           success: false,
-          errorReason: "transaction_failed",
+          errorReason: submissionAcknowledged ? "settlement_pending" : "transaction_failed",
           errorMessage: errorMessage(error),
           transaction: digest,
           network,
