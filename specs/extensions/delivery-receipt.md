@@ -104,7 +104,12 @@ settlement fields. The following rules are normative for x402 routes:
   UTF-8 encoding and runtimes disagree on how to hash it. A verifier MUST reject a payload or directory that violates
   this subset (`integrity`) instead of coercing it.
 - **Receipt id** (`receiptId`): the **64-character lowercase hexadecimal text** of `SHA-256(JCS(payload))`. It is
-  text, not the 32 raw digest bytes.
+  text, not the 32 raw digest bytes. It identifies the **payload only**: it does not cover `signatures`.
+- **Receipt digest** (`digest`, §5.5): `lowercase_hex(SHA-256(UTF-8(JCS(receipt))))` over the **whole** receipt —
+  payload and `signatures`. Two receipts with the same payload share one `receiptId` but can have different digests
+  (ML-DSA-65 signing is hedged, so a re-issue of the same payload yields different signature bytes). Evidence that a
+  particular signed receipt was seen — a buyer's archive, a log entry, a third-party record — MUST be keyed by
+  `digest`; `receiptId` alone records only that the payload existed, not which signatures accompanied it.
 - **Signed message**: the exact octets passed to every signature algorithm (§5.3):
   `UTF-8("x402-delivery-receipt/1") || 0x0A || UTF-8(receiptId)` — 88 octets.
 - **Session path / archival path**: the two verification paths of §8.1, which check the `ed25519` and the
@@ -515,6 +520,12 @@ A key authorizes a signature only if, at `T = payload.issuedAt`:
 - `reserved` never authorizes. `revoked` never authorizes: a holder of a revoked key can choose any `issuedAt`, so the
   signed time alone cannot show that a receipt predates revocation. (An independent time proof, e.g. a timestamp
   anchor, could lift this restriction in a later version.)
+- Two different claims must not be conflated. **Pre-revocation evidence** — an independent record that the receipt
+  (by `digest`) existed before `revokedAt` — shows only that it was produced before the issuer *announced* the
+  revocation. It is **not proof of pre-compromise signing**: a key can be compromised for an unknown time before it
+  is revoked, and a receipt forged in that interval also predates `revokedAt`. A future version that accepts
+  independent time proofs can establish pre-revocation evidence at most; it cannot by itself establish that the
+  legitimate holder produced the signature.
 
 A verifier MUST also reject `issuedAt` more than its clock-skew allowance (default 300 s) in the future.
 
@@ -744,7 +755,8 @@ framing registered for that transport. Implementations MUST document what they h
 ## 12. Security and privacy considerations
 
 - **What a receipt proves.** A valid receipt proves that the issuer's authorized key signed the stated settlement
-  locator and content commitment at `issuedAt`. It does not prove that the content is correct, lawful or useful, and
+  locator and content commitment; `issuedAt` is the time the signer *stated*, not an independently proven time
+  (§7.4). It does not prove that the content is correct, lawful or useful, and
   it does not by itself prove that the transfer happened — check `transaction`/`logIndex` on chain for that.
 - **Self-issued.** The issuer is normally the seller. A receipt is therefore an admission by the seller, which is
   what a buyer needs in a dispute; it is not an independent witness. Independent attestation requires a
