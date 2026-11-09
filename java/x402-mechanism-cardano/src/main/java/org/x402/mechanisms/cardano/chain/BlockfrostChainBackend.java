@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -120,6 +121,38 @@ public final class BlockfrostChainBackend
       }
       if (maxTipAge != null && (maxTipAge.isNegative() || maxTipAge.isZero())) {
         throw new IllegalArgumentException("Cardano provider maxTipAge must be positive");
+      }
+    }
+
+    /**
+     * The settings without credentials: the project id is masked and the base URL is reduced to
+     * its origin, since provider URLs can carry an API key in the path or query.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "Config[network=" + network + ", baseUrl=" + origin(baseUrl)
+          + ", projectId=" + (projectId == null ? "null" : "***")
+          + ", requestTimeout=" + requestTimeout + ", awaitConfirmation=" + awaitConfirmation
+          + ", confirmationPoll=" + confirmationPoll + ", clock=" + clock
+          + ", slotConfig=" + slotConfig + ", networkMagic=" + networkMagic
+          + ", maxTipAge=" + maxTipAge + ", evaluation=" + evaluation + "]";
+    }
+
+    private static String origin(String url) {
+      if (url == null) {
+        return "null";
+      }
+      try {
+        URI uri = new URI(url);
+        if (uri.getScheme() == null || uri.getHost() == null) {
+          return "***";
+        }
+        return uri.getScheme() + "://" + uri.getHost()
+            + (uri.getPort() < 0 ? "" : ":" + uri.getPort());
+      } catch (URISyntaxException e) {
+        return "***";
       }
     }
 
@@ -292,7 +325,10 @@ public final class BlockfrostChainBackend
   public BlockfrostChainBackend(Config config) {
     this.config = Objects.requireNonNull(config, "config");
     this.baseUrl = config.baseUrl().replaceAll("/+$", "");
-    this.http = HttpClient.newBuilder().connectTimeout(config.requestTimeout()).build();
+    // HTTP/1.1: on a plain-http base URL (a local Blockfrost-compatible service) the JDK default
+    // HTTP/2 sends an h2c upgrade, which some servers mishandle (#4129 saw uvicorn drop bodies).
+    this.http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(config.requestTimeout()).build();
   }
 
   /**

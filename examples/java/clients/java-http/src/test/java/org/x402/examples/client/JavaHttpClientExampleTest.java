@@ -27,8 +27,8 @@ import org.x402.core.types.ResourceInfo;
 import org.x402.core.types.SettleResponse;
 import org.x402.http.HeaderCodec;
 import org.x402.http.X402HttpClient;
-import org.x402.mechanisms.cardano.CardanoConstants;
-import org.x402.mechanisms.cardano.DefaultAssets;
+import org.x402.mechanisms.cardano.utils.CardanoConstants;
+import org.x402.mechanisms.cardano.utils.DefaultAssets;
 
 /**
  * The example's client wiring against a WireMock resource server. A recording scheme stands in

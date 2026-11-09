@@ -27,6 +27,20 @@ public interface SchemeNetworkClient {
       int x402Version, PaymentRequirements requirements, PaymentPayloadContext context);
 
   /**
+   * Whether this client can pay an option that already matches its scheme and network. The
+   * client skips options for which this answers {@code false} (an asset transfer method or an
+   * asset the scheme cannot sign, say) and selects among the rest, so it never picks an option it
+   * would fail to pay. Java-only; the TypeScript SDK has no equivalent.
+   *
+   * @param requirements an offered option
+   * @return {@code true} when {@link #createPaymentPayload} can handle it; the default accepts
+   *     every option
+   */
+  default boolean supports(PaymentRequirements requirements) {
+    return true;
+  }
+
+  /**
    * Optional scheme-scoped client hooks.
    *
    * @return the hooks, or {@code null}

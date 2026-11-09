@@ -71,6 +71,23 @@ public record ClientCardanoSignerConfig(
   }
 
   /**
+   * The settings with the mnemonic masked: it is the wallet's key.
+   *
+   * @return the redacted settings
+   */
+  @Override
+  public String toString() {
+    return "ClientCardanoSignerConfig[mnemonic=***, network=" + network
+        + ", utxoSupplier=" + utxoSupplier + ", protocolParamsSupplier=" + protocolParamsSupplier
+        + ", accountIndex=" + accountIndex + ", masumiBuyerInput=" + masumiBuyerInput
+        + ", validateMasumiRegistryClaim=" + validateMasumiRegistryClaim
+        + ", masumiRequestContent=" + masumiRequestContent
+        + ", validateCustomMasumiDeployment=" + validateCustomMasumiDeployment
+        + ", masumiMaxCollateralLovelace=" + masumiMaxCollateralLovelace
+        + ", masumiMaxDeadlineHorizonMs=" + masumiMaxDeadlineHorizonMs + ", clock=" + clock + "]";
+  }
+
+  /**
    * A builder.
    *
    * @return the builder

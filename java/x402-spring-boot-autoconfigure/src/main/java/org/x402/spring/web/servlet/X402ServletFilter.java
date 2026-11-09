@@ -5,8 +5,10 @@ import jakarta.servlet.AsyncListener;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.MappingMatch;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,7 @@ import org.springframework.web.util.WebUtils;
 import org.x402.core.FacilitatorResponseException;
 import org.x402.core.server.CancelOptions;
 import org.x402.core.server.ServerHooks.CancellationReason;
+import org.x402.http.AmbiguousRouteException;
 import org.x402.http.HttpProcessResult;
 import org.x402.http.HttpRequestContext;
 import org.x402.http.HttpResponseInstructions;
@@ -112,7 +115,14 @@ public final class X402ServletFilter extends OncePerRequestFilter {
     String offer = registry.get().offerFor(resolution.handler());
     String pattern = OfferRegistry.toRoutePattern(resolution.pattern());
     if (offer == null) {
-      offer = routes.get().matchPath(request.getMethod(), rawPath, decodedPath);
+      try {
+        offer = routes.get().matchPath(request.getMethod(), rawPath, decodedPath,
+            containerPath(request), servletPathPrefix(request));
+      } catch (AmbiguousRouteException e) {
+        LOG.debug(e.getMessage());
+        write(response, X402HttpResourceServer.invalidPathResponse());
+        return;
+      }
       pattern = offer == null ? null : routes.get().patternOf(offer);
     }
     if (offer == null) {
@@ -147,6 +157,35 @@ public final class X402ServletFilter extends OncePerRequestFilter {
       request.setAttribute(STATE_ATTRIBUTE, paid);
       runHandler(paid, request, paid.wrapper, chain);
     }
+  }
+
+  /**
+   * The path prefix of the servlet the request is mapped to ({@code /api} for a DispatcherServlet
+   * at {@code /api/*}); handler patterns are relative to it. Decoded, like the path forms it is
+   * compared with ({@code ServletRequestPathUtils.getServletPathPrefix} returns it encoded).
+   */
+  static String servletPathPrefix(HttpServletRequest request) {
+    try {
+      HttpServletMapping mapping = request.getHttpServletMapping();
+      if (mapping == null || mapping.getMappingMatch() != MappingMatch.PATH) {
+        return null;
+      }
+      String servletPath = request.getServletPath();
+      return servletPath == null || servletPath.isEmpty() ? null : servletPath;
+    } catch (RuntimeException e) {
+      return null; // no servlet mapping exposed (a wrapper): match the application path only
+    }
+  }
+
+  /**
+   * The path the container dispatches on: decoded, {@code ;} parameters removed and dot segments
+   * resolved ({@code servletPath + pathInfo}).
+   */
+  static String containerPath(HttpServletRequest request) {
+    String servletPath = request.getServletPath();
+    String pathInfo = request.getPathInfo();
+    String path = (servletPath == null ? "" : servletPath) + (pathInfo == null ? "" : pathInfo);
+    return path.isEmpty() ? null : path;
   }
 
   static void routeUnavailable(HttpServletResponse response,

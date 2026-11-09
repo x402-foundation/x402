@@ -14,6 +14,7 @@
 
   <modules>
     <module>x402-core</module>
+    <module>x402-servlet</module>
     <module>x402-mechanism-cardano</module>
     <module>x402-extensions</module>
     <module>x402-spring-boot-autoconfigure</module>
@@ -44,6 +45,11 @@
       <dependency>
         <groupId>org.x402</groupId>
         <artifactId>x402-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.x402</groupId>
+        <artifactId>x402-servlet</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

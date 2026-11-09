@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.x402</groupId>
+    <artifactId>x402-parent</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>x402-servlet</artifactId>
+  <name>x402-servlet</name>
+  <description>x402 for plain Jakarta Servlet applications: a PaymentFilter on the core HTTP layer,
+    without Spring. Adapted from #4129 (Stefano Amorelli).</description>
+
+  <properties>
+    <!-- Servlet 6.1 so the buffering wrapper also captures the 6.1 sendRedirect overloads; the
+         filter only calls Servlet 6.0 methods, so it runs on 6.0 containers. -->
+    <jakarta-servlet-api.version>6.1.0</jakarta-servlet-api.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <version>${jakarta-servlet-api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-servlet</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Test only: MockHttpServletResponse for the buffering wrapper's unit tests (shared with the
+         Spring starter's copy of the wrapper). The module itself has no Spring dependency. -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-web</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

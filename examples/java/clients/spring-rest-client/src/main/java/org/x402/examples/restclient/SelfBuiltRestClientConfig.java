@@ -20,9 +20,11 @@ class SelfBuiltRestClientConfig {
   @Bean
   RestClient selfBuiltRestClient(X402ClientHttpRequestFactoryDecorator x402Decorator,
       @Value("${example.base-url}") String baseUrl) {
-    HttpClient following = HttpClient.newBuilder()
+    // HTTP/1.1: the JDK default HTTP/2 sends an h2c upgrade to plain-http servers, which some
+    // servers (uvicorn, Next.js) mishandle.
+    HttpClient following = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
         .followRedirects(HttpClient.Redirect.NORMAL).build();
-    HttpClient notFollowing = HttpClient.newBuilder()
+    HttpClient notFollowing = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
         .followRedirects(HttpClient.Redirect.NEVER).build();
     return RestClient.builder()
         .baseUrl(baseUrl)

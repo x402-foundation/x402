@@ -19,7 +19,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 
 | Role | TypeScript | Go | Python | Java |
 |------|------------|-----|--------|------|
-| Server | Express, Hono, Next.js, Fastify | Gin, net/http, Echo | FastAPI, Flask | Spring WebMvc, Spring WebFlux |
+| Server | Express, Hono, Next.js, Fastify | Gin, net/http, Echo | FastAPI, Flask | Spring WebMvc, Spring WebFlux, Jakarta Servlet |
 | Client | Fetch, Axios | net/http | httpx, requests | java.net.http, Spring RestClient / RestTemplate / WebClient |
 
 ## Networks

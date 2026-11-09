@@ -63,6 +63,16 @@ public record X402CardanoProperties(Map<String, CardanoAccount> accounts, Client
     public ClientCardano {
       networks = networks == null ? List.of() : List.copyOf(networks);
     }
+
+    /**
+     * The settings with the mnemonic masked.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "ClientCardano[mnemonic=" + masked(mnemonic) + ", networks=" + networks + "]";
+    }
   }
 
   /**
@@ -72,7 +82,19 @@ public record X402CardanoProperties(Map<String, CardanoAccount> accounts, Client
    * @param mnemonic overrides the default mnemonic, may be null
    * @param blockfrost the Blockfrost backend for UTxO lookups
    */
-  public record CardanoNetwork(String network, String mnemonic, Blockfrost blockfrost) {}
+  public record CardanoNetwork(String network, String mnemonic, Blockfrost blockfrost) {
+
+    /**
+     * The settings with the mnemonic masked.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "CardanoNetwork[network=" + network + ", mnemonic=" + masked(mnemonic)
+          + ", blockfrost=" + blockfrost + "]";
+    }
+  }
 
   /**
    * A Blockfrost backend (client and facilitator server).
@@ -80,7 +102,51 @@ public record X402CardanoProperties(Map<String, CardanoAccount> accounts, Client
    * @param projectId the project id
    * @param baseUrl the API base URL, or blank for the network's default
    */
-  public record Blockfrost(String projectId, String baseUrl) {}
+  public record Blockfrost(String projectId, String baseUrl) {
+
+    /**
+     * The settings with the project id masked and the base URL reduced to its origin, since
+     * provider URLs can carry an API key in the path or query.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "Blockfrost[projectId=" + masked(projectId) + ", baseUrl=" + origin(baseUrl) + "]";
+    }
+  }
+
+  /**
+   * The scheme, host and port of a URL, or {@code ***} when it has none.
+   *
+   * @param url the URL, may be null or blank
+   * @return the origin
+   */
+  static String origin(String url) {
+    if (url == null || url.isBlank()) {
+      return String.valueOf(url);
+    }
+    try {
+      java.net.URI uri = new java.net.URI(url.strip());
+      if (uri.getScheme() == null || uri.getHost() == null) {
+        return "***";
+      }
+      return uri.getScheme() + "://" + uri.getHost()
+          + (uri.getPort() < 0 ? "" : ":" + uri.getPort());
+    } catch (java.net.URISyntaxException e) {
+      return "***";
+    }
+  }
+
+  /**
+   * Masks a secret for {@code toString}: {@code null} stays visible, anything else is {@code ***}.
+   *
+   * @param secret the secret, may be null
+   * @return {@code "null"} or {@code "***"}
+   */
+  static String masked(String secret) {
+    return secret == null ? "null" : "***";
+  }
 
   /**
    * One account's Cardano view.
@@ -108,7 +174,20 @@ public record X402CardanoProperties(Map<String, CardanoAccount> accounts, Client
    * @param deployment a non-canonical escrow deployment (required on Preview)
    */
   public record Masumi(String sellerMnemonic, String sellerReturnAddress, String agentIdentifier,
-      Deployment deployment) {}
+      Deployment deployment) {
+
+    /**
+     * The settings with the seller mnemonic masked.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "Masumi[sellerMnemonic=" + masked(sellerMnemonic) + ", sellerReturnAddress="
+          + sellerReturnAddress + ", agentIdentifier=" + agentIdentifier + ", deployment="
+          + deployment + "]";
+    }
+  }
 
   /**
    * Masumi escrow validator parameters.

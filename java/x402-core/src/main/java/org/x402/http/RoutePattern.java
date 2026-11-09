@@ -2,6 +2,8 @@ package org.x402.http;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
@@ -144,6 +146,60 @@ public final class RoutePattern {
   private static String collapse(String path) {
     String single = SLASHES.matcher(path).replaceAll("/");
     return TRAILING.matcher(single).replaceFirst("$1");
+  }
+
+  /**
+   * Canonicalizes a raw path the way servlet containers do before dispatching: drops query and
+   * fragment, strips {@code ;} parameters from each segment, percent-decodes each segment (a
+   * malformed escape keeps the raw segment; a decoded {@code /} or {@code \} is re-escaped, so
+   * decoding never creates a segment boundary), drops empty and {@code .} segments and resolves
+   * {@code ..} against the previous segment, never above the root. A container may dispatch
+   * {@code /public/..;/premium} or {@code /public/%2e%2e/premium} to {@code /premium}; this form
+   * lets a route see that. Adapted from #4129 ({@code PathNormalizer.canonicalize}).
+   *
+   * @param path the raw path, still percent-encoded
+   * @return the canonical path, starting with {@code /}
+   */
+  public static String canonicalPath(String path) {
+    String[] segments = QUERY.split(path, -1)[0].split("/", -1);
+    for (int i = 0; i < segments.length; i++) {
+      String segment = stripParameters(segments[i]);
+      String decoded = decodeUriComponent(segment);
+      segments[i] = decoded == null ? segment
+          : decoded.replace("/", "%2F").replace("\\", "%5C");
+    }
+    return resolveDotSegments(segments);
+  }
+
+  /**
+   * Canonicalizes a path a framework already decoded: drops query and fragment, empty and
+   * {@code .} segments and resolves {@code ..}, without decoding again.
+   *
+   * @param path the decoded path
+   * @return the canonical path, starting with {@code /}
+   */
+  public static String canonicalDecodedPath(String path) {
+    return resolveDotSegments(QUERY.split(path, -1)[0].split("/", -1));
+  }
+
+  private static String stripParameters(String segment) {
+    int semicolon = segment.indexOf(';');
+    return semicolon < 0 ? segment : segment.substring(0, semicolon);
+  }
+
+  private static String resolveDotSegments(String[] segments) {
+    Deque<String> resolved = new ArrayDeque<>();
+    for (String segment : segments) {
+      if (segment.isEmpty() || ".".equals(segment)) {
+        continue;
+      }
+      if ("..".equals(segment)) {
+        resolved.pollLast();
+      } else {
+        resolved.addLast(segment);
+      }
+    }
+    return "/" + String.join("/", resolved);
   }
 
   /**

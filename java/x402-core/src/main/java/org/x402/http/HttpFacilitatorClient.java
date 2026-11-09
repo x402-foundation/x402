@@ -3,6 +3,7 @@ package org.x402.http;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -100,12 +101,16 @@ public final class HttpFacilitatorClient implements FacilitatorClient {
 
   private HttpFacilitatorClient(Builder b) {
     this.url = stripTrailingSlashes(b.url);
+    requireBareUrl(this.url);
     this.identifier = b.identifier == null ? this.url : stripTrailingSlashes(b.identifier);
     this.timeout = positive(b.timeout, "timeout");
     this.verifyTimeout = positive(b.verifyTimeout, "verifyTimeout");
     this.auth = b.auth;
+    // HTTP/1.1: on a plain-http facilitator the JDK default HTTP/2 sends an h2c upgrade, which
+    // uvicorn answers by dropping the request body and Next.js by closing the connection.
     this.http = b.http != null ? b.http
-        : HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+        : HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NEVER).build();
     this.clock = b.clock;
     this.sleeper = b.sleeper;
   }
@@ -611,5 +616,39 @@ public final class HttpFacilitatorClient implements FacilitatorClient {
       throw new IllegalArgumentException(name + " must be a positive duration, got " + d);
     }
     return d;
+  }
+
+  /**
+   * Refuses a base URL that carries credentials or request parts. The URL doubles as the
+   * identifier in logs, health and pins, so user info or an API key in the query would leak there,
+   * and the endpoint paths are appended to it. The message never repeats the URL.
+   */
+  private static void requireBareUrl(String url) {
+    boolean credentials;
+    boolean queryOrFragment;
+    try {
+      URI uri = new URI(url);
+      String authority = uri.getRawAuthority();
+      credentials = uri.getRawUserInfo() != null || (authority != null && authority.contains("@"));
+      queryOrFragment = uri.getRawQuery() != null || uri.getRawFragment() != null;
+    } catch (URISyntaxException e) {
+      // Malformed: it still fails on the first request, as before, but would reach logs and
+      // health as the identifier first, so the plain-text checks apply.
+      int scheme = url.indexOf("://");
+      int start = scheme < 0 ? 0 : scheme + 3;
+      int slash = url.indexOf('/', start);
+      credentials = url.substring(start, slash < 0 ? url.length() : slash).contains("@");
+      queryOrFragment = url.indexOf('?') >= 0 || url.indexOf('#') >= 0;
+    }
+    if (credentials) {
+      throw new IllegalArgumentException("Facilitator URL must not contain credentials (user "
+          + "info); send them as headers with a FacilitatorAuthProvider (Spring: "
+          + "x402.facilitators[].headers)");
+    }
+    if (queryOrFragment) {
+      throw new IllegalArgumentException("Facilitator URL must not have a query or fragment; "
+          + "send credentials as headers with a FacilitatorAuthProvider (Spring: "
+          + "x402.facilitators[].headers)");
+    }
   }
 }

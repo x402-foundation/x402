@@ -42,4 +42,15 @@ public interface HandlerMethodSource {
    * @return {@code true} for a streaming handler
    */
   boolean isStreaming(HandlerMethod handlerMethod);
+
+  /**
+   * The dispatcher's path prefix, e.g. {@code /api} for {@code spring.mvc.servlet.path=/api}:
+   * handler patterns are relative to it, so a YAML {@code path:} offer may be written with or
+   * without it.
+   *
+   * @return the prefix without a trailing slash, or {@code ""} for none
+   */
+  default String pathPrefix() {
+    return "";
+  }
 }

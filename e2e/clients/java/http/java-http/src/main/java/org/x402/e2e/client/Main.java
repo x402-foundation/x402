@@ -88,7 +88,10 @@ public final class Main {
     X402Client client = new X402Client().setSpendControls(SpendControls.disabled());
     networks.forEach(network -> network.register(client));
 
-    X402HttpClient http = X402HttpClient.wrap(HttpClient.newHttpClient(), client);
+    // HTTP/1.1: the JDK default HTTP/2 sends an h2c upgrade to plain-http servers, which some
+    // e2e servers (uvicorn, Next.js) mishandle.
+    X402HttpClient http = X402HttpClient.wrap(
+        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(), client);
     // No per-request timeout: X402HttpClient applies its 240 s default.
     HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + endpointPath)).GET().build();
     HttpResponse<String> response =

@@ -7,6 +7,7 @@ Cardano `exact` (transfer methods `default`, `masumi` and `script`) is the first
 | Module | What it is |
 |---|---|
 | `x402-core` | Wire types, the scheme SPI, `X402Client` / `X402ResourceServer` / `X402Facilitator` with hooks, and a framework-free HTTP layer (`X402HttpClient`, `X402HttpResourceServer`, `HttpFacilitatorClient`). No Spring. |
+| `x402-servlet` | `PaymentFilter` for plain Jakarta Servlet 6 apps (Tomcat, Jetty, Undertow), no Spring. |
 | `x402-mechanism-cardano` | Cardano `exact`: client (transaction builder, wallet signer), server (prices, Masumi quotes) and facilitator (verify, settle). |
 | `x402-extensions` | The bazaar discovery declaration (server side). |
 | `x402-spring-boot-autoconfigure` | `@X402Payment`, the `x402.*` configuration, WebMvc and WebFlux filters, client interceptors, the facilitator server. |
@@ -25,6 +26,7 @@ Runnable examples: [`examples/java`](../examples/java/README.md).
 ## Contents
 
 - [Quick start: protect a Spring endpoint](#quick-start-protect-a-spring-endpoint)
+- [Protect a plain servlet app (no Spring)](#protect-a-plain-servlet-app-no-spring)
 - [Prices](#prices)
 - [Accounts: networks, wallets, transfer methods](#accounts-networks-wallets-transfer-methods)
 - [Several payment options](#several-payment-options)
@@ -104,6 +106,35 @@ x402:
       accepts:
         - { account: preprod, price: "$0.25" }
 ```
+
+## Protect a plain servlet app (no Spring)
+
+`x402-servlet` charges for routes in any Jakarta Servlet 6 container without Spring. Routes are x402 route patterns, as in the TypeScript SDK:
+
+```java
+X402ResourceServer core = X402ResourceServer.builder()
+    .facilitators(List.of(HttpFacilitatorClient.builder().url("https://x402.org/facilitator").build()))
+    .build();
+core.register("cardano:preprod", new ExactCardanoServerScheme());
+Map<String, RouteConfig> routes = Map.of("GET /weather", RouteConfig.builder()
+    .accepts(List.of(PaymentOption.builder().scheme("exact").network("cardano:preprod")
+        .payTo("addr_test1...").price("$0.01").build()))
+    .build());
+X402HttpResourceServer http = new X402HttpResourceServer(core, new PatternRouteResolver(routes));
+
+FilterRegistration.Dynamic x402 = servletContext.addFilter("x402", new PaymentFilter(http));
+x402.setAsyncSupported(true);
+x402.addMappingForUrlPatterns(
+    EnumSet.of(DispatcherType.REQUEST, DispatcherType.FORWARD), false, "/*");
+```
+
+- **Map it for `REQUEST` and `FORWARD`.** A free URL that forwards to a paid path is charged on the forward; a forward inside a paid request is not charged again.
+- **Mark it async-supported.** A filter registered without it makes every route it covers synchronous, so free async endpoints (SSE, `startAsync`) would fail. Paid routes stay protected either way.
+- **Startup.** `init` syncs the resource server unless you already called `http.initialize()`. When only a facilitator is unreachable, the app starts, the routes that need it answer 503 with `Retry-After`, and a background re-sync retries with backoff (1 s up to 60 s). Any other route error fails startup.
+- **The paid response is held back** until the payment settles. A handler status of 400 or more, or an exception, cancels the payment and nothing is settled.
+- **Paid routes must be synchronous:** `startAsync` and protocol upgrades are refused on them, because they would bypass the buffer.
+- **Same wire behaviour as the Spring starter:** the same 402 bodies, 502 on a facilitator transport failure, `Cache-Control: private` on paid responses, and the paywall page for browsers. `new PaymentFilter(http, paywallConfig, false)` keeps 402s JSON for browsers too.
+- **Every form of the path is matched.** That includes the forms a container dispatches on, with `;` parameters stripped and dot segments resolved, so `/public/..;/weather` is charged. A path whose forms select different routes answers 400 `{"error":"invalid_path"}`.
 
 ## Prices
 
@@ -736,5 +767,10 @@ The wire format (headers, JSON, status codes, route syntax) follows TS. Behaviou
 | Handler headers after a failed settle | kept | dropped (the whole paid response is buffered) |
 | Client host allowlist | none (you wrap one `fetch`) | `x402.client.hosts` / `HostPolicy` |
 | Declarative config | code only | `application.yml`, named accounts |
+| Request path matching | the raw path, then the decoded one; the first match wins | every form of the path is matched: raw and decoded, and both again with `;` parameters stripped and dot segments resolved, the way a servlet container dispatches. Forms that select different routes answer 400 `{"error":"invalid_path"}` and the request is neither served nor charged (from #4129) |
+| Spring MVC under `spring.mvc.servlet.path` | — | YAML `path:` offers are matched in the DispatcherServlet's path space, written with or without the prefix; the first offer in declaration order wins either way, so declare specific offers before catch-alls |
+| A client scheme declining an option | not available | `SchemeNetworkClient.supports(requirements)`; the client pays another option instead |
+| Facilitator URL with credentials, a query or a fragment | used as given | refused at construction (and so at startup); send credentials as headers (`FacilitatorAuthProvider`, `x402.facilitators[].headers`) |
+| Plain servlet apps | — | `x402-servlet`'s `PaymentFilter` (from #4129) |
 
-Not implemented yet: other chains, MCP, client-side extensions, the payment-identifier, sign-in-with-x and builder-code extensions, the bazaar facilitator client, a Cardano paywall UI, and a non-Spring servlet filter (v1 in [`legacy/`](legacy/README.md) has one). See [SDK features](../docs/sdk-features.md).
+Not implemented yet: other chains, MCP, client-side extensions, the payment-identifier, sign-in-with-x and builder-code extensions, the bazaar facilitator client and a Cardano paywall UI. See [SDK features](../docs/sdk-features.md).

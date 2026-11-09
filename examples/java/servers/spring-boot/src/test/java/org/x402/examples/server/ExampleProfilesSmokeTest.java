@@ -36,7 +36,7 @@ import org.x402.core.types.PaymentRequired;
 import org.x402.core.types.PaymentRequirements;
 import org.x402.core.types.SettleResponse;
 import org.x402.http.HeaderCodec;
-import org.x402.mechanisms.cardano.CardanoConstants;
+import org.x402.mechanisms.cardano.utils.CardanoConstants;
 import org.x402.mechanisms.cardano.exact.masumi.MasumiBlueprint;
 import org.x402.mechanisms.cardano.exact.masumi.MasumiDeployment;
 import org.x402.mechanisms.cardano.exact.server.CardanoSellerSigner;

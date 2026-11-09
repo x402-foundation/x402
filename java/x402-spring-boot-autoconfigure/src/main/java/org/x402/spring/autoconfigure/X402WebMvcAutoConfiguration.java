@@ -12,6 +12,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.security.SecurityProperties;
+import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletPath;
 import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationContext;
@@ -55,9 +56,13 @@ public class X402WebMvcAutoConfiguration {
   @Lazy(false)
   @ConditionalOnMissingBean
   OfferRegistry x402OfferRegistry(X402Offers offers, X402ResourceServer server,
-      ObjectProvider<RequestMappingInfoHandlerMapping> mappings) {
+      ObjectProvider<RequestMappingInfoHandlerMapping> mappings,
+      ObjectProvider<DispatcherServletPath> dispatcherServletPath) {
     return new OfferRegistry(new ServletHandlerMethodSource(
-        () -> mappings.orderedStream().toList()), offers,
+        () -> mappings.orderedStream().toList(), () -> {
+          DispatcherServletPath path = dispatcherServletPath.getIfAvailable();
+          return path == null ? "" : path.getPrefix();
+        }), offers,
         OfferRegistry.settlesAfterHandler(offers, server));
   }
 

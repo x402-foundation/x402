@@ -31,8 +31,8 @@ import org.x402.core.types.PaymentRequirements;
 import org.x402.core.types.ResourceInfo;
 import org.x402.core.types.SettleResponse;
 import org.x402.http.HeaderCodec;
-import org.x402.mechanisms.cardano.CardanoConstants;
-import org.x402.mechanisms.cardano.DefaultAssets;
+import org.x402.mechanisms.cardano.utils.CardanoConstants;
+import org.x402.mechanisms.cardano.utils.DefaultAssets;
 import org.x402.spring.X402ClientCustomizer;
 
 /**

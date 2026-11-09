@@ -104,7 +104,10 @@ public final class JavaHttpClientExample {
    * @return the paying client
    */
   static X402HttpClient payingHttpClient(X402Client payments, URI url) {
+    // HTTP/1.1: the JDK default HTTP/2 sends an h2c upgrade to plain-http servers, which some
+    // servers (uvicorn, Next.js) mishandle.
     HttpClient jdk = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
         .followRedirects(HttpClient.Redirect.NEVER)
         .connectTimeout(Duration.ofSeconds(10))
         .build();

@@ -115,7 +115,29 @@ public record X402Properties(
    * @param supported headers for GET /supported
    */
   public record FacilitatorHeaders(
-      Map<String, String> verify, Map<String, String> settle, Map<String, String> supported) {}
+      Map<String, String> verify, Map<String, String> settle, Map<String, String> supported) {
+
+    /**
+     * The header names without their values, which are usually credentials.
+     *
+     * @return the redacted headers
+     */
+    @Override
+    public String toString() {
+      return "FacilitatorHeaders[verify=" + names(verify) + ", settle=" + names(settle)
+          + ", supported=" + names(supported) + "]";
+    }
+
+    private static String names(Map<String, String> headers) {
+      if (headers == null) {
+        return "null";
+      }
+      StringBuilder sb = new StringBuilder("{");
+      headers.keySet().forEach(name -> sb.append(sb.length() > 1 ? ", " : "")
+          .append(name).append("=***"));
+      return sb.append('}').toString();
+    }
+  }
 
   /**
    * Facilitator sync.

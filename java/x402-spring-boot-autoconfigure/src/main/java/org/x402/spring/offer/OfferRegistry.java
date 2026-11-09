@@ -139,10 +139,11 @@ public final class OfferRegistry {
           + "\" uses {…}; x402 route patterns use :param, [param] or *");
     }
     RoutePattern pattern = RoutePattern.parse(path.strip());
+    String prefix = source.pathPrefix();
     boolean matched = false;
     Set<String> overlaps = new LinkedHashSet<>();
     for (HandlerMethodSource.Mapping mapping : mappings) {
-      if (!matches(pattern, mapping)) {
+      if (!matches(pattern, mapping, prefix)) {
         continue;
       }
       matched = true;
@@ -166,19 +167,31 @@ public final class OfferRegistry {
     }
   }
 
-  private static boolean matches(RoutePattern pattern, HandlerMethodSource.Mapping mapping) {
+  /**
+   * Whether an offer's path matches a handler, written relative to the dispatcher (as handler
+   * patterns are) or with the dispatcher's prefix in front, as the request sees it.
+   */
+  private static boolean matches(RoutePattern pattern, HandlerMethodSource.Mapping mapping,
+      String prefix) {
     for (String springPattern : mapping.patterns()) {
-      String sample = RoutePattern.normalizePath(sample(springPattern));
-      if (mapping.methods().isEmpty()) {
-        if (pattern.matchesNormalized(sample)) {
-          return true;
-        }
-        continue;
+      String sample = sample(springPattern);
+      if (matchesSample(pattern, mapping, RoutePattern.normalizePath(sample))
+          || (prefix != null && !prefix.isEmpty()
+              && matchesSample(pattern, mapping, RoutePattern.normalizePath(prefix + sample)))) {
+        return true;
       }
-      for (String method : mapping.methods()) {
-        if (pattern.matches(method, sample)) {
-          return true;
-        }
+    }
+    return false;
+  }
+
+  private static boolean matchesSample(RoutePattern pattern, HandlerMethodSource.Mapping mapping,
+      String sample) {
+    if (mapping.methods().isEmpty()) {
+      return pattern.matchesNormalized(sample);
+    }
+    for (String method : mapping.methods()) {
+      if (pattern.matches(method, sample)) {
+        return true;
       }
     }
     return false;

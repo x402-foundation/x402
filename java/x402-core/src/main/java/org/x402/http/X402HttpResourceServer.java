@@ -243,7 +243,25 @@ public final class X402HttpResourceServer {
    * @return {@code true} when a route matches
    */
   public boolean requiresPayment(HttpRequestContext context) {
-    return resolver.resolve(withMethod(context)) != null;
+    try {
+      return resolver.resolve(withMethod(context)) != null;
+    } catch (AmbiguousRouteException e) {
+      return true; // processHttpRequest answers 400; an ambiguous path is never free
+    }
+  }
+
+  /**
+   * The answer to a request whose path forms select different routes
+   * ({@link AmbiguousRouteException}): 400 {@code {"error":"invalid_path"}}, not cached. Adapters
+   * that match routes themselves write the same response.
+   *
+   * @return the response
+   */
+  public static HttpResponseInstructions invalidPathResponse() {
+    Map<String, String> headers = new LinkedHashMap<>();
+    headers.put("Content-Type", "application/json");
+    headers.put("Cache-Control", "no-store");
+    return new HttpResponseInstructions(400, headers, Map.of("error", "invalid_path"), false);
   }
 
   /**
@@ -271,7 +289,12 @@ public final class X402HttpResourceServer {
   public HttpProcessResult processHttpRequest(
       HttpRequestContext context, PaywallConfig paywallConfig) {
     HttpRequestContext ctx = withMethod(context);
-    RouteMatch match = resolver.resolve(ctx);
+    RouteMatch match;
+    try {
+      match = resolver.resolve(ctx);
+    } catch (AmbiguousRouteException e) {
+      return new HttpProcessResult.PaymentError(invalidPathResponse());
+    }
     if (match == null) {
       return new HttpProcessResult.NoPaymentRequired();
     }
@@ -608,7 +631,12 @@ public final class X402HttpResourceServer {
       HttpTransportContext transport) {
     HttpResponseBody custom = null;
     if (transport != null && transport.request() != null) {
-      RouteMatch match = resolver.resolve(withMethod(transport.request()));
+      RouteMatch match;
+      try {
+        match = resolver.resolve(withMethod(transport.request()));
+      } catch (AmbiguousRouteException e) {
+        match = null; // cannot happen for a request that was verified; keep the default body
+      }
       if (match != null && match.config().settlementFailedResponseBody() != null) {
         custom = match.config().settlementFailedResponseBody().create(transport.request(),
             failure);

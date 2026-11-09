@@ -16,14 +16,34 @@ import org.x402.spring.web.StreamingHandlers;
 public final class ServletHandlerMethodSource implements HandlerMethodSource {
 
   private final Supplier<List<RequestMappingInfoHandlerMapping>> mappings;
+  private final Supplier<String> pathPrefix;
+
+  /**
+   * Creates the source for a DispatcherServlet mapped at the root.
+   *
+   * @param mappings the request mappings, read when {@link #mappings()} is called
+   */
+  public ServletHandlerMethodSource(Supplier<List<RequestMappingInfoHandlerMapping>> mappings) {
+    this(mappings, () -> "");
+  }
 
   /**
    * Creates the source.
    *
    * @param mappings the request mappings, read when {@link #mappings()} is called
+   * @param pathPrefix the DispatcherServlet's path prefix ({@code spring.mvc.servlet.path}),
+   *     read when {@link #pathPrefix()} is called; {@code null} or {@code ""} for none
    */
-  public ServletHandlerMethodSource(Supplier<List<RequestMappingInfoHandlerMapping>> mappings) {
+  public ServletHandlerMethodSource(Supplier<List<RequestMappingInfoHandlerMapping>> mappings,
+      Supplier<String> pathPrefix) {
     this.mappings = mappings;
+    this.pathPrefix = pathPrefix;
+  }
+
+  @Override
+  public String pathPrefix() {
+    String prefix = pathPrefix.get();
+    return prefix == null ? "" : prefix;
   }
 
   @Override

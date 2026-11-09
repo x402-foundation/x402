@@ -40,7 +40,20 @@ public final class CardanoServerPlan {
    * @param deployment the network's deployment, or {@code null}
    */
   public record MasumiSettings(String sellerMnemonic, String sellerReturnAddress,
-      String agentIdentifier, MasumiDeployment deployment) {}
+      String agentIdentifier, MasumiDeployment deployment) {
+
+    /**
+     * The settings with the seller mnemonic masked.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "MasumiSettings[sellerMnemonic=" + X402CardanoProperties.masked(sellerMnemonic)
+          + ", sellerReturnAddress=" + sellerReturnAddress + ", agentIdentifier="
+          + agentIdentifier + ", deployment=" + deployment + "]";
+    }
+  }
 
   private final X402CardanoProperties cardano;
   private final Set<String> written = new LinkedHashSet<>();

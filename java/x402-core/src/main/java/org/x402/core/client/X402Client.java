@@ -41,7 +41,8 @@ import org.x402.core.utils.Networks;
  * The paying side: picks one of a 402's options and asks the
  * matching scheme to sign it.
  *
- * <p>Selection runs in order: (1) keep options with a registered network + scheme, (2)
+ * <p>Selection runs in order: (1) keep options with a registered network + scheme whose
+ * {@link SchemeNetworkClient#supports} accepts them, (2)
  * drop unknown {@code paymentFlow} values, (3) spend controls, (4) policies in registration order
  * (an empty result throws), (5) prefer authorization flows, (6) the selector (default: first).
  *
@@ -254,7 +255,8 @@ public final class X402Client {
     List<PaymentRequirements> supported = requirements.stream().filter(r -> {
       Map<String, SchemeNetworkClient> forNetwork =
           Networks.findSchemesByNetwork(byNetwork, r.network());
-      return forNetwork != null && forNetwork.containsKey(r.scheme());
+      SchemeNetworkClient scheme = forNetwork == null ? null : forNetwork.get(r.scheme());
+      return scheme != null && scheme.supports(r);
     }).toList();
     if (supported.isEmpty()) {
       Map<String, Object> detail = new LinkedHashMap<>();

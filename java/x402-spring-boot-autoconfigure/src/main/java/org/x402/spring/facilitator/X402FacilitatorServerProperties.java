@@ -108,7 +108,21 @@ public record X402FacilitatorServerProperties(
    */
   public record Network(String network, X402CardanoProperties.Blockfrost blockfrost,
       String mnemonic, SlotConfig slotConfig, Integer networkMagic, Boolean evaluation,
-      List<String> masumiAllowedScriptHashes) {}
+      List<String> masumiAllowedScriptHashes) {
+
+    /**
+     * The settings with the facilitator mnemonic masked.
+     *
+     * @return the redacted settings
+     */
+    @Override
+    public String toString() {
+      return "Network[network=" + network + ", blockfrost=" + blockfrost + ", mnemonic="
+          + (mnemonic == null ? "null" : "***") + ", slotConfig=" + slotConfig
+          + ", networkMagic=" + networkMagic + ", evaluation=" + evaluation
+          + ", masumiAllowedScriptHashes=" + masumiAllowedScriptHashes + "]";
+    }
+  }
 
   /**
    * A Shelley-era slot configuration; all three values are required together.

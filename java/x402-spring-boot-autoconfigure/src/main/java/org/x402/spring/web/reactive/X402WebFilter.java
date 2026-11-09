@@ -24,6 +24,7 @@ import org.springframework.web.server.WebFilterChain;
 import org.x402.core.FacilitatorResponseException;
 import org.x402.core.server.CancelOptions;
 import org.x402.core.server.ServerHooks.CancellationReason;
+import org.x402.http.AmbiguousRouteException;
 import org.x402.http.HttpProcessResult;
 import org.x402.http.HttpRequestContext;
 import org.x402.http.HttpResponseInstructions;
@@ -98,7 +99,12 @@ public final class X402WebFilter implements WebFilter, Ordered {
       String offer = registry.offerFor(resolution.handler());
       String pattern = OfferRegistry.toRoutePattern(resolution.pattern());
       if (offer == null) {
-        offer = routes.matchPath(method, paths[0], paths[1]);
+        try {
+          offer = routes.matchPath(method, paths[0], paths[1]);
+        } catch (AmbiguousRouteException e) {
+          LOG.debug(e.getMessage());
+          return write(exchange.getResponse(), X402HttpResourceServer.invalidPathResponse());
+        }
         pattern = offer == null ? null : routes.patternOf(offer);
       }
       if (offer == null) {
