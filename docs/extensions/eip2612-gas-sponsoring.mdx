@@ -107,14 +107,27 @@ If neither is provided and the server advertises this extension, the scheme logs
   <Tab title="Go">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
-    scheme := evm.NewExactEvmScheme(signer)
+    // The signer must be able to read contracts (to check allowance and nonce).
+    // Use an RPC-backed signer or configure RPCURL in the scheme options.
+    signer, _ := evmsigners.NewClientSignerFromPrivateKeyWithClient(
+        os.Getenv("EVM_PRIVATE_KEY"),
+        "https://your-rpc.example",
+    )
+
+    scheme := exactevm.NewExactEvmScheme(signer, nil)
+    // Or configure RPC separately:
+    // scheme := exactevm.NewExactEvmScheme(signer, &exactevm.ExactEvmSchemeConfig{
+    //     RPCURL: "https://your-rpc.example",
+    // })
     client.Register("eip155:*", scheme)
 
-    // EIP-2612 permit signing is handled automatically
-    // when the server advertises the extension
+    // EIP-2612 permit signing is handled automatically when the server
+    // advertises the extension. If the signer lacks read-contract capability,
+    // the extension is skipped and a warning is logged once per network.
     ```
   </Tab>
   <Tab title="Python">

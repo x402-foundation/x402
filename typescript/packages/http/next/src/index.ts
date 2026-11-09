@@ -33,6 +33,23 @@ export function setSettlementOverrides(res: NextResponse, overrides: SettlementO
   res.headers.set(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
 }
 
+const prepareBazaar = (httpServer: x402HTTPResourceServer): Promise<void> | null => {
+  if (!checkIfBazaarNeeded(httpServer.routes)) {
+    return null;
+  }
+
+  return import("@x402/extensions/bazaar")
+    .then(({ bazaarResourceServerExtension, validateBazaarRouteExtensions }) => {
+      if (!httpServer.server.hasExtension("bazaar")) {
+        httpServer.server.registerExtension(bazaarResourceServerExtension);
+      }
+      validateBazaarRouteExtensions(httpServer.routes);
+    })
+    .catch((err: unknown) => {
+      console.error("Failed to load bazaar extension:", err);
+    });
+};
+
 /**
  * Configuration for registering a payment scheme with a specific network
  */
@@ -79,25 +96,7 @@ export function paymentProxyFromHTTPServer(
   syncFacilitatorOnStart: boolean = true,
 ) {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
-
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = prepareBazaar(httpServer);
 
   return async (req: NextRequest) => {
     const context = createRequestContext(req);
@@ -285,25 +284,7 @@ export function withX402FromHTTPServer<T = unknown>(
   syncFacilitatorOnStart: boolean = true,
 ): (request: NextRequest) => Promise<NextResponse<T>> {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
-
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = prepareBazaar(httpServer);
 
   let warnedNoMatch = false;
 

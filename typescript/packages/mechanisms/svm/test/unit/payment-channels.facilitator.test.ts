@@ -44,7 +44,12 @@ import {
   type ChannelRpc,
   type ExpectedOpenChannel,
 } from "../../src/payment-channels/facilitator";
-import { MEMO_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import {
+  COMPUTE_BUDGET_PROGRAM_ADDRESS,
+  MEMO_PROGRAM_ADDRESS,
+  SOLANA_DEVNET_CAIP2,
+} from "../../src/constants";
+import { peekWireTransactionVersion } from "../../src/utils";
 
 const CHANNEL_ID = USDC_MAINNET_ADDRESS;
 const rpc = {} as ChannelRpc;
@@ -320,6 +325,66 @@ describe("payment-channel transaction submission", () => {
     await expect(
       submitChannelTransactionWithSigner(feePayer, signer, SOLANA_DEVNET_CAIP2, [instruction]),
     ).rejects.toBeInstanceOf(ChannelSimulationError);
+    expect(signer.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["omitted is v0", undefined, 0, true],
+    ["explicit v0", 0, 0, true],
+    ["explicit v1", 1, 1, false],
+  ] as const)(
+    "builds the configured facilitator transaction version: %s",
+    async (_name, facilitatorTransactionVersion, wantVersion, wantBudget) => {
+      const feePayer = await generateKeyPairSigner();
+      const signer = {
+        getLatestBlockhash: vi.fn().mockResolvedValue({
+          blockhash: USDC_MAINNET_ADDRESS,
+          lastValidBlockHeight: 1n,
+        }),
+        simulateTransaction: vi.fn().mockResolvedValue(undefined),
+        sendTransaction: vi.fn().mockResolvedValue(signature),
+        confirmTransaction: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await submitChannelTransactionWithSigner(
+        feePayer,
+        signer,
+        SOLANA_DEVNET_CAIP2,
+        [instruction],
+        { facilitatorTransactionVersion },
+      );
+
+      expect(signer.sendTransaction).toHaveBeenCalledOnce();
+      const wire = signer.sendTransaction.mock.calls[0]![0] as string;
+      expect(peekWireTransactionVersion(wire)).toBe(wantVersion);
+
+      const { staticAccounts } = getCompiledTransactionMessageDecoder().decode(
+        getTransactionDecoder().decode(getBase64Codec().encode(wire)).messageBytes,
+      );
+      expect(
+        staticAccounts.includes(address(COMPUTE_BUDGET_PROGRAM_ADDRESS)),
+        "v0 carries ComputeBudget instructions; v1 carries the budget inline",
+      ).toBe(wantBudget);
+    },
+  );
+
+  it("rejects an unsupported facilitator transaction version", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const signer = {
+      getLatestBlockhash: vi.fn().mockResolvedValue({
+        blockhash: USDC_MAINNET_ADDRESS,
+        lastValidBlockHeight: 1n,
+      }),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn().mockResolvedValue(signature),
+      confirmTransaction: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(
+      submitChannelTransactionWithSigner(feePayer, signer, SOLANA_DEVNET_CAIP2, [instruction], {
+        facilitatorTransactionVersion: 2 as never,
+      }),
+    ).rejects.toThrow("unsupported facilitator transaction version 2");
     expect(signer.sendTransaction).not.toHaveBeenCalled();
   });
 

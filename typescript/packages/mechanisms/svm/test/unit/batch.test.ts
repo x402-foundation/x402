@@ -24,7 +24,11 @@ import {
 } from "../../src/batch-settlement/facilitator/scheme";
 import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { BatchSvmScheme as BatchServerScheme } from "../../src/batch-settlement/server/scheme";
-import { encodeReceiverBindingMemo } from "../../src/batch-settlement/receiverBinding";
+import {
+  encodeReceiverBindingMemo,
+  readReceiverBindingFromOpen,
+} from "../../src/batch-settlement/receiverBinding";
+import { peekWireTransactionVersion } from "../../src/utils";
 import { MemoryChannelStore } from "../../src/batch-settlement/server/storage";
 import type { ChannelState } from "../../src/batch-settlement/server/types";
 import {
@@ -1133,46 +1137,56 @@ describe("batch-settlement SVM", () => {
       ).resolves.toBeUndefined();
     });
 
-    it("builds an open that binds the sponsor as payee/rent payer and receiver at 100%", async () => {
-      const built = await buildDepositPayload({
-        blockhash: { blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 1n },
-        depositAmount: 10_000n,
-        feePayer: feePayer.address,
-        firstCharge: 1_000n,
-        memo: "invoice-42",
-        mint: MINT,
-        openSlot: OPEN_SLOT,
-        payer,
-        receiver: RECEIVER,
-        receiverAuthorizer: receiverAuthorizer.address,
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-        withdrawDelay: WITHDRAW_DELAY,
-      });
-      const open = await verifyOpenTransaction(built.payload.deposit.transaction, {
-        authorizedSigner: payer.address,
-        expectedBindingMemo: encodeReceiverBindingMemo(receiverAuthorizer.address),
-        feePayer: feePayer.address,
-        from: payer.address,
-        maxCap: 10_000n,
-        memo: "invoice-42",
-        mint: MINT,
-        openSlot: OPEN_SLOT,
-        payee: feePayer.address,
-        recipients: [{ bps: 10_000, recipient: RECEIVER }],
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-        withdrawDelay: WITHDRAW_DELAY,
-      });
-      expect(open.channelId).toBe(built.channelId);
-      expect(built.payload.channelConfig).toMatchObject({
-        openSlot: Number(OPEN_SLOT),
-        payer: payer.address,
-        payerAuthorizer: payer.address,
-        receiver: RECEIVER,
-        token: MINT,
-        withdrawDelay: WITHDRAW_DELAY,
-      });
-      expect(built.payload.voucher!.maxClaimableAmount).toBe("1000");
-    });
+    it.each([0, 1] as const)(
+      "builds a version %s open that binds the sponsor as payee/rent payer and receiver at 100%%",
+      async transactionVersion => {
+        const built = await buildDepositPayload({
+          transactionVersion,
+          blockhash: { blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 1n },
+          depositAmount: 10_000n,
+          feePayer: feePayer.address,
+          firstCharge: 1_000n,
+          memo: "invoice-42",
+          mint: MINT,
+          openSlot: OPEN_SLOT,
+          payer,
+          receiver: RECEIVER,
+          receiverAuthorizer: receiverAuthorizer.address,
+          tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          withdrawDelay: WITHDRAW_DELAY,
+        });
+        const open = await verifyOpenTransaction(built.payload.deposit.transaction, {
+          authorizedSigner: payer.address,
+          expectedBindingMemo: encodeReceiverBindingMemo(receiverAuthorizer.address),
+          feePayer: feePayer.address,
+          from: payer.address,
+          maxCap: 10_000n,
+          memo: "invoice-42",
+          mint: MINT,
+          openSlot: OPEN_SLOT,
+          payee: feePayer.address,
+          recipients: [{ bps: 10_000, recipient: RECEIVER }],
+          tokenProgram: TOKEN_PROGRAM_ADDRESS,
+          withdrawDelay: WITHDRAW_DELAY,
+        });
+        expect(open.channelId).toBe(built.channelId);
+        expect(built.payload.channelConfig).toMatchObject({
+          openSlot: Number(OPEN_SLOT),
+          payer: payer.address,
+          payerAuthorizer: payer.address,
+          receiver: RECEIVER,
+          token: MINT,
+          withdrawDelay: WITHDRAW_DELAY,
+        });
+        expect(built.payload.voucher!.maxClaimableAmount).toBe("1000");
+        const transaction = built.payload.deposit.transaction;
+        expect(peekWireTransactionVersion(transaction)).toBe(transactionVersion);
+        // The receiver binding is read back from the open, whatever its version.
+        expect(readReceiverBindingFromOpen(transaction, built.channelId)).toBe(
+          receiverAuthorizer.address,
+        );
+      },
+    );
 
     it("builds an operator channel with a reusable payer proof", async () => {
       const operator = await generateKeyPairSigner();
@@ -1278,7 +1292,7 @@ describe("batch-settlement SVM", () => {
   });
 
   describe("client transaction version negotiation", () => {
-    it.each([[[1]], [["legacy", 0]], ["0"]])(
+    it.each([[[2]], [[]], [["legacy", 0]], ["0"]])(
       "fails closed before any channel work when transactionVersions is %j",
       async transactionVersions => {
         const client = new BatchClientScheme(await generateKeyPairSigner());
@@ -1309,12 +1323,14 @@ describe("batch-settlement SVM", () => {
       const extra = facilitator.getExtra(SOLANA_DEVNET_CAIP2);
       expect(extra).toEqual({
         feePayer: feePayer.address,
+        maxClaimChannels: 18,
         maxIdleSecs: 604_800,
-        transactionVersions: [0],
+        maxSettleChannels: 13,
+        transactionVersions: [0, 1],
       });
       // The advertised list is a copy, so mutating one response cannot change the next.
       (extra.transactionVersions as number[])[0] = 1;
-      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2).transactionVersions).toEqual([0]);
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2).transactionVersions).toEqual([0, 1]);
       expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([feePayer.address]);
     });
 
@@ -1330,7 +1346,9 @@ describe("batch-settlement SVM", () => {
       });
       expect(disabled.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: feePayer.address,
-        transactionVersions: [0],
+        maxClaimChannels: 18,
+        maxSettleChannels: 13,
+        transactionVersions: [0, 1],
       });
       expect(
         () =>

@@ -115,14 +115,27 @@ If neither is provided and the server advertises this extension, the scheme logs
   <Tab title="Go">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
-    scheme := evm.NewExactEvmScheme(signer)
+    // The signer must support transaction signing to sign the approve() tx.
+    // Use an RPC-backed signer or configure RPCURL in the scheme options.
+    signer, _ := evmsigners.NewClientSignerFromPrivateKeyWithClient(
+        os.Getenv("EVM_PRIVATE_KEY"),
+        "https://your-rpc.example",
+    )
+
+    scheme := exactevm.NewExactEvmScheme(signer, nil)
+    // Or configure RPC separately:
+    // scheme := exactevm.NewExactEvmScheme(signer, &exactevm.ExactEvmSchemeConfig{
+    //     RPCURL: "https://your-rpc.example",
+    // })
     client.Register("eip155:*", scheme)
 
-    // ERC-20 approval gas sponsoring is handled automatically
-    // as a fallback when EIP-2612 is not available
+    // ERC-20 approval gas sponsoring is handled automatically as a fallback
+    // when EIP-2612 is not available. If the signer lacks transaction-signing
+    // capability, the extension is skipped and a warning is logged once per network.
     ```
   </Tab>
   <Tab title="Python">

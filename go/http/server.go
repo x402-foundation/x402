@@ -1111,10 +1111,10 @@ func (s *x402HTTPResourceServer) CreateFailurePathSettlementHeaders(
 	return nil
 }
 
-// sanitizedFailureTransaction returns the broadcast transaction hash for a failed
-// settlement only when the failure is settlement_pending. Every other terminal reason
-// must not surface a transaction value, regardless of whether the failure arrived as
-// an error or as a direct SettleResponse (e.g. from a remote facilitator client).
+// sanitizedFailureTransaction returns the broadcast transaction hash for a thrown
+// settle error only when the failure is settlement_pending. Every other terminal reason
+// must not surface a transaction value. Failed SettleResponses returned by the
+// facilitator are forwarded as-is.
 func sanitizedFailureTransaction(errorReason, transaction string) string {
 	if errorReason == settlementPendingReason {
 		return transaction
@@ -1136,7 +1136,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResultFromError(err error
 			Success:      false,
 			ErrorReason:  se.ErrorReason,
 			ErrorMessage: se.ErrorMessage,
-			Transaction:  se.Transaction,
+			Transaction:  sanitizedFailureTransaction(se.ErrorReason, se.Transaction),
 			Network:      network,
 			Payer:        se.Payer,
 		})
@@ -1157,7 +1157,9 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
 		failureResponse.ErrorMessage = settleResult.ErrorMessage
-		failureResponse.Transaction = sanitizedFailureTransaction(errorReason, settleResult.Transaction)
+		failureResponse.Transaction = settleResult.Transaction
+		failureResponse.Amount = settleResult.Amount
+		failureResponse.Extra = settleResult.Extra
 	}
 
 	headers, err := s.CreateSettlementHeaders(&failureResponse)

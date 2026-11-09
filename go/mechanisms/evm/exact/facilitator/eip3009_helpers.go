@@ -131,6 +131,27 @@ func ClassifyEIP3009Signature(
 	tokenName string,
 	tokenVersion string,
 ) (*EIP3009SignatureClassification, error) {
+	code, err := signer.GetCode(ctx, authorization.From)
+	if err != nil {
+		return nil, err
+	}
+	return ClassifyEIP3009SignatureWithCode(
+		ctx, signer, authorization, signature, chainID, tokenAddress, tokenName, tokenVersion, code,
+	)
+}
+
+// ClassifyEIP3009SignatureWithCode classifies a signature using bytecode the caller already fetched.
+func ClassifyEIP3009SignatureWithCode(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	authorization evm.ExactEIP3009Authorization,
+	signature []byte,
+	chainID *big.Int,
+	tokenAddress string,
+	tokenName string,
+	tokenVersion string,
+	payerCode []byte,
+) (*EIP3009SignatureClassification, error) {
 	hash, err := evm.HashEIP3009Authorization(
 		authorization,
 		chainID,
@@ -145,13 +166,14 @@ func ClassifyEIP3009Signature(
 	var hash32 [32]byte
 	copy(hash32[:], hash)
 
-	valid, sigData, err := evm.VerifyUniversalSignature(
+	valid, sigData, err := evm.VerifyUniversalSignatureWithCode(
 		ctx,
 		signer,
 		authorization.From,
 		hash32,
 		signature,
 		true,
+		payerCode,
 	)
 	if err != nil {
 		return nil, err
@@ -172,7 +194,6 @@ func ClassifyEIP3009Signature(
 		return classification, nil
 	}
 
-	// Reuse the GetCode result VerifyUniversalSignature already fetched.
 	if sigData.CodeDeployed {
 		classification.IsSmartWallet = true
 		return classification, nil
@@ -190,26 +211,6 @@ func ClassifyEIP3009Signature(
 	}
 
 	return classification, nil
-}
-
-// IsPlainNonCanonicalECDSASignature reports whether signature is a high-s EOA signature.
-func IsPlainNonCanonicalECDSASignature(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	payer string,
-	signature []byte,
-) (bool, error) {
-	// Plain ECDSA signatures are r || s || v (65 bytes); other lengths may be ERC-1271/6492 wrappers.
-	if len(signature) != 65 || evm.IsCanonicalECDSASignature(signature) {
-		return false, nil
-	}
-
-	code, err := signer.GetCode(ctx, payer)
-	if err != nil {
-		return false, err
-	}
-
-	return len(code) == 0, nil
 }
 
 // SimulateEIP3009Transfer runs the transfer via eth_call.

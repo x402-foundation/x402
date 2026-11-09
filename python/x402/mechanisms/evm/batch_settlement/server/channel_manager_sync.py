@@ -13,6 +13,7 @@ from .channel_manager_common import (
     AutoJob,
     AutoSettlementConfig,
     AutoSettlementContext,
+    BatchClaimError,
     ChannelManagerConfigSync,
     ClaimOptions,
     ClaimResult,
@@ -23,6 +24,7 @@ from .channel_manager_common import (
     build_refund_claims,
     build_refund_payment_payload,
     build_settle_payment_payload,
+    filter_in_network,
     format_facilitator_failure,
     get_claimable_vouchers_from_channels,
     get_idle_channels_for_refund,
@@ -71,10 +73,22 @@ class BatchSettlementChannelManagerSync:
         return SettleResult(transaction=response.transaction)
 
     def claim_and_settle(self, opts: ClaimOptions | None = None) -> dict[str, Any]:
-        claims = self.claim(opts)
+        claim_error: BatchClaimError | None = None
+        try:
+            claims = self.claim(opts)
+        except BatchClaimError as err:
+            claims = err.results
+            claim_error = err
         settle: SettleResult | None = None
         if claims:
-            settle = self.settle()
+            try:
+                settle = self.settle()
+            except Exception as settle_error:
+                if claim_error is None:
+                    raise
+                raise BatchClaimError([*claim_error.errors, settle_error], claims) from settle_error
+        if claim_error is not None:
+            raise BatchClaimError(claim_error.errors, claims, settle) from claim_error
         return {"claims": claims, "settle": settle}
 
     def refund(self, channel_ids: list[str] | None = None) -> list[RefundResult]:
@@ -96,11 +110,12 @@ class BatchSettlementChannelManagerSync:
         return self._refund_channels(targets)
 
     def get_claimable_vouchers(self, idle_secs: int | None = None) -> list[VoucherClaim]:
-        channels = self._scheme.get_storage().list()
+        channels = filter_in_network(self._scheme.get_storage().list(), self._network)
         return get_claimable_vouchers_from_channels(channels, idle_secs)
 
     def get_withdrawal_pending_sessions(self) -> list[Channel]:
-        return [c for c in self._scheme.get_storage().list() if c.withdraw_requested_at > 0]
+        channels = filter_in_network(self._scheme.get_storage().list(), self._network)
+        return [c for c in channels if c.withdraw_requested_at > 0]
 
     def start(self, config: AutoSettlementConfig | None = None) -> None:
         if self._running:
@@ -198,11 +213,18 @@ class BatchSettlementChannelManagerSync:
         targets = self._select_claim_targets(
             ClaimOptions(select_claim_channels=cfg.select_claim_channels)
         )
-        results = self._claim_from_channels(
-            targets,
-            max_claims_per_batch=cfg.max_claims_per_batch or 100,
-            idle_secs=None,
-        )
+        try:
+            results = self._claim_from_channels(
+                targets,
+                max_claims_per_batch=cfg.max_claims_per_batch or 100,
+                idle_secs=None,
+            )
+        except BatchClaimError as err:
+            if cfg.on_error is not None:
+                cfg.on_error(err)
+            if not err.results:
+                return
+            results = err.results
         self._last_claim_time = now_ms()
         if cfg.on_claim is not None:
             for r in results:
@@ -225,18 +247,19 @@ class BatchSettlementChannelManagerSync:
         if cfg.select_refund_channels is None:
             return
         ctx = self._build_auto_settlement_context(now_ms())
-        channels = self._scheme.get_storage().list()
+        channels = filter_in_network(self._scheme.get_storage().list(), self._network)
         targets = cfg.select_refund_channels(channels, ctx)
         for r in self._refund_channels(targets):
             if cfg.on_refund is not None:
                 cfg.on_refund(r)
 
     def _select_claim_targets(self, opts: ClaimOptions | None) -> list[Channel]:
-        channels = self._scheme.get_storage().list()
+        channels = filter_in_network(self._scheme.get_storage().list(), self._network)
         if opts is None or opts.select_claim_channels is None:
             return channels
         ctx = self._build_auto_settlement_context(now_ms())
-        return opts.select_claim_channels(channels, ctx)
+        selected = opts.select_claim_channels(channels, ctx)
+        return filter_in_network(selected, self._network)
 
     def _claim_from_channels(
         self,
@@ -249,19 +272,24 @@ class BatchSettlementChannelManagerSync:
         if not all_claims:
             return []
         results: list[ClaimResult] = []
+        errors: list[BaseException] = []
         for i in range(0, len(all_claims), max_claims_per_batch):
             batch = all_claims[i : i + max_claims_per_batch]
-            result = self._submit_claim(batch)
-            results.append(result)
-            self._update_claimed_sessions(batch)
-        if results:
-            self._pending_settle = True
+            try:
+                result = self._submit_claim(batch)
+                results.append(result)
+                self._pending_settle = True
+                self._update_claimed_sessions(batch)
+            except Exception as err:
+                errors.append(err)
+        if errors:
+            raise BatchClaimError(errors, results)
         return results
 
     def _refund_channels(self, channels: list[Channel]) -> list[RefundResult]:
         now = now_ms()
         results: list[RefundResult] = []
-        for c in channels:
+        for c in filter_in_network(channels, self._network):
             if has_live_pending_request(c, now):
                 continue
             results.append(self._refund_channel(c))

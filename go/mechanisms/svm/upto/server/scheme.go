@@ -134,7 +134,13 @@ func (s *UptoSvmScheme) ValidateFacilitatorSupport(
 // SettleOnCancel settles canceled verified payments as a zero-amount refund so
 // the facilitator can seal and distribute the channel, returning the full
 // deposit to the client instead of stranding it until the grace period.
+//
+// A cancel before the before-handler deposit settled no escrow, so there is
+// nothing to refund.
 func (s *UptoSvmScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
+	if !x402.SettledPhasesContain(ctx.SettledPhases, x402.SettlePhaseBeforeHandler) {
+		return nil, nil
+	}
 	switch ctx.Reason {
 	case x402.CancellationReasonHandlerFailed,
 		x402.CancellationReasonHandlerThrew,

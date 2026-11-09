@@ -174,8 +174,6 @@ export async function verifyEIP3009(
     };
   }
 
-  // Reject malleable high-s EOA signatures before broadcast instead of relying on the
-  // token's on-chain InvalidSignatureS revert, which not every ERC-3009 token enforces.
   if (isPlainNonCanonicalEcdsaSignature(signature, classification.isDeployedAtPayer)) {
     return {
       response: {

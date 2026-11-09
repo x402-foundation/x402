@@ -11,6 +11,7 @@ import type {
   PaywallProvider,
   FacilitatorClient,
 } from "@x402/core/server";
+import { validateBazaarRouteExtensions } from "@x402/extensions/bazaar";
 import {
   checkIfBazaarNeeded,
   FacilitatorResponseError,
@@ -72,6 +73,52 @@ function createMockPaymentCancellationDispatcher(): PaymentVerifiedResult["cance
   } as unknown as PaymentVerifiedResult["cancellationDispatcher"];
 }
 
+type MockHTTPResourceServerOverrides = {
+  initialize?: () => Promise<void>;
+};
+
+/**
+ * Builds a mock x402HTTPResourceServer instance for constructor mocks.
+ * Must use a `function` implementation so `new x402HTTPResourceServer()` works.
+ *
+ * @param server - Resource server passed to the HTTP server constructor.
+ * @param routes - Route config passed to the HTTP server constructor.
+ * @param overrides - Optional overrides (e.g. custom initialize).
+ * @returns Mock HTTP resource server.
+ */
+function buildMockHTTPResourceServer(
+  server: unknown,
+  routes: unknown,
+  overrides: MockHTTPResourceServerOverrides = {},
+): x402HTTPResourceServer {
+  return {
+    initialize: overrides.initialize ?? vi.fn().mockResolvedValue(undefined),
+    processHTTPRequest: mockProcessHTTPRequest,
+    processSettlement: mockProcessSettlement,
+    createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
+    createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
+    registerPaywallProvider: mockRegisterPaywallProvider,
+    requiresPayment: mockRequiresPayment,
+    routes,
+    server: server || {
+      hasExtension: vi.fn().mockReturnValue(false),
+      registerExtension: vi.fn(),
+    },
+  } as unknown as x402HTTPResourceServer;
+}
+
+/**
+ * Returns a constructor mock for x402HTTPResourceServer.
+ *
+ * @param overrides - Optional constructor overrides for the mock HTTP server.
+ * @returns A constructible mock for x402HTTPResourceServer.
+ */
+function mockHTTPResourceServerConstructor(overrides: MockHTTPResourceServerOverrides = {}) {
+  return function (server: unknown, routes: unknown) {
+    return buildMockHTTPResourceServer(server, routes, overrides);
+  };
+}
+
 vi.mock("@x402/core/server", async importOriginal => {
   const actual = await importOriginal<typeof import("@x402/core/server")>();
   return {
@@ -98,29 +145,23 @@ vi.mock("@x402/core/server", async importOriginal => {
       }
       return null;
     },
-    x402ResourceServer: vi.fn().mockImplementation(() => ({
-      initialize: vi.fn().mockResolvedValue(undefined),
-      registerExtension: vi.fn(),
-      register: vi.fn(),
-      hasExtension: vi.fn().mockReturnValue(false),
-    })),
-    x402HTTPResourceServer: vi.fn().mockImplementation((server, routes) => ({
-      initialize: vi.fn().mockResolvedValue(undefined),
-      processHTTPRequest: mockProcessHTTPRequest,
-      processSettlement: mockProcessSettlement,
-      createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-      createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-      registerPaywallProvider: mockRegisterPaywallProvider,
-      requiresPayment: mockRequiresPayment,
-      routes: routes,
-      server: server || {
-        hasExtension: vi.fn().mockReturnValue(false),
+    x402ResourceServer: vi.fn().mockImplementation(function () {
+      return {
+        initialize: vi.fn().mockResolvedValue(undefined),
         registerExtension: vi.fn(),
-      },
-    })),
+        register: vi.fn(),
+        hasExtension: vi.fn().mockReturnValue(false),
+      };
+    }),
+    x402HTTPResourceServer: vi.fn().mockImplementation(mockHTTPResourceServerConstructor()),
     checkIfBazaarNeeded: vi.fn().mockReturnValue(false),
   };
 });
+
+vi.mock("@x402/extensions/bazaar", () => ({
+  bazaarResourceServerExtension: {},
+  validateBazaarRouteExtensions: vi.fn(),
+}));
 
 // --- Mock Factories ---
 /**
@@ -273,23 +314,7 @@ describe("paymentMiddleware", () => {
     mockRegisterPaywallProvider = vi.fn();
     mockRequiresPayment = vi.fn().mockReturnValue(true);
 
-    // Reset the mock implementation
-    vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes: routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
-    );
+    vi.mocked(HTTPResourceServer).mockImplementation(mockHTTPResourceServerConstructor());
   });
 
   it("calls next() when no-payment-required", async () => {
@@ -310,6 +335,24 @@ describe("paymentMiddleware", () => {
 
     expect(next).toHaveBeenCalled();
     expect(mockProcessHTTPRequest).toHaveBeenCalled();
+  });
+
+  it("uses the raw path when percent-decoding fails", async () => {
+    setupMockHttpServer({ type: "no-payment-required" });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    await middleware(createMockRequest({ path: "/api/%" }), createMockResponse(), vi.fn());
+
+    expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/api/%", decodedPath: "/api/%" }),
+      undefined,
+    );
   });
 
   it("returns 402 HTML for payment-error with isHtml", async () => {
@@ -411,6 +454,37 @@ describe("paymentMiddleware", () => {
 
     expect(next).toHaveBeenCalled();
     expect(resourceServer.registerExtension).not.toHaveBeenCalled();
+  });
+
+  it("logs and continues when bazaar extension validation fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(checkIfBazaarNeeded).mockReturnValueOnce(true);
+    vi.mocked(validateBazaarRouteExtensions).mockImplementationOnce(() => {
+      throw new Error("invalid bazaar");
+    });
+    setupMockHttpServer({ type: "no-payment-required" });
+    const resourceServer = {
+      hasExtension: vi.fn().mockReturnValue(false),
+      registerExtension: vi.fn(),
+    };
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      resourceServer as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const next = vi.fn();
+    await middleware(createMockRequest(), createMockResponse(), next);
+
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to load bazaar extension:",
+      expect.any(Error),
+    );
+    expect(next).toHaveBeenCalled();
+    expect(mockProcessHTTPRequest).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("sends a declared text/plain payment-error body without JSON encoding", async () => {
@@ -959,21 +1033,7 @@ describe("paymentMiddleware", () => {
     );
 
     vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          initialize,
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
+      mockHTTPResourceServerConstructor({ initialize }),
     );
 
     const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
@@ -1003,21 +1063,7 @@ describe("paymentMiddleware", () => {
       .mockResolvedValueOnce(undefined);
 
     vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          initialize,
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
+      mockHTTPResourceServerConstructor({ initialize }),
     );
     mockProcessHTTPRequest.mockResolvedValue({ type: "no-payment-required" });
 
@@ -1054,21 +1100,7 @@ describe("paymentMiddleware", () => {
           : Promise.resolve(undefined);
       };
       vi.mocked(HTTPResourceServer).mockImplementation(
-        (server, routes) =>
-          ({
-            initialize,
-            processHTTPRequest: mockProcessHTTPRequest,
-            processSettlement: mockProcessSettlement,
-            createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-            createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-            registerPaywallProvider: mockRegisterPaywallProvider,
-            requiresPayment: mockRequiresPayment,
-            routes,
-            server: server || {
-              hasExtension: vi.fn().mockReturnValue(false),
-              registerExtension: vi.fn(),
-            },
-          }) as unknown as x402HTTPResourceServer,
+        mockHTTPResourceServerConstructor({ initialize }),
       );
       mockProcessHTTPRequest.mockResolvedValue({ type: "no-payment-required" });
 
@@ -1091,6 +1123,24 @@ describe("paymentMiddleware", () => {
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
+  });
+
+  it("does not re-initialize the facilitator on subsequent protected requests", async () => {
+    setupMockHttpServer({ type: "no-payment-required" });
+    const initialize = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(HTTPResourceServer).mockImplementation(
+      mockHTTPResourceServerConstructor({ initialize }),
+    );
+
+    const middleware = paymentMiddleware(mockRoutes, {} as unknown as x402ResourceServer);
+    const next = vi.fn();
+
+    await middleware(createMockRequest(), createMockResponse(), next);
+    await middleware(createMockRequest(), createMockResponse(), next);
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(2);
+    expect(next).toHaveBeenCalledTimes(2);
   });
 
   it("returns 502 when processHTTPRequest surfaces FacilitatorResponseError", async () => {
@@ -1305,21 +1355,7 @@ describe("paymentMiddleware", () => {
     mockRequiresPayment.mockReturnValue(false);
     const initialize = vi.fn().mockResolvedValue(undefined);
     vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          initialize,
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
+      mockHTTPResourceServerConstructor({ initialize }),
     );
 
     const middleware = paymentMiddleware(
@@ -1401,32 +1437,15 @@ describe("paymentMiddlewareFromConfig", () => {
     mockRegisterPaywallProvider = vi.fn();
     mockRequiresPayment = vi.fn().mockReturnValue(true);
 
-    vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          initialize: vi.fn().mockResolvedValue(undefined),
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes: routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
-    );
+    vi.mocked(HTTPResourceServer).mockImplementation(mockHTTPResourceServerConstructor());
 
-    vi.mocked(x402ResourceServer).mockImplementation(
-      () =>
-        ({
-          initialize: vi.fn().mockResolvedValue(undefined),
-          registerExtension: vi.fn(),
-          register: vi.fn(),
-        }) as unknown as x402ResourceServer,
-    );
+    vi.mocked(x402ResourceServer).mockImplementation(function () {
+      return {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        registerExtension: vi.fn(),
+        register: vi.fn(),
+      } as unknown as x402ResourceServer;
+    });
   });
 
   it("creates x402ResourceServer with facilitator clients", () => {
@@ -1476,22 +1495,7 @@ describe("ExpressAdapter", () => {
     mockRegisterPaywallProvider = vi.fn();
     mockRequiresPayment = vi.fn().mockReturnValue(true);
 
-    vi.mocked(HTTPResourceServer).mockImplementation(
-      (server, routes) =>
-        ({
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes: routes,
-          server: server || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
-    );
+    vi.mocked(HTTPResourceServer).mockImplementation(mockHTTPResourceServerConstructor());
   });
 
   it("extracts path and method from request", async () => {
@@ -1696,23 +1700,7 @@ describe("before-handler receipt survives a failing handler", () => {
     mockRegisterPaywallProvider = vi.fn();
     mockRequiresPayment = vi.fn().mockReturnValue(true);
 
-    vi.mocked(HTTPResourceServer).mockImplementation(
-      (serverArg, routes) =>
-        ({
-          initialize: vi.fn().mockResolvedValue(undefined),
-          processHTTPRequest: mockProcessHTTPRequest,
-          processSettlement: mockProcessSettlement,
-          createCompletedSettlementHeaders: mockCreateCompletedSettlementHeaders,
-          createFailurePathSettlementHeaders: mockCreateFailurePathSettlementHeaders,
-          registerPaywallProvider: mockRegisterPaywallProvider,
-          requiresPayment: mockRequiresPayment,
-          routes,
-          server: serverArg || {
-            hasExtension: vi.fn().mockReturnValue(false),
-            registerExtension: vi.fn(),
-          },
-        }) as unknown as x402HTTPResourceServer,
-    );
+    vi.mocked(HTTPResourceServer).mockImplementation(mockHTTPResourceServerConstructor());
 
     const app = express();
     app.use(

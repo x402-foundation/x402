@@ -19,7 +19,6 @@ import {
 import {
   ExactAvmScheme as ExactAvmClient,
   ALGORAND_TESTNET_CAIP2,
-  ALGORAND_TESTNET_GENESIS_HASH,
   USDC_TESTNET_ASA_ID,
   toClientAvmSigner,
   toFacilitatorAvmSigner,
@@ -45,7 +44,6 @@ if (!CLIENT_PRIVATE_KEY || !FACILITATOR_PRIVATE_KEY || !SERVER_ADDRESS) {
 const clientSigner = toClientAvmSigner(CLIENT_PRIVATE_KEY);
 const facilitatorSigner = toFacilitatorAvmSigner(FACILITATOR_PRIVATE_KEY);
 const FACILITATOR_ADDRESS = facilitatorSigner.getAddresses()[0];
-const ALGORAND_TESTNET_LEGACY_CAIP2 = `algorand:${ALGORAND_TESTNET_GENESIS_HASH}` as Network;
 
 /**
  * AVM Facilitator Client wrapper
@@ -137,22 +135,14 @@ describe("AVM Integration Tests", () => {
       clientAddress = clientSigner.address;
 
       const avmClient = new ExactAvmClient(clientSigner);
-      client = new x402Client()
-        .register(ALGORAND_TESTNET_CAIP2, avmClient)
-        .register(ALGORAND_TESTNET_LEGACY_CAIP2, avmClient);
+      client = new x402Client().register(ALGORAND_TESTNET_CAIP2, avmClient);
 
       const avmFacilitator = new ExactAvmFacilitator(facilitatorSigner);
-      const facilitator = new x402Facilitator().register(
-        [ALGORAND_TESTNET_CAIP2, ALGORAND_TESTNET_LEGACY_CAIP2],
-        avmFacilitator,
-      );
+      const facilitator = new x402Facilitator().register(ALGORAND_TESTNET_CAIP2, avmFacilitator);
 
       const facilitatorClient = new AvmFacilitatorClient(facilitator);
       server = new x402ResourceServer(facilitatorClient);
-      const avmServer = new ExactAvmServer();
-      server
-        .register(ALGORAND_TESTNET_CAIP2, avmServer)
-        .register(ALGORAND_TESTNET_LEGACY_CAIP2, avmServer);
+      server.register(ALGORAND_TESTNET_CAIP2, new ExactAvmServer());
       await server.initialize();
     });
 
@@ -217,33 +207,6 @@ describe("AVM Integration Tests", () => {
         expect(settleResponse.network).toBe(ALGORAND_TESTNET_CAIP2);
         expect(settleResponse.transaction).toBeDefined();
         expect(settleResponse.payer).toBe(clientAddress);
-      },
-    );
-
-    it(
-      "should verify and settle when paymentRequirements use legacy full-hash network ID",
-      { timeout: 30000 },
-      async () => {
-        const accepts = [
-          buildAvmPaymentRequirements(SERVER_ADDRESS, "1000", ALGORAND_TESTNET_LEGACY_CAIP2),
-        ];
-        const resource = {
-          url: "https://company.co",
-          description: "Company Co. resource",
-          mimeType: "application/json",
-        };
-        const paymentRequired = await server.createPaymentRequiredResponse(accepts, resource);
-        const paymentPayload = await client.createPaymentPayload(paymentRequired);
-        const accepted = server.findMatchingRequirements(accepts, paymentPayload);
-
-        expect(accepted).toBeDefined();
-
-        const verifyResponse = await server.verifyPayment(paymentPayload, accepted!);
-        expect(verifyResponse.isValid).toBe(true);
-
-        const settleResponse = await server.settlePayment(paymentPayload, accepted!);
-        expect(settleResponse.success).toBe(true);
-        expect(settleResponse.network).toBe(ALGORAND_TESTNET_LEGACY_CAIP2);
       },
     );
   });

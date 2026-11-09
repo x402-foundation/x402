@@ -11,7 +11,7 @@ from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset, get_default_asset
 
 if TYPE_CHECKING:
-    from solana.rpc.api import Client as SolanaClient
+    from ..rpc import SvmRpcClient
 
 # Type alias for money parser (sync)
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
@@ -42,15 +42,11 @@ class ExactSvmScheme:
             rpc_url: Optional RPC URL used to add blockhash construction hints.
         """
         self._money_parsers: list[MoneyParser] = []
-        self._rpc_client: SolanaClient | None = None
+        self._rpc_client: SvmRpcClient | None = None
         if rpc_url:
-            try:
-                from solana.rpc.api import Client as SolanaClient
-            except ImportError as e:
-                raise ImportError(
-                    "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
-                ) from e
-            self._rpc_client = SolanaClient(rpc_url)
+            from ..rpc import SvmRpcClient
+
+            self._rpc_client = SvmRpcClient(rpc_url)
 
     def register_money_parser(self, parser: MoneyParser) -> ExactSvmScheme:
         """Register custom money parser in the parser chain.
