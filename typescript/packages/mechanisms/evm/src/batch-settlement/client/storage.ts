@@ -1,3 +1,5 @@
+import { normalizeChannelId } from "../utils";
+
 /**
  * Client-side channel fields mirrored from PAYMENT-RESPONSE / recovery flows.
  */
@@ -29,31 +31,31 @@ export class InMemoryClientChannelStorage implements ClientChannelStorage {
   /**
    * Returns the channel record for `key` if present.
    *
-   * @param key - Channel storage key (channelId).
+   * @param key - Channel storage key (a canonical `bytes32` channel id).
    * @returns Persisted context or undefined.
    */
   async get(key: string): Promise<BatchSettlementClientContext | undefined> {
-    return this.channels.get(key);
+    return this.channels.get(normalizeChannelId(key));
   }
 
   /**
    * Stores or replaces the channel record for `key`.
    *
-   * @param key - Channel storage key.
+   * @param key - Channel storage key (a canonical `bytes32` channel id).
    * @param context - Channel fields to persist.
    * @returns Resolves when stored.
    */
   async set(key: string, context: BatchSettlementClientContext): Promise<void> {
-    this.channels.set(key, context);
+    this.channels.set(normalizeChannelId(key), context);
   }
 
   /**
    * Removes the channel record for `key` if it exists.
    *
-   * @param key - Channel storage key.
+   * @param key - Channel storage key (a canonical `bytes32` channel id).
    * @returns Resolves when removed.
    */
   async delete(key: string): Promise<void> {
-    this.channels.delete(key);
+    this.channels.delete(normalizeChannelId(key));
   }
 }

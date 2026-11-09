@@ -1,6 +1,11 @@
 # `@x402/svm` [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm)
 
-SVM (Solana Virtual Machine) implementation of the x402 payment protocol using the **Exact** payment scheme with SPL Token transfers.
+SVM (Solana Virtual Machine) implementation of the x402 payment protocol.
+
+**Payment schemes:**
+- **Exact** — fixed-price SPL Token transfers (client pays the advertised amount)
+- **Upto** — usage-based billing via [payment-channels](https://github.com/solana-foundation/payment-channels) (client authorizes a max; server settles actual usage)
+- **Batch settlement** — long-lived payment channels with cumulative vouchers and periodic payouts
 
 ## Installation
 
@@ -23,30 +28,66 @@ This package provides three main components for handling x402 payments on Solana
 **V2 Protocol Support** - Modern x402 protocol with CAIP-2 network identifiers
 
 **Client:**
-- `ExactSvmClient` - V2 client implementation using SPL Token
+- `ExactSvmScheme` - V2 exact client using SPL Token
 - `toClientSvmSigner(keypair)` - Converts Solana keypairs to x402 signers
 - `ClientSvmSigner` - TypeScript type for client signers
 - `ClientSvmConfig` - Optional RPC configuration
 
 **Facilitator:**
-- `ExactSvmFacilitator` - V2 facilitator for payment verification and settlement
+- `ExactSvmScheme` - V2 exact facilitator for payment verification and settlement
 - `toFacilitatorSvmSigner(keypair)` - Converts Solana keypairs to facilitator signers
-- `FacilitatorSvmSigner` - TypeScript type for facilitator signers
+- `FacilitatorSvmSigner` - TypeScript type for facilitator signers (`getSigner` optional; required by upto)
 - `FacilitatorRpcClient` - RPC client interface
 
 **Service:**
-- `ExactEvmServer` - V2 service for building payment requirements
+- `ExactSvmScheme` - V2 exact service for building payment requirements
 
 **Utilities:**
 - Network validation, asset info lookup, amount formatting, transaction encoding
+
+### Upto Scheme (`@x402/svm/upto/*`)
+
+Usage-based payments: authorize a ceiling, settle actual usage. See [Upto SVM Scheme](./src/upto/README.md).
+
+| Role | Import |
+|------|--------|
+| Client | `@x402/svm/upto/client` → `UptoSvmScheme` |
+| Server | `@x402/svm/upto/server` → `UptoSvmScheme` (requires `receiverAuthorizerSigner` unless the facilitator's `receiverAuthorizer` is delegated to) |
+| Facilitator | `@x402/svm/upto/facilitator` → `UptoSvmScheme` (requires `getSigner` on the facilitator signer) |
+
+### Batch Settlement (`@x402/svm/batch-settlement/*`)
+
+Long-lived payment channels with cumulative vouchers (client-signed) or operator-metered server-signed mode. See [Batch-Settlement SVM Scheme](./src/batch-settlement/README.md).
+
+| Role | Import |
+|------|--------|
+| Client | `@x402/svm/batch-settlement/client` → `BatchSvmScheme` |
+| Server | `@x402/svm/batch-settlement/server` → `BatchSvmScheme`, `BatchChannelManager` |
+| Facilitator | `@x402/svm/batch-settlement/facilitator` → `BatchSvmScheme` |
+
+#### Recovery and payouts
+
+Distribution keeps its existing request: `type: "settle"` with `channelId` and `channelConfig` for each channel. It sweeps what is currently owed; a later retry may also pay newly claimed earnings. No payout idempotency key or request watermarks are required.
+
+The facilitator records signed bytes and their signature before submission, then reconciles or resends that same transaction after an uncertain outcome. Unresolved operations remain `settlement_pending`; a timeout or unavailable transaction history does not justify building a replacement. The one conclusive expiry signal is the transaction's own blockhash: when the signer reports it invalid (`isBlockhashValid`) and a history lookup (`getConfirmedTransaction`) still finds no record of the signature, the bytes can never land, so the operation is reported as `transaction_failed` and its queue released instead of staying pending. Confirmed account reads use the execution slot as `minContextSlot` when supplied by the signer; a read the backend rejects for that floor is retried before it fails the request.
+
+Distribution `amount` is the receiver's actual token credit in the identified transaction, including on recovery. Deduplicate accounting by network, transaction, asset and recipient rather than summing HTTP responses. The optional facilitator `onDistributionConfirmed` callback runs before recovery completion and may run more than once; it must be idempotent. Recording failures leave the original signature pending.
+
+After distribution, `BatchChannelManager` reads the confirmed channel payout watermark before marking local claims paid. An older recovered payout cannot mark newer earnings paid. Pass `rpcUrl` to `createChannelManager` for that read; `readPayoutWatermark` can replace it. Stale or unavailable results leave work for a later pass. Keep redemption outside the metered-request handler when payout latency should not delay responses.
+
+`InMemoryBatchPendingSettlementStore` is the default single-process reference store and does not survive restarts. Persistent stores must retain unresolved records and implement `setIfAbsent` and `deleteIfEquals` atomically across processes. Shared deployments must also serialize overlapping distribution batches; these primitives do not provide a distributed scheduler. Stores without atomic methods provide only local serialization. Completed-result retention is an operator policy; unresolved records must not silently expire.
+
+Custom signers should return the execution slot from `confirmTransaction`, honor `minContextSlot`, and implement `getConfirmedTransaction` with confirmed token-balance metadata. The default adapter supports these capabilities. Missing payout metadata leaves the original transaction pending.
+
+When a sealed channel's receiver is also the refund recipient or protocol treasury, aggregate token balances can combine earnings with other credits. That payout is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and the sweep queue is released so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
 
 ### V1 Package (`@x402/svm/v1`)
 
 **V1 Protocol Support** - Legacy x402 protocol with simple network names
 
 **Exports:**
-- `ExactSvmClientV1` - V1 client implementation
-- `ExactSvmFacilitatorV1` - V1 facilitator implementation
+- `ExactSvmSchemeV1` - V1 client implementation
+- `ExactSvmSchemeV1` (from `@x402/svm/exact/v1/facilitator`) - V1 facilitator implementation
 - `NETWORKS` - Array of all supported V1 network names
 
 **Supported V1 Networks:**
@@ -120,27 +161,30 @@ const paidFetch = wrapFetchWithPayment(fetch, client);
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactSvmClient } from "@x402/svm";
-import { ExactSvmClientV1 } from "@x402/svm/v1";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
+import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
 const client = new x402Client()
-  .register("solana:*", new ExactSvmClient(signer))
-  .registerSchemeV1("solana-devnet", new ExactSvmClientV1(signer))
-  .registerSchemeV1("solana", new ExactSvmClientV1(signer));
+  .register("solana:*", new ExactSvmScheme(signer)) // fixed-price
+  .register("solana:*", new UptoSvmScheme(signer))  // usage-based
+  .registerV1("solana-devnet", new ExactSvmSchemeV1(signer))
+  .registerV1("solana", new ExactSvmSchemeV1(signer));
 ```
 
 ### 3. Using Config (Flexible)
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactSvmClient } from "@x402/svm";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 
 const client = x402Client.fromConfig({
   schemes: [
-    { network: "solana:*", client: new ExactSvmClient(signer) },
+    { network: "solana:*", client: new ExactSvmScheme(signer) },
     { 
       network: "solana-devnet", 
-      client: new ExactSvmClientV1(signer), 
+      client: new ExactSvmSchemeV1(signer), 
       x402Version: 1 
     }
   ]
@@ -169,10 +213,12 @@ Supports SPL Token and Token-2022 program tokens:
 
 ## Transaction Structure
 
-The exact payment scheme uses SPL Token `TransferChecked` instruction with:
+**Exact** uses SPL Token `TransferChecked` with:
 - Compute budget optimizations (unit limit + price)
 - Source/destination ATAs (Associated Token Accounts)
 - Partial signing (client signs, facilitator completes and submits)
+
+**Upto** uses the payment-channels program (`open` → escrow deposit, then `settle_and_seal` + `distribute` with a server voucher for the actual amount). Details in [Upto SVM Scheme](./src/upto/README.md).
 
 ## Duplicate Settlement Protection
 

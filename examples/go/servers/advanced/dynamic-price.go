@@ -9,10 +9,10 @@ import (
 
 	ginfw "github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	ginmw "github.com/x402-foundation/x402/go/http/gin"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
 const DefaultPort = "4021"

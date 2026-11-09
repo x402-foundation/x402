@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 type mockApprovalSigner struct {
@@ -21,7 +21,7 @@ func (m *mockApprovalSigner) ReadContract(_ context.Context, _ string, _ []byte,
 func (m *mockApprovalSigner) VerifyTypedData(_ context.Context, _ string, _ evm.TypedDataDomain, _ map[string][]evm.TypedDataField, _ string, _ map[string]interface{}, _ []byte) (bool, error) {
 	return true, nil
 }
-func (m *mockApprovalSigner) WriteContract(_ context.Context, _ string, _ []byte, _ string, _ ...interface{}) (string, error) {
+func (m *mockApprovalSigner) WriteContract(_ context.Context, _ string, _ []byte, _ string, _ []byte, _ ...interface{}) (string, error) {
 	return "0xtx", nil
 }
 func (m *mockApprovalSigner) SendTransaction(_ context.Context, _ string, _ []byte) (string, error) {

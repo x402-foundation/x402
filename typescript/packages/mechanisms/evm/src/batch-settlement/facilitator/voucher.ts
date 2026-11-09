@@ -8,6 +8,7 @@ import {
 import { getEvmChainId } from "../../utils";
 import * as Errors from "../errors";
 import {
+  parseRequirementsAmount,
   validateChannelConfig,
   verifyBatchSettlementVoucherTypedData,
   readChannelState,
@@ -35,6 +36,18 @@ export async function verifyVoucher(
   const configErr = validateChannelConfig(channelConfig, channelId, requirements);
   if (configErr) {
     return { isValid: false, invalidReason: configErr, payer: channelConfig.payer };
+  }
+
+  // Refunds are zero-charge and never consult the price; every other payload is floored by it.
+  const isRefund = payload.type === "refund";
+  const price = isRefund ? 0n : parseRequirementsAmount(requirements.amount);
+  if (price === undefined) {
+    return {
+      isValid: false,
+      invalidReason: Errors.ErrInvalidVoucherPayload,
+      invalidMessage: "invalid requirements amount",
+      payer: channelConfig.payer,
+    };
   }
 
   const voucherOk = await verifyBatchSettlementVoucherTypedData(
@@ -72,10 +85,11 @@ export async function verifyVoucher(
     };
   }
 
-  const belowClaimed =
-    payload.type === "refund"
-      ? maxClaimableAmount < state.totalClaimed
-      : maxClaimableAmount <= state.totalClaimed;
+  // Refunds are zero-charge, so the ceiling only has to cover what is already claimed; any other
+  // payload must advance the claimed total by at least the price of this request.
+  const belowClaimed = isRefund
+    ? maxClaimableAmount < state.totalClaimed
+    : maxClaimableAmount < state.totalClaimed + price || maxClaimableAmount <= state.totalClaimed;
   if (belowClaimed) {
     return {
       isValid: false,

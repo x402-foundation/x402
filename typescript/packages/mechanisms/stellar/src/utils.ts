@@ -13,9 +13,8 @@ import {
   STELLAR_NETWORK_TO_PASSPHRASE,
   STELLAR_PUBNET_CAIP2,
   STELLAR_TESTNET_CAIP2,
-  USDC_PUBNET_ADDRESS,
-  USDC_TESTNET_ADDRESS,
 } from "./constants";
+import { getDefaultAsset } from "./defaultAssets";
 import type { Network } from "@x402/core/types";
 
 export const DEFAULT_ESTIMATED_LEDGER_SECONDS = 5;
@@ -165,14 +164,7 @@ export async function getEstimatedLedgerCloseTimeSeconds(network: Network): Prom
  * @throws {Error} If the network doesn't have a configured USDC address
  */
 export function getUsdcAddress(network: Network): string {
-  switch (network) {
-    case STELLAR_PUBNET_CAIP2:
-      return USDC_PUBNET_ADDRESS;
-    case STELLAR_TESTNET_CAIP2:
-      return USDC_TESTNET_ADDRESS;
-    default:
-      throw new Error(`No USDC address configured for network: ${network}`);
-  }
+  return getDefaultAsset(network).asset;
 }
 
 export { numberToDecimalString };

@@ -17,6 +17,51 @@ except ImportError as e:
         "httpx client requires the httpx package. Install with: uv add x402[httpx]"
     ) from e
 
+from ..utils import ResponseBodyTooLargeError, aread_limited_body
+
+
+def _bound_request(response: Response, fallback: Request) -> Request:
+    """Request attached to a transport response, or the caller's request.
+
+    httpx leaves ``Response.request`` unset until ``AsyncClient`` returns from
+    the transport, and the property raises ``RuntimeError`` in that case.
+    ``getattr`` does not catch that.
+    """
+    try:
+        req = response.request
+    except RuntimeError:
+        return fallback
+    if not isinstance(req, Request):
+        return fallback
+    return req
+
+
+async def _cap_returned_payment_required(response: Response, request: Request) -> Response:
+    """Bound a 402 that will be returned to the caller. Paid payloads are unchanged."""
+    if response.status_code != 402:
+        return response
+    try:
+        body = await aread_limited_body(response.aiter_bytes())
+    finally:
+        await response.aclose()
+    req = _bound_request(response, request)
+    extensions = getattr(response, "extensions", None)
+    if not isinstance(extensions, dict):
+        extensions = dict(request.extensions)
+    # aiter_bytes() is already decoded, so these headers do not describe that body.
+    headers = response.headers.copy()
+    for name in ("content-encoding", "content-length"):
+        if name in headers:
+            del headers[name]
+    return Response(
+        status_code=402,
+        headers=headers,
+        content=body,
+        request=req,
+        extensions=extensions,
+    )
+
+
 if TYPE_CHECKING:
     from ...client import x402Client, x402ClientConfig
     from ..x402_http_client import x402HTTPClient
@@ -55,6 +100,7 @@ class x402AsyncTransport(AsyncBaseTransport):
     """
 
     RETRY_KEY = "_x402_is_retry"
+    RECOVERY_KEY = "_x402_is_recovery"
 
     def __init__(
         self,
@@ -76,6 +122,32 @@ class x402AsyncTransport(AsyncBaseTransport):
         self._client = client
         self._transport = transport or httpx.AsyncHTTPTransport()
 
+    async def _send_retry(
+        self,
+        request: Request,
+        extra_headers: dict[str, str],
+        *,
+        payment_retry: bool = False,
+        recovery_retry: bool = False,
+    ) -> Response:
+        # Clone request with additional headers
+        new_headers = dict(request.headers)
+        new_headers.update(extra_headers)
+        new_extensions = dict(request.extensions)
+        if payment_retry:
+            # Mark as retry in extensions
+            new_extensions[self.RETRY_KEY] = True
+        if recovery_retry:
+            new_extensions[self.RECOVERY_KEY] = True
+        retry_request = Request(
+            method=request.method,
+            url=request.url,
+            headers=new_headers,
+            content=request.content,
+            extensions=new_extensions,
+        )
+        return await self._transport.handle_async_request(retry_request)
+
     async def handle_async_request(self, request: Request) -> Response:
         """Handle request with automatic 402 payment retry.
 
@@ -85,6 +157,10 @@ class x402AsyncTransport(AsyncBaseTransport):
         Returns:
             Response (original or retried with payment).
         """
+        # A 402 response requires replaying the request with payment headers.
+        # Buffer streaming bodies before the first send so retries preserve them.
+        await request.aread()
+
         # Send the initial request
         response = await self._transport.handle_async_request(request)
 
@@ -93,12 +169,15 @@ class x402AsyncTransport(AsyncBaseTransport):
             return response
 
         # Check if already a retry (via request extensions)
-        if request.extensions.get(self.RETRY_KEY):
-            return response  # Return 402 without retry
+        if request.extensions.get(self.RETRY_KEY) or request.extensions.get(self.RECOVERY_KEY):
+            return await _cap_returned_payment_required(response, request)
 
         try:
             # Read response body before parsing
-            await response.aread()
+            try:
+                body_bytes = await aread_limited_body(response.aiter_bytes())
+            finally:
+                await response.aclose()
 
             # Parse PaymentRequired (try header first for V2, then body for V1)
             def get_header(name: str) -> str | None:
@@ -106,11 +185,28 @@ class x402AsyncTransport(AsyncBaseTransport):
 
             body = None
             try:
-                body = response.json()
-            except json.JSONDecodeError:
+                body = json.loads(body_bytes)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 pass
 
             payment_required = self._http_client.get_payment_required_response(get_header, body)
+
+            try:
+                request_url = str(response.url)
+            except RuntimeError:
+                request_url = ""
+            request_url = request_url or str(request.url)
+            hook_headers = await self._http_client.handle_payment_required(
+                payment_required, request_url
+            )
+            if hook_headers:
+                hook_response = await self._send_retry(request, hook_headers)
+                if hook_response.status_code != 402:
+                    return hook_response
+                try:
+                    await aread_limited_body(hook_response.aiter_bytes())
+                finally:
+                    await hook_response.aclose()
 
             # Create payment payload
             payment_payload = await self._client.create_payment_payload(payment_required)
@@ -118,29 +214,40 @@ class x402AsyncTransport(AsyncBaseTransport):
             # Encode payment headers
             payment_headers = self._http_client.encode_payment_signature_header(payment_payload)
 
-            # Clone request with payment headers and retry flag
-            new_headers = dict(request.headers)
-            new_headers.update(payment_headers)
-            new_headers["Access-Control-Expose-Headers"] = "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE"
+            # Retry using same transport
+            paid_response = await self._send_retry(request, payment_headers, payment_retry=True)
 
-            # Mark as retry in extensions
-            new_extensions = dict(request.extensions)
-            new_extensions[self.RETRY_KEY] = True
-
-            # Create new request
-            retry_request = Request(
-                method=request.method,
-                url=request.url,
-                headers=new_headers,
-                content=request.content,
-                extensions=new_extensions,
+            process_result = await self._http_client.process_payment_result(
+                payment_payload,
+                paid_response.headers.get,
+                paid_response.status_code,
             )
 
-            # Retry using same transport
-            retry_response = await self._transport.handle_async_request(retry_request)
-            return retry_response
+            if process_result.recovered:
+                if paid_response.status_code == 402:
+                    try:
+                        await aread_limited_body(paid_response.aiter_bytes())
+                    finally:
+                        await paid_response.aclose()
+                # Retry once with a fresh payload after recovery
+                fresh_payload = await self._client.create_payment_payload(payment_required)
+                fresh_headers = self._http_client.encode_payment_signature_header(fresh_payload)
+                recovery_response = await self._send_retry(
+                    request, fresh_headers, recovery_retry=True
+                )
+                # Fire hooks on retry response — no further recovery
+                await self._http_client.process_payment_result(
+                    fresh_payload,
+                    recovery_response.headers.get,
+                    recovery_response.status_code,
+                )
+                return await _cap_returned_payment_required(recovery_response, request)
+
+            return await _cap_returned_payment_required(paid_response, request)
 
         except PaymentError:
+            raise
+        except ResponseBodyTooLargeError:
             raise
         except Exception as e:
             raise PaymentError(f"Failed to handle payment: {e}") from e

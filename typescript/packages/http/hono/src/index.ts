@@ -8,12 +8,15 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  attachBackgroundInitHandler,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { Context, MiddlewareHandler } from "hono";
+import { basePath } from "hono/route";
 import { HonoAdapter } from "./adapter";
 
 /**
@@ -54,6 +57,49 @@ function facilitatorErrorResponse(c: Context, error: FacilitatorResponseError): 
 }
 
 /**
+ * Logs an unexpected error and builds a generic 500 without leaking internals.
+ *
+ * @param c - The current Hono context
+ * @param error - The unexpected error
+ * @returns A JSON 500 response
+ */
+function internalErrorResponse(c: Context, error: unknown): Response {
+  console.error(error);
+  return c.json({ error: "Internal Server Error" }, 500);
+}
+
+/**
+ * Decode `c.req.path` and strip the Hono `basePath` mount prefix.
+ *
+ * @param c - Hono context
+ * @returns Decoded path relative to the app mount
+ */
+function decodedRoutePath(c: Context): string {
+  let path: string;
+  try {
+    path = decodeURIComponent(c.req.path);
+  } catch {
+    path = c.req.path;
+  }
+  let rootPath = "";
+  try {
+    rootPath = basePath(c);
+  } catch {
+    return path;
+  }
+  if (!rootPath || rootPath === "/" || !path.startsWith(rootPath)) {
+    return path;
+  }
+  if (path === rootPath) {
+    return "";
+  }
+  if (path[rootPath.length] === "/") {
+    return path.slice(rootPath.length);
+  }
+  return path;
+}
+
+/**
  * Hono payment middleware for x402 protocol (direct HTTP server instance).
  *
  * Use this when you need to configure HTTP-level hooks.
@@ -91,6 +137,11 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   /**
@@ -114,13 +165,19 @@ export function paymentMiddlewareFromHTTPServer(
     }
   }
 
-  // Dynamically register bazaar extension if routes declare it and not already registered
-  // Skip if pre-registered (e.g., in serverless environments where static imports are used)
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import("@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import("@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import("@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -130,9 +187,11 @@ export function paymentMiddlewareFromHTTPServer(
   return async (c: Context, next: () => Promise<void>) => {
     // Create adapter and context
     const adapter = new HonoAdapter(c);
+    const path = c.req.path;
     const context: HTTPRequestContext = {
       adapter,
-      path: c.req.path,
+      path,
+      decodedPath: decodedRoutePath(c),
       method: c.req.method,
       paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
     };
@@ -151,7 +210,7 @@ export function paymentMiddlewareFromHTTPServer(
         if (facilitatorError) {
           return facilitatorErrorResponse(c, facilitatorError);
         }
-        throw error;
+        return internalErrorResponse(c, error);
       }
     }
 
@@ -169,7 +228,7 @@ export function paymentMiddlewareFromHTTPServer(
       if (error instanceof FacilitatorResponseError) {
         return facilitatorErrorResponse(c, error);
       }
-      throw error;
+      return internalErrorResponse(c, error);
     }
 
     // Handle the different result types
@@ -192,18 +251,39 @@ export function paymentMiddlewareFromHTTPServer(
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
-          result;
+        const {
+          cancellationDispatcher,
+          beforeHandlerSettlement,
+          paymentPayload,
+          paymentRequirements,
+          declaredExtensions,
+        } = result;
 
         // Proceed to the next middleware or route handler
         try {
           await next();
         } catch (error) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
-          throw error;
+          if (!beforeHandlerSettlement && !cancelSettlement) {
+            throw error;
+          }
+          const res = internalErrorResponse(c, error);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.headers.set(key, value);
+            });
+          }
+          c.res = res;
+          return;
         }
 
         // Get the current response
@@ -211,30 +291,44 @@ export function paymentMiddlewareFromHTTPServer(
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.status >= 400) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_failed",
             responseStatus: res.status,
           });
+          res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            res.headers.get("Cache-Control"),
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.headers.set(key, value);
+            });
+          }
           return;
         }
-
-        // Get response body for extensions
-        const responseBody = Buffer.from(await res.clone().arrayBuffer());
-
-        const responseHeaders: Record<string, string> = {};
-        res.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
-        });
 
         // Clear the response so we can modify headers
         c.res = undefined;
 
         try {
+          // Get response body for extensions
+          const responseBody = Buffer.from(await res.arrayBuffer());
+
+          const responseHeaders: Record<string, string> = {};
+          res.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+
           const settleResult = await httpServer.processSettlement(
             paymentPayload,
             paymentRequirements,
             declaredExtensions,
             { request: context, responseBody, responseHeaders },
+            undefined,
+            beforeHandlerSettlement,
           );
 
           if (!settleResult.success) {
@@ -248,10 +342,17 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
+            res = new Response(responseBody, { status: res.status, headers: res.headers });
+            res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {
               res.headers.set(key, value);
             });
+            res.headers.set(
+              "Cache-Control",
+              withPrivateCacheControl(res.headers.get("Cache-Control")),
+            );
+            res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
           }
         } catch (error) {
           if (error instanceof FacilitatorResponseError) {

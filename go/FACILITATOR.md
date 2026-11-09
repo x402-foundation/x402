@@ -29,7 +29,7 @@ Client → Resource Server → Facilitator → Network
 ### Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ### Basic Facilitator Server
@@ -39,8 +39,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    x402 "github.com/x402-foundation/x402/go"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 )
 
 func main() {
@@ -97,7 +97,7 @@ Facilitator signers interact with the blockchain to verify and settle payments.
 - Read blockchain state (nonces, balances)
 - Wait for transaction confirmation
 
-**Note:** Facilitator signer helpers are not yet available. For now, see the reference implementation in [`e2e/facilitators/go/main.go`](../../e2e/facilitators/go/main.go).
+**Note:** Facilitator signer helpers are not yet available. For now, see the reference implementation in [`e2e/facilitators/go/main.go`](../e2e/facilitators/go/main.go).
 
 ### 3. HTTP Endpoints
 
@@ -354,7 +354,7 @@ Facilitator signers need to:
 5. **Wait for Confirmation**: Poll for transaction finality
 6. **Handle Errors**: Retry on nonce errors, gas estimation failures
 
-**Reference Implementation:** See [`e2e/facilitators/go/main.go`](../../e2e/facilitators/go/main.go) for a complete facilitator signer implementation (~300 lines).
+**Reference Implementation:** See [`e2e/facilitators/go/main.go`](../e2e/facilitators/go/main.go) for a complete facilitator signer implementation (~300 lines).
 
 **Coming Soon:** Facilitator signer helpers will reduce this to ~10 lines.
 
@@ -389,7 +389,7 @@ A race condition exists on Solana where the same payment transaction can be subm
 The SVM mechanism packages include a built-in `SettlementCache` that mitigates this. When registering SVM facilitator schemes, pass a shared cache instance to both V1 and V2 schemes:
 
 ```go
-import svm "github.com/x402-foundation/x402/go/mechanisms/svm"
+import svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 
 cache := svm.NewSettlementCache()
 v2Scheme := facilitator.NewExactSvmScheme(signer, cache)
@@ -399,6 +399,35 @@ v1Scheme := v1facilitator.NewExactSvmSchemeV1(signer, cache)
 The cache rejects concurrent settlement attempts for the same transaction payload with a `duplicate_settlement` error. Entries are evicted after 120 seconds (approximately twice the Solana blockhash lifetime).
 
 See the [Exact SVM Scheme Specification](../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended) for full details.
+
+### Payment Channel Rent (Solana `upto`)
+
+The SVM `upto` scheme settles through onchain payment channels, and the facilitator
+fronts both the transaction fees and the channel PDA rent. That rent is recoverable,
+but only after the channel has been sealed, distributed, and aged past its reclaim
+window, so a facilitator that serves `upto` should run the rent cleanup manager:
+
+```go
+import uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
+
+scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
+    RPCURL:         os.Getenv("SVM_RPC_URL"),
+    ChannelStorage: myDurableChannelStorage, // defaults to in-memory
+})
+facilitator.Register([]x402.Network{network}, scheme)
+
+cleanup := scheme.NewRentCleanupManager(string(network))
+cleanup.Start(ctx, uptosvm.StartConfig{Interval: 5 * time.Minute})
+defer cleanup.Stop()
+```
+
+Cleanup reads the scheme's `ChannelStorage` rather than scanning the chain, so
+inject a durable implementation in production: with the default in-memory store, a
+restart loses track of channels whose rent has not been reclaimed yet.
+
+See the [upto SVM README](mechanisms/svm/upto/README.md) for the full flow, and
+[`examples/go/facilitator/upto/`](../examples/go/facilitator/upto/) for a runnable
+facilitator wired to devnet.
 
 ### High Availability
 
@@ -742,8 +771,8 @@ spec:
 
 Complete facilitator examples:
 
-- **[Basic Facilitator](../../examples/go/facilitator/)** - API structure with hooks
-- **[E2E Facilitator](../../e2e/facilitators/go/)** - Complete implementation
+- **[Basic Facilitator](../examples/go/facilitator/)** - API structure with hooks
+- **[E2E Facilitator](../e2e/facilitators/go/)** - Complete implementation
 
 ## Related Documentation
 
@@ -751,5 +780,5 @@ Complete facilitator examples:
 - **[CLIENT.md](CLIENT.md)** - Building clients
 - **[SERVER.md](SERVER.md)** - Building servers
 - **[Mechanisms](mechanisms/)** - Payment scheme implementations
-- **[Examples](../../examples/go/facilitator/)** - Working facilitator examples
+- **[Examples](../examples/go/facilitator/)** - Working facilitator examples
 

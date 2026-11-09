@@ -9,8 +9,8 @@ package erc20approvalgassponsor
 import (
 	"context"
 
-	x402 "github.com/x402-foundation/x402/go"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // ERC20ApprovalGasSponsoring is the extension identifier for the ERC-20 approval gas sponsoring extension.
@@ -57,6 +57,8 @@ type WriteContractCall struct {
 	ABI      []byte
 	Function string
 	Args     []interface{}
+	// DataSuffix is appended to the ABI-encoded calldata when non-empty
+	DataSuffix []byte
 }
 
 // TransactionRequest represents a single transaction to be executed by the signer.
@@ -75,6 +77,8 @@ type TransactionRequest struct {
 // Flashbots, multicall, or smart account batching).
 type Erc20ApprovalGasSponsoringSigner interface {
 	evm.FacilitatorEvmSigner
+	// SendTransactions returns one hash per transaction for sequential execution, or a
+	// single hash when the signer executes the requests atomically as a bundle.
 	SendTransactions(ctx context.Context, transactions []TransactionRequest) ([]string, error)
 }
 

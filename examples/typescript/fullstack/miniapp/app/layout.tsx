@@ -1,4 +1,3 @@
-import "@coinbase/onchainkit/styles.css";
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";

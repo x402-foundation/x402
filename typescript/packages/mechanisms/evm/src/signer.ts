@@ -3,13 +3,9 @@ import type { Log } from "viem";
 /**
  * ClientEvmSigner - Used by x402 clients to sign payment authorizations.
  *
- * Typically a viem WalletClient extended with publicActions:
+ * Typically a viem LocalAccount:
  * ```typescript
- * const client = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
+ * const account = privateKeyToAccount('0x...');
  * ```
  *
  * Or composed via `toClientEvmSigner(account, publicClient)`.
@@ -76,6 +72,7 @@ export type FacilitatorEvmSigner = {
     abi: readonly unknown[];
     functionName: string;
     args?: readonly unknown[];
+    account?: `0x${string}`;
   }): Promise<unknown>;
   verifyTypedData(args: {
     address: `0x${string}`;
@@ -90,15 +87,38 @@ export type FacilitatorEvmSigner = {
     abi: readonly unknown[];
     functionName: string;
     args: readonly unknown[];
-    /** Optional gas limit. When provided, skips eth_estimateGas simulation. */
     gas?: bigint;
+    dataSuffix?: `0x${string}`;
   }): Promise<`0x${string}`>;
   sendTransaction(args: { to: `0x${string}`; data: `0x${string}` }): Promise<`0x${string}`>;
-  waitForTransactionReceipt(args: { hash: `0x${string}` }): Promise<{
+  waitForTransactionReceipt(args: {
+    hash: `0x${string}`;
+    /** Milliseconds to wait before giving up; set by {@link toFacilitatorEvmSigner}. */
+    timeout?: number;
+  }): Promise<{
     status: string;
     logs?: readonly Log[];
   }>;
   getCode(args: { address: `0x${string}` }): Promise<`0x${string}` | undefined>;
+  simulateCalls?(args: {
+    account: `0x${string}`;
+    calls: readonly {
+      to: `0x${string}`;
+      data?: `0x${string}`;
+      abi?: readonly unknown[];
+      functionName?: string;
+      args?: readonly unknown[];
+      gas?: bigint;
+    }[];
+  }): Promise<{
+    results: readonly {
+      status: "success" | "failure";
+      result?: unknown;
+      logs?: readonly Log[];
+      data?: `0x${string}`;
+      gasUsed?: bigint;
+    }[];
+  }>;
 };
 
 /**
@@ -107,13 +127,11 @@ export type FacilitatorEvmSigner = {
  * Use this when your signer (e.g., `privateKeyToAccount`) doesn't have
  * `readContract`. The `publicClient` provides the on-chain read capability.
  *
- * Alternatively, use a WalletClient extended with publicActions directly:
+ * Alternatively, use a local account with an explicit public client:
  * ```typescript
- * const signer = createWalletClient({
- *   account: privateKeyToAccount('0x...'),
- *   chain: baseSepolia,
- *   transport: http(),
- * }).extend(publicActions);
+ * const account = privateKeyToAccount('0x...');
+ * const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+ * const signer = toClientEvmSigner(account, publicClient);
  * ```
  *
  * @param signer - A signer with `address` and `signTypedData` (and optionally `readContract`)
@@ -177,18 +195,33 @@ export function toClientEvmSigner(
   return result;
 }
 
+/** viem's own `waitForTransactionReceipt` default, so wrapping is behavior-preserving. */
+const DEFAULT_CONFIRMATION_TIMEOUT_MS = 180_000;
+
 /**
  * Converts a viem client with single address to a FacilitatorEvmSigner
  * Wraps the single address in a getAddresses() function for compatibility
  *
+ * Every receipt wait the returned signer performs is bounded by `confirmationTimeoutMs`.
+ * Facilitators behind a platform request deadline (serverless functions, gateway timeouts)
+ * should set it below that deadline, so settlement reports `settlement_pending` with the
+ * broadcast hash instead of the process being killed mid-wait.
+ *
  * @param client - The client to convert (must have 'address' property)
+ * @param options - Optional signer behavior
+ * @param options.confirmationTimeoutMs - Receipt-wait bound in milliseconds. Defaults to 180_000.
  * @returns FacilitatorEvmSigner with getAddresses() support
  */
 export function toFacilitatorEvmSigner(
   client: Omit<FacilitatorEvmSigner, "getAddresses"> & { address: `0x${string}` },
+  {
+    confirmationTimeoutMs = DEFAULT_CONFIRMATION_TIMEOUT_MS,
+  }: { confirmationTimeoutMs?: number } = {},
 ): FacilitatorEvmSigner {
   return {
     ...client,
     getAddresses: () => [client.address],
+    waitForTransactionReceipt: args =>
+      client.waitForTransactionReceipt({ ...args, timeout: confirmationTimeoutMs }),
   };
 }

@@ -8,19 +8,37 @@ Note: All protocols are sync-first (matching legacy SDK pattern).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypedDict
 
 from .schemas import (
     AssetAmount,
     Network,
     PaymentPayload,
+    PaymentRequired,
     PaymentRequirements,
     PaymentRequirementsV1,
     Price,
+    ResourceInfo,
     SettleResponse,
+    SettleResultContext,
     SupportedKind,
     VerifyResponse,
+)
+from .schemas.hooks import (
+    AbortResult,
+    RecoveredSettleResult,
+    RecoveredVerifyResult,
+    SettleContext,
+    SettleFailureContext,
+    SkipHandlerResult,
+    SkipSettleResult,
+    SkipVerifyResult,
+    VerifiedPaymentCanceledContext,
+    VerifyContext,
+    VerifyFailureContext,
+    VerifyResultContext,
 )
 
 # ============================================================================
@@ -66,6 +84,17 @@ class FacilitatorContext:
 # ============================================================================
 # Client-Side Protocols
 # ============================================================================
+
+
+@dataclass
+class PaymentPayloadContext:
+    """Context passed to scheme ``create_payment_payload``.
+
+    ``max_amount_per_payment`` is the resolved atomic spend cap; omitted when uncapped.
+    """
+
+    extensions: dict[str, Any] | None = None
+    max_amount_per_payment: str | None = None
 
 
 class SchemeNetworkClient(Protocol):
@@ -143,14 +172,131 @@ class SchemeNetworkClientV1(Protocol):
 # ============================================================================
 
 
+@dataclass(frozen=True)
+class SchemePaymentRequiredContext:
+    """Context for scheme enrich_payment_required_response hooks."""
+
+    requirements: list[PaymentRequirements]
+    resource_info: ResourceInfo | None
+    error: str | None
+    payment_required_response: PaymentRequired
+    transport_context: Any = None
+    payment_payload: PaymentPayload | None = None
+
+
+class EnrichPaymentRequiredProvider(Protocol):
+    """Optional scheme hook to enrich 402 accepts."""
+
+    def enrich_payment_required_response(
+        self,
+        context: SchemePaymentRequiredContext,
+    ) -> list[PaymentRequirements] | None | Awaitable[list[PaymentRequirements] | None]: ...
+
+
+class EnrichSettlementPayloadProvider(Protocol):
+    """Optional scheme hook to enrich settlement payload before facilitator settle."""
+
+    def enrich_settlement_payload(
+        self,
+        context: SettleContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class EnrichSettlementResponseProvider(Protocol):
+    """Optional scheme hook to enrich settlement response extra fields."""
+
+    def enrich_settlement_response(
+        self,
+        context: SettleResultContext,
+    ) -> dict[str, Any] | None | Awaitable[dict[str, Any] | None]: ...
+
+
+class BeforeVerifyHookProvider(Protocol):
+    def before_verify(
+        self, context: VerifyContext
+    ) -> (
+        AbortResult | SkipVerifyResult | None | Awaitable[AbortResult | SkipVerifyResult | None]
+    ): ...
+
+
+class AfterVerifyHookProvider(Protocol):
+    def after_verify(
+        self, context: VerifyResultContext
+    ) -> (
+        AbortResult | SkipHandlerResult | None | Awaitable[AbortResult | SkipHandlerResult | None]
+    ): ...
+
+
+class OnVerifyFailureHookProvider(Protocol):
+    def on_verify_failure(
+        self, context: VerifyFailureContext
+    ) -> RecoveredVerifyResult | None | Awaitable[RecoveredVerifyResult | None]: ...
+
+
+class BeforeSettleHookProvider(Protocol):
+    def before_settle(
+        self, context: SettleContext
+    ) -> (
+        AbortResult | SkipSettleResult | None | Awaitable[AbortResult | SkipSettleResult | None]
+    ): ...
+
+
+class AfterSettleHookProvider(Protocol):
+    def after_settle(self, context: SettleResultContext) -> None | Awaitable[None]: ...
+
+
+class OnSettleFailureHookProvider(Protocol):
+    def on_settle_failure(
+        self,
+        context: SettleFailureContext,
+    ) -> RecoveredSettleResult | None | Awaitable[RecoveredSettleResult | None]: ...
+
+
+class OnVerifiedPaymentCanceledHookProvider(Protocol):
+    def on_verified_payment_canceled(
+        self, context: VerifiedPaymentCanceledContext
+    ) -> None | Awaitable[None]: ...
+
+
+# ============================================================================
+# Payment Flow Types
+# ============================================================================
+
+
+PaymentFlowName = Literal["authorization", "upfront", "escrow"]
+
+
+@dataclass(frozen=True)
+class PaymentFlowPhases:
+    """Phase flags for a named payment flow."""
+
+    verify_before_handler: bool
+    settle_before_handler: bool
+    settle_after_handler: bool
+
+
+class PaymentFlowConfig(TypedDict):
+    """Supported payment flows for one assetTransferMethod, plus the default."""
+
+    supported: Sequence[PaymentFlowName]
+    default: PaymentFlowName
+
+
+@dataclass(frozen=True)
+class ResolvedPaymentFlow:
+    """Result of resolving ATM and payment flow from a scheme table."""
+
+    asset_transfer_method: str
+    payment_flow: PaymentFlowName
+
+
 class SchemeNetworkServer(Protocol):
     """V2 server-side payment mechanism.
 
     Implementations handle price parsing and requirement enhancement for specific schemes.
     Does NOT verify/settle - that's delegated to FacilitatorClient.
 
-    Note: parse_price handles USD→atomic conversion for the scheme.
-    This logic lives in the scheme implementation (e.g., EVM), not standalone.
+    Note: parse_price orchestrates shared helpers plus scheme asset/extra.
 
     Example:
         ```python
@@ -177,10 +323,26 @@ class SchemeNetworkServer(Protocol):
         """Payment scheme identifier."""
         ...
 
+    @property
+    def default_asset_transfer_method(self) -> str:
+        """ATM used when ``requirements.extra.assetTransferMethod`` is absent.
+
+        Use ``"default"`` only as SDK plumbing when the scheme has no on-wire ATM.
+        """
+        ...
+
+    @property
+    def payment_flows(self) -> Mapping[str, PaymentFlowConfig]:
+        """Payment flows supported per assetTransferMethod.
+
+        Every ATM the scheme accepts must appear here.
+        """
+        ...
+
     def parse_price(self, price: Price, network: Network) -> AssetAmount:
         """Convert Money or AssetAmount to normalized AssetAmount.
 
-        USD→atomic conversion logic lives here, not as a standalone utility.
+        parse_price orchestrates shared helpers plus scheme asset/extra.
 
         Args:
             price: Price as Money ("$1.50", 1.50) or AssetAmount.
@@ -208,6 +370,39 @@ class SchemeNetworkServer(Protocol):
 
         Returns:
             Enhanced payment requirements.
+        """
+        ...
+
+
+class FacilitatorSupportValidator(Protocol):
+    """Optional scheme hook to validate facilitator capabilities at startup.
+
+    Schemes that delegate a capability to the facilitator (e.g. batch-settlement
+    delegating the receiver-authorizer role) implement this to fail fast during
+    ``initialize()`` when the facilitator does not advertise that capability. The
+    server discovers it via attribute lookup, so schemes that do not need it can
+    omit the method entirely.
+    """
+
+    def validate_facilitator_support(
+        self,
+        network: Network,
+        supported_kind: SupportedKind,
+        facilitator_extensions: list[str],
+    ) -> str | None:
+        """Validate facilitator capabilities for this scheme/network.
+
+        Invoked during ``initialize()``, only when the facilitator supports the
+        scheme.
+
+        Args:
+            network: The network identifier being validated.
+            supported_kind: The facilitator's advertised kind for this scheme/network.
+            facilitator_extensions: Extensions advertised by the facilitator.
+
+        Returns:
+            A human-readable problem message when the configuration cannot be
+            fulfilled, or None when valid.
         """
         ...
 

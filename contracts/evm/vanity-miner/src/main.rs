@@ -39,7 +39,7 @@ const EXACT_INIT_CODE_HASH: [u8; 32] =
     hex_literal::hex!("e774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c");
 // x402UptoPermit2Proxy (deterministic build, no CBOR metadata)
 const UPTO_INIT_CODE_HASH: [u8; 32] =
-    hex_literal::hex!("01575bfc9cacbf6463db62ee8867594b1657139c8493a712ef6bcefa848a20b7");
+    hex_literal::hex!("74f7a29cbc3c55f87cdef7f7c551643189e8bb62eed9de67753aebc402b83797");
 // x402BatchSettlement — keccak256(type(x402BatchSettlement).creationCode) after `forge build`
 const BATCH_INIT_CODE_HASH: [u8; 32] =
     hex_literal::hex!("ed07c0a1aeb6bd4b8e28932959d66e9f2c1a2f6ebb1fd3dc5f3fbcf8135850f6");

@@ -31,6 +31,11 @@ export class SettlementCache {
     return false;
   }
 
+  /** Remove all entries. Used in tests to reset shared singleton state between cases. */
+  clear(): void {
+    this.entries.clear();
+  }
+
   /**
    * Remove entries older than the settlement TTL.
    * Leverages Map insertion-order guarantee to break early.

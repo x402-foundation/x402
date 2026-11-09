@@ -8,9 +8,11 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
+  attachBackgroundInitHandler,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
 import { NextFunction, Request, Response } from "express";
@@ -53,6 +55,53 @@ function sendFacilitatorError(res: Response, error: FacilitatorResponseError): v
 }
 
 /**
+ * Logs an unexpected error and sends a generic 500 without leaking internals.
+ *
+ * @param res - The Express response to write to
+ * @param error - The unexpected error
+ */
+function sendInternalError(res: Response, error: unknown): void {
+  console.error(error);
+  res.status(500).json({ error: "Internal Server Error" });
+}
+
+/**
+ * Write a payment-error body without JSON-encoding a declared plain-text payload.
+ *
+ * @param res - The Express response to write to
+ * @param response - Payment-error instructions from the HTTP resource server
+ * @param response.body - Optional response body to write
+ * @param response.headers - Response headers, including Content-Type
+ * @param response.isHtml - Whether the body should be sent as HTML
+ */
+function sendPaymentErrorBody(
+  res: Response,
+  response: { body?: unknown; headers: Record<string, string>; isHtml?: boolean },
+): void {
+  const contentType = response.headers["Content-Type"] ?? response.headers["content-type"] ?? "";
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
+  if (response.isHtml || (mediaType === "text/plain" && typeof response.body === "string")) {
+    res.send(response.body ?? "");
+    return;
+  }
+  res.json(response.body ?? {});
+}
+
+/**
+ * Decode percent-escapes in a request path.
+ *
+ * @param path - Request path
+ * @returns Decoded path, or the original if decoding fails
+ */
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Express payment middleware for x402 protocol (direct HTTP server instance).
  *
  * Use this when you need to configure HTTP-level hooks.
@@ -90,6 +139,11 @@ export function paymentMiddlewareFromHTTPServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   /**
@@ -113,13 +167,19 @@ export function paymentMiddlewareFromHTTPServer(
     }
   }
 
-  // Dynamically register bazaar extension if routes declare it and not already registered
-  // Skip if pre-registered (e.g., in serverless environments where static imports are used)
   let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes) && !httpServer.server.hasExtension("bazaar")) {
-    bazaarPromise = import("@x402/extensions/bazaar")
-      .then(({ bazaarResourceServerExtension }) => {
-        httpServer.server.registerExtension(bazaarResourceServerExtension);
+  if (checkIfBazaarNeeded(httpServer.routes)) {
+    if (!httpServer.server.hasExtension("bazaar")) {
+      bazaarPromise = import("@x402/extensions/bazaar").then(
+        ({ bazaarResourceServerExtension }) => {
+          httpServer.server.registerExtension(bazaarResourceServerExtension);
+        },
+      );
+    }
+    bazaarPromise = (bazaarPromise ?? Promise.resolve())
+      .then(() => import("@x402/extensions/bazaar"))
+      .then(({ validateBazaarRouteExtensions }) => {
+        validateBazaarRouteExtensions(httpServer.routes);
       })
       .catch(err => {
         console.error("Failed to load bazaar extension:", err);
@@ -129,9 +189,11 @@ export function paymentMiddlewareFromHTTPServer(
   return async (req: Request, res: Response, next: NextFunction) => {
     // Create adapter and context
     const adapter = new ExpressAdapter(req);
+    const path = req.path;
     const context: HTTPRequestContext = {
       adapter,
-      path: req.path,
+      path,
+      decodedPath: decodedRoutePath(path),
       method: req.method,
       paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
     };
@@ -151,7 +213,8 @@ export function paymentMiddlewareFromHTTPServer(
           sendFacilitatorError(res, facilitatorError);
           return;
         }
-        return next(error);
+        sendInternalError(res, error);
+        return;
       }
     }
 
@@ -170,7 +233,8 @@ export function paymentMiddlewareFromHTTPServer(
         sendFacilitatorError(res, error);
         return;
       }
-      return next(error);
+      sendInternalError(res, error);
+      return;
     }
 
     // Handle the different result types
@@ -186,17 +250,18 @@ export function paymentMiddlewareFromHTTPServer(
         Object.entries(response.headers).forEach(([key, value]) => {
           res.setHeader(key, value);
         });
-        if (response.isHtml) {
-          res.send(response.body);
-        } else {
-          res.json(response.body || {});
-        }
+        sendPaymentErrorBody(res, response);
         return;
 
       case "payment-verified":
         // Payment is valid, need to wrap response for settlement
-        const { cancellationDispatcher, paymentPayload, paymentRequirements, declaredExtensions } =
-          result;
+        const {
+          cancellationDispatcher,
+          beforeHandlerSettlement,
+          paymentPayload,
+          paymentRequirements,
+          declaredExtensions,
+        } = result;
 
         // Intercept and buffer all core methods that can commit response to client
         const originalWriteHead = res.writeHead.bind(res);
@@ -264,10 +329,23 @@ export function paymentMiddlewareFromHTTPServer(
         try {
           await Promise.resolve(next());
         } catch (error) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_threw",
             error,
           });
+          const existingCacheControl =
+            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            existingCacheControl,
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.setHeader(key, String(value));
+            });
+          }
           bufferedCalls = [];
           restoreResponseMethods();
           return next(error);
@@ -278,10 +356,24 @@ export function paymentMiddlewareFromHTTPServer(
 
         // If the response from the protected route is >= 400, do not settle payment
         if (res.statusCode >= 400) {
-          await cancellationDispatcher.cancel({
+          const cancelSettlement = await cancellationDispatcher.cancel({
             reason: "handler_failed",
             responseStatus: res.statusCode,
           });
+          res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
+          const existingCacheControl =
+            res.getHeader("Cache-Control") != null ? String(res.getHeader("Cache-Control")) : null;
+          const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+            cancelSettlement,
+            beforeHandlerSettlement,
+            paymentPayload,
+            existingCacheControl,
+          );
+          if (failureHeaders) {
+            Object.entries(failureHeaders).forEach(([key, value]) => {
+              res.setHeader(key, String(value));
+            });
+          }
           restoreResponseMethods();
           // Replay all buffered calls in order
           for (const [method, args] of bufferedCalls) {
@@ -316,6 +408,8 @@ export function paymentMiddlewareFromHTTPServer(
             paymentRequirements,
             declaredExtensions,
             { request: context, responseBody, responseHeaders },
+            undefined,
+            beforeHandlerSettlement,
           );
 
           // If settlement fails, return an error and do not send the buffered response
@@ -325,11 +419,8 @@ export function paymentMiddlewareFromHTTPServer(
             Object.entries(response.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
             });
-            if (response.isHtml) {
-              res.status(response.status).send(response.body);
-            } else {
-              res.status(response.status).json(response.body ?? {});
-            }
+            res.status(response.status);
+            sendPaymentErrorBody(res, response);
             return;
           }
 
@@ -337,6 +428,14 @@ export function paymentMiddlewareFromHTTPServer(
           Object.entries(settleResult.headers).forEach(([key, value]) => {
             res.setHeader(key, value);
           });
+          res.setHeader(
+            "Cache-Control",
+            withPrivateCacheControl(
+              res.getHeader("Cache-Control") != null
+                ? String(res.getHeader("Cache-Control"))
+                : null,
+            ),
+          );
         } catch (error) {
           if (error instanceof FacilitatorResponseError) {
             bufferedCalls = [];
@@ -346,10 +445,12 @@ export function paymentMiddlewareFromHTTPServer(
           console.error(error);
           // If settlement fails, don't send the buffered response
           bufferedCalls = [];
-          res.status(402).json({});
+          res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {
           restoreResponseMethods();
+
+          res.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
 
           // Replay all buffered calls in order
           for (const [method, args] of bufferedCalls) {

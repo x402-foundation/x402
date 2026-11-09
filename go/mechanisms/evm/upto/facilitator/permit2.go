@@ -3,16 +3,17 @@ package facilitator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	exactfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	exactfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // VerifyUptoPermit2 verifies an upto Permit2 payment payload against the given requirements.
@@ -42,6 +43,9 @@ func VerifyUptoPermit2(
 	}
 
 	tokenAddress := evm.NormalizeAddress(requirements.Asset)
+
+	// Run the asset-contract check concurrently with the signature check below.
+	assetCheck := evm.StartAssetContractCheck(ctx, signer, string(requirements.Network), requirements.Asset)
 
 	if !strings.EqualFold(permit2Payload.Permit2Authorization.Spender, evm.X402UptoPermit2ProxyAddress) {
 		return nil, x402.NewVerifyError(ErrPermit2InvalidSpender, payer, "invalid spender")
@@ -103,10 +107,24 @@ func VerifyUptoPermit2(
 		return nil, x402.NewVerifyError(ErrInvalidSignatureFormat, payer, err.Error())
 	}
 
-	sigValid, sigErr := verifyUptoPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+	sigValid, sigData, sigErr := verifyUptoPermit2Signature(ctx, signer, permit2Payload.Permit2Authorization, signatureBytes, chainID)
+
+	assetReason, assetErr := assetCheck.Await()
+	if assetErr != nil {
+		return nil, fmt.Errorf("asset contract check failed: %w", assetErr)
+	}
+	if assetReason != "" {
+		return nil, x402.NewVerifyError(assetReason, payer, fmt.Sprintf("asset %s is not a deployed contract", requirements.Asset))
+	}
+
 	if sigErr != nil || !sigValid {
-		code, codeErr := signer.GetCode(ctx, payer)
-		if codeErr != nil || len(code) == 0 {
+		deployed := false
+		if sigData != nil {
+			deployed = sigData.CodeDeployed
+		} else if code, codeErr := signer.GetCode(ctx, payer); codeErr == nil {
+			deployed = len(code) > 0
+		}
+		if !deployed {
 			return nil, x402.NewVerifyError(ErrPermit2InvalidSignature, payer, "invalid signature")
 		}
 	}
@@ -183,6 +201,9 @@ func VerifyUptoPermit2(
 
 // SettleUptoPermit2 settles an upto Permit2 payment by calling x402UptoPermit2Proxy.settle().
 // simulateInSettle controls whether to run an eth_call simulation as part of pre-settle verification.
+// store is consulted first (keyed on permit2Payload.Signature) to reconcile a
+// previously-broadcast-but-unconfirmed transaction from a prior settlement_pending
+// response, instead of re-broadcasting. A nil store disables this fast path.
 func SettleUptoPermit2(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -191,13 +212,31 @@ func SettleUptoPermit2(
 	permit2Payload *evm.UptoPermit2Payload,
 	facilCtx *x402.FacilitatorContext,
 	simulateInSettle bool,
+	store x402.PendingSettlementStore,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Accepted.Network)
 	payer := permit2Payload.Permit2Authorization.From
 
+	// Parsed up front: requirements.Amount is identical on a resource-server
+	// retry (byte-identical payload/requirements), so the fast path below can
+	// safely reuse it to report the settled Amount without re-verifying.
 	settlementAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
 	if !ok {
 		return nil, x402.NewSettleError(ErrUptoInvalidPayload, payer, network, "", "invalid settlement amount")
+	}
+
+	if store != nil && permit2Payload.Signature != "" {
+		if txHash, ok, _ := store.Get(ctx, permit2Payload.Signature); ok {
+			// Remove before reconciling (rather than after) so a concurrent retry
+			// of the same payload misses here instead of also reconciling: it
+			// falls through to the normal broadcast path, which independently
+			// rejects it as an on-chain replay (nonce already consumed).
+			_ = store.Delete(ctx, permit2Payload.Signature)
+			receiptWaitSigner := exactfacilitator.ResolvePermit2ReceiptWaitSigner(signer, facilCtx, payload.Extensions, payload.Accepted.Network)
+			return exactfacilitator.AwaitPermit2Settlement(
+				ctx, store, receiptWaitSigner, permit2Payload.Signature, txHash, payer, network, ErrUptoTransactionFailed, settlementAmount.String(),
+			)
+		}
 	}
 
 	// Re-verify with permitted.amount as requirements.Amount (the authorized max)
@@ -241,6 +280,11 @@ func SettleUptoPermit2(
 	permitStruct := args.permitStruct()
 	witnessStruct := args.witnessStruct()
 
+	dataSuffix, err := evm.ResolveDataSuffix(facilCtx, evm.DataSuffixContext{Payload: payload, Requirements: requirements})
+	if err != nil {
+		return nil, x402.NewSettleError(ErrUptoInvalidPayload, payer, network, "", err.Error())
+	}
+
 	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(payload.Extensions)
 	erc20Info, _ := erc20approvalgassponsor.ExtractInfo(payload.Extensions)
 
@@ -275,6 +319,7 @@ func SettleUptoPermit2(
 			evm.X402UptoPermit2ProxyAddress,
 			evm.X402UptoPermit2ProxySettleWithPermitABI,
 			evm.FunctionSettleWithPermit,
+			dataSuffix,
 			permit2612Struct,
 			permitStruct,
 			args.SettlementAmount,
@@ -291,10 +336,11 @@ func SettleUptoPermit2(
 		}
 		if extensionSigner != nil {
 			settle := erc20approvalgassponsor.WriteContractCall{
-				Address:  evm.X402UptoPermit2ProxyAddress,
-				ABI:      evm.X402UptoPermit2ProxySettleABI,
-				Function: evm.FunctionSettle,
-				Args:     []interface{}{permitStruct, args.SettlementAmount, args.Owner, witnessStruct, args.Signature},
+				Address:    evm.X402UptoPermit2ProxyAddress,
+				ABI:        evm.X402UptoPermit2ProxySettleABI,
+				Function:   evm.FunctionSettle,
+				Args:       []interface{}{permitStruct, args.SettlementAmount, args.Owner, witnessStruct, args.Signature},
+				DataSuffix: dataSuffix,
 			}
 			txHashes, sendErr := extensionSigner.SendTransactions(ctx, []erc20approvalgassponsor.TransactionRequest{
 				{Serialized: erc20Info.SignedTransaction},
@@ -302,8 +348,10 @@ func SettleUptoPermit2(
 			})
 			if sendErr != nil {
 				err = sendErr
-			} else if len(txHashes) > 0 {
-				txHash = txHashes[len(txHashes)-1]
+			} else if finalHash, hashOk := evm.FinalHashFromTwoRequestSend(txHashes); !hashOk || !evm.IsValidTxHash(finalHash) {
+				err = fmt.Errorf("%s: extension signer returned no valid settlement transaction hash", ErrErc20ApprovalTxFailed)
+			} else {
+				txHash = finalHash
 			}
 		} else {
 			txHash, err = signer.WriteContract(
@@ -311,6 +359,7 @@ func SettleUptoPermit2(
 				evm.X402UptoPermit2ProxyAddress,
 				evm.X402UptoPermit2ProxySettleABI,
 				evm.FunctionSettle,
+				dataSuffix,
 				permitStruct,
 				args.SettlementAmount,
 				args.Owner,
@@ -325,6 +374,7 @@ func SettleUptoPermit2(
 			evm.X402UptoPermit2ProxyAddress,
 			evm.X402UptoPermit2ProxySettleABI,
 			evm.FunctionSettle,
+			dataSuffix,
 			permitStruct,
 			args.SettlementAmount,
 			args.Owner,
@@ -338,49 +388,29 @@ func SettleUptoPermit2(
 		return nil, x402.NewSettleError(errorReason, payer, network, "", err.Error())
 	}
 
-	receiptWaitSigner := signer
-	if erc20Info != nil && facilCtx != nil {
-		if ext, ok := facilCtx.GetExtension(erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key()).(*erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension); ok && ext != nil {
-			if extensionSigner := ext.ResolveSigner(payload.Accepted.Network); extensionSigner != nil {
-				receiptWaitSigner = extensionSigner
-			}
-		}
-	}
-	receipt, err := receiptWaitSigner.WaitForTransactionReceipt(ctx, txHash)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrUptoFailedToGetReceipt, payer, network, txHash, err.Error())
-	}
-
-	if receipt.Status != evm.TxStatusSuccess {
-		return nil, x402.NewSettleError(ErrUptoTransactionFailed, payer, network, txHash, "")
-	}
-
-	return &x402.SettleResponse{
-		Success:     true,
-		Transaction: txHash,
-		Network:     network,
-		Payer:       verifyResp.Payer,
-		Amount:      settlementAmount.String(),
-	}, nil
+	receiptWaitSigner := exactfacilitator.ResolvePermit2ReceiptWaitSigner(signer, facilCtx, payload.Extensions, payload.Accepted.Network)
+	return exactfacilitator.AwaitPermit2Settlement(
+		ctx, store, receiptWaitSigner, permit2Payload.Signature, txHash, verifyResp.Payer, network, ErrUptoTransactionFailed, settlementAmount.String(),
+	)
 }
 
+// verifyUptoPermit2Signature verifies the upto Permit2 EIP-712 signature.
 func verifyUptoPermit2Signature(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
 	authorization evm.UptoPermit2Authorization,
 	signature []byte,
 	chainID *big.Int,
-) (bool, error) {
+) (bool, *evm.ERC6492SignatureData, error) {
 	hash, err := evm.HashUptoPermit2Authorization(authorization, chainID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	var hash32 [32]byte
 	copy(hash32[:], hash)
 
-	valid, _, err := evm.VerifyUniversalSignature(ctx, signer, authorization.From, hash32, signature, true)
-	return valid, err
+	return evm.VerifyUniversalSignature(ctx, signer, authorization.From, hash32, signature, true)
 }
 
 var validateEip2612PermitForPayment = evm.ValidateEip2612PermitForPayment

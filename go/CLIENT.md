@@ -16,7 +16,7 @@ An **x402 client** is an application that makes HTTP requests to payment-protect
 ### Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ### Basic HTTP Client
@@ -27,10 +27,10 @@ package main
 import (
     "net/http"
     
-    x402 "github.com/x402-foundation/x402/go"
-    x402http "github.com/x402-foundation/x402/go/http"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 func main() {
@@ -62,7 +62,7 @@ func main() {
 #### EVM Signer
 
 ```go
-import evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+import evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 
 signer, err := evmsigners.NewClientSignerFromPrivateKey("0x1234...")
 if err != nil {
@@ -75,7 +75,7 @@ fmt.Println("Address:", signer.Address())
 #### SVM Signer
 
 ```go
-import svmsigners "github.com/x402-foundation/x402/go/signers/svm"
+import svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 
 signer, err := svmsigners.NewClientSignerFromPrivateKey("5J7W...")
 if err != nil {
@@ -113,7 +113,14 @@ client.Register("eip155:*", evm.NewExactEvmScheme(evmSigner, nil))
 
 // All Solana networks
 client.Register("solana:*", svm.NewExactSvmScheme(svmSigner))
+
+// Usage-based Solana services, alongside the fixed-price ones above
+client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
 ```
+
+Registering more than one scheme for the same network is how a client supports
+both fixed-price (`exact`) and usage-based (`upto`) services. See the
+[upto SVM README](mechanisms/svm/upto/README.md) for details on the channel flow.
 
 #### Specific Network Registration
 
@@ -164,7 +171,45 @@ client.Register("eip155:*", evm.NewExactEvmScheme(defaultSigner, &evm.ExactEvmSc
 }))
 ```
 
-### 4. HTTP Integration
+### 4. Spend Controls
+
+Built-in safety rails applied before policies during accept selection. Use these for amount and asset bounds—not for network preference.
+
+`Newx402Client()` enables spend controls by default: only assets the registered scheme's `FindDefaultAsset` recognizes are allowed, with a **`$1`** USD ceiling. Opt into other tokens via `AllowedAssets`, or call `DisableSpendControls()` to disable all spend controls.
+
+```go
+client := x402.Newx402Client().
+    SetSpendControls(x402.SpendControls{
+        MaxAmountPerPayment: "$5", // USD cap on default assets; empty => "$1"
+        AllowedAssets: []x402.SpendControlAsset{
+            // opt-in non-default with atomic cap
+            {Network: "eip155:8453", Asset: "0xCustomToken", MaxAmountPerPayment: "2000000"},
+            // opt-in non-default uncapped
+            {Network: "eip155:8453", Asset: "0xOtherToken"},
+            // override USD cap for a default asset by ticker (or on-chain id)
+            {Network: "eip155:8453", Asset: "PYUSD", MaxAmountPerPayment: "500000"},
+        },
+        // AllowAnyAsset: true, // allow any asset (USD cap still applies to defaults)
+    }).
+    Register("eip155:*", evm.NewExactEvmScheme(signer, nil))
+
+// Or disable all spend controls (any asset, no caps):
+// client.DisableSpendControls()
+```
+
+Accept selection runs in three stages: **spend controls** enforce built-in safety caps, **policies** filter the remaining list, and **paymentRequirementsSelector** picks one accept (default: first remaining). Do not use policies for USD caps or asset allowlists—that is what spend controls are for.
+
+| Control | Purpose |
+|---------|---------|
+| `DisableSpendControls()` | Disable all spend controls (any asset, no caps). Useful for UI-confirmed flows (paywall) and tests. |
+| `MaxAmountPerPayment` | USD ceiling on payments in recognized USD-pegged assets (default **`$1`**). Set a higher value to raise the cap, or `DisableMaxAmountPerPayment: true` to remove it. |
+| `AllowedAssets` | Opt-in for non-default tokens. Omit for default assets only; `AllowAnyAsset: true` to allow any asset; or a list of `{ Network, Asset }` with optional atomic `MaxAmountPerPayment` per entry. Per-entry `MaxAmountPerPayment` is an integer atomic string (`"2000000"`), not `"$1"`. `Asset` may be an on-chain id or a default-asset symbol (e.g. `"PYUSD"`). |
+
+Network scoping is separate: register only the networks you intend to pay on. Unregistered networks are never selected regardless of spend controls.
+
+See [Advanced Examples](../examples/go/clients/advanced/) for a runnable spend-controls example.
+
+### 5. HTTP Integration
 
 The HTTP layer adds automatic payment handling to standard HTTP clients.
 
@@ -330,6 +375,14 @@ func (c *X402Client) OnAfterPaymentCreation(hook AfterPaymentCreationHook) *X402
 func (c *X402Client) OnPaymentCreationFailure(hook PaymentCreationFailureHook) *X402Client
 ```
 
+**Spend Control Methods:**
+```go
+func (c *X402Client) SetSpendControls(controls SpendControls) *X402Client
+func (c *X402Client) DisableSpendControls() *X402Client
+func WithSpendControls(controls SpendControls) ClientOption
+func WithSpendControlsDisabled() ClientOption
+```
+
 **Payment Methods:**
 ```go
 func (c *X402Client) CreatePaymentPayload(ctx context.Context, requirements PaymentRequirements, resource *ResourceInfo, extensions map[string]interface{}) (PaymentPayload, error)
@@ -459,11 +512,11 @@ signer, _ := evmsigners.NewClientSignerFromPrivateKey(privateKey)
 
 ## Examples
 
-Complete examples are available in [`examples/go/clients/`](../../examples/go/clients/):
+Complete examples are available in [`examples/go/clients/`](../examples/go/clients/):
 
-- **[Basic HTTP Client](../../examples/go/clients/http/)** - Simple integration
-- **[Custom Client](../../examples/go/clients/custom/)** - Manual implementation
-- **[Advanced Patterns](../../examples/go/clients/advanced/)** - Production patterns
+- **[Basic HTTP Client](../examples/go/clients/http/)** - Simple integration
+- **[Custom Client](../examples/go/clients/custom/)** - Manual implementation
+- **[Advanced Patterns](../examples/go/clients/advanced/)** - Production patterns
 
 ## Troubleshooting
 
@@ -540,8 +593,8 @@ Payment payloads are created fresh for each 402 response. They are not cached be
 ```go
 import (
     "testing"
-    x402 "github.com/x402-foundation/x402/go"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 )
 
 func TestClientRegistration(t *testing.T) {
@@ -596,5 +649,5 @@ client.
 - **[FACILITATOR.md](FACILITATOR.md)** - Building facilitators
 - **[Signers](signers/README.md)** - Signer helpers
 - **[Mechanisms](mechanisms/)** - Payment scheme implementations
-- **[Examples](../../examples/go/clients/)** - Working client examples
+- **[Examples](../examples/go/clients/)** - Working client examples
 

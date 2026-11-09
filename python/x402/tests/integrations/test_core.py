@@ -62,6 +62,30 @@ class ComponentsFixture:
     server: x402ResourceServer | x402ResourceServerSync
     is_async: bool
 
+    def create_payment_required_response(
+        self,
+        requirements: list[PaymentRequirements],
+        resource: ResourceInfo | None = None,
+        error: str | None = None,
+        extensions: dict[str, Any] | None = None,
+    ) -> PaymentRequired:
+        """Build 402 response, handling sync/async uniformly."""
+        if self.is_async:
+            return asyncio.run(
+                self.server.create_payment_required_response(  # type: ignore
+                    requirements,
+                    resource,
+                    error,
+                    extensions,
+                )
+            )
+        return self.server.create_payment_required_response(  # type: ignore
+            requirements,
+            resource,
+            error,
+            extensions,
+        )
+
     def create_payment_payload(
         self,
         payment_required: PaymentRequired | PaymentRequiredV1,
@@ -130,9 +154,13 @@ def _create_sync_components() -> ComponentsFixture:
     )
     facilitator_client = CashFacilitatorClientSync(facilitator)
 
-    client = x402ClientSync().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    client = (
+        x402ClientSync()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
 
     server = x402ResourceServerSync(facilitator_client)
@@ -155,9 +183,13 @@ def _create_async_components() -> ComponentsFixture:
     )
     facilitator_client = CashFacilitatorClient(facilitator)
 
-    client = x402Client().register(
-        "x402:cash",
-        CashSchemeNetworkClient("John"),
+    client = (
+        x402Client()
+        .register(
+            "x402:cash",
+            CashSchemeNetworkClient("John"),
+        )
+        .set_spend_controls(False)
     )
 
     server = x402ResourceServer(facilitator_client)
@@ -200,7 +232,7 @@ class TestCorePaymentFlow:
             description="Company Co. resource",
             mime_type="application/json",
         )
-        payment_required = components.server.create_payment_required_response(
+        payment_required = components.create_payment_required_response(
             accepts,
             resource,
         )
@@ -228,7 +260,7 @@ class TestCorePaymentFlow:
     ) -> None:
         """Test that client creates a properly structured payment payload."""
         accepts = [build_cash_payment_requirements("Merchant", "USD", "10")]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
 
         payload = components.create_payment_payload(payment_required)
 
@@ -247,7 +279,7 @@ class TestCorePaymentFlow:
     ) -> None:
         """Test that facilitator can verify and settle payments directly."""
         requirements = build_cash_payment_requirements("Recipient", "USD", "5")
-        payment_required = components.server.create_payment_required_response([requirements])
+        payment_required = components.create_payment_required_response([requirements])
         payload = components.create_payment_payload(payment_required)
 
         # Verify directly with facilitator
@@ -265,7 +297,7 @@ class TestCorePaymentFlow:
     ) -> None:
         """Test that invalid signatures fail verification."""
         requirements = build_cash_payment_requirements("Recipient", "USD", "5")
-        payment_required = components.server.create_payment_required_response([requirements])
+        payment_required = components.create_payment_required_response([requirements])
         payload = components.create_payment_payload(payment_required)
 
         # Tamper with the payload
@@ -281,7 +313,7 @@ class TestCorePaymentFlow:
     ) -> None:
         """Test that findMatchingRequirements returns None when no match."""
         accepts = [build_cash_payment_requirements("Company A", "USD", "1")]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
         payload = components.create_payment_payload(payment_required)
 
         # Try to match against different requirements
@@ -311,7 +343,7 @@ class TestCorePaymentFlow:
             build_cash_payment_requirements("Merchant A", "USD", "10"),
             build_cash_payment_requirements("Merchant B", "EUR", "20"),
         ]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
 
         payload = components.create_payment_payload(payment_required)
 
@@ -353,10 +385,19 @@ class TestServerInitialization:
     ) -> None:
         """Test that server raises error if not initialized."""
         requirements = build_cash_payment_requirements("Test", "USD", "1")
-        payment_required = uninitialized_server.create_payment_required_response([requirements])
+        if isinstance(uninitialized_server, x402ResourceServer):
+            payment_required = asyncio.run(
+                uninitialized_server.create_payment_required_response([requirements])
+            )
+        else:
+            payment_required = uninitialized_server.create_payment_required_response([requirements])
 
         # Create a valid client to make payload
-        client = x402ClientSync().register("x402:cash", CashSchemeNetworkClient("Test"))
+        client = (
+            x402ClientSync()
+            .register("x402:cash", CashSchemeNetworkClient("Test"))
+            .set_spend_controls(False)
+        )
         payload = client.create_payment_payload(payment_required)
 
         with pytest.raises(RuntimeError, match="not initialized"):
@@ -377,6 +418,7 @@ class TestClientPolicies:
                 x402Client()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
                 .register("x402:other", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .register_policy(prefer_network("x402:other"))
             )
         else:
@@ -384,12 +426,13 @@ class TestClientPolicies:
                 x402ClientSync()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
                 .register("x402:other", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .register_policy(prefer_network("x402:other"))
             )
 
         # Create requirements (only x402:cash is supported by facilitator)
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
 
         if components.is_async:
             payload = asyncio.run(
@@ -420,17 +463,19 @@ class TestSyncHooks:
             client = (
                 x402Client()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .on_after_payment_creation(after_hook)
             )
         else:
             client = (
                 x402ClientSync()
                 .register("x402:cash", CashSchemeNetworkClient("John"))
+                .set_spend_controls(False)
                 .on_after_payment_creation(after_hook)
             )
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
 
         if components.is_async:
             payload = asyncio.run(
@@ -457,7 +502,7 @@ class TestSyncHooks:
         components.server.on_after_verify(after_hook)
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = components.server.create_payment_required_response(accepts)
+        payment_required = components.create_payment_required_response(accepts)
         payload = components.create_payment_payload(payment_required)
 
         components.verify_payment(payload, accepts[0])

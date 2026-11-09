@@ -87,7 +87,7 @@ class MockResourceServer:
     """Mock resource server for testing (sync)."""
 
     def __init__(self):
-        self.verify_payment = Mock(return_value=Mock(is_valid=True))
+        self.verify_payment = Mock(return_value=Mock(is_valid=True, skip_handler=None))
         self.settle_payment = Mock(
             return_value=SettleResponse(
                 success=True,
@@ -146,7 +146,7 @@ class MockAsyncResourceServer:
     """Mock async resource server for testing."""
 
     def __init__(self):
-        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True))
+        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True, skip_handler=None))
         self.settle_payment = AsyncMock(
             return_value=SettleResponse(
                 success=True,

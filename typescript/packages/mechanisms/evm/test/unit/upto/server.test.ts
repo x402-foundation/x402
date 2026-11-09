@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { UptoEvmScheme } from "../../../src/upto/server/scheme";
 import type { PaymentRequirements } from "@x402/core/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 
 const FACILITATOR_ADDRESS = "0xFAC11174700123456789012345678901234aBCDe";
 
@@ -111,9 +112,9 @@ describe("UptoEvmScheme (Server)", () => {
         const customServer = new UptoEvmScheme();
 
         customServer.registerMoneyParser(async (amount, network) => {
-          if (network === "eip155:84532" && amount > 0) {
+          if (network === "eip155:84532" && Number(amount) > 0) {
             return {
-              amount: (amount * 1e18).toString(),
+              amount: convertToTokenAmount(String(amount), 18),
               asset: "0xPermit2OnlyToken123456789012345678901234",
               extra: { assetTransferMethod: "permit2" },
             };

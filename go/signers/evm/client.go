@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -16,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
-	x402evm "github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // ClientSigner implements x402evm.ClientEvmSigner using an ECDSA private key.
@@ -77,6 +78,16 @@ func NewClientSignerFromPrivateKeyWithClient(privateKeyHex string, ethClient *et
 // Address returns the Ethereum address of the signer.
 func (s *ClientSigner) Address() string {
 	return s.address.Hex()
+}
+
+// SignMessage signs a UTF-8 message using the EIP-191 personal-sign format.
+func (s *ClientSigner) SignMessage(_ context.Context, message string) (string, error) {
+	signature, err := crypto.Sign(accounts.TextHash([]byte(message)), s.privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign message: %w", err)
+	}
+	signature[64] += 27
+	return "0x" + common.Bytes2Hex(signature), nil
 }
 
 // SignTypedData signs EIP-712 typed data.
@@ -246,6 +257,13 @@ func (s *ClientSigner) SignTransaction(ctx context.Context, tx *types.Transactio
 	}
 
 	return rlpBytes, nil
+}
+
+// HasRPCClient reports whether the signer is backed by an ethclient. When false, its
+// RPC-dependent methods (ReadContract, GetTransactionCount) are non-functional, so callers
+// such as evm.ResolveReadSigner fall back to a scheme-configured RPC URL.
+func (s *ClientSigner) HasRPCClient() bool {
+	return s.ethClient != nil
 }
 
 // ReadContract reads data from a smart contract.

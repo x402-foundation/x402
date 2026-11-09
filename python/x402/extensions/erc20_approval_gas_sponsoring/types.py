@@ -49,6 +49,7 @@ class WriteContractCall:
     abi: list[dict[str, Any]]
     function: str
     args: list[Any] = field(default_factory=list)
+    data_suffix: str | None = None
 
 
 TransactionRequest = str | WriteContractCall
@@ -67,7 +68,8 @@ class Erc20ApprovalGasSponsoringSigner(Protocol):
             transactions: List of either raw hex tx strings or WriteContractCall.
 
         Returns:
-            List of transaction hashes, one per input.
+            Transaction hashes: one per input for sequential execution, or one hash for
+            an atomic bundle.
         """
         ...
 

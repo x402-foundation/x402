@@ -5,7 +5,7 @@ Gin middleware integration for the x402 Payment Protocol. This package provides 
 ## Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ## Quick Start
@@ -16,10 +16,10 @@ package main
 import (
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	ginmw "github.com/x402-foundation/x402/go/http/gin"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,7 +27,7 @@ func main() {
 	r := gin.Default()
 
 	facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-		URL: "https://facilitator.x402.org",
+		URL: "https://x402.org/facilitator",
 	})
 
 	routes := x402http.RoutesConfig{
@@ -154,8 +154,8 @@ Register schemes for different networks:
 
 ```go
 import (
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
 
 r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
@@ -238,10 +238,10 @@ import (
 	"log"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	ginmw "github.com/x402-foundation/x402/go/http/gin"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	"github.com/gin-gonic/gin"
 )
 
@@ -249,7 +249,7 @@ func main() {
 	r := gin.Default()
 
 	facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-		URL: "https://facilitator.x402.org",
+		URL: "https://x402.org/facilitator",
 	})
 
 	routes := x402http.RoutesConfig{
@@ -325,6 +325,6 @@ r.Use(ginmw.SimplePaymentMiddleware(
 	"0xYourAddress",
 	"$0.10",
 	"eip155:84532",
-	"https://facilitator.x402.org",
+	"https://x402.org/facilitator",
 ))
 ```

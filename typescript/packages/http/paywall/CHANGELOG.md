@@ -1,5 +1,188 @@
 # @x402/paywall Changelog
 
+## 2.30.0
+
+### Minor Changes
+
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+
+### Patch Changes
+
+- [6f1a533](https://github.com/x402-foundation/x402/commit/6f1a533): The Solana paywall now asks for a version-1 transaction only when the connected wallet lists `1` in the `supportedTransactionVersions` of its `solana:signTransaction` feature. Other wallets, including those that do not declare their versions, keep paying with version 0 when the facilitator advertises `extra.transactionVersions` `[0, 1]`. The paywall now depends on `@solana/kit` 8, which encodes and decodes version-1 transactions, and on `@solana/wallet-standard-features` 1.5, which adds version `1` to `SolanaTransactionVersion`. The regenerated paywall templates ship the change to the Python and Go SDKs. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+
+## 2.29.0
+
+### Minor Changes
+
+- [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb): Added `rpcUrls` to `PaywallConfig`: a map of RPC endpoints keyed by CAIP-2 network. The Solana paywall uses it for the balance check and for building the payment transaction, so mainnet payments no longer depend on `api.mainnet-beta.solana.com`, which rejects browser-origin requests. Networks without an entry keep the public default. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e): Require canonical CAIP-2 network identifiers for Algorand and remove support for full genesis hashes as network values. Clients, servers, and facilitators must use the truncated 32-character network references introduced in `@x402/avm` 2.20.0. ([#3894](https://github.com/x402-foundation/x402/pull/3894)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [43aaecb](https://github.com/x402-foundation/x402/commit/43aaecb): Regenerated the EVM and AVM paywall bundles, which had not been rebuilt since May. They now include the Algorand CAIP-2 network ID fix, the spend-control handling and the Celo Sepolia and Sei testnet faucet links that were merged in source but never shipped. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [a9772e5](https://github.com/x402-foundation/x402/commit/a9772e5): Fixed reflected XSS when embedding configuration in EVM, SVM, and AVM paywall HTML. ([#3855](https://github.com/x402-foundation/x402/pull/3855)) - Thanks [@asooge](https://github.com/asooge)!
+
+## 2.28.0
+
+### Patch Changes
+
+- [dd89698](https://github.com/x402-foundation/x402/commit/dd89698): Add Arc mainnet (chain ID 5042) and Arc Testnet (chain ID 5042002) with native USDC as the default stablecoin ([#3590](https://github.com/x402-foundation/x402/pull/3590)) - Thanks [@NotMcAfee](https://github.com/NotMcAfee)!
+  - @x402/core@2.28.0
+
+## 2.27.0
+
+### Minor Changes
+
+- Updated dependencies [5d3a2b2](https://github.com/x402-foundation/x402/commit/5d3a2b2)
+  - @x402/core@2.27.0
+
+## 2.26.0
+
+### Minor Changes
+
+- Updated dependencies [76fe973](https://github.com/x402-foundation/x402/commit/76fe973)
+  - @x402/core@2.26.0
+
+## 2.25.0
+
+### Minor Changes
+
+- Updated dependencies [1bc2ae8](https://github.com/x402-foundation/x402/commit/1bc2ae8)
+- Updated dependencies [299b9bc](https://github.com/x402-foundation/x402/commit/299b9bc)
+- Updated dependencies [bbcb974](https://github.com/x402-foundation/x402/commit/bbcb974)
+  - @x402/core@2.25.0
+
+## 2.24.0
+
+### Patch Changes
+
+- [6557149](https://github.com/x402-foundation/x402/commit/6557149): Add Sei mainnet (chain ID 1329) and Sei Testnet (chain ID 1328) with native USDC as the default stablecoin ([#3227](https://github.com/x402-foundation/x402/pull/3227)) - Thanks [@alexander-sei](https://github.com/alexander-sei)!
+  - @x402/core@2.24.0
+
+## 2.23.0
+
+### Minor Changes
+
+- Updated dependencies [79b6259](https://github.com/x402-foundation/x402/commit/79b6259)
+- Updated dependencies [4f58723](https://github.com/x402-foundation/x402/commit/4f58723)
+- Updated dependencies [ab1a31a](https://github.com/x402-foundation/x402/commit/ab1a31a)
+- Updated dependencies [c2612d3](https://github.com/x402-foundation/x402/commit/c2612d3)
+- Updated dependencies [656437e](https://github.com/x402-foundation/x402/commit/656437e)
+  - @x402/core@2.23.0
+
+### Patch Changes
+
+- [4f58723](https://github.com/x402-foundation/x402/commit/4f58723): Normalize each mechanism's default assets into `DEFAULT_ASSETS` + `getDefaultAsset` / `findDefaultAsset`, and add client `spendControls`: by default only recognized pegged assets are allowed with a `$1` USD cap; opt into other tokens via `allowedAssets` (list with optional integer atomic `maxAmountPerPayment`, or `true` to allow any); pass `spendControls: false` to disable all spend controls. A non-integer per-asset cap is a config error; a non-integer 402 amount on that path is dropped. Keeta, XRPL, and Concordium now ship USD defaults (USDC, RLUSD, USDR). XRPL pins the RLUSD issuer in the client scheme before signing. `$` settlement overrides throw when `getAssetDecimals` is unknown instead of guessing 6 decimals. Notable API moves: `DEFAULT_STABLECOINS` / `USDC_CONFIG` / `DEFAULT_ASSET_BY_NETWORK` → `DEFAULT_ASSETS` (list per network); identifier field `address` / `asaId` → `asset`; TVM `getDefaultAsset` returns an entry (use `.asset`). EVM `getAssetDecimals` is asset-aware; aptos unknown networks throw; EVM/SVM register helpers scope v1 networks to `config.networks`. Paywall uses `spendControls: false` (UI approval); MCP forwards `spendControls`. ([#3124](https://github.com/x402-foundation/x402/pull/3124)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+## 2.22.0
+
+### Minor Changes
+
+- Updated dependencies [37412e7](https://github.com/x402-foundation/x402/commit/37412e7)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [db5da2e](https://github.com/x402-foundation/x402/commit/db5da2e)
+- Updated dependencies [1601942](https://github.com/x402-foundation/x402/commit/1601942)
+  - @x402/core@2.22.0
+
+## 2.21.0
+
+### Minor Changes
+
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [e335d4f](https://github.com/x402-foundation/x402/commit/e335d4f)
+- Updated dependencies [183b270](https://github.com/x402-foundation/x402/commit/183b270)
+- Updated dependencies [ee1b148](https://github.com/x402-foundation/x402/commit/ee1b148)
+- Updated dependencies [e805616](https://github.com/x402-foundation/x402/commit/e805616)
+- Updated dependencies [5192e50](https://github.com/x402-foundation/x402/commit/5192e50)
+  - @x402/core@2.21.0
+
+### Patch Changes
+
+- [242d6e9](https://github.com/x402-foundation/x402/commit/242d6e9): Add Celo mainnet (chain ID 42220) and Celo Sepolia (chain ID 11142220) support with USDC as the default stablecoin ([#3025](https://github.com/x402-foundation/x402/pull/3025)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!
+
+## 2.20.0
+
+### Minor Changes
+
+- Updated dependencies [4453a92](https://github.com/x402-foundation/x402/commit/4453a92)
+  - @x402/core@2.20.0
+
+## 2.19.0
+
+### Minor Changes
+
+- Updated dependencies [c72cfee](https://github.com/x402-foundation/x402/commit/c72cfee)
+  - @x402/core@2.19.0
+
+## 2.18.0
+
+### Minor Changes
+
+- Updated dependencies [a3ad102](https://github.com/x402-foundation/x402/commit/a3ad102)
+  - @x402/core@2.18.0
+
+## 2.17.0
+
+### Minor Changes
+
+- Updated dependencies [266b19d](https://github.com/x402-foundation/x402/commit/266b19d)
+  - @x402/core@2.17.0
+
+## 2.16.0
+
+### Minor Changes
+
+- Updated dependencies [59ac597](https://github.com/x402-foundation/x402/commit/59ac597)
+  - @x402/core@2.16.0
+
+## 2.15.0
+
+### Minor Changes
+
+- Updated dependencies [bfa580e](https://github.com/x402-foundation/x402/commit/bfa580e)
+- Updated dependencies [3a60816](https://github.com/x402-foundation/x402/commit/3a60816)
+- Updated dependencies [7539e93](https://github.com/x402-foundation/x402/commit/7539e93)
+  - @x402/core@2.15.0
+
+## 2.14.0
+
+### Minor Changes
+
+- Updated dependencies [be788e0]
+- Updated dependencies [0af31dd]
+  - @x402/core@2.14.0
+
+## 2.13.0
+
+### Minor Changes
+
+- e35becf: Add `faucetUrls?: Record<network, string>` to `PaywallConfig` plus a curated testnet faucet map in `@x402/paywall`. Server overrides win over the curated map; unmapped chains render "No faucet configured." rather than a fallback link.
+- f3deb60: decimals.ts now only lists EVM networks whose default stablecoin is not 6 decimals, so new 6-decimal chains in DEFAULT_STABLECOINS no longer need a paywall regen for amount display
+- Updated dependencies [ad08a9a]
+- Updated dependencies [5fca9f3]
+- Updated dependencies [95f2094]
+- Updated dependencies [49ea054]
+  - @x402/core@2.13.0
+
 ## 2.12.0
 
 ### Minor Changes
@@ -24,7 +207,7 @@
   - Resolves the token's decimal precision via a new `getDefaultTokenDecimals` helper that looks up the network in `@x402/evm`'s `DEFAULT_STABLECOINS` registry — the same source the scheme `getAssetDecimals` methods read from and the inline scheme dispatch in `@x402/core`'s `x402ResourceServer` uses. Falls back to 6 (USDC default) when the network is unknown.
   - Replaces the lossy `parseFloat(amount) / 10**decimals` math with `Number(formatUnits(BigInt(amount), decimals))`, preserving precision through the atomic-to-display conversion.
 
-  `@x402/evm` now publicly re-exports `DEFAULT_STABLECOINS` from `./shared/defaultAssets` so consumers can read the canonical default-asset registry directly.
+  `@x402/evm` now publicly re-exports `DEFAULT_STABLECOINS` from `./defaultAssets` so consumers can read the canonical default-asset registry directly.
 
 ### Patch Changes
 

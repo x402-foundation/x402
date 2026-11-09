@@ -8,7 +8,11 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
+  attachBackgroundInitHandler,
   PaymentCancellationDispatcher,
+  CompletedSettlement,
+  SETTLEMENT_OVERRIDES_HEADER,
+  withPrivateCacheControl,
 } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
@@ -37,6 +41,34 @@ export function createFacilitatorErrorResponse(error: FacilitatorResponseError):
 }
 
 /**
+ * Logs an unexpected error and builds a generic 500 without leaking internals.
+ *
+ * @param error - The unexpected error
+ * @returns A JSON 500 response
+ */
+export function createInternalErrorResponse(error: unknown): NextResponse {
+  console.error(error);
+  return new NextResponse(JSON.stringify({ error: "Internal Server Error" }), {
+    status: 500,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Decode percent-escapes in a request path.
+ *
+ * @param path - Request path
+ * @returns Decoded path, or the original if decoding fails
+ */
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Prepares an existing x402HTTPResourceServer with initialization logic
  *
  * @param httpServer - Pre-configured x402HTTPResourceServer instance
@@ -57,6 +89,11 @@ export function prepareHttpServer(
   // Store initialization promise (not the result)
   // httpServer.initialize() fetches facilitator support and validates routes
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
+  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
+  // rejections; the original promise is still awaited on the first protected
+  // request. Fatal capability / route mismatches exit the process so a
+  // misconfigured server does not stay up until that request.
+  attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 
   return {
@@ -114,9 +151,11 @@ export function createHttpServer(
 export function createRequestContext(request: NextRequest): HTTPRequestContext {
   // Create adapter and context
   const adapter = new NextAdapter(request);
+  const path = request.nextUrl.pathname;
   return {
     adapter,
-    path: request.nextUrl.pathname,
+    path,
+    decodedPath: decodedRoutePath(path),
     method: request.method,
     paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
   };
@@ -138,7 +177,17 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
       headers,
     });
   }
-  headers.set("Content-Type", "application/json");
+  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+  if (typeof response.body === "string" && !isJson) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers,
+    });
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return new NextResponse(JSON.stringify(response.body || {}), {
     status: response.status,
     headers,
@@ -153,8 +202,9 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
  * @param paymentPayload - The payment payload from the client
  * @param paymentRequirements - The payment requirements for the route
  * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
- * @param cancellationDispatcher - Cancels verified payments that should not settle
- * @param httpContext - Optional HTTP request context for extensions
+ * @param cancellationDispatcher - Cancels payments that should not settle after the handler
+ * @param httpContext - HTTP request context for extensions
+ * @param beforeHandlerSettlement - Optional before-handler settle for PAYMENT-RESPONSE echo
  * @returns The response with settlement headers or an error response if settlement fails
  */
 export async function handleSettlement(
@@ -164,26 +214,46 @@ export async function handleSettlement(
   paymentRequirements: PaymentRequirements,
   declaredExtensions: Record<string, unknown> | undefined,
   cancellationDispatcher: PaymentCancellationDispatcher,
-  httpContext?: HTTPRequestContext,
+  httpContext: HTTPRequestContext,
+  beforeHandlerSettlement?: CompletedSettlement,
 ): Promise<NextResponse> {
   // If the response from the protected route is >= 400, do not settle payment
   if (response.status >= 400) {
-    await cancellationDispatcher.cancel({
+    const cancelSettlement = await cancellationDispatcher.cancel({
       reason: "handler_failed",
       responseStatus: response.status,
     });
+    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+    const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+      response.headers.get("Cache-Control"),
+    );
+    if (failureHeaders) {
+      Object.entries(failureHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+    }
     return response;
   }
 
   try {
     // Get response body for extensions
-    const responseBody = Buffer.from(await response.clone().arrayBuffer());
+    const responseBody = Buffer.from(await response.arrayBuffer());
+
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
 
     const result = await httpServer.processSettlement(
       paymentPayload,
       paymentRequirements,
       declaredExtensions,
-      httpContext ? { request: httpContext, responseBody } : undefined,
+      { request: httpContext, responseBody, responseHeaders },
+      undefined,
+      beforeHandlerSettlement,
     );
 
     if (!result.success) {
@@ -196,12 +266,24 @@ export async function handleSettlement(
       });
     }
 
-    // Settlement succeeded - add headers and return original response.
-    Object.entries(result.headers).forEach(([key, value]) => {
-      response.headers.set(key, value);
+    // Settlement succeeded - add headers and return the buffered response.
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
+      status: response.status,
+      headers: response.headers,
     });
+    settled.headers.delete("transfer-encoding");
+    Object.entries(result.headers).forEach(([key, value]) => {
+      settled.headers.set(key, value);
+    });
+    settled.headers.set(
+      "Cache-Control",
+      withPrivateCacheControl(settled.headers.get("Cache-Control")),
+    );
 
-    return response;
+    // Strip internal settlement override header before sending to client.
+    settled.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+
+    return settled;
   } catch (error) {
     if (error instanceof FacilitatorResponseError) {
       return createFacilitatorErrorResponse(error);

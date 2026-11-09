@@ -6,18 +6,57 @@ import {
   VerifyError,
   SettleError,
   FacilitatorResponseError,
+  FacilitatorTimeoutError,
 } from "../types/facilitator";
 import { z } from "../schemas";
 import { safeBase64Decode } from "../utils";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "./responseBody";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
+/** Default per-request timeout for facilitator HTTP calls, in milliseconds */
+const DEFAULT_TIMEOUT_MS = 90_000;
+/**
+ * Upper bound for timeoutMs (2^31 - 1). AbortSignal.timeout() requires an
+ * integer, and larger values overflow Node's 32-bit timers, which would
+ * silently fire after ~1ms while reporting the configured duration.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export interface FacilitatorConfig {
   url?: string;
+  /**
+   * Timeout in milliseconds applied to each facilitator HTTP request —
+   * `verify()`, `settle()`, and every `getSupported()` attempt — covering both
+   * response headers and body consumption. Must be a positive integer no
+   * greater than 2_147_483_647 (2^31 - 1, about 24.8 days).
+   * Defaults to 90_000 (90 seconds).
+   *
+   * On expiry the operation rejects with {@link FacilitatorTimeoutError}. For
+   * `settle()` a timeout is an indeterminate outcome: the facilitator may still
+   * have completed the settlement.
+   */
+  timeoutMs?: number;
+  /**
+   * Returns authentication headers for the facilitator, keyed by request path.
+   *
+   * The returned object must be keyed by path (`verify`, `settle`, `supported`,
+   * and optionally `bazaar`), each mapping to a headers object — NOT a flat
+   * headers object. Paths may be omitted (no auth is sent for them), but
+   * returning a flat object such as `{ Authorization: "Bearer ..." }` will
+   * throw, since it would otherwise silently drop auth on every request.
+   *
+   * @example
+   * ```ts
+   * createAuthHeaders: async () => {
+   *   const headers = { Authorization: `Bearer ${token}` };
+   *   return { verify: headers, settle: headers, supported: headers };
+   * }
+   * ```
+   */
   createAuthHeaders?: () => Promise<{
-    verify: Record<string, string>;
-    settle: Record<string, string>;
-    supported: Record<string, string>;
+    verify?: Record<string, string>;
+    settle?: Record<string, string>;
+    supported?: Record<string, string>;
     bazaar?: Record<string, string>;
   }>;
 }
@@ -63,8 +102,44 @@ export interface FacilitatorClient {
 const GET_SUPPORTED_RETRIES = 3;
 /** Base delay in ms for exponential backoff on retries */
 const GET_SUPPORTED_RETRY_DELAY_MS = 1000;
+/** Upper bound on retry delay to prevent pathological waits from a misbehaving server */
+const MAX_RETRY_DELAY_MS = 30_000;
 
-const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
+/**
+ * Resolves the delay before the next 429 retry. Parses Retry-After per RFC 7231 §7.1.3
+ * (delta-seconds or HTTP-date) and falls back to exponential backoff when the header
+ * is absent, unparseable, or non-positive. The result is clamped to MAX_RETRY_DELAY_MS.
+ *
+ * @param retryAfter - Raw `Retry-After` header value, or null if not present
+ * @param attempt - Zero-based retry attempt index used for exponential backoff
+ * @returns Delay in milliseconds to wait before the next attempt
+ */
+export function computeRetryDelay(retryAfter: string | null, attempt: number): number {
+  let delay: number | null = null;
+
+  if (retryAfter !== null) {
+    const trimmedRetryAfter = retryAfter.trim();
+    if (/^\d+$/.test(trimmedRetryAfter)) {
+      // delta-seconds form
+      delay = Number(trimmedRetryAfter) * 1000;
+    } else {
+      // HTTP-date form
+      const retryDate = Date.parse(retryAfter);
+      if (!isNaN(retryDate)) {
+        delay = retryDate - Date.now();
+      }
+    }
+  }
+
+  // Fall back to exponential backoff for missing, invalid, or non-positive values
+  if (delay === null || delay <= 0) {
+    delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+  }
+
+  return Math.min(delay, MAX_RETRY_DELAY_MS);
+}
+
+const verifyResponseSchema: z.ZodType<VerifyResponse, unknown> = z.object({
   isValid: z.boolean(),
   invalidReason: z
     .string()
@@ -88,7 +163,7 @@ const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z
     .transform(v => v ?? undefined),
 });
 
-const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z.object({
+const settleResponseSchema: z.ZodType<SettleResponse, unknown> = z.object({
   success: z.boolean(),
   errorReason: z
     .string()
@@ -118,20 +193,19 @@ const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z
     .transform(v => v ?? undefined),
 });
 
-const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], z.ZodTypeDef, unknown> =
-  z.object({
-    x402Version: z.number(),
-    scheme: z.string(),
-    network: z.custom<SupportedResponse["kinds"][number]["network"]>(
-      value => typeof value === "string",
-    ),
-    extra: z
-      .record(z.string(), z.unknown())
-      .nullish()
-      .transform(v => v ?? undefined),
-  });
+const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], unknown> = z.object({
+  x402Version: z.number(),
+  scheme: z.string(),
+  network: z.custom<SupportedResponse["kinds"][number]["network"]>(
+    value => typeof value === "string",
+  ),
+  extra: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
+});
 
-const supportedResponseSchema: z.ZodType<SupportedResponse, z.ZodTypeDef, unknown> = z.object({
+const supportedResponseSchema: z.ZodType<SupportedResponse, unknown> = z.object({
   kinds: z.array(supportedKindSchema),
   extensions: z.array(z.string()).default([]),
   signers: z.record(z.string(), z.array(z.string())).default({}),
@@ -157,25 +231,64 @@ function responseExcerpt(text: string, limit: number = 200): string {
   return `${compact.slice(0, limit - 3)}...`;
 }
 
+/**
+ * Returns true when an error (or anything in its cause chain) is an abort or
+ * timeout failure raised by an AbortSignal, across runtime error shapes.
+ *
+ * @param error - The thrown value to inspect
+ * @returns Whether the failure was caused by an aborted request
+ */
+function isAbortOrTimeoutError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 10 && current !== null && typeof current === "object"; depth++) {
+    const name = (current as { name?: unknown }).name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 const EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST = ["status", "rejectedReason", "reason", "code"];
+
+/**
+ * Decodes the facilitator `EXTENSION-RESPONSES` header into a plain object.
+ * Returns undefined when the header is missing or malformed.
+ *
+ * @param response - The HTTP response from the facilitator
+ * @returns Decoded extension responses, or undefined if missing/malformed
+ */
+function extractExtensionResponsesHeader(response: Response): Record<string, unknown> | undefined {
+  const header = response.headers.get("EXTENSION-RESPONSES");
+  if (!header) return undefined;
+  try {
+    const decoded = JSON.parse(safeBase64Decode(header));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+      return undefined;
+    }
+    return decoded as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Reads the `EXTENSION-RESPONSES` header from a facilitator HTTP response and logs
  * allowlisted fields. Silently ignores malformed headers.
  *
  * @param response - The HTTP response from the facilitator
+ * @param decoded - Optional pre-decoded header object (avoids double-parse)
  */
-function logExtensionResponsesHeader(response: Response): void {
-  const header = response.headers.get("EXTENSION-RESPONSES");
-  if (!header) return;
+function logExtensionResponsesHeader(response: Response, decoded?: Record<string, unknown>): void {
+  const payload = decoded ?? extractExtensionResponsesHeader(response);
+  if (!payload) return;
   try {
-    const decoded = JSON.parse(safeBase64Decode(header));
-    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return;
     const sanitized: Record<string, Record<string, unknown>> = {};
-    for (const [extensionKey, payload] of Object.entries(decoded as Record<string, unknown>)) {
+    for (const [extensionKey, value] of Object.entries(payload)) {
       const source =
-        payload && typeof payload === "object" && !Array.isArray(payload)
-          ? (payload as Record<string, unknown>)
+        value && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
           : {};
       const filtered: Record<string, unknown> = {};
       for (const key of EXTENSION_RESPONSE_LOG_FIELD_ALLOWLIST) {
@@ -187,8 +300,28 @@ function logExtensionResponsesHeader(response: Response): void {
     }
     console.log(`[x402] extension responses: ${JSON.stringify(sanitized)}`);
   } catch {
-    // Ignore malformed header
+    // Ignore malformed payload shapes
   }
+}
+
+/**
+ * Attach decoded EXTENSION-RESPONSES onto `extensionResponses` (server-internal
+ * sidechannel). Never merges into `extensions`, which remains body-only and may
+ * be forwarded to buyers via PAYMENT-RESPONSE.
+ *
+ * @param result - Facilitator response object to annotate
+ * @param response - The HTTP response from the facilitator
+ * @returns The same result, possibly with extensionResponses set
+ */
+function attachExtensionResponsesFromHeader<
+  T extends { extensionResponses?: Record<string, unknown> },
+>(result: T, response: Response): T {
+  const headerExtensions = extractExtensionResponsesHeader(response);
+  logExtensionResponsesHeader(response, headerExtensions);
+  if (headerExtensions) {
+    result.extensionResponses = headerExtensions;
+  }
+  return result;
 }
 
 /**
@@ -201,10 +334,10 @@ function logExtensionResponsesHeader(response: Response): void {
  */
 async function parseSuccessResponse<T>(
   response: Response,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   operation: string,
 ): Promise<T> {
-  const text = await response.text();
+  const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
 
   let data: unknown;
   try {
@@ -231,6 +364,8 @@ async function parseSuccessResponse<T>(
  */
 export class HTTPFacilitatorClient implements FacilitatorClient {
   readonly url: string;
+  /** Per-request timeout for facilitator HTTP calls, in milliseconds. */
+  readonly timeoutMs: number;
   private readonly _createAuthHeaders?: FacilitatorConfig["createAuthHeaders"];
 
   /**
@@ -242,6 +377,13 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
     // Normalize URL: strip trailing slashes to prevent redirect loops (e.g. 308)
     // when constructing endpoint paths like `${url}/supported`
     this.url = (config?.url || DEFAULT_FACILITATOR_URL).replace(/\/+$/, "");
+    const timeoutMs = config?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) {
+      throw new RangeError(
+        `timeoutMs must be a positive integer number of milliseconds no greater than ${MAX_TIMEOUT_MS}, got ${timeoutMs}`,
+      );
+    }
+    this.timeoutMs = timeoutMs;
     this._createAuthHeaders = config?.createAuthHeaders;
   }
 
@@ -265,38 +407,42 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       headers = { ...headers, ...authHeaders.headers };
     }
 
-    const response = await fetch(`${this.url}/verify`, {
-      method: "POST",
-      headers,
-      redirect: "follow",
-      body: JSON.stringify({
-        x402Version: paymentPayload.x402Version,
-        paymentPayload: this.toJsonSafe(paymentPayload),
-        paymentRequirements: this.toJsonSafe(paymentRequirements),
-      }),
+    return this.withRequestTimeout("verify", async signal => {
+      const response = await fetch(`${this.url}/verify`, {
+        method: "POST",
+        headers,
+        redirect: "follow",
+        body: JSON.stringify({
+          x402Version: paymentPayload.x402Version,
+          paymentPayload: this.toJsonSafe(paymentPayload),
+          paymentRequirements: this.toJsonSafe(paymentRequirements),
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+        let data: unknown;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(
+            `Facilitator verify failed (${response.status}): ${responseExcerpt(text)}`,
+          );
+        }
+
+        if (typeof data === "object" && data !== null && "isValid" in data) {
+          throw new VerifyError(response.status, data as VerifyResponse);
+        }
+
+        throw new Error(
+          `Facilitator verify failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
+        );
+      }
+
+      const verifyResult = await parseSuccessResponse(response, verifyResponseSchema, "verify");
+      return attachExtensionResponsesFromHeader(verifyResult, response);
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Facilitator verify failed (${response.status}): ${responseExcerpt(text)}`);
-      }
-
-      if (typeof data === "object" && data !== null && "isValid" in data) {
-        throw new VerifyError(response.status, data as VerifyResponse);
-      }
-
-      throw new Error(
-        `Facilitator verify failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
-      );
-    }
-
-    const verifyResult = await parseSuccessResponse(response, verifyResponseSchema, "verify");
-    logExtensionResponsesHeader(response);
-    return verifyResult;
   }
 
   /**
@@ -319,38 +465,42 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       headers = { ...headers, ...authHeaders.headers };
     }
 
-    const response = await fetch(`${this.url}/settle`, {
-      method: "POST",
-      headers,
-      redirect: "follow",
-      body: JSON.stringify({
-        x402Version: paymentPayload.x402Version,
-        paymentPayload: this.toJsonSafe(paymentPayload),
-        paymentRequirements: this.toJsonSafe(paymentRequirements),
-      }),
+    return this.withRequestTimeout("settle", async signal => {
+      const response = await fetch(`${this.url}/settle`, {
+        method: "POST",
+        headers,
+        redirect: "follow",
+        body: JSON.stringify({
+          x402Version: paymentPayload.x402Version,
+          paymentPayload: this.toJsonSafe(paymentPayload),
+          paymentRequirements: this.toJsonSafe(paymentRequirements),
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+        let data: unknown;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(
+            `Facilitator settle failed (${response.status}): ${responseExcerpt(text)}`,
+          );
+        }
+
+        if (typeof data === "object" && data !== null && "success" in data) {
+          throw new SettleError(response.status, data as SettleResponse);
+        }
+
+        throw new Error(
+          `Facilitator settle failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
+        );
+      }
+
+      const settleResult = await parseSuccessResponse(response, settleResponseSchema, "settle");
+      return attachExtensionResponsesFromHeader(settleResult, response);
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Facilitator settle failed (${response.status}): ${responseExcerpt(text)}`);
-      }
-
-      if (typeof data === "object" && data !== null && "success" in data) {
-        throw new SettleError(response.status, data as SettleResponse);
-      }
-
-      throw new Error(
-        `Facilitator settle failed (${response.status}): ${responseExcerpt(JSON.stringify(data))}`,
-      );
-    }
-
-    const settleResult = await parseSuccessResponse(response, settleResponseSchema, "settle");
-    logExtensionResponsesHeader(response);
-    return settleResult;
   }
 
   /**
@@ -371,24 +521,51 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < GET_SUPPORTED_RETRIES; attempt++) {
-      const response = await fetch(`${this.url}/supported`, {
-        method: "GET",
-        headers,
-        redirect: "follow",
+      const outcome = await this.withRequestTimeout("supported", async signal => {
+        const response = await fetch(`${this.url}/supported`, {
+          method: "GET",
+          headers,
+          redirect: "follow",
+          signal,
+        });
+
+        if (response.ok) {
+          return {
+            kind: "success" as const,
+            value: await parseSuccessResponse(response, supportedResponseSchema, "supported"),
+          };
+        }
+
+        const errorText = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES).catch(
+          (cause: unknown) => {
+            // A deadline abort during the error-body read must surface as a
+            // timeout, not be masked as a generic HTTP failure (which would be
+            // retried for 429). statusText covers other body-read failures.
+            if (isAbortOrTimeoutError(cause)) {
+              throw cause;
+            }
+            return response.statusText;
+          },
+        );
+        return {
+          kind: "http-error" as const,
+          status: response.status,
+          retryAfter: response.headers.get("Retry-After"),
+          error: new Error(
+            `Facilitator getSupported failed (${response.status}): ${responseExcerpt(errorText)}`,
+          ),
+        };
       });
 
-      if (response.ok) {
-        return parseSuccessResponse(response, supportedResponseSchema, "supported");
+      if (outcome.kind === "success") {
+        return outcome.value;
       }
 
-      const errorText = await response.text().catch(() => response.statusText);
-      lastError = new Error(
-        `Facilitator getSupported failed (${response.status}): ${responseExcerpt(errorText)}`,
-      );
+      lastError = outcome.error;
 
-      // Retry on 429 rate limit errors with exponential backoff
-      if (response.status === 429 && attempt < GET_SUPPORTED_RETRIES - 1) {
-        const delay = GET_SUPPORTED_RETRY_DELAY_MS * Math.pow(2, attempt);
+      // Retry on 429, honoring the server's Retry-After when available.
+      if (outcome.status === 429 && attempt < GET_SUPPORTED_RETRIES - 1) {
+        const delay = computeRetryDelay(outcome.retryAfter, attempt);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -408,18 +585,65 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
   async createAuthHeaders(path: string): Promise<{
     headers: Record<string, string>;
   }> {
-    if (this._createAuthHeaders) {
-      const authHeaders = (await this._createAuthHeaders()) as Record<
-        string,
-        Record<string, string>
-      >;
-      return {
-        headers: authHeaders[path] ?? {},
-      };
+    if (!this._createAuthHeaders) {
+      return { headers: {} };
     }
+
+    const authHeaders = (await this._createAuthHeaders()) as Record<string, unknown>;
+
+    // `createAuthHeaders` must return an object keyed by facilitator path
+    // (`verify` | `settle` | `supported` | `bazaar`), whose values are header
+    // objects.
+    // A common mistake is returning a flat headers object (e.g.
+    // `{ Authorization: "Bearer ..." }`), which would otherwise index to
+    // `undefined` here and silently drop auth on every request. Detect that
+    // shape and fail loudly instead. See
+    // https://github.com/x402-foundation/x402/issues/2762
+    const isHeaderObject = (value: unknown): value is Record<string, string> =>
+      typeof value === "object" && value !== null && !Array.isArray(value);
+    const hasPathKey = ["verify", "settle", "supported", "bazaar"].some(key =>
+      isHeaderObject(authHeaders[key]),
+    );
+    const looksFlat =
+      !hasPathKey && Object.values(authHeaders).some(value => !isHeaderObject(value));
+    if (looksFlat) {
+      throw new Error(
+        "createAuthHeaders must return an object keyed by facilitator path, e.g. " +
+          '{ verify: { Authorization: "..." }, settle: { ... }, supported: { ... } }, ' +
+          "but received a flat headers object. See " +
+          "https://github.com/x402-foundation/x402/issues/2762",
+      );
+    }
+
+    const headersForPath = authHeaders[path];
     return {
-      headers: {},
+      headers: isHeaderObject(headersForPath) ? headersForPath : {},
     };
+  }
+
+  /**
+   * Runs a single facilitator HTTP attempt under this client's request deadline.
+   * The provided signal must be passed to `fetch` so the deadline also covers
+   * response-body consumption.
+   *
+   * @param operation - The facilitator operation name ("verify", "settle", "supported")
+   * @param run - The attempt to execute with the deadline's AbortSignal
+   * @returns The attempt's result
+   * @throws FacilitatorTimeoutError when the deadline elapses before completion
+   */
+  private async withRequestTimeout<T>(
+    operation: string,
+    run: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    try {
+      return await run(signal);
+    } catch (error) {
+      if (signal.aborted && isAbortOrTimeoutError(error)) {
+        throw new FacilitatorTimeoutError(operation, this.timeoutMs);
+      }
+      throw error;
+    }
   }
 
   /**

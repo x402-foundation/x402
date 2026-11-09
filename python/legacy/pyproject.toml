@@ -46,4 +46,5 @@ packages = ["src/x402"]
 allow-direct-references = true
 
 [tool.uv]
+required-version = ">=0.11.0"
 exclude-newer = "3 days"

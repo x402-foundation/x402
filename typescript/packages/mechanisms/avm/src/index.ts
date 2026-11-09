@@ -60,7 +60,6 @@ export {
   USDC_MAINNET_ASA_ID,
   USDC_TESTNET_ASA_ID,
   USDC_DECIMALS,
-  USDC_CONFIG,
   // Transaction Limits
   MAX_REASONABLE_FEE_PER_TXN,
   maxReasonableGroupFee,
@@ -83,8 +82,16 @@ export {
   getNetworkFromCaip2,
   isAlgorandNetwork,
   isTestnetNetwork,
+  normalizeAlgorandNetwork,
   getGenesisHashFromTransaction,
   validateGroupId,
   getTransactionId,
   hasSignature,
 } from "./utils";
+
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type AvmDefaultAsset,
+} from "./defaultAssets";

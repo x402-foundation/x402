@@ -1,6 +1,6 @@
 package facilitator
 
-import "github.com/x402-foundation/x402/go/mechanisms/evm"
+import "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 
 // Facilitator error constants for the exact EVM scheme
 const (
@@ -22,6 +22,7 @@ const (
 	ErrInvalidSignatureFormat      = "invalid_exact_evm_signature_format"
 	ErrFailedToVerifySignature     = "invalid_exact_evm_failed_to_verify_signature"
 	ErrInvalidSignature            = "invalid_exact_evm_signature"
+	ErrInvalidSignatureS           = "invalid_exact_evm_non_canonical_signature"
 	ErrValidBeforeExpired          = "invalid_exact_evm_payload_authorization_valid_before"
 	ErrValidAfterInFuture          = "invalid_exact_evm_payload_authorization_valid_after"
 	ErrEip3009TokenNameMismatch    = "invalid_exact_evm_token_name_mismatch"
@@ -30,16 +31,22 @@ const (
 	ErrEip3009SimulationFailed     = "invalid_exact_evm_transaction_simulation_failed"
 
 	// EIP-3009 Settle errors
-	ErrVerificationFailed      = "invalid_exact_evm_verification_failed"
-	ErrFailedToParseSignature  = "invalid_exact_evm_failed_to_parse_signature"
+	ErrVerificationFailed     = "invalid_exact_evm_verification_failed"
+	ErrFailedToParseSignature = "invalid_exact_evm_failed_to_parse_signature"
+	// Reserved wire value: settle now reads deployment from the verify it already awaited, so
+	// it no longer performs the eth_getCode this reported on. Do not reassign.
 	ErrFailedToCheckDeployment = "invalid_exact_evm_failed_to_check_deployment"
 	ErrFailedToExecuteTransfer = "invalid_exact_evm_failed_to_execute_transfer"
-	ErrFailedToGetReceipt      = "invalid_exact_evm_failed_to_get_receipt"
-	ErrTransactionFailed       = "invalid_exact_evm_transaction_failed"
+	// Reserved wire value (exact/v1); do not reassign.
+	ErrFailedToGetReceipt    = "invalid_exact_evm_failed_to_get_receipt"
+	ErrTransactionFailed     = "invalid_exact_evm_transaction_failed"
+	ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch"
+	ErrSettlementPending     = evm.ErrSettlementPending
 
 	// Smart wallet errors (shared by EIP-3009 and Permit2)
 	ErrUndeployedSmartWallet       = "invalid_exact_evm_payload_undeployed_smart_wallet"
 	ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed"
+	ErrFactoryNotAllowed           = "eip6492_factory_not_allowed"
 	ErrUnsupportedPayloadType      = "unsupported_payload_type"
 
 	// Permit2 verify errors — canonical values live in evm.ErrPermit2*
@@ -64,7 +71,7 @@ const (
 	ErrPermit2SimulationFailed    = evm.ErrPermit2SimulationFailed
 	ErrPermit2InsufficientBalance = evm.ErrPermit2InsufficientBalance
 	ErrPermit2ProxyNotDeployed    = evm.ErrPermit2ProxyNotDeployed
-	ErrErc20ApprovalTxFailed      = "erc20_approval_tx_failed"
+	ErrErc20ApprovalTxFailed      = evm.ErrErc20ApprovalTxFailed
 
 	// ERC-20 approval gas sponsoring errors
 	ErrErc20ApprovalInsufficientEth = evm.ErrErc20ApprovalInsufficientEth

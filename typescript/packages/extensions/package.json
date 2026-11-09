@@ -1,13 +1,13 @@
 {
   "name": "@x402/extensions",
-  "version": "2.12.0",
+  "version": "2.30.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
-    "build": "tsup",
-    "test": "vitest run",
+    "build": "tsup && node ../../scripts/mirror-cjs-dts.mjs",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
     "watch": "tsc --watch",
     "format": "prettier -c .prettierrc --write \"**/*.{ts,js,cjs,json,md}\"",
@@ -30,28 +30,30 @@
     "@types/node": "^22.13.4",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
     "eslint-plugin-prettier": "^5.2.6",
+    "eslint-plugin-sonarjs": "^3.0.7",
     "prettier": "3.5.2",
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "vite": "^6.2.6",
+    "vite": "^6.4.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.5"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@noble/curves": "^1.9.0",
     "@scure/base": "^1.2.6",
-    "@x402/core": "workspace:~",
-    "ajv": "^8.17.1",
-    "jose": "^5.9.6",
     "@signinwithethereum/siwe": "^4.1.0",
+    "@x402/core": "workspace:~",
+    "ajv": "^8.18.0",
+    "jose": "^5.9.6",
     "tweetnacl": "^1.0.3",
     "viem": "^2.48.11",
-    "zod": "^3.24.2"
+    "zod": "^4.6.6"
   },
   "exports": {
     ".": {
@@ -103,9 +105,20 @@
         "types": "./dist/cjs/payment-identifier/index.d.ts",
         "default": "./dist/cjs/payment-identifier/index.js"
       }
+    },
+    "./builder-code": {
+      "import": {
+        "types": "./dist/esm/builder-code/index.d.mts",
+        "default": "./dist/esm/builder-code/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/builder-code/index.d.ts",
+        "default": "./dist/cjs/builder-code/index.js"
+      }
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ]
 }

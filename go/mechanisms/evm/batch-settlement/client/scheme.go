@@ -9,10 +9,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/internal/clientutil"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 const (
@@ -37,6 +38,7 @@ type DepositStrategyContext struct {
 	CurrentBalance       string
 	MinimumDepositAmount string
 	DepositAmount        string
+	MaxDeposit           string
 }
 
 // DepositStrategyResult is the return value of a DepositStrategy callback.
@@ -57,10 +59,10 @@ type DepositStrategy func(ctx context.Context, c DepositStrategyContext) (Deposi
 
 // BatchSettlementEvmSchemeOptions configures the batched client scheme.
 //
-// Use `DepositStrategy` for app-specific sizing or skipping.
+// Use DepositStrategy for app-specific sizing or skipping.
 type BatchSettlementEvmSchemeOptions struct {
-	// DepositMultiplier is the multiplier applied to the required amount for deposits.
-	// E.g., 5 means deposit 5× the per-request amount. Defaults to 5.
+	// DepositMultiplier sizes the deposit target when extra.minDeposit is absent,
+	// and the lock ceiling when a spend cap is set. Defaults to 5.
 	DepositMultiplier int
 	// DepositStrategy lets the caller override the computed deposit amount or
 	// skip the deposit entirely (returning Skip=true sends a voucher-only
@@ -69,27 +71,33 @@ type BatchSettlementEvmSchemeOptions struct {
 	DepositStrategy DepositStrategy
 	// Storage is the session persistence backend. Defaults to in-memory.
 	Storage ClientChannelStorage
-	// Salt is the channel salt for differentiating identical configs. Defaults to zero.
+	// Salt differentiates otherwise identical channel configs. A decimal index
+	// ("0", "1", …) or 0x-prefixed hex; empty selects the zero salt.
 	Salt string
 	// PayerAuthorizer is the EOA address used for voucher signing (separate from payer).
 	// Zero address means the payer signs vouchers directly (ERC-1271).
 	PayerAuthorizer string
 	// VoucherSigner is an optional separate key for signing vouchers.
 	VoucherSigner evm.ClientEvmSigner
+	// RPCURL is used by the gas-sponsoring extensions for onchain reads and
+	// approval transaction fields when the signer cannot provide them.
+	RPCURL string
+	// RPCByChainID overrides RPCURL per chain ID.
+	RPCByChainID map[int64]evm.RPCChainConfig
 }
 
 // BatchSettlementEvmScheme implements SchemeNetworkClient for batched EVM payments.
 type BatchSettlementEvmScheme struct {
-	signer  evm.ClientEvmSigner
-	config  BatchSettlementEvmSchemeOptions
-	storage ClientChannelStorage
+	signer   evm.ClientEvmSigner
+	config   BatchSettlementEvmSchemeOptions
+	storage  ClientChannelStorage
+	warnings *clientutil.WarningSet
 }
 
 // NewBatchSettlementEvmScheme creates a new batched client scheme.
 func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettlementEvmSchemeOptions) *BatchSettlementEvmScheme {
 	cfg := BatchSettlementEvmSchemeOptions{
 		DepositMultiplier: DefaultDepositMultiplier,
-		Salt:              DefaultSalt,
 	}
 	if config != nil {
 		if config.DepositMultiplier > 0 {
@@ -98,12 +106,12 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 		if config.Storage != nil {
 			cfg.Storage = config.Storage
 		}
-		if config.Salt != "" {
-			cfg.Salt = config.Salt
-		}
+		cfg.Salt = config.Salt
 		cfg.DepositStrategy = config.DepositStrategy
 		cfg.PayerAuthorizer = config.PayerAuthorizer
 		cfg.VoucherSigner = config.VoucherSigner
+		cfg.RPCURL = config.RPCURL
+		cfg.RPCByChainID = config.RPCByChainID
 	}
 
 	storage := cfg.Storage
@@ -112,9 +120,10 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 	}
 
 	return &BatchSettlementEvmScheme{
-		signer:  signer,
-		config:  cfg,
-		storage: storage,
+		signer:   signer,
+		config:   cfg,
+		storage:  storage,
+		warnings: &clientutil.WarningSet{},
 	}
 }
 
@@ -123,13 +132,24 @@ func (c *BatchSettlementEvmScheme) Scheme() string {
 	return batchsettlement.SchemeBatched
 }
 
+func (c *BatchSettlementEvmScheme) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
+}
+
 // CreatePaymentPayload creates a batched payment payload.
 //
 // The client loads local session state, falls back to onchain recovery when
 // storage is empty, then chooses deposit vs voucher from the resulting context.
+// Permit2 deposits may attach EIP-2612 or ERC-20 approval gas sponsoring when
+// payloadCtx.Extensions advertises those keys.
 func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
+	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
 	channelConfig, err := c.BuildChannelConfig(requirements)
 	if err != nil {
@@ -140,7 +160,10 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, err = batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return types.PaymentPayload{}, err
+	}
 
 	session, err := c.storage.Get(channelId)
 	if err != nil {
@@ -186,10 +209,20 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 	needsTopUp := !needsInitialDeposit && newCumulative.Cmp(balance) > 0
 
 	if needsInitialDeposit || needsTopUp {
-		computedDeposit := c.calculateDepositAmount(requiredAmount)
 		minimumDeposit := new(big.Int).Sub(newCumulative, balance)
 		if minimumDeposit.Sign() < 0 {
 			minimumDeposit = big.NewInt(0)
+		}
+		maxDeposit := MaxDepositFromSpendCap(payloadCtx.MaxAmountPerPayment, c.config.DepositMultiplier)
+		computedDeposit, err := DepositAmountForRequest(
+			c.config.DepositMultiplier,
+			requiredAmount,
+			minimumDeposit,
+			requirements.Extra,
+			maxDeposit,
+		)
+		if err != nil {
+			return types.PaymentPayload{}, err
 		}
 		strategyCtx := DepositStrategyContext{
 			PaymentRequirements:  requirements,
@@ -200,19 +233,32 @@ func (c *BatchSettlementEvmScheme) CreatePaymentPayload(
 			MaxClaimableAmount:   newCumulative.String(),
 			CurrentBalance:       balance.String(),
 			MinimumDepositAmount: minimumDeposit.String(),
-			DepositAmount:        computedDeposit.String(),
+			DepositAmount:        computedDeposit,
+		}
+		if maxDeposit != nil {
+			strategyCtx.MaxDeposit = maxDeposit.String()
 		}
 		resolved, err := c.resolveDepositAmount(ctx, strategyCtx)
 		if err != nil {
 			return types.PaymentPayload{}, err
 		}
+		var payload types.PaymentPayload
 		if resolved.skip {
-			return c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
+			payload, err = c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
+		} else {
+			payload, err = c.createDepositPayload(ctx, channelConfig, resolved.amount, newCumulative.String(), requirements)
 		}
-		return c.createDepositPayload(ctx, channelConfig, resolved.amount, newCumulative.String(), requirements)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		return c.enrichDepositWithGasSponsoring(ctx, requirements, payload, payloadCtx)
 	}
 
-	return c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
+	payload, err := c.createVoucherPayload(ctx, channelId, channelConfig, newCumulative.String(), requirements)
+	if err != nil {
+		return types.PaymentPayload{}, err
+	}
+	return c.enrichDepositWithGasSponsoring(ctx, requirements, payload, payloadCtx)
 }
 
 // resolveDepositAmountResult is the internal output of resolveDepositAmount.
@@ -245,12 +291,27 @@ func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 		return resolveDepositAmountResult{}, fmt.Errorf("depositStrategy must return a positive integer deposit amount, got %q", res.Amount)
 	}
 	minimum, _ := new(big.Int).SetString(strategyCtx.MinimumDepositAmount, 10)
-	if minimum != nil && amount.Cmp(minimum) < 0 {
+	if minimum == nil {
+		minimum = big.NewInt(0)
+	}
+	if amount.Cmp(minimum) < 0 {
 		return resolveDepositAmountResult{}, fmt.Errorf(
 			"depositStrategy returned %s, below required top-up %s",
 			amount.String(), minimum.String())
 	}
-	return resolveDepositAmountResult{amount: amount.String()}, nil
+	var maxDeposit *big.Int
+	if strategyCtx.MaxDeposit != "" {
+		maxDeposit, _ = new(big.Int).SetString(strategyCtx.MaxDeposit, 10)
+	}
+	clamped, err := ApplyMaxDeposit(amount, minimum, maxDeposit)
+	if err != nil {
+		return resolveDepositAmountResult{}, err
+	}
+	return resolveDepositAmountResult{amount: clamped}, nil
+}
+
+func (c *BatchSettlementEvmScheme) normalizedConfigSalt() (string, error) {
+	return batchsettlement.ParseChannelSalt(c.config.Salt)
 }
 
 // BuildChannelConfig constructs a ChannelConfig from payment requirements and scheme config.
@@ -258,6 +319,10 @@ func (c *BatchSettlementEvmScheme) resolveDepositAmount(
 // Returns an error when `requirements.Extra["receiverAuthorizer"]` is missing
 // or zero — without it the derived channelId would not match the onchain
 // channel and the deposit transaction would revert.
+//
+// Facilitator-managed 402s (voucherManager "facilitator" and a non-zero
+// refundAuthorizer) pack that address into the salt. Self-managed channels
+// keep the raw salt.
 func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.PaymentRequirements) (batchsettlement.ChannelConfig, error) {
 	var receiverAuthorizer string
 	if requirements.Extra != nil {
@@ -267,6 +332,22 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 	}
 	if receiverAuthorizer == "" || strings.EqualFold(receiverAuthorizer, "0x0000000000000000000000000000000000000000") {
 		return batchsettlement.ChannelConfig{}, fmt.Errorf("payment requirements must include a non-zero extra.receiverAuthorizer")
+	}
+
+	baseSalt, err := c.normalizedConfigSalt()
+	if err != nil {
+		return batchsettlement.ChannelConfig{}, fmt.Errorf("invalid salt: %w", err)
+	}
+	channelSalt := baseSalt
+	if requirements.Extra != nil && requirements.Extra["voucherManager"] == batchsettlement.VoucherManagerFacilitator {
+		if refundAuthorizer, ok := requirements.Extra["refundAuthorizer"].(string); ok &&
+			refundAuthorizer != "" &&
+			!strings.EqualFold(refundAuthorizer, "0x0000000000000000000000000000000000000000") {
+			channelSalt, err = batchsettlement.PackRefundAuthorizerSalt(baseSalt, refundAuthorizer)
+			if err != nil {
+				return batchsettlement.ChannelConfig{}, fmt.Errorf("pack refund authorizer salt: %w", err)
+			}
+		}
 	}
 
 	withdrawDelay := DefaultWithdrawDelay
@@ -300,7 +381,7 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 		ReceiverAuthorizer: receiverAuthorizer,
 		Token:              requirements.Asset,
 		WithdrawDelay:      withdrawDelay,
-		Salt:               c.config.Salt,
+		Salt:               channelSalt,
 	}, nil
 }
 
@@ -311,12 +392,31 @@ func (c *BatchSettlementEvmScheme) Refund(ctx context.Context, url string, optio
 	return RefundChannel(ctx, &refundContextAdapter{scheme: c}, url, options)
 }
 
+// ChannelSettleLocal is the client-owned input for applying a deposit or voucher settle.
+//
+// RequestAmount is the per-request maximum (PaymentRequirements.amount);
+// the voucher ceiling was chargedCumulativeAmount + requestAmount.
+// DepositAmount is payload.deposit.amount for this payment and is added to
+// previous local balance after settle. Omit it on voucher-only.
+type ChannelSettleLocal struct {
+	ChannelId     string
+	RequestAmount string
+	DepositAmount *string
+}
+
+// ChannelSettleServer is the untrusted settlement response fields used when
+// applying a deposit or voucher settle.
+type ChannelSettleServer struct {
+	ChargedAmount           *string
+	ChargedCumulativeAmount *string
+}
+
 // OnPaymentResponse implements x402.PaymentResponseHandler so the transport can
 // auto-sync local session state after every paid response.
 //
-// On a successful settle (HTTP 200 + PAYMENT-RESPONSE), folds the server-tracked
-// channel snapshot back into the local session so the next request signs a
-// voucher built from the right cumulative base.
+// On a successful settle, updates local channel state from previous state plus
+// capped chargedAmount and any client-signed deposit. Server channelState
+// fields are never copied. Failed settlements leave local state unchanged.
 //
 // On a corrective 402 (PAYMENT-REQUIRED carrying batch_settlement_cumulative_*
 // or signature recovery data), runs ProcessCorrectivePaymentRequired and reports
@@ -326,10 +426,67 @@ func (c *BatchSettlementEvmScheme) OnPaymentResponse(
 	prCtx x402.PaymentResponseContext,
 ) (x402.PaymentResponseResult, error) {
 	if prCtx.SettleResponse != nil {
-		if prCtx.SettleResponse.Extra != nil {
-			if err := c.ProcessSettleResponse(prCtx.SettleResponse.Extra); err != nil {
-				return x402.PaymentResponseResult{}, fmt.Errorf("process settle response: %w", err)
+		if !prCtx.SettleResponse.Success {
+			return x402.PaymentResponseResult{}, nil
+		}
+
+		config, err := c.BuildChannelConfig(prCtx.Requirements)
+		if err != nil {
+			return x402.PaymentResponseResult{}, err
+		}
+		channelId, err := batchsettlement.ComputeChannelId(config, prCtx.Requirements.Network)
+		if err != nil {
+			return x402.PaymentResponseResult{}, fmt.Errorf("compute channel id: %w", err)
+		}
+
+		payload := prCtx.PaymentPayload.Payload
+		if batchsettlement.IsRefundPayload(payload) {
+			var refundAmount *string
+			if amount, ok := payload["amount"].(string); ok {
+				refundAmount = &amount
 			}
+			if err := UpdateSessionAfterRefund(c.storage, strings.ToLower(channelId), refundAmount); err != nil {
+				return x402.PaymentResponseResult{}, fmt.Errorf("update channel after refund: %w", err)
+			}
+			return x402.PaymentResponseResult{}, nil
+		}
+
+		var chargedAmount *string
+		if extra := prCtx.SettleResponse.Extra; extra != nil {
+			if v, ok := extra["chargedAmount"]; ok {
+				s, isString := v.(string)
+				if !isString {
+					return x402.PaymentResponseResult{}, fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+				}
+				chargedAmount = &s
+			}
+		}
+		var chargedCumulativeAmount *string
+		if extra := prCtx.SettleResponse.Extra; extra != nil {
+			if cs, ok := extra["channelState"].(map[string]interface{}); ok && cs != nil {
+				if v, ok := cs["chargedCumulativeAmount"].(string); ok {
+					chargedCumulativeAmount = &v
+				}
+			}
+		}
+		var depositAmount *string
+		if batchsettlement.IsDepositPayload(payload) {
+			if deposit, ok := payload["deposit"].(map[string]interface{}); ok {
+				if amount, ok := deposit["amount"].(string); ok {
+					depositAmount = &amount
+				}
+			}
+		}
+
+		if err := UpdateChannelFromSettle(c.storage, ChannelSettleServer{
+			ChargedAmount:           chargedAmount,
+			ChargedCumulativeAmount: chargedCumulativeAmount,
+		}, ChannelSettleLocal{
+			ChannelId:     channelId,
+			RequestAmount: prCtx.Requirements.Amount,
+			DepositAmount: depositAmount,
+		}); err != nil {
+			return x402.PaymentResponseResult{}, err
 		}
 		return x402.PaymentResponseResult{}, nil
 	}
@@ -349,51 +506,103 @@ func (c *BatchSettlementEvmScheme) OnPaymentResponse(
 	return x402.PaymentResponseResult{}, nil
 }
 
-// ProcessSettleResponse updates local session state from a settle response.
-// It merges present fields into the existing session.
-// Refund-specific reconciliation is handled at the refund call site via
-// UpdateSessionAfterRefund.
-func (c *BatchSettlementEvmScheme) ProcessSettleResponse(settle map[string]interface{}) error {
-	if settle == nil {
+// UpdateChannelFromSettle updates local channel state after a deposit or voucher settle.
+//
+// Next cumulative is previous local chargedCumulativeAmount plus
+// server.ChargedAmount (capped at local.RequestAmount). Next balance is
+// previous local balance plus local.DepositAmount when present;
+// voucher-only leaves balance unchanged. The write is skipped when extra
+// chargedCumulativeAmount is present and is not a non-negative integer equal
+// to that next cumulative. Server channelState fields are never copied.
+func UpdateChannelFromSettle(storage ClientChannelStorage, server ChannelSettleServer, local ChannelSettleLocal) error {
+	chargedAmount := big.NewInt(0)
+	if server.ChargedAmount != nil {
+		s := *server.ChargedAmount
+		if s == "" {
+			return fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+		}
+		for i := 0; i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				return fmt.Errorf("invalid chargedAmount: not a non-negative integer")
+			}
+		}
+		chargedAmount.SetString(s, 10)
+	}
+	requestAmount, ok := new(big.Int).SetString(local.RequestAmount, 10)
+	if !ok {
+		return fmt.Errorf("invalid requestAmount")
+	}
+	if chargedAmount.Cmp(requestAmount) > 0 {
+		return fmt.Errorf("settle response chargedAmount exceeds PaymentRequirements.amount")
+	}
+
+	previous, err := storage.Get(local.ChannelId)
+	if err != nil {
+		return fmt.Errorf("get channel session: %w", err)
+	}
+	var depositAmount *big.Int
+	if local.DepositAmount != nil {
+		d, ok := new(big.Int).SetString(*local.DepositAmount, 10)
+		if !ok {
+			return fmt.Errorf("invalid depositAmount")
+		}
+		depositAmount = d
+	}
+
+	if previous == nil && chargedAmount.Sign() == 0 && depositAmount == nil {
 		return nil
 	}
 
-	parsed, _ := batchsettlement.PaymentResponseExtraFromMap(settle)
-	if parsed == nil || parsed.ChannelState == nil {
-		return nil
+	prevCharged := big.NewInt(0)
+	if previous != nil && previous.ChargedCumulativeAmount != "" {
+		if v, ok := new(big.Int).SetString(previous.ChargedCumulativeAmount, 10); ok {
+			prevCharged = v
+		}
 	}
-	cs := parsed.ChannelState
-	if cs.ChannelId == "" {
-		return nil
+	nextChargedCumulative := new(big.Int).Add(prevCharged, chargedAmount)
+	if server.ChargedCumulativeAmount != nil {
+		s := *server.ChargedCumulativeAmount
+		valid := s != ""
+		for i := 0; valid && i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				valid = false
+			}
+		}
+		if !valid {
+			return nil
+		}
+		reported, _ := new(big.Int).SetString(s, 10)
+		if reported.Cmp(nextChargedCumulative) != 0 {
+			return nil
+		}
 	}
-	channelId := batchsettlement.NormalizeChannelId(cs.ChannelId)
 
-	prev, _ := c.storage.Get(channelId)
 	next := &BatchSettlementClientContext{}
-	if prev != nil {
-		*next = *prev
+	if previous != nil {
+		*next = *previous
 	}
-	if cs.ChargedCumulativeAmount != "" {
-		next.ChargedCumulativeAmount = cs.ChargedCumulativeAmount
+	next.ChargedCumulativeAmount = nextChargedCumulative.String()
+	if depositAmount != nil {
+		prevBalance := big.NewInt(0)
+		if previous != nil && previous.Balance != "" {
+			if v, ok := new(big.Int).SetString(previous.Balance, 10); ok {
+				prevBalance = v
+			}
+		}
+		next.Balance = new(big.Int).Add(prevBalance, depositAmount).String()
 	}
-	if cs.Balance != "" {
-		next.Balance = cs.Balance
-	}
-	if cs.TotalClaimed != "" {
-		next.TotalClaimed = cs.TotalClaimed
-	}
-	return c.storage.Set(channelId, next)
+	return storage.Set(local.ChannelId, next)
 }
 
 // HasSession checks if a session exists for the given channel ID.
 func (c *BatchSettlementEvmScheme) HasSession(channelId string) bool {
-	session, _ := c.storage.Get(batchsettlement.NormalizeChannelId(channelId))
+	session, _ := c.storage.Get(channelId)
 	return session != nil
 }
 
 // GetSession returns the session for the given channel ID.
 func (c *BatchSettlementEvmScheme) GetSession(channelId string) (*BatchSettlementClientContext, bool) {
-	session, err := c.storage.Get(batchsettlement.NormalizeChannelId(channelId))
+	session, err := c.storage.Get(channelId)
 	if err != nil || session == nil {
 		return nil, false
 	}
@@ -417,7 +626,10 @@ func (c *BatchSettlementEvmScheme) RecoverSession(ctx context.Context, requireme
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute channel ID: %w", err)
 	}
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, err = batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return nil, err
+	}
 
 	channelIdBytes := common.HexToHash(channelId)
 
@@ -561,7 +773,10 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 	if err != nil {
 		return false, nil //nolint:nilerr
 	}
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, err = batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		return false, nil //nolint:nilerr
+	}
 
 	// Read onchain state to verify
 	channelIdBytes := common.HexToHash(channelId)
@@ -605,12 +820,7 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 		return false, nil //nolint:nilerr
 	}
 
-	domain := evm.TypedDataDomain{
-		Name:              batchsettlement.BatchSettlementDomain.Name,
-		Version:           batchsettlement.BatchSettlementDomain.Version,
-		ChainID:           chainId,
-		VerifyingContract: batchsettlement.BatchSettlementAddress,
-	}
+	domain := batchsettlement.GetBatchSettlementEip712Domain(chainId)
 
 	voucherSigner := c.signer
 	if c.config.VoucherSigner != nil {
@@ -764,9 +974,89 @@ func (a *refundContextAdapter) ProcessCorrectivePaymentRequired(ctx context.Cont
 	return a.scheme.ProcessCorrectivePaymentRequired(ctx, errorReason, accepts)
 }
 
-// calculateDepositAmount returns `requiredAmount * DepositMultiplier`. Callers
-// wanting a cap should use a DepositStrategy callback.
-func (c *BatchSettlementEvmScheme) calculateDepositAmount(requiredAmount *big.Int) *big.Int {
-	multiplier := big.NewInt(int64(c.config.DepositMultiplier))
-	return new(big.Int).Mul(requiredAmount, multiplier)
+func isAtomicAmountString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseAnnouncedMinDeposit parses a server-announced extra.minDeposit when it is a
+// valid deposit target (positive integer >= requestAmount).
+func ParseAnnouncedMinDeposit(value interface{}, requestAmount *big.Int) *big.Int {
+	s, ok := value.(string)
+	if !ok || !isAtomicAmountString(s) {
+		return nil
+	}
+	parsed, ok := new(big.Int).SetString(s, 10)
+	if !ok || parsed.Sign() <= 0 || parsed.Cmp(requestAmount) < 0 {
+		return nil
+	}
+	return parsed
+}
+
+// MaxDepositFromSpendCap derives the deposit ceiling as depositMultiplier × the
+// resolved spend cap. Returns nil when the payment is uncapped.
+func MaxDepositFromSpendCap(maxAmountPerPayment string, depositMultiplier int) *big.Int {
+	if !isAtomicAmountString(maxAmountPerPayment) {
+		return nil
+	}
+	cap, ok := new(big.Int).SetString(maxAmountPerPayment, 10)
+	if !ok || cap.Sign() <= 0 {
+		return nil
+	}
+	if depositMultiplier <= 0 {
+		depositMultiplier = DefaultDepositMultiplier
+	}
+	return new(big.Int).Mul(cap, big.NewInt(int64(depositMultiplier)))
+}
+
+// ApplyMaxDeposit clamps a computed deposit to maxDeposit. Errors when the
+// voucher gap exceeds the cap.
+func ApplyMaxDeposit(deposit, needed, maxDeposit *big.Int) (string, error) {
+	if maxDeposit == nil {
+		return deposit.String(), nil
+	}
+	if needed.Cmp(maxDeposit) > 0 {
+		return "", fmt.Errorf(
+			"required deposit %s exceeds depositMultiplier × spendControls.maxAmountPerPayment (%s). Raise maxAmountPerPayment or depositMultiplier",
+			needed.String(), maxDeposit.String(),
+		)
+	}
+	if deposit.Cmp(maxDeposit) > 0 {
+		return maxDeposit.String(), nil
+	}
+	return deposit.String(), nil
+}
+
+// DepositAmountForRequest computes the deposit amount from the voucher gap,
+// server hint, or deposit multiplier.
+func DepositAmountForRequest(
+	multiplier int,
+	requestAmount *big.Int,
+	needed *big.Int,
+	extra map[string]interface{},
+	maxDeposit *big.Int,
+) (string, error) {
+	var announced *big.Int
+	if extra != nil {
+		announced = ParseAnnouncedMinDeposit(extra["minDeposit"], requestAmount)
+	}
+	if multiplier <= 0 {
+		multiplier = DefaultDepositMultiplier
+	}
+	target := new(big.Int).Mul(big.NewInt(int64(multiplier)), requestAmount)
+	if announced != nil {
+		target = announced
+	}
+	deposit := target
+	if needed.Cmp(target) > 0 {
+		deposit = needed
+	}
+	return ApplyMaxDeposit(deposit, needed, maxDeposit)
 }

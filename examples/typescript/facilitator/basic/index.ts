@@ -94,7 +94,11 @@ const evmSigner = toFacilitatorEvmSigner({
 });
 
 // Facilitator can now handle all Solana networks with automatic RPC creation
-const svmSigner = toFacilitatorSvmSigner(svmAccount);
+const svmRpcUrl = process.env.SVM_RPC_URL;
+const svmSigner = toFacilitatorSvmSigner(
+  svmAccount,
+  svmRpcUrl ? { defaultRpcUrl: svmRpcUrl } : undefined,
+);
 
 const facilitator = new x402Facilitator()
   .onBeforeVerify(async (context) => {
@@ -119,7 +123,11 @@ const facilitator = new x402Facilitator()
 // Register EVM and SVM schemes
 facilitator.register(
   "eip155:84532",
-  new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
+  new ExactEvmScheme(evmSigner, {
+    // Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+    // A non-empty array enables smart wallet deployment; an empty array denies all factory calls.
+    eip6492AllowedFactories: [],
+  }),
 ); // Base Sepolia
 facilitator.register("eip155:84532", new UptoEvmScheme(evmSigner));
 facilitator.register(
@@ -138,6 +146,7 @@ app.use(express.json());
  * Note: Payment tracking and bazaar discovery are handled by lifecycle hooks
  */
 app.post("/verify", async (req, res) => {
+  const endpointT0 = performance.now();
   try {
     const { paymentPayload, paymentRequirements } = req.body as {
       paymentPayload: PaymentPayload;
@@ -147,6 +156,44 @@ app.post("/verify", async (req, res) => {
     if (!paymentPayload || !paymentRequirements) {
       return res.status(400).json({
         error: "Missing paymentPayload or paymentRequirements",
+      });
+    }
+
+    const payloadField: unknown = paymentPayload.payload;
+    if (
+      typeof payloadField !== "object" ||
+      payloadField === null ||
+      Array.isArray(payloadField)
+    ) {
+      return res.status(400).json({
+        error: "paymentPayload.payload must be an object",
+      });
+    }
+
+    const supportedKind = facilitator
+      .getSupported()
+      .kinds.some(
+        (kind) =>
+          kind.x402Version === paymentPayload.x402Version &&
+          kind.scheme === paymentRequirements.scheme &&
+          kind.network === paymentRequirements.network,
+      );
+    if (!supportedKind) {
+      return res.json({
+        isValid: false,
+        invalidReason: "unsupported_scheme",
+      });
+    }
+
+    if (
+      paymentRequirements.scheme === "exact" &&
+      paymentRequirements.network.startsWith("eip155:") &&
+      !("authorization" in payloadField) &&
+      !("permit2Authorization" in payloadField)
+    ) {
+      return res.status(400).json({
+        error:
+          "paymentPayload.payload must include authorization or permit2Authorization",
       });
     }
 
@@ -164,6 +211,10 @@ app.post("/verify", async (req, res) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
     });
+  } finally {
+    console.log(
+      `/verify completed in ${((performance.now() - endpointT0) / 1000).toFixed(3)}s`,
+    );
   }
 });
 
@@ -174,12 +225,56 @@ app.post("/verify", async (req, res) => {
  * Note: Verification validation and cleanup are handled by lifecycle hooks
  */
 app.post("/settle", async (req, res) => {
+  const endpointT0 = performance.now();
   try {
-    const { paymentPayload, paymentRequirements } = req.body;
+    const { paymentPayload, paymentRequirements } = req.body as {
+      paymentPayload: PaymentPayload;
+      paymentRequirements: PaymentRequirements;
+    };
 
     if (!paymentPayload || !paymentRequirements) {
       return res.status(400).json({
         error: "Missing paymentPayload or paymentRequirements",
+      });
+    }
+
+    const payloadField: unknown = paymentPayload.payload;
+    if (
+      typeof payloadField !== "object" ||
+      payloadField === null ||
+      Array.isArray(payloadField)
+    ) {
+      return res.status(400).json({
+        error: "paymentPayload.payload must be an object",
+      });
+    }
+
+    const supportedKind = facilitator
+      .getSupported()
+      .kinds.some(
+        (kind) =>
+          kind.x402Version === paymentPayload.x402Version &&
+          kind.scheme === paymentRequirements.scheme &&
+          kind.network === paymentRequirements.network,
+      );
+    if (!supportedKind) {
+      return res.json({
+        success: false,
+        errorReason: "unsupported_scheme",
+        transaction: "",
+        network: paymentRequirements.network || "unknown",
+      });
+    }
+
+    if (
+      paymentRequirements.scheme === "exact" &&
+      paymentRequirements.network.startsWith("eip155:") &&
+      !("authorization" in payloadField) &&
+      !("permit2Authorization" in payloadField)
+    ) {
+      return res.status(400).json({
+        error:
+          "paymentPayload.payload must include authorization or permit2Authorization",
       });
     }
 
@@ -188,30 +283,21 @@ app.post("/settle", async (req, res) => {
     // - Check verification timeout (onBeforeSettle)
     // - Clean up tracking (onAfterSettle / onSettleFailure)
     const response: SettleResponse = await facilitator.settle(
-      paymentPayload as PaymentPayload,
-      paymentRequirements as PaymentRequirements,
+      paymentPayload,
+      paymentRequirements,
     );
 
     res.json(response);
   } catch (error) {
     console.error("Settle error:", error);
 
-    // Check if this was an abort from hook
-    if (
-      error instanceof Error &&
-      error.message.includes("Settlement aborted:")
-    ) {
-      // Return a proper SettleResponse instead of 500 error
-      return res.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        network: req.body?.paymentPayload?.network || "unknown",
-      } as SettleResponse);
-    }
-
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
     });
+  } finally {
+    console.log(
+      `/settle completed in ${((performance.now() - endpointT0) / 1000).toFixed(3)}s`,
+    );
   }
 });
 

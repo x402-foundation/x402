@@ -30,4 +30,7 @@ const (
 	// ERC-20 approval gas-sponsoring errors
 	ErrErc20ApprovalInsufficientEth = "erc20_approval_insufficient_eth_for_gas"
 	ErrErc20ApprovalBroadcastFailed = "erc20_approval_broadcast_failed"
+	// Sentinel used to route invalid settlement hashes from the extension signer
+	// into ErrErc20ApprovalBroadcastFailed.
+	ErrErc20ApprovalTxFailed = "erc20_approval_tx_failed"
 )

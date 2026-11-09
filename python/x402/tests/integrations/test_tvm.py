@@ -31,6 +31,8 @@ import pytest
 
 pytest.importorskip("pytoniq_core")
 
+from decimal import Decimal
+
 from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
 from x402.mechanisms.tvm import (
     SCHEME_EXACT,
@@ -71,6 +73,7 @@ from x402.schemas import (
     SupportedResponse,
     VerifyResponse,
 )
+from x402.schemas.helpers import convert_to_token_amount
 
 TVM_PRIVATE_KEY = os.environ.get("TVM_PRIVATE_KEY")
 TVM_CLIENT_PRIVATE_KEY = os.environ.get("TVM_CLIENT_PRIVATE_KEY", TVM_PRIVATE_KEY)
@@ -224,9 +227,13 @@ class TestTvmIntegrationV2:
             self.facilitator_address,
         )
 
-        self.client = x402ClientSync().register(
-            TVM_TESTNET,
-            ExactTvmClientScheme(self.client_signer),
+        self.client = (
+            x402ClientSync()
+            .register(
+                TVM_TESTNET,
+                ExactTvmClientScheme(self.client_signer),
+            )
+            .set_spend_controls(False)
         )
         self.facilitator = x402FacilitatorSync().register(
             [TVM_TESTNET],
@@ -351,9 +358,13 @@ class TestTvmIntegrationV2:
         )
         _configure_client_provider(second_client_config)
         second_client_signer = WalletV5R1MnemonicSigner(second_client_config)
-        second_client = x402ClientSync().register(
-            TVM_TESTNET,
-            ExactTvmClientScheme(second_client_signer),
+        second_client = (
+            x402ClientSync()
+            .register(
+                TVM_TESTNET,
+                ExactTvmClientScheme(second_client_signer),
+            )
+            .set_spend_controls(False)
         )
         second_client_address = second_client_signer.address
         if second_client_address == self.client_address:
@@ -674,10 +685,10 @@ class TestTvmPriceParsing:
     def test_custom_money_parser(self) -> None:
         from x402.schemas import AssetAmount
 
-        def large_amount_parser(amount: float, network: str):
-            if amount > 100:
+        def large_amount_parser(amount: str | int | float, network: str):
+            if Decimal(str(amount)) > 100:
                 return AssetAmount(
-                    amount=str(int(amount * 1_000_000_000)),
+                    amount=convert_to_token_amount(str(amount), 9),
                     asset="0:" + "b" * 64,
                     extra={"token": "LARGE", "tier": "large"},
                 )

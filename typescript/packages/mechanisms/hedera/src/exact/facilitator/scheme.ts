@@ -137,7 +137,8 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
       inspected.hbarTransfers,
       requirements,
     ) as HederaTransferEntry[];
-    const payer = this.inferPayer(payerTransfers);
+    const payers = this.inferPayers(payerTransfers);
+    const payer = payers[0]?.accountId ?? "";
 
     // Phase 4: alias policy check
     const payToValidation = await this.validatePayToPolicy(requirements);
@@ -145,18 +146,51 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
       return payToValidation;
     }
 
-    // Phase 5: optional onchain preflight (balance + token association).
-    // Spec §6 — advisory, never throws out of verify.
-    // Precondition: Phase 3 transfer-semantics guarantees `payer` is non-empty
-    // (the payload must contain at least one debited account for `asset`).
-    if (typeof this.signer.preflightTransfer === "function") {
+    // Phase 5: payer signature verification (fail-closed), checked before
+    // preflight so an unsigned/wrong-key payload is rejected first.
+    // Spec §4 allows multiple sending accounts, so every debited sender must
+    // have signed. Precondition: Phase 3 transfer-semantics guarantees at
+    // least one debited account for `asset`, so `payers` is non-empty.
+    for (const sender of payers) {
+      let signature: { ok: boolean; reason?: string; message?: string };
+      try {
+        signature = await this.signer.verifyPayerSignature({
+          payer: sender.accountId,
+          transaction: transactionBase64,
+          network: requirements.network,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_hedera_payload_signature_invalid",
+          invalidMessage: message,
+          payer,
+        };
+      }
+      if (!signature.ok) {
+        const invalidMessage = signature.reason
+          ? `${signature.reason}${signature.message ? `: ${signature.message}` : ""}`
+          : signature.message;
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_hedera_payload_signature_invalid",
+          invalidMessage,
+          payer,
+        };
+      }
+    }
+
+    // Phase 6: onchain preflight (balance + token association), fail-closed.
+    // Each sender only funds their own debited portion, so preflight runs per sender with that sender's amount.
+    for (const sender of payers) {
       let preflight: { ok: boolean; reason?: string; message?: string };
       try {
         preflight = await this.signer.preflightTransfer({
-          payer,
+          payer: sender.accountId,
           payTo: requirements.payTo,
           asset: requirements.asset,
-          amount: requirements.amount,
+          amount: sender.amount,
           network: requirements.network,
         });
       } catch (error) {
@@ -282,13 +316,27 @@ export class ExactHederaScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Best-effort payer inference from debited transfer entries.
+   * Infers every debited sender from the asset transfers, summing each
+   * account's debited magnitude. Spec §4 permits multiple sending accounts,
+   * so all of them are returned (each funds only their own portion).
    *
    * @param transfers - Asset transfers
-   * @returns Payer account id
+   * @returns Distinct debited accounts with their absolute debited amount
    */
-  private inferPayer(transfers: HederaTransferEntry[]): string {
-    return transfers.find(entry => BigInt(entry.amount) < 0n)?.accountId ?? "";
+  private inferPayers(
+    transfers: HederaTransferEntry[],
+  ): Array<{ accountId: string; amount: string }> {
+    const debited = new Map<string, bigint>();
+    for (const entry of transfers) {
+      const amount = BigInt(entry.amount);
+      if (amount < 0n) {
+        debited.set(entry.accountId, (debited.get(entry.accountId) ?? 0n) + amount);
+      }
+    }
+    return [...debited.entries()].map(([accountId, amount]) => ({
+      accountId,
+      amount: (-amount).toString(),
+    }));
   }
 
   /**

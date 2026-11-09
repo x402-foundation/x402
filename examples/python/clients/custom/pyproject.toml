@@ -20,6 +20,7 @@ packages = ["."]
 allow-direct-references = true
 
 [tool.uv]
+required-version = ">=0.13.4"
 exclude-newer = "3 days"
 package = false
 

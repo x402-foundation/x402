@@ -1,7 +1,0 @@
-{
-  "name": "DJD Agent Score",
-  "description": "Reputation scoring API for AI agent wallets on Base. Scores agents 0–100 based on on-chain signals and provides x402-agent-score Hono middleware for gating API requests by reputation.",
-  "logoUrl": "/logos/djd-agent-score.png",
-  "websiteUrl": "https://djd-agent-score.fly.dev",
-  "category": "Services/Endpoints"
-}

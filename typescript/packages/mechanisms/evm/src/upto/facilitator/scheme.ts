@@ -6,9 +6,30 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
-import { UptoPermit2Payload, isUptoPermit2Payload } from "../../types";
+import {
+  UptoPermit2Payload,
+  getExactEvmPayloadPayer,
+  isUptoPermit2Payload,
+  validateUptoPermit2Payload,
+} from "../../types";
+import { ErrUptoInvalidPayload } from "./errors";
 import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";
+
+/** Optional configuration for {@link UptoEvmScheme}. */
+export interface UptoEvmSchemeConfig {
+  /**
+   * Lets a retried settle for the same payload reconcile against an
+   * already-broadcast transaction instead of re-verifying and
+   * re-broadcasting (see {@link PendingSettlementStore}). Defaults to a
+   * fresh in-memory store shared across all settle calls on this scheme
+   * instance. Inject a shared, network-backed implementation (e.g. Redis)
+   * for a multi-instance facilitator so a settle retry landing on a
+   * different replica still reconciles correctly.
+   */
+  pendingSettlementStore?: PendingSettlementStore;
+}
 
 /**
  * EVM facilitator implementation for the Upto payment scheme.
@@ -17,13 +38,20 @@ import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";
 export class UptoEvmScheme implements SchemeNetworkFacilitator {
   readonly scheme = "upto";
   readonly caipFamily = "eip155:*";
+  private readonly pendingStore: PendingSettlementStore;
 
   /**
    * Creates a new UptoEvmScheme facilitator instance.
    *
    * @param signer - The EVM signer for facilitator operations
+   * @param config - Optional configuration
    */
-  constructor(private readonly signer: FacilitatorEvmSigner) {}
+  constructor(
+    private readonly signer: FacilitatorEvmSigner,
+    config?: UptoEvmSchemeConfig,
+  ) {
+    this.pendingStore = config?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
+  }
 
   /**
    * Returns extra metadata required by the upto scheme, including the facilitator address.
@@ -55,16 +83,32 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
    * @param payload - The payment payload to verify
    * @param requirements - The payment requirements to verify against
    * @param context - Optional facilitator context
+   * @param _ - Payment required extensions (unused; reserved for interface parity)
    * @returns Promise resolving to a verification response
    */
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
+    _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload as Record<string, unknown>;
     if (!isUptoPermit2Payload(rawPayload)) {
-      return { isValid: false, invalidReason: "unsupported_payload_type", payer: "" };
+      return {
+        isValid: false,
+        invalidReason: ErrUptoInvalidPayload,
+        invalidMessage: "unsupported payload type: expected upto permit2 payload",
+        payer: "",
+      };
+    }
+    const payloadError = validateUptoPermit2Payload(rawPayload);
+    if (payloadError) {
+      return {
+        isValid: false,
+        invalidReason: ErrUptoInvalidPayload,
+        invalidMessage: payloadError,
+        payer: getExactEvmPayloadPayer(rawPayload),
+      };
     }
     return verifyUptoPermit2(
       this.signer,
@@ -94,8 +138,20 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
         success: false,
         network: payload.accepted.network,
         transaction: "",
-        errorReason: "unsupported_payload_type",
+        errorReason: ErrUptoInvalidPayload,
+        errorMessage: "unsupported payload type: expected upto permit2 payload",
         payer: "",
+      };
+    }
+    const payloadError = validateUptoPermit2Payload(rawPayload);
+    if (payloadError) {
+      return {
+        success: false,
+        network: payload.accepted.network,
+        transaction: "",
+        errorReason: ErrUptoInvalidPayload,
+        errorMessage: payloadError,
+        payer: getExactEvmPayloadPayer(rawPayload),
       };
     }
     return settleUptoPermit2(
@@ -104,6 +160,7 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
       requirements,
       rawPayload as UptoPermit2Payload,
       context,
+      this.pendingStore,
     );
   }
 }

@@ -15,9 +15,11 @@ Supports:
 Run with: uv run uvicorn main:app --port 4022
 """
 
+import json
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(message)s")
@@ -25,13 +27,14 @@ logging.getLogger("x402.permit2").setLevel(logging.DEBUG)
 logging.getLogger("x402.signers").setLevel(logging.DEBUG)
 
 from bazaar import BazaarCatalog
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
-from x402.extensions.bazaar import extract_discovery_info
+from datetime import datetime, timezone
+
+from x402.extensions.bazaar import DiscoveryResource, extract_discovery_info
 from x402.extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING
 from x402.extensions.erc20_approval_gas_sponsoring import (
     Erc20ApprovalFacilitatorExtension,
@@ -42,18 +45,53 @@ from x402.mechanisms.evm.constants import TX_STATUS_SUCCESS
 from x402.mechanisms.evm.exact import register_exact_evm_facilitator
 from x402.mechanisms.evm.types import TransactionReceipt
 from x402.mechanisms.evm.upto import UptoEvmFacilitatorScheme
+from x402.mechanisms.evm.batch_settlement.authorizer_signer import LocalAuthorizerSigner
+from x402.mechanisms.evm.batch_settlement.facilitator import (
+    BatchSettlementEvmFacilitator,
+)
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
 from x402.mechanisms.tvm import (
-    TVM_TESTNET,
     TVM_PROVIDER_TONAPI,
     HighloadV3Config,
     FacilitatorHighloadV3Signer,
 )
 from x402.mechanisms.tvm.exact import ExactTvmFacilitatorScheme
 
-# Load environment variables
-load_dotenv()
+
+def _catalog_testnet_caip2(network_id: str) -> str:
+    """Read testnet.caip2 from e2e/config/mechanisms_<id>.json."""
+    injected = os.getenv("E2E_MECHANISMS_CATALOG")
+    candidates: list[Path] = []
+    if injected:
+        candidates.append(Path(injected))
+    here = Path(__file__).resolve()
+    candidates.extend(parent / "config" for parent in here.parents)
+    for catalog_dir in candidates:
+        path = catalog_dir / f"mechanisms_{network_id}.json"
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data["testnet"]["caip2"]
+    raise FileNotFoundError(f"Could not locate mechanisms_{network_id}.json")
+
+
+def _resolve_network_caip2(network_id: str) -> str:
+    env_key = f"{network_id.upper()}_NETWORK"
+    return os.environ.get(env_key) or _catalog_testnet_caip2(network_id)
+
+
+def _caip2_pattern(caip2: str) -> str:
+    """Derive a CAIP-2 namespace wildcard (`eip155:*`) from a concrete CAIP-2 id."""
+    ns = caip2.split(":", 1)[0]
+    if not ns:
+        raise ValueError(f"invalid caip2: {caip2}")
+    return f"{ns}:*"
+
+
+def _network_caip2_pattern(network_id: str) -> str:
+    """Client/resource-server registration pattern for a catalog network id."""
+    return _caip2_pattern(_resolve_network_caip2(network_id))
+
 
 # Configuration
 PORT = int(os.environ.get("PORT", "4022"))
@@ -64,54 +102,50 @@ bazaar_catalog = BazaarCatalog()
 # Validate that at least one chain is configured
 if not any(
     [
-        os.environ.get("EVM_PRIVATE_KEY"),
-        os.environ.get("SVM_PRIVATE_KEY"),
-        os.environ.get("TVM_PRIVATE_KEY"),
+        os.environ.get("FACILITATOR_EVM_PRIVATE_KEY"),
+        os.environ.get("FACILITATOR_SVM_PRIVATE_KEY"),
+        os.environ.get("FACILITATOR_TVM_PRIVATE_KEY"),
     ]
 ):
     print(
-        "❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required"
+        "❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY, or FACILITATOR_TVM_PRIVATE_KEY is required"
     )
     sys.exit(1)
 
-# Network configuration
-EVM_NETWORK = os.environ.get("EVM_NETWORK", "eip155:84532")
-SVM_NETWORK = os.environ.get("SVM_NETWORK", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
-TVM_NETWORK = os.environ.get("TVM_NETWORK", TVM_TESTNET)
+# Network configuration — harness-injected `${ID}_NETWORK` or catalog testnet
+EVM_NETWORK = _resolve_network_caip2("evm")
+SVM_NETWORK = _resolve_network_caip2("svm")
+TVM_NETWORK = _resolve_network_caip2("tvm")
 
 # Initialize the EVM signer from private key when configured
 evm_signer = None
-if os.environ.get("EVM_PRIVATE_KEY"):
+if os.environ.get("FACILITATOR_EVM_PRIVATE_KEY"):
     evm_rpc_url = os.environ.get("EVM_RPC_URL") or "https://sepolia.base.org"
     evm_signer = FacilitatorWeb3Signer(
-        private_key=os.environ["EVM_PRIVATE_KEY"],
+        private_key=os.environ["FACILITATOR_EVM_PRIVATE_KEY"],
         rpc_url=evm_rpc_url,
     )
     print(f"EVM Facilitator account: {evm_signer.get_addresses()[0]}")
 
 # Initialize the SVM signer from private key when configured
 svm_signer = None
-if os.environ.get("SVM_PRIVATE_KEY"):
-    svm_keypair = Keypair.from_base58_string(os.environ["SVM_PRIVATE_KEY"])
+if os.environ.get("FACILITATOR_SVM_PRIVATE_KEY"):
+    svm_keypair = Keypair.from_base58_string(os.environ["FACILITATOR_SVM_PRIVATE_KEY"])
     svm_signer = FacilitatorKeypairSigner(svm_keypair)
     print(f"SVM Facilitator account: {svm_signer.get_addresses()[0]}")
 
 # Initialize the TVM signer from private key when configured
 tvm_signer = None
-if os.environ.get("TVM_PRIVATE_KEY"):
-    tvm_config = HighloadV3Config.from_private_key(os.environ["TVM_PRIVATE_KEY"])
+if os.environ.get("FACILITATOR_TVM_PRIVATE_KEY"):
+    tvm_config = HighloadV3Config.from_private_key(os.environ["FACILITATOR_TVM_PRIVATE_KEY"])
     tvm_provider = (os.environ.get("TVM_PROVIDER") or "").strip().lower()
     tvm_config.provider = tvm_provider or tvm_config.provider
     tvm_config.api_key = (
-        os.environ.get("TONAPI_API_KEY")
+        os.environ.get("TVM_TONAPI_API_KEY")
         if tvm_provider == TVM_PROVIDER_TONAPI
-        else os.environ.get("TONCENTER_API_KEY")
+        else os.environ.get("TVM_TONCENTER_API_KEY")
     )
-    tvm_config.provider_base_url = (
-        os.environ.get("TONAPI_BASE_URL")
-        if tvm_provider == TVM_PROVIDER_TONAPI
-        else os.environ.get("TONCENTER_BASE_URL")
-    )
+    tvm_config.provider_base_url = os.environ.get("TVM_RPC_URL")
     tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
     print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
 
@@ -150,9 +184,7 @@ class Erc20ApprovalSigner:
                         "value": deficit,
                         "gas": 21000,
                         "gasPrice": w3.eth.gas_price,
-                        "nonce": w3.eth.get_transaction_count(
-                            self._signer._account.address
-                        ),
+                        "nonce": self._signer._reserve_nonce(),
                         "chainId": w3.eth.chain_id,
                     }
                     signed_fund = self._signer._account.sign_transaction(fund_tx)
@@ -207,26 +239,29 @@ def _handle_after_verify(ctx: Any) -> None:
             print(f"   📝 Discovered resource: {discovered.resource_url}")
             print(f"   📝 Method: {discovered.method}")
             print(f"   📝 X402Version: {discovered.x402_version}")
+            if discovered.service_name is not None:
+                print(f"   📝 Service: {discovered.service_name}")
+            if discovered.tags is not None:
+                print(f"   📝 Tags: {', '.join(discovered.tags)}")
 
-            # Convert discovery_info to dict for serialization
-            discovery_info_dict = None
-            if discovered.discovery_info:
-                if hasattr(discovered.discovery_info, "model_dump"):
-                    discovery_info_dict = discovered.discovery_info.model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                else:
-                    discovery_info_dict = discovered.discovery_info
-
-            bazaar_catalog.catalog_resource(
-                resource_url=discovered.resource_url,
-                method=discovered.method,
-                x402_version=discovered.x402_version,
-                discovery_info=discovery_info_dict,
-                payment_requirements=ctx.requirements.model_dump(by_alias=True)
-                if hasattr(ctx.requirements, "model_dump")
-                else ctx.requirements,
-                route_template=getattr(discovered, "route_template", None),
+            bazaar_catalog.add(
+                DiscoveryResource(
+                    resource=discovered.resource_url,
+                    type=discovered.discovery_info.input.type,
+                    x402_version=discovered.x402_version,
+                    accepts=[
+                        ctx.requirements.model_dump(by_alias=True)
+                        if hasattr(ctx.requirements, "model_dump")
+                        else ctx.requirements
+                    ],
+                    last_updated=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    description=discovered.description,
+                    mime_type=discovered.mime_type,
+                    service_name=discovered.service_name,
+                    tags=discovered.tags,
+                    icon_url=discovered.icon_url,
+                    extensions=discovered.extensions,
+                )
             )
             print("   ✅ Added to bazaar catalog")
     except Exception as err:
@@ -250,11 +285,24 @@ if evm_signer is not None:
         facilitator,
         evm_signer,
         networks=EVM_NETWORK,
-        deploy_erc4337_with_eip6492=True,
     )
 
     # Register upto EVM scheme (V2 only)
     facilitator.register([EVM_NETWORK], UptoEvmFacilitatorScheme(evm_signer))
+
+    # Register batch-settlement EVM scheme (V2 only). Facilitator key is
+    # advertised as receiverAuthorizer in /supported; servers may delegate
+    # to it or supply their own (SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY).
+    batch_settlement_authorizer = LocalAuthorizerSigner(
+        os.environ["FACILITATOR_EVM_PRIVATE_KEY"]
+    )
+    print(
+        f"EVM Receiver Authorizer (batch-settlement): {batch_settlement_authorizer.address}"
+    )
+    facilitator.register(
+        [EVM_NETWORK],
+        BatchSettlementEvmFacilitator(evm_signer, batch_settlement_authorizer),
+    )
 
 # Register SVM schemes (V1 and V2)
 if svm_signer is not None:

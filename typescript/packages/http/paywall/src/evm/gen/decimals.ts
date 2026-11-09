@@ -1,5 +1,5 @@
 // THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-// Source: @x402/evm DEFAULT_STABLECOINS (decimals !== 6 only).
+// Source: @x402/evm DEFAULT_ASSETS (decimals !== 6 only).
 // Regenerate via: pnpm --filter @x402/paywall run build:paywall
 
 /**
@@ -10,5 +10,6 @@
  */
 export const NETWORK_DECIMALS: Record<string, number> = {
   "eip155:31611": 18,
+  "eip155:31612": 18,
   "eip155:4326": 18,
 };

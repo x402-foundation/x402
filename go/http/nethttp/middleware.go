@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // SetSettlementOverrides sets settlement overrides on the response for partial settlement.
@@ -131,12 +132,13 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 	httpServer := x402http.Wrappedx402HTTPResourceServer(routes, server)
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	bazaar.ValidateBazaarRouteExtensions(routes)
 
 	if config.SyncFacilitatorOnStart {
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -166,6 +168,7 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 	httpServer := x402http.Newx402HTTPResourceServer(config.Routes, serverOpts...)
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	bazaar.ValidateBazaarRouteExtensions(config.Routes)
 
 	for _, scheme := range config.Schemes {
 		httpServer.Register(scheme.Network, scheme.Server)
@@ -175,7 +178,7 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -206,12 +209,13 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 	}
 
 	httpServer.RegisterExtension(bazaar.BazaarResourceServerExtension)
+	bazaar.ValidateBazaarRouteExtensionsFromServer(httpServer)
 
 	if config.SyncFacilitatorOnStart {
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
 
@@ -225,8 +229,11 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 			adapter := NewNetHTTPAdapter(r)
 			reqCtx := x402http.HTTPRequestContext{
 				Adapter: adapter,
-				Path:    r.URL.Path,
-				Method:  r.Method,
+				// Match both EscapedPath and URL.Path (the decoded routing view)
+				// so a route can't be bypassed via either representation.
+				Path:        r.URL.EscapedPath(),
+				DecodedPath: r.URL.Path,
+				Method:      r.Method,
 			}
 
 			// Check if route requires payment
@@ -261,14 +268,28 @@ func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseIn
 		w.Header().Set(key, value)
 	}
 
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
 	if response.IsHTML {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(response.Status)
 		fmt.Fprint(w, response.Body)
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		w.WriteHeader(response.Status)
+		fmt.Fprint(w, text)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.Status)
-		_ = json.NewEncoder(w).Encode(response.Body)
+		body := response.Body
+		if body == nil {
+			body = map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
 
@@ -309,15 +330,26 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
+					var cancelSettlement *x402.SettleResponse
 					if result.CancellationDispatcher != nil {
 						err, ok := rec.(error)
 						if !ok {
 							err = fmt.Errorf("%v", rec)
 						}
-						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
 						})
+					}
+					if headers := server.CreateFailurePathSettlementHeaders(
+						cancelSettlement,
+						result.BeforeHandlerSettlement,
+						result.PaymentPayload,
+						w.Header().Get("Cache-Control"),
+					); headers != nil {
+						for key, value := range headers {
+							w.Header().Set(key, value)
+						}
 					}
 					panic(rec)
 				}
@@ -328,11 +360,22 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: capture.statusCode,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			capture.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
 		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
@@ -350,6 +393,8 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 			ResponseHeaders: capture.Header(),
 		},
 		result.DeclaredExtensions,
+		result.BeforeHandlerSettlement,
+		"",
 	)
 
 	if !settleResult.Success {
@@ -369,7 +414,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]any{})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
@@ -378,6 +423,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 	for key, value := range settleResult.Headers {
 		w.Header().Set(key, value)
 	}
+	w.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(w.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {

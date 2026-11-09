@@ -25,6 +25,8 @@ type MulticallResult struct {
 	Status string
 	Result interface{}
 	Error  error
+	// ReturnData is the raw revert data of a failed call.
+	ReturnData []byte
 }
 
 type multicallTryAggregateCall struct {
@@ -89,8 +91,9 @@ func Multicall(
 	for i, raw := range decodedResults {
 		if !raw.Success {
 			results = append(results, MulticallResult{
-				Status: "failure",
-				Error:  fmt.Errorf("multicall: call reverted"),
+				Status:     "failure",
+				Error:      fmt.Errorf("multicall: call reverted"),
+				ReturnData: raw.ReturnData,
 			})
 			continue
 		}

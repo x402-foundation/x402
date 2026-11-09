@@ -4,7 +4,8 @@
     "lib": ["ES2020", "DOM", "dom.iterable", "esnext"],
     "allowJs": false,
     "checkJs": false,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["node"]
   },
   "include": ["src"]
 }

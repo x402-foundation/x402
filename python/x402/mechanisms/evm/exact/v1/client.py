@@ -8,6 +8,7 @@ from typing import Any
 
 from .....schemas.v1 import PaymentRequirementsV1
 from ...constants import SCHEME_EXACT
+from ...default_assets import find_default_asset
 from ...eip712 import build_typed_data_for_signing
 from ...signer import ClientEvmSigner
 from ...types import ExactEIP3009Authorization, ExactEIP3009Payload, TypedDataField
@@ -30,6 +31,7 @@ class ExactEvmSchemeV1:
     """
 
     scheme = SCHEME_EXACT
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientEvmSigner):
         """Create ExactEvmSchemeV1.

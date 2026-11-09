@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_STABLECOINS } from "@x402/evm";
+import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_ASSETS } from "@x402/evm";
 import { evmPaywall, getDefaultTokenDecimals } from "./evm";
 import { NETWORK_DECIMALS } from "./evm/gen/decimals";
+import { getEvmTemplate } from "./evm/template-loader";
 import { svmPaywall } from "./svm";
+import { getSvmTemplate } from "./svm/template-loader";
+import { avmPaywall } from "./avm";
+import { getAvmTemplate } from "./avm/template-loader";
 import { FAUCET_URLS, resolveFaucetUrl } from "./faucetUrls";
 import { isTestnetNetwork, SOLANA_NETWORK_REFS } from "./paywallUtils";
 import type { PaymentRequired, PaymentRequirements } from "./types";
@@ -61,7 +65,7 @@ describe("Network Handlers", () => {
     });
 
     it("renders 1e15-atomic Mezo mUSD as 0.001 (18-decimal end-to-end)", () => {
-      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS.
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_ASSETS.
       // 1e15 atomic = 0.001 mUSD. A regression to the old `parseFloat / 1e6`
       // path would render this as 1_000_000_000 (the order-of-magnitude bug
       // this PR fixes).
@@ -105,7 +109,7 @@ describe("Network Handlers", () => {
     });
 
     it("renders 1e6-atomic Base USDC as 1 (6-decimal end-to-end)", () => {
-      // Base mainnet USDC is 6-decimal in DEFAULT_STABLECOINS.
+      // Base mainnet USDC is 6-decimal in DEFAULT_ASSETS.
       // 1e6 atomic = 1.00 USDC. Asserts the same dispatch behaves correctly
       // for the canonical 6-decimal case alongside the 18-decimal case above.
       const req: PaymentRequirements = {
@@ -127,7 +131,7 @@ describe("Network Handlers", () => {
 
   describe("getDefaultTokenDecimals", () => {
     it("reads non-default decimals from the @x402/evm registry", () => {
-      // Mezo Testnet mUSD is 18-decimal in DEFAULT_STABLECOINS
+      // Mezo Testnet mUSD is 18-decimal in DEFAULT_ASSETS
       const req: PaymentRequirements = {
         ...evmRequirement,
         network: "eip155:31611",
@@ -138,12 +142,12 @@ describe("Network Handlers", () => {
 
     it("reads the registry value (not the fallback) for a known 6-decimal chain", () => {
       // Base mainnet USDC is in the registry at 6 decimals. Asserting
-      // alongside DEFAULT_STABLECOINS catches the case where the registry is
+      // alongside DEFAULT_ASSETS catches the case where the registry is
       // empty: the function would still return 6 via fallback, but the second
       // assertion would fail.
       const req: PaymentRequirements = { ...evmRequirement, network: "eip155:8453" };
       expect(getDefaultTokenDecimals(req)).toBe(6);
-      expect(DEFAULT_STABLECOINS["eip155:8453"]?.decimals).toBe(6);
+      expect(DEFAULT_ASSETS["eip155:8453"]?.[0]?.decimals).toBe(6);
     });
 
     it("falls back to 6 (USDC default) for networks not in the registry", () => {
@@ -154,23 +158,24 @@ describe("Network Handlers", () => {
       expect(getDefaultTokenDecimals(req)).toBe(6);
     });
 
-    it("NETWORK_DECIMALS overrides stay in sync with DEFAULT_STABLECOINS", () => {
+    it("NETWORK_DECIMALS overrides stay in sync with DEFAULT_ASSETS", () => {
       // The generated `src/evm/gen/decimals.ts` file is emitted by
-      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_STABLECOINS`. Only
+      // `src/evm/build.ts` from `@x402/evm`'s `DEFAULT_ASSETS`. Only
       // networks whose decimals !== 6 are listed; others rely on the fallback
       // in `getDefaultTokenDecimals`. This pins the drift invariant in-process
       // (complements the CI regen-diff guard in #2054).
       const fallbackDecimals = 6;
-      for (const [network, info] of Object.entries(DEFAULT_STABLECOINS)) {
+      for (const [network, assets] of Object.entries(DEFAULT_ASSETS)) {
+        const info = assets[0];
         expect(
           NETWORK_DECIMALS[network] ?? fallbackDecimals,
           `effective decimals drift on ${network}`,
         ).toBe(info.decimals);
       }
-      const stablecoinKeys = new Set(Object.keys(DEFAULT_STABLECOINS));
+      const stablecoinKeys = new Set(Object.keys(DEFAULT_ASSETS));
       for (const network of Object.keys(NETWORK_DECIMALS)) {
         expect(stablecoinKeys.has(network)).toBe(true);
-        const info = DEFAULT_STABLECOINS[network];
+        const info = DEFAULT_ASSETS[network][0];
         expect(NETWORK_DECIMALS[network]).toBe(info!.decimals);
         expect(
           info!.decimals,
@@ -244,6 +249,154 @@ describe("Network Handlers", () => {
 
       expect(html).toContain("<!DOCTYPE html>");
       expect(html).toMatch(/Solana Test|SVM Paywall/);
+    });
+
+    it("formats amount from maxAmountRequired when amount is missing", () => {
+      const req: PaymentRequirements = {
+        ...svmRequirement,
+        amount: undefined,
+        maxAmountRequired: "2500000",
+      };
+      const html = svmPaywall.generateHtml(
+        req,
+        { ...mockPaymentRequired, accepts: [req] },
+        { testnet: false },
+      );
+      expect(html).toContain("amount: 2.5,");
+      expect(html).not.toContain("console.log('SVM Payment required initialized:'");
+    });
+
+    it("renders zero when neither amount nor maxAmountRequired is set", () => {
+      const req: PaymentRequirements = {
+        ...svmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = svmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
+    });
+
+    it("uses config.currentUrl when the payment required has no resource URL", () => {
+      const html = svmPaywall.generateHtml(
+        svmRequirement,
+        { x402Version: 2, error: "Payment required", accepts: [svmRequirement] },
+        { currentUrl: "https://fallback.example/path", appName: 'App "Name"' },
+      );
+      expect(html).toContain("https://fallback.example/path");
+      expect(html).toContain('appName: "App \\"Name\\""');
+    });
+
+    it("injects rpcUrls as a script-safe JSON object keyed by CAIP-2 network", () => {
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {
+        rpcUrls: { [svmRequirement.network]: 'https://rpc.example/?key="k"</script>' },
+      });
+      expect(html).toContain(
+        'rpcUrls: {"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":"https://rpc.example/?key=\\"k\\"\\u003c/script>"},',
+      );
+    });
+
+    it("leaves rpcUrls undefined when not configured so the public default is used", () => {
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("rpcUrls: undefined,");
+    });
+  });
+
+  describe("avmPaywall", () => {
+    const avmRequirement: PaymentRequirements = {
+      scheme: "exact",
+      network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      asset: "0",
+      amount: "1000000",
+      payTo: "TESTNETADDRESS",
+      maxTimeoutSeconds: 60,
+    };
+
+    it("supports CAIP-2 Algorand networks", () => {
+      expect(avmPaywall.supports(avmRequirement)).toBe(true);
+      expect(avmPaywall.supports({ ...avmRequirement, network: "eip155:8453" })).toBe(false);
+    });
+
+    it("generates HTML for Algorand networks", () => {
+      const html = avmPaywall.generateHtml(avmRequirement, mockPaymentRequired, {
+        appName: "Algorand Test",
+        testnet: true,
+      });
+      expect(html).toContain("<!DOCTYPE html>");
+      expect(html).toMatch(/Algorand Test|AVM Paywall/);
+      expect(html).toContain("amount: 1,");
+    });
+
+    it("formats amount from maxAmountRequired when amount is missing", () => {
+      const req: PaymentRequirements = {
+        ...avmRequirement,
+        amount: undefined,
+        maxAmountRequired: "3000000",
+      };
+      const html = avmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 3,");
+    });
+
+    it("renders zero when neither amount nor maxAmountRequired is set", () => {
+      const req: PaymentRequirements = {
+        ...avmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = avmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
+    });
+  });
+
+  describe("template fallbacks", () => {
+    it("renders a build hint when the EVM template is missing", () => {
+      vi.mocked(getEvmTemplate).mockReturnValueOnce("");
+      const html = evmPaywall.generateHtml(evmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+
+    it("renders a build hint when the SVM template is missing", () => {
+      vi.mocked(getSvmTemplate).mockReturnValueOnce("");
+      const html = svmPaywall.generateHtml(svmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+
+    it("renders a build hint when the AVM template is missing", () => {
+      vi.mocked(getAvmTemplate).mockReturnValueOnce("");
+      const avmRequirement: PaymentRequirements = {
+        ...svmRequirement,
+        network: "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe",
+      };
+      const html = avmPaywall.generateHtml(avmRequirement, mockPaymentRequired, {});
+      expect(html).toContain("run pnpm build:paywall");
+    });
+  });
+
+  describe("evm currentUrl and amount fallbacks", () => {
+    it("uses config.currentUrl and escapes quotes in app metadata", () => {
+      const html = evmPaywall.generateHtml(
+        evmRequirement,
+        { x402Version: 2, error: "Payment required", accepts: [evmRequirement] },
+        {
+          currentUrl: 'https://example.com/path?q="x"',
+          appName: "App\nName",
+          appLogo: "https://cdn.example/logo.png",
+          testnet: false,
+        },
+      );
+      expect(html).toContain('https://example.com/path?q=\\"x\\"');
+      expect(html).toContain("App\\nName");
+      expect(html).toContain("https://cdn.example/logo.png");
+      expect(html).not.toContain("console.log('EVM Payment required initialized:'");
+    });
+
+    it("renders zero when the EVM requirement has no atomic amount", () => {
+      const req: PaymentRequirements = {
+        ...evmRequirement,
+        amount: undefined,
+        maxAmountRequired: undefined,
+      };
+      const html = evmPaywall.generateHtml(req, { ...mockPaymentRequired, accepts: [req] }, {});
+      expect(html).toContain("amount: 0,");
     });
   });
 });

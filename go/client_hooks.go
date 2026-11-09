@@ -2,6 +2,8 @@ package x402
 
 import (
 	"context"
+
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -22,10 +24,13 @@ type PaymentCreatedContext struct {
 	Payload PaymentPayloadView
 }
 
-// PaymentCreationFailureContext contains payment creation failure and context
+// PaymentCreationFailureContext contains payment creation failure and context.
+// PaymentRequired is set when the caller attached the challenge, so a scheme
+// handler can fall back to a sibling accept.
 type PaymentCreationFailureContext struct {
 	PaymentCreationContext
-	Error error
+	Error           error
+	PaymentRequired *types.PaymentRequired
 }
 
 // ============================================================================

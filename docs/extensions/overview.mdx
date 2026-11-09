@@ -46,6 +46,14 @@ interface ResourceServerExtension {
   /** Unique identifier for this extension */
   key: string;
 
+  /**
+   * Names of fields under the extension's `info` that are dynamic — regenerated
+   * on every PaymentRequired response (e.g. nonces, timestamps) — rather than
+   * static committed terms. Dynamic fields are excluded from client echo
+   * validation. Defaults to none (all info fields treated as static / strict).
+   */
+  dynamicInfoFields?: string[];
+
   /** Enrich the extension declaration at route registration time */
   enrichDeclaration?: (declaration: unknown, transportContext: unknown) => unknown;
 
@@ -111,6 +119,7 @@ Not all extensions use the same hooks. Here's how the built-in extensions map to
 | Extension | `enrichDeclaration` | `enrichPaymentRequiredResponse` | `enrichSettlementResponse` | Facilitator |
 |-----------|:---:|:---:|:---:|:---:|
 | Bazaar | ✅ (narrows HTTP method) | — | — | ✅ (discovery cataloging) |
+| Builder Code | — | ✅ (declares app code + schema) | — | ✅ (encodes ERC-8021 calldata suffix) |
 | EIP-2612 Gas Sponsoring | — | — | — | ✅ (batch signing) |
 | ERC-20 Approval Gas Sponsoring | — | — | — | ✅ (batch signing) |
 | Payment Identifier | — | ✅ | ✅ | — |
@@ -125,10 +134,11 @@ Bazaar is unique in that it spans both sides: the resource server extension enri
 | Extension | Type | Description | SDK Support |
 |-----------|------|-------------|-------------|
 | [Bazaar](./bazaar) | Server + Facilitator | Discovery layer for x402 endpoints and MCP tools. Makes your services findable by AI agents and developers. | TypeScript, Go, Python |
+| [Builder Code](./builder-code) | Server + Client + Facilitator | On-chain attribution tracking via ERC-8021 Schema 2. Appends CBOR-encoded builder codes to settlement transaction calldata. | TypeScript, Go, Python |
 | [EIP-2612 Gas Sponsoring](./eip2612-gas-sponsoring) | Facilitator | Sponsors gas for EIP-2612 permit-based token transfers. | TypeScript, Go, Python |
 | [ERC-20 Approval Gas Sponsoring](./erc20-approval-gas-sponsoring) | Facilitator | Sponsors gas for ERC-20 approval-based token transfers. | TypeScript, Go, Python |
 | [Payment Identifier](./payment-identifier) | Server + Client | Attaches a unique identifier to each payment for tracking, reconciliation, and idempotency. | TypeScript, Go, Python |
-| [Sign-In-With-X](./sign-in-with-x) | Server + Client | CAIP-122 wallet authentication. Lets clients prove wallet ownership to access previously purchased content without repaying. | TypeScript |
+| [Sign-In-With-X](./sign-in-with-x) | Server + Client | CAIP-122 wallet authentication. Lets clients prove wallet ownership to access previously purchased content without repaying. | TypeScript, Go, Python |
 | [Signed Offers & Receipts](./offer-receipt) | Server + Client | Signs offers on 402 responses and receipts on 200 responses, producing cryptographic proof-of-interaction artifacts. | TypeScript |
 
 ## Building a Custom Extension
@@ -150,9 +160,14 @@ import type { ResourceServerExtension } from "@x402/core";
 const myExtension: ResourceServerExtension = {
   key: "my-extension",
 
+  // Mark fields that are regenerated on every 402 response so they are
+  // excluded from client echo validation (extension_echo_mismatch check).
+  // Omit this property when all info fields are static committed terms.
+  dynamicInfoFields: ["timestamp"],
+
   enrichPaymentRequiredResponse: async (declaration, context) => {
     // Add custom data to the 402 response
-    return { customField: "value", timestamp: Date.now() };
+    return { info: { customField: "value", timestamp: Date.now() } };
   },
 
   enrichSettlementResponse: async (declaration, context) => {

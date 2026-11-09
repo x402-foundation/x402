@@ -1,0 +1,498 @@
+"""Unit tests for HTTP protected-request hooks and middleware cancellation."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from x402 import x402ResourceServer, x402ResourceServerSync
+from x402.http.constants import PAYMENT_SIGNATURE_HEADER
+from x402.http.types import (
+    HTTPRequestContext,
+    PaymentOption,
+    RouteConfig,
+)
+from x402.http.utils import decode_payment_response_header, encode_payment_signature_header
+from x402.http.x402_http_server import x402HTTPResourceServer, x402HTTPResourceServerSync
+from x402.schemas import (
+    AfterSettleAbortError,
+    AssetAmount,
+    PaymentPayload,
+    PaymentRequirements,
+    ResourceConfig,
+    SettleResponse,
+    VerifyResponse,
+)
+from x402.schemas.hooks import (
+    AbortProtectedRequestResult,
+    GrantAccessResult,
+    SkipHandlerDirective,
+    SkipHandlerResult,
+)
+from x402.schemas.payments import PaymentRequired
+from x402.schemas.responses import SupportedKind, SupportedResponse
+
+
+def make_requirements() -> PaymentRequirements:
+    return PaymentRequirements(
+        scheme="exact",
+        network="eip155:8453",
+        asset="0x0000000000000000000000000000000000000000",
+        amount="1000000",
+        pay_to="0x1234567890123456789012345678901234567890",
+        max_timeout_seconds=300,
+    )
+
+
+class MockHTTPAdapter:
+    def get_header(self, name: str) -> str | None:
+        return None
+
+    def get_method(self) -> str:
+        return "GET"
+
+    def get_path(self) -> str:
+        return "/api/protected"
+
+    def get_url(self) -> str:
+        return "https://example.com/api/protected"
+
+    def get_accept_header(self) -> str:
+        return "application/json"
+
+    def get_user_agent(self) -> str:
+        return "test-client"
+
+    def get_query_params(self) -> dict[str, str]:
+        return {}
+
+    def get_query_param(self, name: str) -> str | None:
+        return None
+
+    def get_body(self):
+        return None
+
+
+@pytest.fixture
+def protected_routes() -> dict[str, RouteConfig]:
+    return {
+        "GET /api/protected": RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to="0x1234567890123456789012345678901234567890",
+                price="$0.01",
+                network="eip155:8453",
+            ),
+        )
+    }
+
+
+class TestOnProtectedRequest:
+    @pytest.mark.asyncio
+    async def test_grant_access(self, protected_routes):
+        server = MagicMock()
+        http_server = x402HTTPResourceServer(server, protected_routes)
+        http_server.on_protected_request(lambda _ctx, _cfg: GrantAccessResult())
+
+        context = HTTPRequestContext(
+            adapter=MockHTTPAdapter(),
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = await http_server.process_http_request(context)
+
+        assert result.type == "no-payment-required"
+
+    @pytest.mark.asyncio
+    async def test_abort(self, protected_routes):
+        server = MagicMock()
+        http_server = x402HTTPResourceServer(server, protected_routes)
+        http_server.on_protected_request(
+            lambda _ctx, _cfg: AbortProtectedRequestResult(reason="Access denied")
+        )
+
+        context = HTTPRequestContext(
+            adapter=MockHTTPAdapter(),
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = await http_server.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 403
+        assert result.response.body == {"error": "Access denied"}
+
+    @pytest.mark.asyncio
+    async def test_continue_to_payment_flow(self, protected_routes):
+        server = MagicMock()
+        server.enrich_extensions.side_effect = lambda declared, _ctx: declared
+        requirements = [make_requirements()]
+
+        async def mock_create_payment_required(
+            _requirements, _resource, error, _extensions, **_kwargs
+        ):
+            return PaymentRequired(
+                x402_version=2,
+                error=error,
+                accepts=requirements,
+            )
+
+        server.create_payment_required_response = AsyncMock(
+            side_effect=mock_create_payment_required
+        )
+        http_server = x402HTTPResourceServer(server, protected_routes)
+        http_server.on_protected_request(lambda _ctx, _cfg: None)
+
+        context = HTTPRequestContext(
+            adapter=MockHTTPAdapter(),
+            path="/api/protected",
+            method="GET",
+        )
+
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=[make_requirements()]),
+        ):
+            result = await http_server.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+
+
+class MockFacilitatorClient:
+    def __init__(self) -> None:
+        self.verify_calls: list = []
+        self.settle_calls: list = []
+
+    def get_supported(self) -> SupportedResponse:
+        return SupportedResponse(
+            kinds=[
+                SupportedKind(
+                    x402_version=2,
+                    scheme="exact",
+                    network="eip155:8453",
+                )
+            ],
+            extensions=[],
+            signers={},
+        )
+
+    async def verify(self, payload, requirements) -> VerifyResponse:
+        self.verify_calls.append((payload, requirements))
+        return VerifyResponse(is_valid=True, payer="0xpayer")
+
+    async def settle(self, payload, requirements) -> SettleResponse:
+        self.settle_calls.append((payload, requirements))
+        return SettleResponse(
+            success=True,
+            transaction="0xmock",
+            network=requirements.network,
+            payer="0xpayer",
+        )
+
+
+class TestSkipHandlerSettlement:
+    @pytest.mark.asyncio
+    async def test_settles_and_returns_skip_handler_response(self):
+        class ExactScheme:
+            scheme = "exact"
+            default_asset_transfer_method = "default"
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+            }
+
+        client = MockFacilitatorClient()
+        server = x402ResourceServer(client)
+        server.register("eip155:8453", ExactScheme())
+        server.initialize()
+        server.on_after_verify(
+            lambda _ctx: SkipHandlerResult(
+                response=SkipHandlerDirective(
+                    content_type="application/json",
+                    body={"message": "Refund acknowledged"},
+                )
+            )
+        )
+
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+        payment_header = encode_payment_signature_header(payload)
+
+        routes = {
+            "GET /api/refund": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        http_server = x402HTTPResourceServer(server, routes)
+
+        class RefundAdapter(MockHTTPAdapter):
+            def get_path(self) -> str:
+                return "/api/refund"
+
+            def get_header(self, name: str) -> str | None:
+                if name.lower() == PAYMENT_SIGNATURE_HEADER.lower():
+                    return payment_header
+                return None
+
+        context = HTTPRequestContext(
+            adapter=RefundAdapter(),
+            path="/api/refund",
+            method="GET",
+        )
+
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=[requirements]),
+        ):
+            result = await http_server.process_http_request(context)
+
+        assert len(client.verify_calls) == 1
+        assert len(client.settle_calls) == 1
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 200
+        assert result.response.body == {"message": "Refund acknowledged"}
+        assert "PAYMENT-RESPONSE" in result.response.headers
+
+
+class TestAfterSettleAbort:
+    @pytest.mark.asyncio
+    async def test_keeps_onchain_receipt_in_payment_response(self):
+        class ExactScheme:
+            scheme = "exact"
+            default_asset_transfer_method = "default"
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+            }
+
+        class DepositFacilitatorClient(MockFacilitatorClient):
+            async def settle(self, payload, requirements) -> SettleResponse:
+                return SettleResponse(
+                    success=True,
+                    transaction="0xdeposit",
+                    network="eip155:8453",
+                    payer="0xpayer",
+                    amount="1000000",
+                    extra={"channelState": "kept"},
+                )
+
+        def abort_after_settle(_ctx):
+            raise AfterSettleAbortError("voucher_store_unavailable", "store down")
+
+        server = x402ResourceServer(DepositFacilitatorClient())
+        server.register("eip155:8453", ExactScheme())
+        server.initialize()
+        server.on_after_settle(abort_after_settle)
+        http_server = x402HTTPResourceServer(server, {})
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+
+        result = await http_server.process_settlement(payload, requirements)
+
+        assert result.success is False
+        assert result.response is not None
+        assert result.response.status == 402
+        decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
+        assert decoded.success is False
+        assert decoded.error_reason == "voucher_store_unavailable"
+        assert decoded.transaction == "0xdeposit"
+        assert decoded.amount == "1000000"
+        assert decoded.extra == {"channelState": "kept"}
+
+
+class PaymentHeaderAdapter(MockHTTPAdapter):
+    def __init__(self, payment_header: str) -> None:
+        self._payment_header = payment_header
+
+    def get_header(self, name: str) -> str | None:
+        if name.lower() == PAYMENT_SIGNATURE_HEADER.lower():
+            return self._payment_header
+        return None
+
+
+class TestV1PayloadRejected:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("version", [1, True])
+    async def test_v1_payload_returns_402(self, protected_routes, version):
+        server = MagicMock()
+        server.enrich_extensions.side_effect = lambda declared, _ctx: declared
+        requirements = [make_requirements()]
+
+        async def mock_create_payment_required(
+            _requirements, _resource, error, _extensions, **_kwargs
+        ):
+            return PaymentRequired(x402_version=2, error=error, accepts=requirements)
+
+        server.create_payment_required_response = AsyncMock(
+            side_effect=mock_create_payment_required
+        )
+        http_server = x402HTTPResourceServer(server, protected_routes)
+
+        header = base64.b64encode(
+            json.dumps(
+                {"x402Version": version, "scheme": "exact", "network": "eip155:8453", "payload": {}}
+            ).encode()
+        ).decode()
+        context = HTTPRequestContext(
+            adapter=PaymentHeaderAdapter(header),
+            path="/api/protected",
+            method="GET",
+        )
+
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=requirements),
+        ):
+            result = await http_server.process_http_request(context)
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        server.find_matching_requirements.assert_not_called()
+
+
+class _ExactScheme:
+    scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
+
+    def parse_price(self, price, network):
+        return AssetAmount(
+            amount="1000000",
+            asset="0x0000000000000000000000000000000000000000",
+        )
+
+    def enhance_payment_requirements(self, requirements, supported_kind, extensions):
+        return requirements
+
+
+class _SyncFacilitator:
+    def __init__(self) -> None:
+        self.verify_calls: list = []
+        self.settle_calls: list = []
+
+    def get_supported(self) -> SupportedResponse:
+        return SupportedResponse(
+            kinds=[
+                SupportedKind(x402_version=2, scheme="exact", network="eip155:8453"),
+            ],
+            extensions=[],
+            signers={},
+        )
+
+    def verify(self, payload, requirements) -> VerifyResponse:
+        self.verify_calls.append((payload, requirements))
+        return VerifyResponse(is_valid=True, payer="0xpayer")
+
+    def settle(self, payload, requirements) -> SettleResponse:
+        self.settle_calls.append((payload, requirements))
+        return SettleResponse(
+            success=True,
+            transaction="0xmock",
+            network=requirements.network,
+            payer="0xpayer",
+        )
+
+
+def _gate_http_server(mode: str):
+    if mode == "async":
+        client = MockFacilitatorClient()
+        server = x402ResourceServer(client)
+        http_cls = x402HTTPResourceServer
+    else:
+        client = _SyncFacilitator()
+        server = x402ResourceServerSync(client)
+        http_cls = x402HTTPResourceServerSync
+    server.register("eip155:8453", _ExactScheme())
+    server.initialize()
+    routes = {
+        "GET /api/protected": RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to="0x1234567890123456789012345678901234567890",
+                price="$0.01",
+                network="eip155:8453",
+            ),
+        )
+    }
+    return server, client, http_cls(server, routes)
+
+
+def _drive(result):
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
+class TestGateHookThrowHttpOutcomes:
+    @pytest.mark.parametrize("mode", ["async", "sync"])
+    def test_verify_hook_throw_hides_exception_text(self, mode):
+        server, client, http_server = _gate_http_server(mode)
+
+        def hook(_ctx):
+            raise RuntimeError("rpc secret https://internal.example/key")
+
+        server.on_before_verify(hook)
+        requirements = server.build_payment_requirements(
+            ResourceConfig(
+                scheme="exact",
+                pay_to="0x1234567890123456789012345678901234567890",
+                price="$0.01",
+                network="eip155:8453",
+            )
+        )[0]
+        payload = PaymentPayload(payload={}, accepted=requirements)
+        context = HTTPRequestContext(
+            adapter=PaymentHeaderAdapter(encode_payment_signature_header(payload)),
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = _drive(http_server.process_http_request(context))
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.body == {"error": "before_verify_hook_error"}
+        assert "rpc secret" not in json.dumps(result.response.body)
+        assert client.verify_calls == []
+
+    @pytest.mark.parametrize("mode", ["async", "sync"])
+    def test_settle_hook_throw_uses_fixed_settle_error(self, mode):
+        server, client, http_server = _gate_http_server(mode)
+
+        def hook(_ctx):
+            raise RuntimeError("storage path /var/secret")
+
+        server.on_before_settle(hook)
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+
+        result = _drive(http_server.process_settlement(payload, requirements))
+
+        assert result.success is False
+        assert result.error_reason == "before_settle_hook_error"
+        decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
+        assert decoded.error_reason == "before_settle_hook_error"
+        assert decoded.error_message == "before settle hook failed"
+        assert "storage path" not in (decoded.error_reason or "")
+        assert "storage path" not in (decoded.error_message or "")
+        assert client.settle_calls == []

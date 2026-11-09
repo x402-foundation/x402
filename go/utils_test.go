@@ -1,6 +1,7 @@
 package x402
 
 import (
+	"math"
 	"testing"
 )
 
@@ -407,4 +408,149 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestParseMoneyString(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"1.0000005", "1.0000005", false},
+		{"0.0000005", "0.0000005", false},
+		{"0.0000009", "0.0000009", false},
+		{"0", "0", false},
+		{"0.00", "0.00", false},
+		{"$1.50", "1.50", false},
+		{"$0", "0", false},
+		{"-1", "", true},
+		{"1e6", "", true},
+		{"1.50 USDT", "", true},
+		{"1.50USDT", "", true},
+	}
+	for _, tt := range tests {
+		got, err := ParseMoneyString(tt.in)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("ParseMoneyString(%q) expected error", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseMoneyString(%q) unexpected error: %v", tt.in, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseMoneyString(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseMoney(t *testing.T) {
+	t.Run("string amounts keep exact digits", func(t *testing.T) {
+		got, symbol, err := ParseMoney("8975.978289462729")
+		if err != nil {
+			t.Fatalf("ParseMoney: %v", err)
+		}
+		if got != "8975.978289462729" {
+			t.Errorf("amount = %q, want 8975.978289462729", got)
+		}
+		if symbol != "" {
+			t.Errorf("symbol = %q, want empty", symbol)
+		}
+	})
+
+	t.Run("ticker and dollar prefix", func(t *testing.T) {
+		got, symbol, err := ParseMoney("1.50 USDT")
+		if err != nil {
+			t.Fatalf("ParseMoney: %v", err)
+		}
+		if got != "1.50" || symbol != "USDT" {
+			t.Errorf("got (%q, %q), want (\"1.50\", \"USDT\")", got, symbol)
+		}
+
+		got, symbol, err = ParseMoney("1.50 USD")
+		if err != nil {
+			t.Fatalf("ParseMoney: %v", err)
+		}
+		if got != "1.50" || symbol != "" {
+			t.Errorf("got (%q, %q), want (\"1.50\", \"\")", got, symbol)
+		}
+
+		got, symbol, err = ParseMoney("$1.50")
+		if err != nil {
+			t.Fatalf("ParseMoney: %v", err)
+		}
+		if got != "1.50" || symbol != "" {
+			t.Errorf("got (%q, %q), want (\"1.50\", \"\")", got, symbol)
+		}
+	})
+
+	t.Run("numeric types stringify without float for integers", func(t *testing.T) {
+		got, _, err := ParseMoney(4)
+		if err != nil || got != "4" {
+			t.Errorf("ParseMoney(4) = %q, %v, want \"4\"", got, err)
+		}
+		got, _, err = ParseMoney(int64(5))
+		if err != nil || got != "5" {
+			t.Errorf("ParseMoney(int64(5)) = %q, %v, want \"5\"", got, err)
+		}
+		got, _, err = ParseMoney(3.5)
+		if err != nil || got != "3.5" {
+			t.Errorf("ParseMoney(3.5) = %q, %v, want \"3.5\"", got, err)
+		}
+	})
+
+	t.Run("rejects invalid values", func(t *testing.T) {
+		invalid := []Price{-1, -1.5, math.NaN(), math.Inf(1), math.Inf(-1), "nope", "1.50USDT", "1e6"}
+		for _, in := range invalid {
+			if _, _, err := ParseMoney(in); err == nil {
+				t.Errorf("ParseMoney(%v) expected error", in)
+			}
+		}
+	})
+}
+
+func TestConvertToTokenAmount(t *testing.T) {
+	tests := []struct {
+		amount   string
+		decimals int
+		want     string
+		wantErr  bool
+	}{
+		{"1.0000005", 6, "1000000", false},
+		{"0.0000005", 6, "0", false},
+		{"0.0000009", 6, "0", false},
+		{"0", 6, "0", false},
+		{"0.00", 6, "0", false},
+		{"8975.978289462729", 18, "8975978289462729000000", false},
+		{"8975.978289462729", 6, "8975978289", false},
+		{"1e6", 6, "", true},
+		{"not-a-number", 6, "", true},
+	}
+	for _, tt := range tests {
+		got, err := ConvertToTokenAmount(tt.amount, tt.decimals)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("ConvertToTokenAmount(%q, %d) expected error", tt.amount, tt.decimals)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ConvertToTokenAmount(%q, %d) unexpected error: %v", tt.amount, tt.decimals, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ConvertToTokenAmount(%q, %d) = %q, want %q", tt.amount, tt.decimals, got, tt.want)
+		}
+	}
+}
+
+func TestNumberToDecimalString(t *testing.T) {
+	if got := NumberToDecimalString(4.02); got != "4.02" {
+		t.Errorf("NumberToDecimalString(4.02) = %q, want \"4.02\"", got)
+	}
+	if got := NumberToDecimalString(0); got != "0" {
+		t.Errorf("NumberToDecimalString(0) = %q, want \"0\"", got)
+	}
 }

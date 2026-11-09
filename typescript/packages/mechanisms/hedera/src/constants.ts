@@ -9,6 +9,16 @@ export const HEDERA_MAINNET_CAIP2 = "hedera:mainnet";
 export const HEDERA_TESTNET_CAIP2 = "hedera:testnet";
 
 /**
+ * Hedera Mirror Node REST API base URL for Mainnet.
+ */
+export const HEDERA_MAINNET_MIRROR_NODE_URL = "https://mainnet-public.mirrornode.hedera.com";
+
+/**
+ * Hedera Mirror Node REST API base URL for Testnet.
+ */
+export const HEDERA_TESTNET_MIRROR_NODE_URL = "https://testnet.mirrornode.hedera.com";
+
+/**
  * Asset id used by x402 to represent native HBAR.
  */
 export const HBAR_ASSET_ID = "0.0.0";

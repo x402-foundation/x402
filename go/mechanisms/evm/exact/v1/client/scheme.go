@@ -7,9 +7,10 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/v1"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	evmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/v1"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactEvmSchemeV1 implements the SchemeNetworkClientV1 interface for EVM exact payments (V1)
@@ -29,10 +30,19 @@ func (c *ExactEvmSchemeV1) Scheme() string {
 	return evm.SchemeExact
 }
 
+func (c *ExactEvmSchemeV1) FindDefaultAsset(asset string, network x402.Network) *x402.DefaultAsset {
+	info := evm.FindDefaultAsset(asset, string(network))
+	if info == nil {
+		return nil
+	}
+	return &x402.DefaultAsset{Asset: info.Asset, Decimals: info.Decimals, Symbol: info.Symbol}
+}
+
 // CreatePaymentPayload creates a V1 payment payload for the exact scheme
 func (c *ExactEvmSchemeV1) CreatePaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirementsV1,
+	_ x402.PaymentPayloadContext,
 ) (types.PaymentPayloadV1, error) {
 	networkStr := requirements.Network
 

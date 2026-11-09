@@ -24,7 +24,7 @@ describe("withPaymentInterceptor()", () => {
     {
       scheme: "exact",
       network: "base-sepolia",
-      maxAmountRequired: "1000000", // 1 USDC in base units
+      maxAmountRequired: "100000", // 0.1 USDC in base units
       resource: "https://api.example.com/resource",
       description: "Test payment",
       mimeType: "application/json",
@@ -254,7 +254,7 @@ describe("withPaymentInterceptor() - SVM and MultiNetwork", () => {
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "1000000",
+        maxAmountRequired: "100000",
         resource: "https://api.example.com/resource",
         description: "Test payment",
         mimeType: "application/json",
@@ -324,7 +324,7 @@ describe("withPaymentInterceptor() - SVM and MultiNetwork", () => {
       {
         scheme: "exact",
         network: "base",
-        maxAmountRequired: "1000000",
+        maxAmountRequired: "100000",
         resource: "https://api.example.com/resource",
         description: "Test payment",
         mimeType: "application/json",

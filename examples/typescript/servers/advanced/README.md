@@ -5,11 +5,13 @@ Express.js server demonstrating advanced x402 patterns including dynamic pricing
 ```typescript
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { ExactKeetaScheme } from "@x402/keeta/exact/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 
 const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: facilitatorUrl }))
   .register("eip155:84532", new ExactEvmScheme())
+  .register("keeta:*", new ExactKeetaScheme())
   .register("stellar:*", new ExactStellarScheme())
   .onBeforeVerify(async ctx => console.log("Verifying payment..."))
   .onAfterSettle(async ctx => console.log("Settled:", ctx.result.transaction));
@@ -31,6 +33,14 @@ app.use(
           price: ctx => (ctx.adapter.getQueryParam?.("tier") === "premium" ? "$0.01" : "$0.001"),
           network: "stellar:*",
           payTo: stellarAddress,
+        },
+      },
+      "GET /weather-keeta": {
+        accepts: {
+          scheme: "exact",
+          price: ctx => (ctx.adapter.getQueryParam?.("tier") === "premium" ? "$0.01" : "$0.001"),
+          network: "keeta:*",
+          payTo: keetaAddress,
         },
       },
     },
@@ -57,12 +67,36 @@ cp .env-local .env
 and fill required environment variables:
 
 - `FACILITATOR_URL` - Facilitator endpoint URL
+- `AVM_ADDRESS` - Algorand address to receive payments (optional for `all-networks`)
+- `AVM_NETWORK` - Algorand network CAIP-2 (optional; defaults to canonical Algorand Testnet)
+- `CARDANO_ADDRESS` - Cardano `addr_test1...` address to receive payments (optional for `all-networks`)
+- `CARDANO_L1_CONFIRMATIONS` - Optional confirmation policy (`-1..20`; unset = 1 confirmation)
+- `APTOS_ADDRESS` - Aptos account address to receive payments (optional for `all-networks`)
+- `CASPER_ADDRESS` - Casper address to receive payments (optional for `all-networks`)
+- `CASPER_NETWORK` - Casper network CAIP-2 (optional; defaults to `casper:casper-test`)
+- `CASPER_ASSET` - CEP-18 contract package hash (optional for `all-networks`)
+- `CASPER_TOKEN_NAME` - CEP-3009 EIP-712 token name (optional for `all-networks`)
+- `CASPER_TOKEN_VERSION` - CEP-3009 EIP-712 token version (optional for `all-networks`)
+- `CASPER_AMOUNT` - Casper CEP-18 amount (optional; defaults to `1500000000`)
+- `CANTON_ADDRESS` - Canton merchant party to receive payments (optional for `all-networks`)
+- `CANTON_INSTRUMENT_ADMIN` - Instrument admin party; the DSO party for Canton Coin (optional for `all-networks`)
+- `CANTON_SYNCHRONIZER_ID` - Global Synchronizer id (optional for `all-networks`)
+- `CANTON_NETWORK` - Canton network CAIP-2 (optional; defaults to `canton:mainnet`)
+- `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
 - `STELLAR_ADDRESS` - Stellar public address (starts with `G`) to receive payments
 - `HEDERA_ACCOUNT_ID` - Hedera account id to receive payments (optional for `all-networks`; format: `0.0.XXXXX`)
+- `KEETA_ADDRESS` - Keeta address (starts with `keeta_`) to receive payments
+- `XRPL_ADDRESS` - XRPL classic address (starts with `r`) to receive payments (optional for `all-networks`)
+- `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
+- `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
 
+> **Canton:** the merchant must hold a live Canton Coin `TransferPreapproval` to be paid. Create it once (and renew it before it expires) with `pnpm setup:canton-preapproval`, which also needs `CANTON_PRIVATE_KEY` (the merchant's Ed25519 PKCS8 PEM), `CANTON_PARTICIPANT_URL`, `CANTON_TOKEN`, `CANTON_USER_ID` and `CANTON_SCAN_URL`. The merchant pays the small preapproval fee from its own Canton Coin; on DevNet, get some from a [CC tap](https://docs.canton.network/sdks-tools/sdks/wallet-sdk/guides/performing-a-cc-tap).
+>
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
+>
+> **Cardano Testnet:** Get test ADA (tADA) for preprod/preview from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/).
 
 2. Install and build all packages from the typescript examples root:
 
@@ -78,6 +112,16 @@ cd servers/advanced
 pnpm dev
 ```
 
+### Network configuration
+
+The `network` in route `accepts` and `.register(...)` must **exactly match** a scheme/network pair from your facilitator's `/supported` response. The server checks this on startup; a mismatch fails initialization.
+
+Check what your facilitator supports before configuring networks:
+
+```bash
+curl -s "$FACILITATOR_URL/supported" | jq '.kinds[] | {scheme, network}'
+```
+
 ### Account Setup Instructions
 
 #### Stellar Testnet
@@ -87,6 +131,34 @@ Stellar accounts need to be created and funded with both XLM and USDC. Instructi
 1. Go to [Stellar Laboratory](https://lab.stellar.org/account/create) ➡️ Generate keypair ➡️ Fund account with Friendbot, then copy the `Secret` and `Public` keys so you can use them.
 2. Add USDC trustline (required to transact USDC): go to [Fund Account](https://lab.stellar.org/account/fund) ➡️ Paste your `Public Key` ➡️ Add USDC Trustline ➡️ paste your `Secret key` ➡️ Sign transaction ➡️ Add Trustline.
 3. Get testnet USDC from [Circle Faucet](https://faucet.circle.com/) (select Stellar network).
+
+#### Keeta Testnet
+
+To create a Keeta Testnet wallet:
+
+1. Go to [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and follow the steps to create your wallet. Make sure to save your mnemonic (seed phrase) to keep access to your wallet. To get your Keeta address, click on "Receive" and copy the deposit address (starting with `keeta_`).
+2. Use the [Keeta Testnet Faucet](https://faucet.test.keeta.com/) to send Testnet KTA to your wallet.
+3. To get Testnet USDC on Keeta, go to the "Receive" page in the wallet, click on "Any token from Keeta Testnet", select "USDC from Base (Sepolia) Testnet" and copy the deposit address (starting with `0x`). Then go the [Circle Faucet](https://faucet.circle.com/), select Base network and enter your Base deposit address.
+
+#### Aptos Testnet
+
+For testing on Aptos testnet, you can obtain test tokens from these faucets:
+
+- **Test APT**: https://aptos.dev/network/faucet or through an account on [geomi.dev](https://geomi.dev/manage/faucet)
+- **Test USDC**: https://faucet.circle.com/
+
+#### XRPL Testnet
+
+The receiving account must exist on the ledger, i.e. hold the [base reserve](https://xrpl.org/docs/concepts/accounts/reserves) (currently 1 XRP):
+
+1. Use the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets) to generate a funded account, and copy its classic address (starts with `r`) into `XRPL_ADDRESS`.
+2. The `all-networks` example prices in XRP drops, so no further setup is needed. To receive issued-currency (IOU) payments instead, the receiving account must hold a [trust line](https://xrpl.org/docs/concepts/tokens/fungible-tokens) to the issuer.
+
+#### Casper Testnet
+
+Create or reuse a dedicated Casper testnet account or wallet key, then fund any account that submits Casper transactions with testnet CSPR from the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet). CSPR is required for gas on Casper Testnet.
+
+Use [testnet.cspr.trade](https://testnet.cspr.trade) to get wrapped CSPR (WCSPR) or csprUSD for the client payments.
 
 ## Available Examples
 

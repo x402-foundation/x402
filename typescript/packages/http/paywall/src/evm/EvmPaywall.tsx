@@ -154,6 +154,7 @@ export function EvmPaywall({ paymentRequired, onSuccessfulResponse }: EvmPaywall
 
       const signer = wagmiToClientSigner(walletClient);
       const client = new x402Client();
+      client.setSpendControls(false); // UI already confirms
       client.register("eip155:*", new ExactEvmScheme(signer));
 
       // Create payment payload - client automatically handles version

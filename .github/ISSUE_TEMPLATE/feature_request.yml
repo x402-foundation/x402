@@ -1,0 +1,24 @@
+name: Feature Proposal
+description: Propose a concrete new feature or protocol change
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended discussion, use the [x402 Slack community](http://slack.x402.org/) first.
+        Feature issues should describe a concrete, scoped proposal.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this solve, or what use case does it enable?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you are proposing.
+    validations:
+      required: true

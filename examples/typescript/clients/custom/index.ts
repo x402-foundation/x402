@@ -29,8 +29,9 @@ config();
 
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
 const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string;
-const baseURL = process.env.SERVER_URL || "http://localhost:4021";
-const url = `${baseURL}/weather`;
+const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
+const endpointPath = process.env.ENDPOINT_PATH || "/weather";
+const url = `${baseURL}${endpointPath}`;
 
 /**
  * Makes a request with x402 payment handling.

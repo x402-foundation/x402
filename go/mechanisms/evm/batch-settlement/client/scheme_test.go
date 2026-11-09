@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 const (
@@ -45,6 +46,86 @@ func defaultRequirements() types.PaymentRequirements {
 	}
 }
 
+func requirementsWithAmount(amount string) types.PaymentRequirements {
+	req := defaultRequirements()
+	req.Amount = amount
+	return req
+}
+
+func strPtr(s string) *string { return &s }
+
+func makeSettle(extra map[string]interface{}) *x402.SettleResponse {
+	return &x402.SettleResponse{
+		Success:     true,
+		Transaction: "0x",
+		Network:     testNetwork,
+		Extra:       extra,
+	}
+}
+
+func makeFailedSettle(extra map[string]interface{}) *x402.SettleResponse {
+	return &x402.SettleResponse{
+		Success:     false,
+		Transaction: "",
+		Network:     testNetwork,
+		ErrorReason: "settlement_failed",
+		Extra:       extra,
+	}
+}
+
+func voucherPayload() map[string]interface{} {
+	return map[string]interface{}{"type": "voucher"}
+}
+
+func refundPayloadMap(channelId string, amount *string) map[string]interface{} {
+	p := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": map[string]interface{}{},
+		"voucher": map[string]interface{}{
+			"channelId":          channelId,
+			"maxClaimableAmount": "1000",
+			"signature":          "0xdead",
+		},
+	}
+	if amount != nil {
+		p["amount"] = *amount
+	}
+	return p
+}
+
+func depositPayloadMap(channelId, depositAmount string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":          "deposit",
+		"channelConfig": map[string]interface{}{},
+		"voucher": map[string]interface{}{
+			"channelId":          channelId,
+			"maxClaimableAmount": "1000",
+			"signature":          "0xdead",
+		},
+		"deposit": map[string]interface{}{
+			"amount":        depositAmount,
+			"authorization": map[string]interface{}{},
+		},
+	}
+}
+
+func localChannelId(t *testing.T, scheme *BatchSettlementEvmScheme, req types.PaymentRequirements) string {
+	t.Helper()
+	cfg, err := scheme.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
+	id, err := batchsettlement.ComputeChannelId(cfg, req.Network)
+	if err != nil {
+		t.Fatalf("ComputeChannelId: %v", err)
+	}
+	id, err = batchsettlement.NormalizeChannelId(id)
+	if err != nil {
+		t.Fatalf("NormalizeChannelId: %v", err)
+	}
+	return id
+}
+
 // ---------- NewBatchSettlementEvmScheme defaults ----------
 
 func TestNewBatchSettlementEvmScheme_Defaults(t *testing.T) {
@@ -53,8 +134,8 @@ func TestNewBatchSettlementEvmScheme_Defaults(t *testing.T) {
 	if scheme.config.DepositMultiplier != DefaultDepositMultiplier {
 		t.Fatalf("multiplier = %d", scheme.config.DepositMultiplier)
 	}
-	if scheme.config.Salt != DefaultSalt {
-		t.Fatalf("salt = %s", scheme.config.Salt)
+	if scheme.config.Salt != "" {
+		t.Fatalf("salt should default to empty, got %q", scheme.config.Salt)
 	}
 	if scheme.config.DepositStrategy != nil {
 		t.Fatal("DepositStrategy should be nil by default")
@@ -85,7 +166,7 @@ func TestNewBatchSettlementEvmScheme_OverridesConfig(t *testing.T) {
 		t.Fatal("storage should be the explicit one")
 	}
 	if scheme.config.Salt != "0xfeed" {
-		t.Fatalf("salt = %s", scheme.config.Salt)
+		t.Fatal("salt override not stored")
 	}
 	if scheme.config.PayerAuthorizer != "0xPA" {
 		t.Fatalf("payerAuthorizer = %s", scheme.config.PayerAuthorizer)
@@ -117,6 +198,9 @@ func TestBuildChannelConfig_DefaultsAndOverrides(t *testing.T) {
 	}
 	if config.WithdrawDelay != DefaultWithdrawDelay {
 		t.Fatalf("withdrawDelay = %d", config.WithdrawDelay)
+	}
+	if config.Salt != DefaultSalt {
+		t.Fatalf("salt = %s", config.Salt)
 	}
 }
 
@@ -181,24 +265,264 @@ func TestBuildChannelConfig_ExplicitPayerAuthorizer(t *testing.T) {
 	}
 }
 
-// ---------- calculateDepositAmount ----------
-
-func TestCalculateDepositAmount_BasicMultiplier(t *testing.T) {
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, nil)
-	// Default multiplier 5 → 5 * 100 = 500.
-	got := scheme.calculateDepositAmount(big.NewInt(100))
-	if got.Cmp(big.NewInt(500)) != 0 {
-		t.Fatalf("got %s", got.String())
+func TestBuildChannelConfig_RespectsCustomSaltFromOptions(t *testing.T) {
+	salt := "0xabc1230000000000000000000000000000000000000000000000000000000099"
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+	cfg, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
+	if cfg.Salt != salt {
+		t.Fatalf("salt = %s", cfg.Salt)
 	}
 }
 
-func TestCalculateDepositAmount_HonorsCustomMultiplier(t *testing.T) {
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{
-		DepositMultiplier: 100,
-	})
-	got := scheme.calculateDepositAmount(big.NewInt(100))
-	if got.Cmp(big.NewInt(10_000)) != 0 {
-		t.Fatalf("got %s", got.String())
+func TestBuildChannelConfig_PacksRefundAuthorizerIntoSalt(t *testing.T) {
+	salt := "0xabc1230000000000000000000000000000000000000000000000000000000099"
+	refundAuthorizer := "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd"
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+	req := defaultRequirements()
+	req.Extra["voucherManager"] = batchsettlement.VoucherManagerFacilitator
+	req.Extra["refundAuthorizer"] = refundAuthorizer
+	cfg, err := scheme.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
+	want, err := batchsettlement.PackRefundAuthorizerSalt(salt, refundAuthorizer)
+	if err != nil {
+		t.Fatalf("PackRefundAuthorizerSalt: %v", err)
+	}
+	if cfg.Salt != want {
+		t.Fatalf("salt = %s, want %s", cfg.Salt, want)
+	}
+	if got := batchsettlement.UnpackRefundAuthorizer(cfg.Salt); !strings.EqualFold(got, refundAuthorizer) {
+		t.Fatalf("unpack refund authorizer = %s", got)
+	}
+}
+
+func TestBuildChannelConfig_SelfManagedNeverPacksSalt(t *testing.T) {
+	salt := "0xabc1230000000000000000000000000000000000000000000000000000000099"
+	refundAuthorizer := "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd"
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+
+	base, err := scheme.BuildChannelConfig(defaultRequirements())
+	if err != nil {
+		t.Fatalf("BuildChannelConfig: %v", err)
+	}
+	baseId, err := batchsettlement.ComputeChannelId(base, testNetwork)
+	if err != nil {
+		t.Fatalf("ComputeChannelId: %v", err)
+	}
+
+	cases := map[string]map[string]interface{}{
+		"voucherManager omitted":     {"refundAuthorizer": refundAuthorizer},
+		"voucherManager server":      {"voucherManager": batchsettlement.VoucherManagerServer, "refundAuthorizer": refundAuthorizer},
+		"facilitator without refund": {"voucherManager": batchsettlement.VoucherManagerFacilitator},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := defaultRequirements()
+			for k, v := range extra {
+				req.Extra[k] = v
+			}
+			cfg, err := scheme.BuildChannelConfig(req)
+			if err != nil {
+				t.Fatalf("BuildChannelConfig: %v", err)
+			}
+			if cfg.Salt != salt {
+				t.Fatalf("salt = %s, want the raw salt %s", cfg.Salt, salt)
+			}
+			id, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+			if err != nil {
+				t.Fatalf("ComputeChannelId: %v", err)
+			}
+			if !strings.EqualFold(id, baseId) {
+				t.Fatalf("channelId = %s, want unchanged %s", id, baseId)
+			}
+		})
+	}
+}
+
+func TestBuildChannelConfig_PackedSaltsYieldDistinctChannelIds(t *testing.T) {
+	refundAuthorizer := "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd"
+	req := defaultRequirements()
+	req.Extra["voucherManager"] = batchsettlement.VoucherManagerFacilitator
+	req.Extra["refundAuthorizer"] = refundAuthorizer
+	saltA := "0x0000000000000000000000000000000000000000000000000000000000000011"
+	saltB := "0x0000000000000000000000000000000000000000000000000000000000000012"
+	schemeA := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: saltA})
+	schemeB := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: saltB})
+	cfgA, err := schemeA.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig A: %v", err)
+	}
+	cfgB, err := schemeB.BuildChannelConfig(req)
+	if err != nil {
+		t.Fatalf("BuildChannelConfig B: %v", err)
+	}
+	if cfgA.Salt == cfgB.Salt {
+		t.Fatal("expected distinct packed salts")
+	}
+	idA, err := batchsettlement.ComputeChannelId(cfgA, testNetwork)
+	if err != nil {
+		t.Fatalf("ComputeChannelId A: %v", err)
+	}
+	idB, err := batchsettlement.ComputeChannelId(cfgB, testNetwork)
+	if err != nil {
+		t.Fatalf("ComputeChannelId B: %v", err)
+	}
+	if strings.EqualFold(idA, idB) {
+		t.Fatalf("expected distinct channel ids, got %s", idA)
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_NormalizesNumericAndShortHexSalt(t *testing.T) {
+	padded := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	for _, salt := range []string{
+		"1",
+		"0x1",
+		"0X1",
+		" 1 ",
+		padded,
+	} {
+		scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+		cfg, err := scheme.BuildChannelConfig(defaultRequirements())
+		if err != nil {
+			t.Fatalf("salt %q: %v", salt, err)
+		}
+		if cfg.Salt != padded {
+			t.Fatalf("salt = %q, want %q", cfg.Salt, padded)
+		}
+	}
+
+	zero := "0x0000000000000000000000000000000000000000000000000000000000000000"
+	for _, salt := range []string{"", " ", "0", DefaultSalt, "0x0"} {
+		scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+		cfg, err := scheme.BuildChannelConfig(defaultRequirements())
+		if err != nil {
+			t.Fatalf("salt %q: %v", salt, err)
+		}
+		if cfg.Salt != zero {
+			t.Fatalf("salt = %q, want %q", cfg.Salt, zero)
+		}
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_RejectsInvalidSaltString(t *testing.T) {
+	for _, salt := range []string{"0xzz", "abc", "-1", "1.5"} {
+		scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Salt: salt})
+		if _, err := scheme.BuildChannelConfig(defaultRequirements()); err == nil {
+			t.Fatalf("salt %q: expected error", salt)
+		}
+	}
+}
+
+// ---------- depositAmountForRequest ----------
+
+func TestDepositAmountForRequest_UsesAnnouncedMinDepositWhenValid(t *testing.T) {
+	cap := big.NewInt(1_000_000)
+	got, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "12000"}, cap)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "12000" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestDepositAmountForRequest_IgnoresInvalidMinDepositValues(t *testing.T) {
+	cap := big.NewInt(1_000_000)
+	got, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "abc"}, cap)
+	if err != nil || got != "5000" {
+		t.Fatalf("abc: got %s err=%v", got, err)
+	}
+	got, err = DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "0"}, cap)
+	if err != nil || got != "5000" {
+		t.Fatalf("0: got %s err=%v", got, err)
+	}
+	got, err = DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "500"}, cap)
+	if err != nil || got != "5000" {
+		t.Fatalf("500: got %s err=%v", got, err)
+	}
+}
+
+func TestDepositAmountForRequest_FallsBackToDepositMultiplier(t *testing.T) {
+	cap := big.NewInt(1_000_000)
+	got, err := DepositAmountForRequest(7, big.NewInt(1000), big.NewInt(1000), nil, cap)
+	if err != nil || got != "7000" {
+		t.Fatalf("got %s err=%v", got, err)
+	}
+}
+
+func TestDepositAmountForRequest_UsesVoucherGapWhenItExceedsTarget(t *testing.T) {
+	cap := big.NewInt(1_000_000)
+	got, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(8000), map[string]interface{}{"minDeposit": "5000"}, cap)
+	if err != nil || got != "8000" {
+		t.Fatalf("got %s err=%v", got, err)
+	}
+}
+
+func TestDepositAmountForRequest_ClampsTargetToMaxDeposit(t *testing.T) {
+	got, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "12000"}, big.NewInt(4000))
+	if err != nil || got != "4000" {
+		t.Fatalf("got %s err=%v", got, err)
+	}
+}
+
+func TestDepositAmountForRequest_ThrowsWhenVoucherGapExceedsMaxDeposit(t *testing.T) {
+	_, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(8000), map[string]interface{}{"minDeposit": "5000"}, big.NewInt(4000))
+	if err == nil || !strings.Contains(err.Error(), "exceeds depositMultiplier") {
+		t.Fatalf("expected exceeds error, got %v", err)
+	}
+}
+
+func TestDepositAmountForRequest_SkipsCeilingWhenNoSpendCap(t *testing.T) {
+	got, err := DepositAmountForRequest(5, big.NewInt(1000), big.NewInt(1000), map[string]interface{}{"minDeposit": "15000"}, nil)
+	if err != nil || got != "15000" {
+		t.Fatalf("got %s err=%v", got, err)
+	}
+}
+
+func TestMaxDepositFromSpendCap(t *testing.T) {
+	got := MaxDepositFromSpendCap("1000", 5)
+	if got == nil || got.Cmp(big.NewInt(5000)) != 0 {
+		t.Fatalf("default multiplier = %v", got)
+	}
+	got = MaxDepositFromSpendCap("1000", 7)
+	if got == nil || got.Cmp(big.NewInt(7000)) != 0 {
+		t.Fatalf("custom multiplier = %v", got)
+	}
+	if MaxDepositFromSpendCap("", 5) != nil {
+		t.Fatal("expected nil when no spend cap")
+	}
+}
+
+func TestApplyMaxDeposit(t *testing.T) {
+	got, err := ApplyMaxDeposit(big.NewInt(12000), big.NewInt(1000), big.NewInt(20000))
+	if err != nil || got != "12000" {
+		t.Fatalf("within ceiling: got %s err=%v", got, err)
+	}
+	got, err = ApplyMaxDeposit(big.NewInt(12000), big.NewInt(1000), nil)
+	if err != nil || got != "12000" {
+		t.Fatalf("uncapped: got %s err=%v", got, err)
+	}
+}
+
+func TestParseAnnouncedMinDeposit(t *testing.T) {
+	if got := ParseAnnouncedMinDeposit("1000", big.NewInt(1000)); got == nil || got.Cmp(big.NewInt(1000)) != 0 {
+		t.Fatalf("equal: %v", got)
+	}
+	if got := ParseAnnouncedMinDeposit("5000", big.NewInt(1000)); got == nil || got.Cmp(big.NewInt(5000)) != 0 {
+		t.Fatalf("above: %v", got)
+	}
+	if ParseAnnouncedMinDeposit(nil, big.NewInt(1000)) != nil {
+		t.Fatal("undefined should be rejected")
+	}
+	if ParseAnnouncedMinDeposit("999", big.NewInt(1000)) != nil {
+		t.Fatal("below request amount should be rejected")
+	}
+	if ParseAnnouncedMinDeposit("-1", big.NewInt(1000)) != nil {
+		t.Fatal("negative should be rejected")
 	}
 }
 
@@ -280,76 +604,534 @@ func TestHasSession_GetSession(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
 
-	if scheme.HasSession("0xMISSING") {
+	const missingID = "0x0000000000000000000000000000000000000000000000000000000000000099"
+	const channelID = "0xabcdef0000000000000000000000000000000000000000000000000000000000"
+	const channelIDUpper = "0xABCDEF0000000000000000000000000000000000000000000000000000000000"
+
+	if scheme.HasSession(missingID) {
 		t.Fatal("missing should be false")
 	}
-	if _, ok := scheme.GetSession("0xMISSING"); ok {
+	if _, ok := scheme.GetSession(missingID); ok {
 		t.Fatal("missing should not return ok")
 	}
 
-	_ = storage.Set("0xabc", &BatchSettlementClientContext{Balance: "100"})
-	if !scheme.HasSession("0xABC") {
+	_ = storage.Set(channelID, &BatchSettlementClientContext{Balance: "100"})
+	if !scheme.HasSession(channelIDUpper) {
 		t.Fatal("case-insensitive lookup failed")
 	}
-	got, ok := scheme.GetSession("0xABC")
+	got, ok := scheme.GetSession(channelIDUpper)
 	if !ok || got.Balance != "100" {
 		t.Fatalf("GetSession = %+v ok=%v", got, ok)
 	}
 }
 
-// ---------- ProcessSettleResponse ----------
+// ---------- UpdateChannelFromSettle / OnPaymentResponse ----------
 
-func TestProcessSettleResponse_NilNoop(t *testing.T) {
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, nil)
-	if err := scheme.ProcessSettleResponse(nil); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-}
-
-func TestProcessSettleResponse_StoresSession(t *testing.T) {
+func TestUpdateChannelFromSettle_AppliesCappedChargedAmountLeavesBalanceUnchanged(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("1000")
+	channelId := localChannelId(t, scheme, req)
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
+		Balance:                 "9000",
+		ChargedCumulativeAmount: "0",
+		TotalClaimed:            "500",
+	})
 
-	err := scheme.ProcessSettleResponse(map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"channelId":               "0xABC",
-			"chargedCumulativeAmount": "10",
-			"balance":                 "1000",
-			"totalClaimed":            "5",
-		},
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"chargedAmount": "1000",
+			"channelState": map[string]interface{}{
+				"channelId":               channelId,
+				"chargedCumulativeAmount": "1000",
+				"balance":                 "1",
+				"totalClaimed":            "999",
+			},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	got, _ := storage.Get("0xabc")
-	if got == nil || got.Balance != "1000" || got.ChargedCumulativeAmount != "10" {
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "1000" || got.Balance != "9000" || got.TotalClaimed != "500" {
 		t.Fatalf("session = %+v", got)
 	}
 }
 
-// ProcessSettleResponse is a pure-merge updater.
-// It does NOT delete sessions on zero balance — that responsibility belongs to
-// UpdateSessionAfterRefund, called explicitly at the refund call site.
-func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
+func TestUpdateChannelFromSettle_IgnoresNoChargedAmountAndNoDeposit(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set("0xabc", &BatchSettlementClientContext{Balance: "100"})
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000001"
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "1000",
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got != nil {
+		t.Fatalf("expected no session, got %+v", got)
+	}
+}
 
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
-	err := scheme.ProcessSettleResponse(map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"channelId": "0xabc",
-			"balance":   "0",
-		},
+func TestOnPaymentResponse_DoesNotProcessFailedSettle(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("1000")
+	channelId := localChannelId(t, scheme, req)
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: depositPayloadMap(channelId, "5000")},
+		Requirements:   req,
+		SettleResponse: makeFailedSettle(map[string]interface{}{"chargedAmount": "1000"}),
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	got, _ := storage.Get("0xabc")
-	if got == nil {
-		t.Fatal("session unexpectedly deleted by ProcessSettleResponse")
+	got, _ := storage.Get(channelId)
+	if got != nil {
+		t.Fatalf("expected no session, got %+v", got)
 	}
-	if got.Balance != "0" {
-		t.Fatalf("balance not merged: %+v", got)
+}
+
+func TestOnPaymentResponse_DelegatesToUpdateChannelFromSettle(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("1000")
+	channelId := localChannelId(t, scheme, req)
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
+		Balance:                 "9000",
+		ChargedCumulativeAmount: "0",
+	})
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"chargedAmount": "1000",
+			"channelState": map[string]interface{}{
+				"channelId":               channelId,
+				"chargedCumulativeAmount": "1000",
+				"balance":                 "9000",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "1000" || got.Balance != "9000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_DoesNotRecordDepositWhenSettlementFails(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := defaultRequirements()
+	channelId := localChannelId(t, scheme, req)
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: depositPayloadMap(channelId, "5000")},
+		Requirements:   req,
+		SettleResponse: makeFailedSettle(map[string]interface{}{"chargedAmount": "1000"}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got != nil {
+		t.Fatalf("expected no session, got %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_RoutesRefundThroughRefundReconciliation(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := defaultRequirements()
+	channelId := localChannelId(t, scheme, req)
+	_ = storage.Set(channelId, &BatchSettlementClientContext{ChargedCumulativeAmount: "1000"})
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: refundPayloadMap(channelId, nil)},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"channelState": map[string]interface{}{"channelId": channelId, "balance": "9999"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got != nil {
+		t.Fatalf("full refund should delete, got %+v", got)
+	}
+
+	_, err = scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"channelState": map[string]interface{}{"channelId": channelId, "balance": "0"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ = storage.Get(channelId)
+	if got != nil {
+		t.Fatalf("voucher-only with no chargedAmount should not write, got %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_SubtractsPartialRefundIgnoresServerBalance(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := defaultRequirements()
+	channelId := localChannelId(t, scheme, req)
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "10000",
+	})
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: refundPayloadMap(channelId, strPtr("2000"))},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"channelState": map[string]interface{}{"channelId": channelId, "balance": "0"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.Balance != "8000" || got.ChargedCumulativeAmount != "1000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_LeavesStateUnchangedWhenRefundSettleFails(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := defaultRequirements()
+	channelId := localChannelId(t, scheme, req)
+	previous := &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "10000",
+		TotalClaimed:            "500",
+	}
+	_ = storage.Set(channelId, previous)
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: refundPayloadMap(channelId, strPtr("2000"))},
+		Requirements:   req,
+		SettleResponse: makeFailedSettle(nil),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "1000" || got.Balance != "10000" || got.TotalClaimed != "500" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestOnPaymentResponse_KeysRefundByLocallyComputedChannelId(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := defaultRequirements()
+	localId := localChannelId(t, scheme, req)
+	hostileId := "0xabc12300000000000000000000000000000000000000000000000000000000ff"
+	_ = storage.Set(localId, &BatchSettlementClientContext{ChargedCumulativeAmount: "1000", Balance: "5000"})
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: refundPayloadMap(localId, nil)},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"channelState": map[string]interface{}{"channelId": hostileId, "balance": "9999"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(localId)
+	if got != nil {
+		t.Fatalf("local session should be deleted, got %+v", got)
+	}
+	got, _ = storage.Get(hostileId)
+	if got != nil {
+		t.Fatalf("hostile key should stay empty, got %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	storage := &failingClientChannelStorage{
+		storage: NewInMemoryClientChannelStorage(),
+		getErr:  storageErr,
+	}
+	err := UpdateChannelFromSettle(storage, ChannelSettleServer{ChargedAmount: strPtr("100")}, ChannelSettleLocal{
+		ChannelId:     testChannelID,
+		RequestAmount: "1000",
+	})
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
+	}
+	if storage.setCalls != 0 {
+		t.Fatalf("Set called %d time(s) after Get failure", storage.setCalls)
+	}
+}
+
+// ---------- UpdateChannelFromSettle local truth ----------
+
+const hostileChannelID = "0xabc12300000000000000000000000000000000000000000000000000000000aa"
+
+func seedChannel(storage ClientChannelStorage, channelId, balance, charged string) {
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
+		Balance:                 balance,
+		ChargedCumulativeAmount: charged,
+	})
+}
+
+func TestUpdateChannelFromSettle_IgnoresInflatedServerCumulative(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("10000")
+	channelId := localChannelId(t, scheme, req)
+	seedChannel(storage, channelId, "50000", "0")
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"chargedAmount": "10000",
+			"channelState": map[string]interface{}{
+				"channelId":               channelId,
+				"chargedCumulativeAmount": "40000",
+				"balance":                 "50000",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "0" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+
+	result, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
+	if err != nil {
+		t.Fatalf("CreatePaymentPayload: %v", err)
+	}
+	if result.Payload["type"] != "voucher" {
+		t.Fatalf("expected voucher, got %v", result.Payload["type"])
+	}
+	voucher, _ := result.Payload["voucher"].(map[string]interface{})
+	if voucher["maxClaimableAmount"] != "10000" {
+		t.Fatalf("maxClaimableAmount = %v", voucher["maxClaimableAmount"])
+	}
+}
+
+func TestUpdateChannelFromSettle_DoesNotWriteSecondKeyOnChannelIdMismatch(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("10000")
+	channelId := localChannelId(t, scheme, req)
+	seedChannel(storage, channelId, "50000", "0")
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"chargedAmount": "10000",
+			"channelState": map[string]interface{}{
+				"channelId":               hostileChannelID,
+				"chargedCumulativeAmount": "10000",
+				"balance":                 "50000",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(hostileChannelID)
+	if got != nil {
+		t.Fatalf("hostile key written: %+v", got)
+	}
+	got, _ = storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "10000" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_RejectsChargedAmountGreaterThanRequestAmount(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000005"
+	seedChannel(storage, channelId, "50000", "0")
+
+	err := UpdateChannelFromSettle(storage, ChannelSettleServer{ChargedAmount: strPtr("20000")}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+	})
+	if err == nil || !strings.Contains(err.Error(), "chargedAmount") {
+		t.Fatalf("expected chargedAmount error, got %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "0" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_RejectsNonIntegerChargedAmount(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000005"
+	seedChannel(storage, channelId, "50000", "0")
+
+	err := UpdateChannelFromSettle(storage, ChannelSettleServer{ChargedAmount: strPtr("10.5")}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+	})
+	if err == nil || !strings.Contains(err.Error(), "chargedAmount") {
+		t.Fatalf("expected chargedAmount error, got %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "0" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_IgnoresVoucherOnlyBalanceDeflation(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111"}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+	req := requirementsWithAmount("10000")
+	channelId := localChannelId(t, scheme, req)
+	seedChannel(storage, channelId, "50000", "0")
+
+	_, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
+		PaymentPayload: types.PaymentPayload{Payload: voucherPayload()},
+		Requirements:   req,
+		SettleResponse: makeSettle(map[string]interface{}{
+			"chargedAmount": "10000",
+			"channelState": map[string]interface{}{
+				"channelId":               channelId,
+				"chargedCumulativeAmount": "10000",
+				"balance":                 "10000",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "10000" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_AddsDepositAmountToLocalBalance(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000008"
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{ChargedAmount: strPtr("10000")}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+		DepositAmount: strPtr("50000"),
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "10000" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_PersistsWhenExtraCumulativeOmitted(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000007"
+	seedChannel(storage, channelId, "50000", "0")
+
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{ChargedAmount: strPtr("10000")}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "10000" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_PersistsWhenExtraCumulativeMatches(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000007"
+	seedChannel(storage, channelId, "50000", "0")
+
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{
+		ChargedAmount:           strPtr("10000"),
+		ChargedCumulativeAmount: strPtr("10000"),
+	}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "10000" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_WritesNothingWhenExtraCumulativeDisagreesIncludingDeposit(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000009"
+	seedChannel(storage, channelId, "50000", "0")
+
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{
+		ChargedAmount:           strPtr("10000"),
+		ChargedCumulativeAmount: strPtr("40000"),
+	}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+		DepositAmount: strPtr("1000"),
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "0" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateChannelFromSettle_WritesNothingWhenExtraCumulativeNotInteger(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	channelId := "0xabc1230000000000000000000000000000000000000000000000000000000009"
+	seedChannel(storage, channelId, "50000", "0")
+
+	if err := UpdateChannelFromSettle(storage, ChannelSettleServer{
+		ChargedAmount:           strPtr("10000"),
+		ChargedCumulativeAmount: strPtr("10.5"),
+	}, ChannelSettleLocal{
+		ChannelId:     channelId,
+		RequestAmount: "10000",
+		DepositAmount: strPtr("1000"),
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := storage.Get(channelId)
+	if got == nil || got.ChargedCumulativeAmount != "0" || got.Balance != "50000" {
+		t.Fatalf("session = %+v", got)
 	}
 }
 
@@ -357,7 +1139,7 @@ func TestProcessSettleResponse_DoesNotDeleteOnZeroBalance(t *testing.T) {
 
 func TestCreatePaymentPayload_FirstRequestDeposit(t *testing.T) {
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}, nil)
-	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements(), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -377,10 +1159,10 @@ func TestCreatePaymentPayload_VoucherWhenSessionHasFunds(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "1000", ChargedCumulativeAmount: "100"})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements(), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -399,10 +1181,10 @@ func TestCreatePaymentPayload_TopsUpOnInsufficient(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "50", ChargedCumulativeAmount: "0"})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements(), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -429,10 +1211,10 @@ func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 		t.Fatalf("BuildChannelConfig: %v", err)
 	}
 	channelId, _ := batchsettlement.ComputeChannelId(channelConfig, testNetwork)
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, _ = batchsettlement.NormalizeChannelId(channelId)
 	_ = storage.Set(channelId, &BatchSettlementClientContext{Balance: "50"})
 
-	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements())
+	payload, err := scheme.CreatePaymentPayload(context.Background(), defaultRequirements(), x402.PaymentPayloadContext{})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -441,11 +1223,120 @@ func TestCreatePaymentPayload_DepositStrategySkipYieldsVoucher(t *testing.T) {
 	}
 }
 
+func depositAmountOf(t *testing.T, payload types.PaymentPayload) string {
+	t.Helper()
+	dep, ok := payload.Payload["deposit"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected deposit payload, got %+v", payload.Payload)
+	}
+	amt, _ := dep["amount"].(string)
+	return amt
+}
+
+func requirementsWithMinDeposit(amount, minDeposit string) types.PaymentRequirements {
+	req := defaultRequirements()
+	req.Amount = amount
+	req.Extra["minDeposit"] = minDeposit
+	return req
+}
+
+const testSpendCap = "1000000"
+
+func TestCreatePaymentPayload_HonorsValidMinDepositOverMultiplier(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{DepositMultiplier: 7})
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithMinDeposit("1000", "15000"), x402.PaymentPayloadContext{MaxAmountPerPayment: testSpendCap})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := depositAmountOf(t, payload); got != "15000" {
+		t.Fatalf("deposit.amount = %s", got)
+	}
+}
+
+func TestCreatePaymentPayload_FallsBackWhenMinDepositBelowAmount(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{DepositMultiplier: 5})
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithMinDeposit("1000", "500"), x402.PaymentPayloadContext{MaxAmountPerPayment: testSpendCap})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := depositAmountOf(t, payload); got != "5000" {
+		t.Fatalf("deposit.amount = %s", got)
+	}
+}
+
+func TestCreatePaymentPayload_ClampsMinDepositToSpendCapTimesMultiplier(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{DepositMultiplier: 5})
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithMinDeposit("1000", "15000"), x402.PaymentPayloadContext{MaxAmountPerPayment: "800"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := depositAmountOf(t, payload); got != "4000" {
+		t.Fatalf("deposit.amount = %s", got)
+	}
+}
+
+func TestCreatePaymentPayload_RejectsWhenVoucherGapExceedsSpendCapTimesMultiplier(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, nil)
+	_, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithAmount("1000"), x402.PaymentPayloadContext{MaxAmountPerPayment: "100"})
+	if err == nil || !strings.Contains(err.Error(), "exceeds depositMultiplier") {
+		t.Fatalf("expected exceeds error, got %v", err)
+	}
+}
+
+func TestCreatePaymentPayload_AllowsDepositWhenNoSpendCap(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, nil)
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithAmount("1000"), x402.PaymentPayloadContext{})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := depositAmountOf(t, payload); got != "5000" {
+		t.Fatalf("deposit.amount = %s", got)
+	}
+}
+
+func TestCreatePaymentPayload_DepositStrategyContextIncludesMaxDeposit(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	var seen DepositStrategyContext
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{
+		DepositStrategy: func(_ context.Context, c DepositStrategyContext) (DepositStrategyResult, error) {
+			seen = c
+			return DepositStrategyResult{}, nil
+		},
+	})
+	_, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithAmount("1000"), x402.PaymentPayloadContext{MaxAmountPerPayment: testSpendCap})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if seen.MaxDeposit != "5000000" {
+		t.Fatalf("maxDeposit = %q", seen.MaxDeposit)
+	}
+	if seen.DepositAmount != "5000" {
+		t.Fatalf("depositAmount = %q", seen.DepositAmount)
+	}
+}
+
+func TestCreatePaymentPayload_CustomMultiplier(t *testing.T) {
+	signer := &mockSigner{address: "0x1111111111111111111111111111111111111111", sig: []byte{0xaa}}
+	scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{DepositMultiplier: 7})
+	payload, err := scheme.CreatePaymentPayload(context.Background(), requirementsWithAmount("1000"), x402.PaymentPayloadContext{MaxAmountPerPayment: testSpendCap})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := depositAmountOf(t, payload); got != "7000" {
+		t.Fatalf("deposit.amount = %s", got)
+	}
+}
+
 func TestCreatePaymentPayload_BadAmount(t *testing.T) {
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, nil)
 	req := defaultRequirements()
 	req.Amount = "not-a-number"
-	if _, err := scheme.CreatePaymentPayload(context.Background(), req); err == nil {
+	if _, err := scheme.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -643,36 +1534,6 @@ func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {
 }
 
 // ---------- OnPaymentResponse (PaymentResponseHandler) ----------
-
-func TestOnPaymentResponse_SettleResponseFoldsState(t *testing.T) {
-	storage := NewInMemoryClientChannelStorage()
-	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, &BatchSettlementEvmSchemeOptions{Storage: storage})
-
-	res, err := scheme.OnPaymentResponse(context.Background(), x402.PaymentResponseContext{
-		Requirements: defaultRequirements(),
-		SettleResponse: &x402.SettleResponse{
-			Success: true,
-			Extra: map[string]interface{}{
-				"channelState": map[string]interface{}{
-					"channelId":               "0xabc",
-					"chargedCumulativeAmount": "12345",
-					"balance":                 "67890",
-					"totalClaimed":            "100",
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if res.Recovered {
-		t.Fatal("settle response should not signal Recovered")
-	}
-	got, _ := storage.Get("0xabc")
-	if got == nil || got.ChargedCumulativeAmount != "12345" || got.Balance != "67890" {
-		t.Fatalf("session not folded: %+v", got)
-	}
-}
 
 func TestOnPaymentResponse_NilExtraIsNoop(t *testing.T) {
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, nil)

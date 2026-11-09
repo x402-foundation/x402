@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..types import (
+    BAZAAR,
     BodyDiscoveryInfo,
     BodyInput,
     BodyType,
+    DiscoveryExtension,
     DiscoveryInfo,
     OutputInfo,
     QueryDiscoveryInfo,
@@ -275,3 +277,40 @@ def extract_resource_metadata_v1(
         mime_type=payment_requirements.get("mimeType", "")
         or payment_requirements.get("mime_type", ""),
     )
+
+
+def build_bazaar_extension_from_discovery_info(
+    discovery_info: DiscoveryInfo,
+) -> DiscoveryExtension:
+    """Build a v2 bazaar extension from extracted v1 discovery info.
+
+    V1 had no formal schema validation, so the synthesized schema is permissive.
+    """
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "input": {"type": "object"},
+            "output": {"type": "object"},
+        },
+        "required": ["input"],
+    }
+    return {"info": discovery_info, "schema": schema}
+
+
+def build_v1_catalog_extensions(
+    existing_extensions: dict[str, Any] | None,
+    discovery_info: DiscoveryInfo,
+) -> dict[str, Any]:
+    """Normalize v1 catalog extension payloads to v2 bazaar format.
+
+    Preserves non-bazaar extensions from the payment payload. Replaces legacy
+    ``outputSchema`` entries with a synthesized ``bazaar`` extension.
+    """
+    if existing_extensions and BAZAAR.key in existing_extensions:
+        return existing_extensions
+
+    extensions: dict[str, Any] = dict(existing_extensions) if existing_extensions else {}
+    extensions.pop("outputSchema", None)
+    extensions[BAZAAR.key] = build_bazaar_extension_from_discovery_info(discovery_info)
+    return extensions

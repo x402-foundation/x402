@@ -23,7 +23,7 @@ Both contracts:
 | Contract | Address |
 |----------|---------|
 | x402ExactPermit2Proxy | `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` |
-| x402UptoPermit2Proxy | `0x402015c795ecb48A360bDC6e35a2EaEb313a0002` |
+| x402UptoPermit2Proxy | `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002` |
 
 **Batch settlement (CREATE2 vanity `0x4020…`)**
 
@@ -41,8 +41,10 @@ Both contracts:
 
 | Chain | Exact | Upto |
 |-------|-------|------|
-| Base Mainnet | [Deployed](https://basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | — |
+| Base Mainnet | [Deployed](https://basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Deployed](https://basescan.org/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
 | Base Sepolia | [Deployed](https://sepolia.basescan.org/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Legacy\*](https://sepolia.basescan.org/address/0x402039b3d6E6BEC5A02c2C9fd937ac17A6940002) |
+| Arc Mainnet | — | [Deployed](https://explorer.arc.io/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
+| Arc Testnet | [Deployed](https://explorer.testnet.arc.io/address/0x402085c248EeA27D92E8b30b2C58ed07f9E20001) | [Deployed](https://explorer.testnet.arc.io/address/0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002) |
 
 **Batch settlement deployments**
 
@@ -53,9 +55,16 @@ Both contracts:
 | World Chain | [Deployed](https://worldscan.org/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://worldscan.org/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://worldscan.org/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | World Chain Sepolia | [Deployed](https://sepolia.worldscan.org/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://sepolia.worldscan.org/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://sepolia.worldscan.org/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Polygon Mainnet | [Deployed](https://polygonscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) · [Sourcify](https://sourcify.dev/#/lookup/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://polygonscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) · [Sourcify](https://sourcify.dev/#/lookup/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://polygonscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) · [Sourcify](https://sourcify.dev/#/lookup/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Optimism Mainnet | [Deployed](https://optimistic.etherscan.io/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://optimistic.etherscan.io/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://optimistic.etherscan.io/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Avalanche Mainnet | [Deployed](https://snowscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://snowscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://snowscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Celo Mainnet | [Deployed](https://celoscan.io/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://celoscan.io/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://celoscan.io/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Linea Mainnet | [Deployed](https://lineascan.build/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://lineascan.build/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://lineascan.build/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Unichain Mainnet | [Deployed](https://uniscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://uniscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://uniscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Monad Mainnet | [Deployed](https://monadscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://monadscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://monadscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Monad Testnet | [Deployed](https://testnet.monadvision.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://testnet.monadvision.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://testnet.monadvision.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 
 > \*Older testnet deployments may use prior vanity salts; the canonical **Upto** address for
-> CREATE2 deployments from this tree is `0x402015c7…313a0002` (see `forge script script/ComputeAddress.s.sol`).
+> CREATE2 deployments from this tree is `0x4020A4f3…C240002` (see `forge script script/ComputeAddress.s.sol`).
 
 ## Prerequisites
 
@@ -100,7 +109,7 @@ and `keccak256(initCode)`—not on who sends the transaction.
    ```
    You should see:
    - Exact → `0x402085c248EeA27D92E8b30b2C58ed07f9E20001`
-   - Upto  → `0x402015c795ecb48A360bDC6e35a2EaEb313a0002`
+   - Upto  → `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002`
 
 3. **Check prerequisites on the target chain**
    - [Permit2](https://github.com/Uniswap/permit2) must be deployed at `0x000000000022D473030F116dDEE9F6B43aC78BA3`
@@ -109,15 +118,29 @@ and `keccak256(initCode)`—not on who sends the transaction.
 
 4. **Deploy**
    ```bash
-   export PRIVATE_KEY="your_private_key"
+   cast wallet import x402-deployment-signer --interactive
 
    forge script script/Deploy.s.sol \
      --rpc-url <RPC_URL> \
+     --account x402-deployment-signer \
+     --sender <DEPLOYMENT_SIGNER_ADDRESS> \
      --broadcast \
      --verify
    ```
 
-   The script automatically:
+   To deploy only the Upto proxy, select its deployment entry point:
+
+   ```bash
+   forge script script/Deploy.s.sol \
+     --sig "runUpto()" \
+     --rpc-url <RPC_URL> \
+     --account x402-deployment-signer \
+     --sender <DEPLOYMENT_SIGNER_ADDRESS> \
+     --broadcast \
+     --verify
+   ```
+
+   The default `run()` entry point automatically:
    - Loads the pre-built initCode for Exact and compiler-derived initCode for Upto
    - Skips any contract already deployed at the expected address
    - Verifies `PERMIT2()` returns the correct address after deployment

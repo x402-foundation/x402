@@ -4,10 +4,11 @@ import tsParser from "@typescript-eslint/parser";
 import prettier from "eslint-plugin-prettier";
 import jsdoc from "eslint-plugin-jsdoc";
 import importPlugin from "eslint-plugin-import";
+import sonarjs from "eslint-plugin-sonarjs";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**"],
+    ignores: ["dist/**", "node_modules/**", "src/payment-channels/generated/**"],
   },
   {
     files: ["**/*.ts", "**/*.tsx"],
@@ -34,9 +35,13 @@ export default [
       prettier: prettier,
       jsdoc: jsdoc,
       import: importPlugin,
+      sonarjs,
     },
     rules: {
       ...ts.configs.recommended.rules,
+      complexity: ["error", 50],
+      "max-lines": ["error", { max: 2000 }],
+      "sonarjs/cognitive-complexity": ["error", 70],
       "import/first": "error",
       "prettier/prettier": "error",
       "@typescript-eslint/member-ordering": "error",
@@ -80,12 +85,27 @@ export default [
     plugins: {
       "@typescript-eslint": ts,
       prettier: prettier,
+      sonarjs,
     },
     rules: {
       "prettier/prettier": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/member-ordering": "off",
+    },
+  },
+  {
+    // Vendored Codama client + ported payment-channel primitives. These mirror
+    // upstream generated/Rust code, so they are exempt from the hand-written
+    // JSDoc-completeness rules (correctness rules like check-param-names still apply).
+    files: ["src/payment-channels/**/*.ts"],
+    rules: {
+      "jsdoc/require-jsdoc": "off",
+      "jsdoc/require-description": "off",
+      "jsdoc/require-param": "off",
+      "jsdoc/require-param-description": "off",
+      "jsdoc/require-returns": "off",
+      "jsdoc/require-returns-description": "off",
     },
   },
 ];

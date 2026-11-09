@@ -4,7 +4,7 @@ import {
   PaymentRequirements,
   VerifyResponse,
 } from "@x402/core/types";
-import { encodeFunctionData, getAddress } from "viem";
+import { encodeFunctionData, getAddress, parseErc6492Signature } from "viem";
 import {
   extractEip2612GasSponsoringInfo,
   extractErc20ApprovalGasSponsoringInfo,
@@ -14,6 +14,8 @@ import {
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
 } from "../../exact/extensions";
+import { appendDataSuffix } from "../../shared/extensions";
+import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import { validateErc20ApprovalForPayment } from "../../shared/erc20approval";
 import { validateEip2612PermitForPayment, splitEip2612Signature } from "../../shared/permit2";
 import { PERMIT2_ADDRESS, erc20AllowanceAbi } from "../../constants";
@@ -70,7 +72,8 @@ export function buildPermit2DepositCollectorData(
     throw new Error(Errors.ErrPermit2AuthorizationRequired);
   }
 
-  return buildPermit2CollectorData(auth.nonce, auth.deadline, auth.signature, eip2612PermitData);
+  const { signature } = parseErc6492Signature(auth.signature);
+  return buildPermit2CollectorData(auth.nonce, auth.deadline, signature, eip2612PermitData);
 }
 
 /**
@@ -230,24 +233,28 @@ export async function resolvePermit2DepositBranch(
  *
  * @param payload - Batch deposit payload.
  * @param collectorData - Encoded Permit2 collector data.
+ * @param dataSuffix - Optional hex suffix appended to the deposit calldata.
  * @returns Transaction request for the extension signer.
  */
 export function buildDepositTransaction(
   payload: BatchSettlementDepositPayload,
   collectorData: `0x${string}`,
+  dataSuffix?: `0x${string}`,
 ): { to: `0x${string}`; data: `0x${string}`; gas: bigint } {
+  const data = encodeFunctionData({
+    abi: batchSettlementABI,
+    functionName: "deposit",
+    args: [
+      toContractChannelConfig(payload.channelConfig),
+      BigInt(payload.deposit.amount),
+      getPermit2DepositCollectorAddress(),
+      collectorData,
+    ],
+  });
+
   return {
     to: getAddress(BATCH_SETTLEMENT_ADDRESS),
-    data: encodeFunctionData({
-      abi: batchSettlementABI,
-      functionName: "deposit",
-      args: [
-        toContractChannelConfig(payload.channelConfig),
-        BigInt(payload.deposit.amount),
-        getPermit2DepositCollectorAddress(),
-        collectorData,
-      ],
-    }),
+    data: appendDataSuffix(data, dataSuffix),
     gas: 300_000n,
   };
 }
@@ -299,30 +306,31 @@ async function verifyPermit2TypedData(
     return { isValid: false, invalidReason: Errors.ErrPermit2DeadlineExpired, payer };
   }
 
-  try {
-    const ok = await signer.verifyTypedData({
-      address: getAddress(auth.from),
-      domain: { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS },
-      types: batchPermit2WitnessTypes,
-      primaryType: "PermitWitnessTransferFrom",
-      message: {
-        permitted: {
-          token: getAddress(auth.permitted.token),
-          amount: BigInt(auth.permitted.amount),
-        },
-        spender: getAddress(auth.spender),
-        nonce: BigInt(auth.nonce),
-        deadline: BigInt(auth.deadline),
-        witness: {
-          channelId: auth.witness.channelId,
-        },
+  // Mirror Permit2's on-chain SignatureVerification: ecrecover when the address
+  // has no code, strict EIP-1271 isValidSignature when it does. No ECDSA
+  // fallback for code addresses — that fallback would accept sigs Permit2
+  // rejects on-chain (notably for ERC-7702 EOAs whose delegate doesn't accept
+  // raw owner ECDSA).
+  const ok = await verifyTypedDataSignature(signer, {
+    address: getAddress(auth.from),
+    domain: { name: "Permit2", chainId, verifyingContract: PERMIT2_ADDRESS },
+    types: batchPermit2WitnessTypes,
+    primaryType: "PermitWitnessTransferFrom",
+    message: {
+      permitted: {
+        token: getAddress(auth.permitted.token),
+        amount: BigInt(auth.permitted.amount),
       },
-      signature: auth.signature,
-    });
-    if (!ok) {
-      return { isValid: false, invalidReason: Errors.ErrPermit2InvalidSignature, payer };
-    }
-  } catch {
+      spender: getAddress(auth.spender),
+      nonce: BigInt(auth.nonce),
+      deadline: BigInt(auth.deadline),
+      witness: {
+        channelId: auth.witness.channelId,
+      },
+    },
+    signature: auth.signature,
+  });
+  if (!ok) {
     return { isValid: false, invalidReason: Errors.ErrPermit2InvalidSignature, payer };
   }
 

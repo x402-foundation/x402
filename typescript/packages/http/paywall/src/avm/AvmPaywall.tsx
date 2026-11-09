@@ -200,6 +200,7 @@ export function AvmPaywall({
       };
 
       const client = new x402Client();
+      client.setSpendControls(false); // UI already confirms
       client.register(
         "algorand:*",
         new ExactAvmScheme(walletSigner, algorandClient ? { algorandClient } : undefined),

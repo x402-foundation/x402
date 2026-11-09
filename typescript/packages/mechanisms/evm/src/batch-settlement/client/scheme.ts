@@ -28,20 +28,18 @@ import {
   type BatchSettlementDepositStrategyContext,
   type BatchSettlementDepositPolicy,
   type BatchSettlementEvmSchemeOptions,
+  applyMaxDeposit,
   depositAmountForRequest,
+  maxDepositFromSpendCap,
   resolveClientOptions,
   validateDepositPolicy,
 } from "./config";
 import { refundChannel, type RefundOptions } from "./refund";
-import {
-  type BatchSettlementClientDeps,
-  buildChannelConfig,
-  processSettleResponse,
-  recoverChannel,
-} from "./channel";
+import { type BatchSettlementClientDeps, buildChannelConfig, recoverChannel } from "./channel";
 import { createBatchSettlementClientHooks } from "./hooks";
 import { processCorrectivePaymentRequired } from "./recovery";
 import type { ClientChannelStorage } from "./storage";
+import { findDefaultAsset } from "../../defaultAssets";
 import { signVoucher } from "./voucher";
 
 export type { BatchSettlementClientContext } from "./storage";
@@ -57,14 +55,14 @@ export type { RefundOptions } from "./refund";
 /**
  * Client-side implementation of the `batch-settlement` scheme for EVM networks.
  *
- * Builds payment payloads (deposit + voucher or voucher-only), processes server
- * responses to update local session state via {@link processSettleResponse},
- * handles corrective 402 resynchronisation via
- * {@link processCorrectivePaymentRequired}, and supports on-demand cooperative
- * refund requests via {@link refundChannel}.
+ * Builds payment payloads (deposit + voucher or voucher-only), updates local
+ * channel state from payment-response hooks, handles corrective 402
+ * resynchronisation via {@link processCorrectivePaymentRequired}, and supports
+ * on-demand cooperative refund requests via {@link refundChannel}.
  */
 export class BatchSettlementEvmScheme implements SchemeNetworkClient {
   readonly scheme = BATCH_SETTLEMENT_SCHEME;
+  findDefaultAsset = findDefaultAsset;
 
   readonly schemeHooks: SchemeClientHooks;
 
@@ -124,7 +122,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
    *
    * @param x402Version - Protocol version for the payload envelope.
    * @param paymentRequirements - Server payment requirements (scheme, network, asset, amount).
-   * @param context - Optional payment payload context with extension hints.
+   * @param context - Optional extensions and the resolved atomic spend cap.
    * @returns A {@link PaymentPayloadResult} ready to be sent as the `X-PAYMENT` header.
    */
   async createPaymentPayload(
@@ -153,8 +151,18 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
     const needsTopUp = !needsInitialDeposit && BigInt(maxClaimableAmount) > currentBalance;
 
     if (needsInitialDeposit || needsTopUp) {
-      const computedDeposit = depositAmountForRequest(this.depositPolicy, requestAmount);
       const minimumDepositAmount = BigInt(maxClaimableAmount) - currentBalance;
+      const maxDeposit = maxDepositFromSpendCap(
+        context?.maxAmountPerPayment,
+        this.depositPolicy?.depositMultiplier ?? 5,
+      );
+      const computedDeposit = depositAmountForRequest(
+        this.depositPolicy,
+        requestAmount,
+        minimumDepositAmount,
+        paymentRequirements.extra,
+        maxDeposit,
+      );
       const depositAmount = await this.resolveDepositAmount({
         paymentRequirements,
         channelConfig: config,
@@ -165,6 +173,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
         currentBalance: currentBalance.toString(),
         minimumDepositAmount: minimumDepositAmount.toString(),
         depositAmount: computedDeposit,
+        ...(maxDeposit !== undefined ? { maxDeposit: maxDeposit.toString() } : {}),
       });
       if (depositAmount === false) {
         return this.createVoucherPayload(
@@ -253,16 +262,6 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
   }
 
   /**
-   * Updates local channel state from a settle response.
-   *
-   * @param settle - The parsed settle response from the server.
-   * @returns Resolves when local channel state has been updated.
-   */
-  async processSettleResponse(settle: SettleResponse): Promise<void> {
-    return processSettleResponse(this.storage, settle);
-  }
-
-  /**
    * Resyncs local channel state from a corrective 402 response.
    *
    * @param paymentRequired - The decoded 402 response body.
@@ -302,7 +301,11 @@ export class BatchSettlementEvmScheme implements SchemeNetworkClient {
         `depositStrategy returned ${depositAmount}, below required top-up ${context.minimumDepositAmount}`,
       );
     }
-    return depositAmount;
+    return applyMaxDeposit(
+      BigInt(depositAmount),
+      BigInt(context.minimumDepositAmount),
+      context.maxDeposit === undefined ? undefined : BigInt(context.maxDeposit),
+    );
   }
 
   /**

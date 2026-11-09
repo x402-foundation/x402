@@ -1,4 +1,4 @@
-import {
+import axios, {
   AxiosError,
   AxiosHeaders,
   AxiosInstance,
@@ -8,6 +8,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrapAxiosWithPayment, wrapAxiosWithPaymentFromConfig } from "./index";
 import type { x402Client, x402ClientConfig } from "@x402/core/client";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, ResponseBodyTooLargeError } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 
 // Mock the @x402/core/client module
@@ -73,7 +74,7 @@ describe("wrapAxiosWithPayment()", () => {
   const createAxiosError = (
     status: number,
     config?: InternalAxiosRequestConfig,
-    data?: PaymentRequired,
+    data?: PaymentRequired | Uint8Array | string,
     headers?: Record<string, string>,
   ): AxiosError => {
     return new AxiosError(
@@ -115,6 +116,7 @@ describe("wrapAxiosWithPayment()", () => {
         },
       },
       request: vi.fn(),
+      getUri: axios.getUri,
     } as unknown as AxiosInstance;
 
     // Create mock client
@@ -162,7 +164,7 @@ describe("wrapAxiosWithPayment()", () => {
   it("should pass through successful responses", async () => {
     const successHandler = (mockAxiosClient.interceptors.response.use as ReturnType<typeof vi.fn>)
       .mock.calls[0][0];
-    const response = { data: "success" } as AxiosResponse;
+    const response = { status: 200, data: "success" } as AxiosResponse;
     expect(successHandler(response)).toBe(response);
   });
 
@@ -199,6 +201,48 @@ describe("wrapAxiosWithPayment()", () => {
     // Verify the retry config has payment headers and retry flag
     const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(retryConfig.__is402Retry).toBe(true);
+  });
+
+  it("keeps a Cookie array so Axios can join it with semicolons on the paid retry", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", ["session=demo", "locale=zh"]);
+    config.headers.set("X-Trace", "keep-me");
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual(["session=demo", "locale=zh"]);
+    expect(retryConfig.headers["X-Trace"]).toBe("keep-me");
+    expect(retryConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
+  });
+
+  it("keeps empty Cookie array elements so the paid retry matches native join", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", ["", "locale=zh"]);
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual(["", "locale=zh"]);
+  });
+
+  it("keeps an empty Cookie array so it still overrides an instance default", async () => {
+    const successResponse = { data: "success" } as AxiosResponse;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.headers.set("Cookie", []);
+
+    await interceptor(createAxiosError(402, config, validPaymentRequired));
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers.Cookie).toEqual([]);
   });
 
   it("should not retry if already retried", async () => {
@@ -490,6 +534,336 @@ describe("wrapAxiosWithPayment()", () => {
     expect(hookConfig.headers["X-HOOK"]).toBe("handled");
     expect(paidConfig.headers["PAYMENT-SIGNATURE"]).toBe("encoded-payment-header");
     expect(mockClient.createPaymentPayload).toHaveBeenCalledWith(validPaymentRequired);
+  });
+
+  it("rejects an oversized initial 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = new Uint8Array(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), oversizedBody),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).not.toHaveBeenCalled();
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).not.toHaveBeenCalled();
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized auth-retry 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-HOOK": "handled" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      createAxiosResponse(402, oversizedBody),
+    );
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized paid-retry 402 response", async () => {
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      createAxiosResponse(402, oversizedBody),
+    );
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an oversized recovery 402 response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({ recovered: true });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(createAxiosResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(createAxiosResponse(402, oversizedBody));
+
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(), validPaymentRequired),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an oversized already-retried 402 error", async () => {
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+    const error = await interceptor(
+      createAxiosError(402, createErrorConfig(true), oversizedBody),
+    ).catch(caught => caught as Error);
+
+    expect(error).toBeInstanceOf(ResponseBodyTooLargeError);
+    expect(mockAxiosClient.request).not.toHaveBeenCalled();
+  });
+
+  it("caps a 402 on the success interceptor", async () => {
+    const successHandler = (mockAxiosClient.interceptors.response.use as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0];
+    const oversizedBody = "x".repeat(MAX_CONTROL_PLANE_RESPONSE_BYTES + 1);
+
+    expect(() => successHandler(createAxiosResponse(402, oversizedBody))).toThrow(
+      ResponseBodyTooLargeError,
+    );
+  });
+
+  it("should return immediately when hook retry succeeds with a non-402 status", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const hookResponse = createAxiosResponse(200, { data: "hook-success" });
+
+    (
+      MockX402HTTPClient.prototype.handlePaymentRequired as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({ "X-HOOK": "handled" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(hookResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    const result = await interceptor(error);
+
+    expect(result).toBe(hookResponse);
+    expect(mockAxiosClient.request).toHaveBeenCalledTimes(1);
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
+    const hookConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(hookConfig.headers["X-HOOK"]).toBe("handled");
+  });
+
+  it("should prefer the browser redirect URL when resolving the payment request URL", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    if (error.response) {
+      error.response.request = { responseURL: "https://cdn.example.com/final" };
+    }
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.handlePaymentRequired).toHaveBeenCalledWith(
+      validPaymentRequired,
+      "https://cdn.example.com/final",
+    );
+  });
+
+  it("should prefer the Node redirect URL when resolving the payment request URL", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    if (error.response) {
+      error.response.request = { res: { responseUrl: "https://cdn.example.com/node-final" } };
+    }
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.handlePaymentRequired).toHaveBeenCalledWith(
+      validPaymentRequired,
+      "https://cdn.example.com/node-final",
+    );
+  });
+
+  it("should resolve a relative url against baseURL", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.baseURL = "https://api.example.com/v1/";
+    config.url = "paid";
+    const error = createAxiosError(402, config, validPaymentRequired);
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.handlePaymentRequired).toHaveBeenCalledWith(
+      validPaymentRequired,
+      "https://api.example.com/v1/paid",
+    );
+  });
+
+  it("should fall back to url or baseURL when URL resolution fails", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.baseURL = "not-a-valid-base";
+    config.url = "/paid";
+    const error = createAxiosError(402, config, validPaymentRequired);
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.handlePaymentRequired).toHaveBeenCalledWith(
+      validPaymentRequired,
+      "/paid",
+    );
+  });
+
+  it("should fall back to baseURL when relative url is empty and resolution fails", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const config = createErrorConfig();
+    config.baseURL = "not-a-valid-base";
+    config.url = "";
+    const error = createAxiosError(402, config, validPaymentRequired);
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.handlePaymentRequired).toHaveBeenCalledWith(
+      validPaymentRequired,
+      "not-a-valid-base",
+    );
+  });
+
+  it("should clone plain object headers that do not implement toJSON", async () => {
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    const config = createErrorConfig();
+    config.headers = {
+      Accept: "application/json",
+      skip: undefined,
+      drop: null,
+      compute: () => "nope",
+    } as unknown as InternalAxiosRequestConfig["headers"];
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const error = createAxiosError(402, config, validPaymentRequired);
+    await interceptor(error);
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.headers).toEqual(
+      expect.objectContaining({
+        Accept: "application/json",
+        "PAYMENT-SIGNATURE": "encoded-payment-header",
+      }),
+    );
+    expect(retryConfig.headers.skip).toBeUndefined();
+    expect(retryConfig.headers.drop).toBeUndefined();
+    expect(retryConfig.headers.compute).toBeUndefined();
+  });
+
+  it("should treat 200-299 as success and reject others when no validateStatus is set", async () => {
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    await interceptor(error);
+
+    const retryConfig = (mockAxiosClient.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(retryConfig.validateStatus(200)).toBe(true);
+    expect(retryConfig.validateStatus(299)).toBe(true);
+    expect(retryConfig.validateStatus(300)).toBe(false);
+    expect(retryConfig.validateStatus(402)).toBe(true);
+    expect(retryConfig.validateStatus(500)).toBe(false);
+  });
+
+  it("should look up payment-required headers case-insensitively and ignore non-strings", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(200, { data: "success" });
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+    (
+      MockX402HTTPClient.prototype.getPaymentRequiredResponse as ReturnType<typeof vi.fn>
+    ).mockImplementation((getHeader: (name: string) => string | undefined) => {
+      expect(getHeader("PAYMENT-REQUIRED")).toBe("encoded-from-lower");
+      expect(getHeader("X-COUNT")).toBeUndefined();
+      return validPaymentRequired;
+    });
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired, {
+      "payment-required": "encoded-from-lower",
+    });
+    if (error.response) {
+      (error.response.headers as Record<string, unknown>)["x-count"] = 2;
+    }
+
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.getPaymentRequiredResponse).toHaveBeenCalled();
+  });
+
+  it("should look up payment-response headers case-insensitively and ignore non-strings", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createAxiosResponse(
+      200,
+      { data: "success" },
+      {
+        "payment-response": "settled",
+      },
+    );
+    (successResponse.headers as Record<string, unknown>)["x-count"] = 2;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>).mockResolvedValue(successResponse);
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      async (
+        _payload: PaymentPayload,
+        getResponseHeader: (name: string) => string | undefined,
+        status: number,
+      ) => {
+        expect(status).toBe(200);
+        expect(getResponseHeader("PAYMENT-RESPONSE")).toBe("settled");
+        expect(getResponseHeader("X-COUNT")).toBeUndefined();
+        return { recovered: false };
+      },
+    );
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    await interceptor(error);
+
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalled();
+  });
+
+  it("should look up recovery retry headers case-insensitively and ignore non-strings", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const correctiveResponse = createAxiosResponse(402, validPaymentRequired);
+    const retryResponse = createAxiosResponse(
+      200,
+      { data: "success" },
+      {
+        "payment-response": "recovered",
+      },
+    );
+    (retryResponse.headers as Record<string, unknown>)["x-count"] = 2;
+    (mockAxiosClient.request as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(correctiveResponse)
+      .mockResolvedValueOnce(retryResponse);
+    (MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ recovered: true })
+      .mockImplementationOnce(
+        async (
+          _payload: PaymentPayload,
+          getRetryHeader: (name: string) => string | undefined,
+          status: number,
+        ) => {
+          expect(status).toBe(200);
+          expect(getRetryHeader("PAYMENT-RESPONSE")).toBe("recovered");
+          expect(getRetryHeader("X-COUNT")).toBeUndefined();
+          return { recovered: false };
+        },
+      );
+
+    const error = createAxiosError(402, createErrorConfig(), validPaymentRequired);
+    const result = await interceptor(error);
+
+    expect(result).toBe(retryResponse);
+    expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(2);
   });
 });
 

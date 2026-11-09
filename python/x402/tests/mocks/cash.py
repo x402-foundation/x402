@@ -200,6 +200,12 @@ class CashSchemeNetworkServer:
     """
 
     scheme = "cash"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+        "permit2": {"supported": ("authorization",), "default": "authorization"},
+        "eip3009": {"supported": ("authorization",), "default": "authorization"},
+    }
 
     def parse_price(self, price: Price, network: Network) -> AssetAmount:
         """Parse a price into AssetAmount.
@@ -262,6 +268,26 @@ class CashSchemeNetworkServer:
             Unmodified payment requirements.
         """
         return requirements
+
+
+class MockAuthorizeSchemeNetworkServer(CashSchemeNetworkServer):
+    """Cash server that declares the default authorization payment flow."""
+
+
+class MockUpfrontSchemeNetworkServer(CashSchemeNetworkServer):
+    """Cash server that declares the upfront payment flow."""
+
+    payment_flows = {
+        "default": {"supported": ("upfront",), "default": "upfront"},
+    }
+
+
+class MockEscrowSchemeNetworkServer(CashSchemeNetworkServer):
+    """Cash server that declares the escrow payment flow."""
+
+    payment_flows = {
+        "default": {"supported": ("escrow",), "default": "escrow"},
+    }
 
 
 class CashFacilitatorClient:

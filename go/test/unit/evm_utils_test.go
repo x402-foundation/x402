@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // TestGetEvmChainId tests chain ID retrieval for various network formats
@@ -413,74 +413,6 @@ func TestHexRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGetNetworkConfig tests network configuration retrieval
-func TestGetNetworkConfig(t *testing.T) {
-	t.Run("Base Mainnet has default asset", func(t *testing.T) {
-		config, err := evm.GetNetworkConfig("eip155:8453")
-		if err != nil {
-			t.Fatalf("Failed to get config: %v", err)
-		}
-
-		if config.ChainID.Int64() != 8453 {
-			t.Errorf("Expected chain ID 8453, got %d", config.ChainID.Int64())
-		}
-
-		if config.DefaultAsset.Address == "" {
-			t.Error("Expected default asset to be configured")
-		}
-
-		// USDC should have 6 decimals
-		if config.DefaultAsset.Decimals != 6 {
-			t.Errorf("Expected 6 decimals, got %d", config.DefaultAsset.Decimals)
-		}
-	})
-
-	t.Run("Base Sepolia has default asset", func(t *testing.T) {
-		config, err := evm.GetNetworkConfig("eip155:84532")
-		if err != nil {
-			t.Fatalf("Failed to get config: %v", err)
-		}
-
-		if config.ChainID.Int64() != 84532 {
-			t.Errorf("Expected chain ID 84532, got %d", config.ChainID.Int64())
-		}
-
-		if config.DefaultAsset.Address == "" {
-			t.Error("Expected default asset to be configured")
-		}
-	})
-
-	t.Run("Arbitrary EVM chain works without default asset", func(t *testing.T) {
-		config, err := evm.GetNetworkConfig("eip155:999999")
-		if err != nil {
-			t.Fatalf("Failed to get config: %v", err)
-		}
-
-		if config.ChainID.Int64() != 999999 {
-			t.Errorf("Expected chain ID 999999, got %d", config.ChainID.Int64())
-		}
-
-		// Should NOT have default asset
-		if config.DefaultAsset.Address != "" {
-			t.Error("Arbitrary chain should not have default asset")
-		}
-	})
-
-	t.Run("Legacy names rejected", func(t *testing.T) {
-		_, err := evm.GetNetworkConfig("base")
-		if err == nil {
-			t.Error("Expected error for legacy network name; use evm/v1 package for v1 networks")
-		}
-	})
-
-	t.Run("Invalid format returns error", func(t *testing.T) {
-		_, err := evm.GetNetworkConfig("invalid")
-		if err == nil {
-			t.Error("Expected error for invalid network format")
-		}
-	})
-}
-
 // TestGetAssetInfo tests asset information retrieval
 func TestGetAssetInfo(t *testing.T) {
 	t.Run("Explicit address returns asset info", func(t *testing.T) {
@@ -535,28 +467,29 @@ func TestGetAssetInfo(t *testing.T) {
 // TestCreateValidityWindow tests validity window creation
 func TestCreateValidityWindow(t *testing.T) {
 	t.Run("Creates valid window", func(t *testing.T) {
+		now := time.Now().Unix()
 		validAfter, validBefore := evm.CreateValidityWindow(time.Hour) // 1 hour
 
-		// validAfter should be ~30 seconds in the past
+		if validAfter.Int64() != 0 {
+			t.Errorf("validAfter should be 0, got %d", validAfter.Int64())
+		}
+
 		if validAfter.Int64() >= validBefore.Int64() {
 			t.Error("validAfter should be before validBefore")
 		}
 
-		// Window should be approximately 1 hour + 600 seconds buffer
-		window := validBefore.Int64() - validAfter.Int64()
-		if window < 4100 || window > 4300 { // Allow some tolerance
-			t.Errorf("Expected window ~4200 seconds, got %d", window)
+		// validBefore should be approximately now + 1 hour
+		diff := validBefore.Int64() - now
+		if diff < 3595 || diff > 3605 { // Allow some tolerance
+			t.Errorf("Expected validBefore ~3600 seconds in the future, diff was %d", diff)
 		}
 	})
 
-	t.Run("validAfter is in the past", func(t *testing.T) {
-		now := time.Now().Unix()
+	t.Run("validAfter is zero", func(t *testing.T) {
 		validAfter, _ := evm.CreateValidityWindow(time.Minute)
 
-		// validAfter should be approximately now - 600
-		diff := now - validAfter.Int64()
-		if diff < 595 || diff > 605 { // Allow tolerance for test execution time
-			t.Errorf("validAfter should be ~600 seconds in the past, diff was %d", diff)
+		if validAfter.Int64() != 0 {
+			t.Errorf("validAfter should be 0, got %d", validAfter.Int64())
 		}
 	})
 

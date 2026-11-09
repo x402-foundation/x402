@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 const (
@@ -141,8 +141,15 @@ func TestVerifyPermit2_InvalidSignatureReason(t *testing.T) {
 }
 
 func TestVerifyPermit2_ValidAuthorizationReturnsEmpty(t *testing.T) {
+	// Strict primitive: GetCode → code present → EIP-1271 → isValidSignature returns magic.
 	signer := &fakeFacilitatorSigner{
-		verifyTypedData: func(_ string) (bool, error) { return true, nil },
+		getCode: func(_ string) ([]byte, error) { return []byte{0x60, 0x80}, nil },
+		readContract: func(fn string, _ ...interface{}) (interface{}, error) {
+			if fn == "isValidSignature" {
+				return [4]byte{0x16, 0x26, 0xba, 0x7e}, nil
+			}
+			return nil, nil
+		},
 	}
 	auth := goodPermit2Auth()
 	reason, err := verifyPermit2DepositAuthorization(

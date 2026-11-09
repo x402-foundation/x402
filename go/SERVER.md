@@ -17,7 +17,7 @@ An **x402 server** is an application that protects HTTP resources with payment r
 ### Installation
 
 ```bash
-go get github.com/x402-foundation/x402/go
+go get github.com/x402-foundation/x402/go/v2
 ```
 
 ### Basic Gin Server
@@ -27,10 +27,10 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    x402 "github.com/x402-foundation/x402/go"
-    x402http "github.com/x402-foundation/x402/go/http"
-    ginmw "github.com/x402-foundation/x402/go/http/gin"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 )
 
 func main() {
@@ -176,7 +176,7 @@ settleResp, err := facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 ### Gin Middleware
 
 ```go
-import ginmw "github.com/x402-foundation/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
 
 r.Use(ginmw.X402Payment(ginmw.Config{
     Routes:      routes,
@@ -224,7 +224,7 @@ func customPaymentMiddleware(server *x402http.HTTPServer) gin.HandlerFunc {
 }
 ```
 
-See **[examples/go/servers/custom/](../../examples/go/servers/custom/)** for complete implementation.
+See **[examples/go/servers/custom/](../examples/go/servers/custom/)** for complete implementation.
 
 ## Advanced Features
 
@@ -281,16 +281,16 @@ Use alternative tokens for payments:
 
 ```go
 evmScheme := evm.NewExactEvmScheme().RegisterMoneyParser(
-    func(amount float64, network x402.Network) (*x402.AssetAmount, error) {
-        // Use DAI for large amounts
-        if amount > 100 {
-            return &x402.AssetAmount{
-                Amount: fmt.Sprintf("%.0f", amount*1e18),
-                Asset:  "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", // DAI
-                Extra:  map[string]interface{}{"token": "DAI"},
-            }, nil
+    func(amount string, network x402.Network) (*x402.AssetAmount, error) {
+        tokenAmount, err := x402.ConvertToTokenAmount(amount, 18)
+        if err != nil {
+            return nil, err
         }
-        return nil, nil // Use default USDC for small amounts
+        return &x402.AssetAmount{
+            Amount: tokenAmount,
+            Asset:  "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", // DAI
+            Extra:  map[string]interface{}{"token": "DAI"},
+        }, nil
     },
 )
 ```
@@ -322,8 +322,8 @@ Add protocol extensions like Bazaar discovery:
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/bazaar"
-    "github.com/x402-foundation/x402/go/extensions/types"
+    "github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+    "github.com/x402-foundation/x402/go/v2/extensions/types"
 )
 
 discoveryExt, _ := bazaar.DeclareDiscoveryExtension(
@@ -539,6 +539,43 @@ r.Use(ginmw.X402Payment(ginmw.Config{
 }))
 ```
 
+### Usage-Based Pricing (`upto`)
+
+The `upto` scheme charges for actual usage: the route's `Price` is the maximum the
+client authorizes, and the handler decides what to settle.
+
+```go
+// SVM upto settles through an onchain payment channel, so the server needs a hot
+// key that signs settlement vouchers. It never signs a transaction.
+authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"))
+
+r.Use(ginmw.X402Payment(ginmw.Config{
+    Routes: x402http.RoutesConfig{
+        "GET /api/generate": {
+            Accepts: x402http.PaymentOptions{
+                {Scheme: "upto", Price: "$0.10", Network: svmNetwork, PayTo: svmAddress},
+            },
+        },
+    },
+    Facilitator: facilitator,
+    Schemes: []ginmw.SchemeConfig{
+        {Network: svmNetwork, Server: uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+            ReceiverAuthorizerSigner: authorizer,
+        })},
+    },
+}))
+
+r.GET("/api/generate", func(c *gin.Context) {
+    // Charge only what the request actually consumed.
+    ginmw.SetSettlementOverrides(c, &x402.SettlementOverrides{Amount: "50%"})
+    c.JSON(http.StatusOK, gin.H{"result": "..."})
+})
+```
+
+`Amount` accepts raw atomic units, a percentage of the authorized maximum, or a
+dollar price. See the [upto SVM README](mechanisms/svm/upto/README.md) and the
+[upto EVM README](mechanisms/evm/upto/README.md) for the per-chain details.
+
 ### Per-Route Configuration
 
 Different prices for different endpoints:
@@ -731,11 +768,11 @@ facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
 
 ## Examples
 
-Complete examples are available in [`examples/go/servers/`](../../examples/go/servers/):
+Complete examples are available in [`examples/go/servers/`](../examples/go/servers/):
 
-- **[Gin Server](../../examples/go/servers/gin/)** - Basic integration
-- **[Custom Server](../../examples/go/servers/custom/)** - Custom middleware
-- **[Advanced Patterns](../../examples/go/servers/advanced/)** - Dynamic pricing, hooks, extensions
+- **[Gin Server](../examples/go/servers/gin/)** - Basic integration
+- **[Custom Server](../examples/go/servers/custom/)** - Custom middleware
+- **[Advanced Patterns](../examples/go/servers/advanced/)** - Dynamic pricing, hooks, extensions
 
 ## Migration from V1
 
@@ -770,7 +807,7 @@ import "github.com/x402-foundation/x402/go/middleware/gin"
 
 **V2:**
 ```go
-import ginmw "github.com/x402-foundation/x402/go/http/gin"
+import ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
 ```
 
 ## Related Documentation
@@ -780,5 +817,5 @@ import ginmw "github.com/x402-foundation/x402/go/http/gin"
 - **[FACILITATOR.md](FACILITATOR.md)** - Building facilitators
 - **[Mechanisms](mechanisms/)** - Payment scheme implementations
 - **[Extensions](extensions/)** - Protocol extensions
-- **[Examples](../../examples/go/servers/)** - Working server examples
+- **[Examples](../examples/go/servers/)** - Working server examples
 

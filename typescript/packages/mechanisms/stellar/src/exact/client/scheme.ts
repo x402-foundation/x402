@@ -1,4 +1,5 @@
 import { nativeToScVal, contract } from "@stellar/stellar-sdk";
+import { findDefaultAsset } from "../../defaultAssets";
 import { handleSimulationResult } from "../../shared";
 import {
   getEstimatedLedgerCloseTimeSeconds,
@@ -18,6 +19,7 @@ import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@
  */
 export class ExactStellarScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactStellarScheme instance.
@@ -77,7 +79,12 @@ export class ExactStellarScheme implements SchemeNetworkClient {
       rpcUrl,
       parseResultXdr: result => result,
     });
-    handleSimulationResult(tx.simulation);
+    const simulationContext = {
+      payer: sourcePublicKey,
+      payee: payTo,
+      asset,
+    };
+    handleSimulationResult(tx.simulation, simulationContext);
 
     let missingSigners = tx.needsNonInvokerSigningBy();
     if (!missingSigners.includes(sourcePublicKey) || missingSigners.length > 1) {
@@ -92,7 +99,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     });
 
     await tx.simulate();
-    handleSimulationResult(tx.simulation);
+    handleSimulationResult(tx.simulation, simulationContext);
 
     missingSigners = tx.needsNonInvokerSigningBy();
     if (missingSigners.length > 0) {

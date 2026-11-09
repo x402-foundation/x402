@@ -4,20 +4,66 @@ import {
   validateSvmAddress,
   normalizeNetwork,
   getUsdcAddress,
+  getStablecoinAddress,
+  getStablecoinSymbol,
+  getStablecoinTokenProgram,
   SVM_ADDRESS_REGEX,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
+  TOKEN_2022_PROGRAM_ADDRESS,
+  TOKEN_PROGRAM_ADDRESS,
   USDC_MAINNET_ADDRESS,
   USDC_DEVNET_ADDRESS,
+  getDefaultAsset,
 } from "../../src/index";
+import type { FacilitatorSvmSigner } from "../../src/signer";
+import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
+import { PaymentChannelRentCleanupManager } from "../../src/payment-channels/rentCleanup";
+import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/exact/server/scheme";
+import * as exactClientEntry from "../../src/exact/client";
+import { registerExactSvmScheme as registerExactClient } from "../../src/exact/client/register";
+import * as exactFacilitatorEntry from "../../src/exact/facilitator";
+import { registerExactSvmScheme as registerExactFacilitator } from "../../src/exact/facilitator/register";
+import * as exactServerEntry from "../../src/exact/server";
+import { registerExactSvmScheme as registerExactServer } from "../../src/exact/server/register";
+import * as exactV1ClientEntry from "../../src/exact/v1/client";
+import { ExactSvmSchemeV1 as ExactV1ClientScheme } from "../../src/exact/v1/client/scheme";
+import * as exactV1FacilitatorEntry from "../../src/exact/v1/facilitator";
+import { ExactSvmSchemeV1 as ExactV1FacilitatorScheme } from "../../src/exact/v1/facilitator/scheme";
+import * as uptoClientEntry from "../../src/upto/client";
+import { UptoSvmScheme as UptoClientScheme } from "../../src/upto/client/scheme";
+import * as uptoServerEntry from "../../src/upto/server";
+import { UptoSvmScheme as UptoServerScheme } from "../../src/upto/server/scheme";
+import * as uptoFacilitatorEntry from "../../src/upto/facilitator";
+import { UptoSvmScheme as UptoFacilitatorScheme } from "../../src/upto/facilitator/scheme";
+import * as paymentChannelsEntry from "../../src/payment-channels";
+import { verifyOpenTransaction } from "../../src/payment-channels/open";
 
 describe("@x402/svm", () => {
   it("should export main classes", () => {
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
+  });
+
+  it("re-exports register/scheme entry points callers import from package subpaths", () => {
+    expect(exactClientEntry.registerExactSvmScheme).toBe(registerExactClient);
+    expect(exactFacilitatorEntry.registerExactSvmScheme).toBe(registerExactFacilitator);
+    expect(exactServerEntry.registerExactSvmScheme).toBe(registerExactServer);
+    expect(exactV1ClientEntry.ExactSvmSchemeV1).toBe(ExactV1ClientScheme);
+    expect(exactV1FacilitatorEntry.ExactSvmSchemeV1).toBe(ExactV1FacilitatorScheme);
+    expect(uptoClientEntry.UptoSvmScheme).toBe(UptoClientScheme);
+    expect(uptoServerEntry.UptoSvmScheme).toBe(UptoServerScheme);
+    expect(uptoFacilitatorEntry.UptoSvmScheme).toBe(UptoFacilitatorScheme);
+    expect(uptoFacilitatorEntry.ERR_DELEGATED_AUTH_STORE).toBe(
+      "invalid_upto_svm_delegated_auth_store",
+    );
+    expect(uptoFacilitatorEntry.ERR_DELEGATED_SETTLE_UNAUTHENTICATED).toBe(
+      "invalid_upto_svm_delegated_settle_unauthenticated",
+    );
+    expect(paymentChannelsEntry.verifyOpenTransaction).toBe(verifyOpenTransaction);
   });
 
   describe("validateSvmAddress", () => {
@@ -32,6 +78,13 @@ describe("@x402/svm", () => {
       expect(validateSvmAddress("invalid")).toBe(false);
       expect(validateSvmAddress("0x1234567890abcdef")).toBe(false);
       expect(validateSvmAddress("too-short")).toBe(false);
+    });
+
+    it("should reject base58 that does not decode to 32 bytes", () => {
+      // Passes the charset/length regex but decodes short, so no Solana runtime
+      // (nor the Go SDK's decoder) would accept it as a public key.
+      expect(validateSvmAddress("NotAMint11111111111111111111111111111")).toBe(false);
+      expect(validateSvmAddress("OtherReceiver111111111111111111111111")).toBe(false);
     });
 
     it("should reject addresses with invalid characters", () => {
@@ -79,6 +132,111 @@ describe("@x402/svm", () => {
     });
   });
 
+  describe("stablecoin helpers", () => {
+    it("should return stablecoin addresses by network", () => {
+      expect(getStablecoinAddress("USDT", SOLANA_MAINNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_MAINNET_CAIP2, "USDT").asset,
+      );
+      expect(getStablecoinAddress("USDG", SOLANA_MAINNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_MAINNET_CAIP2, "USDG").asset,
+      );
+      expect(getStablecoinAddress("USDG", SOLANA_DEVNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_DEVNET_CAIP2, "USDG").asset,
+      );
+      expect(getStablecoinAddress("PYUSD", SOLANA_MAINNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_MAINNET_CAIP2, "PYUSD").asset,
+      );
+      expect(getStablecoinAddress("PYUSD", SOLANA_DEVNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_DEVNET_CAIP2, "PYUSD").asset,
+      );
+      expect(getStablecoinAddress("CASH", SOLANA_MAINNET_CAIP2)).toBe(
+        getDefaultAsset(SOLANA_MAINNET_CAIP2, "CASH").asset,
+      );
+      expect(() => getStablecoinAddress("CASH", SOLANA_DEVNET_CAIP2)).toThrow(
+        /No CASH default asset configured for network/,
+      );
+    });
+
+    it("should identify stablecoin symbols from symbols and known mints", () => {
+      expect(getStablecoinSymbol("USDG")).toBe("USDG");
+      expect(getStablecoinSymbol(getDefaultAsset(SOLANA_MAINNET_CAIP2, "USDG").asset)).toBe("USDG");
+      expect(getStablecoinSymbol("CustomMint111111111111111111111111111111")).toBeUndefined();
+    });
+
+    it("should categorize stablecoins by token program", () => {
+      expect(getStablecoinTokenProgram("USDC", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(getStablecoinTokenProgram("USDT", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(getStablecoinTokenProgram("PYUSD", SOLANA_DEVNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+      expect(getStablecoinTokenProgram("USDG", SOLANA_DEVNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+      expect(getStablecoinTokenProgram("CASH", SOLANA_MAINNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+      expect(getStablecoinTokenProgram("SOL", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(
+        getStablecoinTokenProgram(
+          "UnknownMint111111111111111111111111111111",
+          SOLANA_MAINNET_CAIP2,
+        ),
+      ).toBe(TOKEN_PROGRAM_ADDRESS);
+    });
+  });
+
+  describe("createRpcClient", () => {
+    it("creates clients for testnet and mainnet and rejects unsupported networks", async () => {
+      const { createRpcClient } = await import("../../src/utils");
+      expect(createRpcClient(SOLANA_TESTNET_CAIP2)).toBeDefined();
+      expect(createRpcClient(SOLANA_MAINNET_CAIP2)).toBeDefined();
+      expect(() => createRpcClient("solana:unknown" as never)).toThrow("Unsupported SVM network");
+    });
+  });
+
+  describe("FacilitatorSvmSigner", () => {
+    const exactOnlySigner: FacilitatorSvmSigner = {
+      getAddresses: () => ["11111111111111111111111111111111" as never],
+      signTransaction: async () => "tx",
+      simulateTransaction: async () => {},
+      sendTransaction: async () => "sig",
+      confirmTransaction: async () => {},
+    };
+
+    it("allows exact-only signers without getSigner", () => {
+      expect(exactOnlySigner.getAddresses()).toHaveLength(1);
+      expect(exactOnlySigner.getSigner).toBeUndefined();
+    });
+
+    it("accepts exact-only signers for ExactSvmScheme", () => {
+      expect(() => new ExactSvmScheme(exactOnlySigner)).not.toThrow();
+    });
+
+    it("accepts exact-only signers for UptoSvmScheme at compile time but rejects missing getSigner at runtime", () => {
+      expect(() => new UptoSvmScheme(exactOnlySigner)).toThrow(
+        "UptoSvmScheme requires getSigner on the signer",
+      );
+    });
+
+    it("rejects exact-only signers for PaymentChannelRentCleanupManager at runtime", () => {
+      expect(
+        () =>
+          new PaymentChannelRentCleanupManager({
+            signer: exactOnlySigner,
+            storage: {
+              recordOpen: async record => ({ record, revertToken: "1" }),
+              revertOpen: async () => {},
+              recordActivity: async () => {},
+              get: async () => undefined,
+              list: async () => [],
+              delete: async () => {},
+            },
+            network: SOLANA_DEVNET_CAIP2,
+          }),
+      ).toThrow("PaymentChannelRentCleanupManager requires getSigner on the signer");
+    });
+  });
+
   describe("ExactSvmScheme (Server)", () => {
     const server = new ServerExactSvmScheme();
 
@@ -111,6 +269,26 @@ describe("@x402/svm", () => {
         );
         expect(result.amount).toBe("100000");
         expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
+      });
+
+      it("should parse supported stablecoin suffixes", async () => {
+        const network = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+        await expect(server.parsePrice("0.10 USDT", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "USDT").asset,
+        });
+        await expect(server.parsePrice("0.10 USDG", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "USDG").asset,
+        });
+        await expect(server.parsePrice("0.10 PYUSD", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "PYUSD").asset,
+        });
+        await expect(server.parsePrice("0.10 CASH", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "CASH").asset,
+        });
       });
 
       it("should parse number prices", async () => {
@@ -209,8 +387,8 @@ describe("@x402/svm", () => {
 
     it("should register custom money parser and use it", async () => {
       const customServer = new ServerExactSvmScheme();
-      const customParser = async (amount: number, _network: string) => {
-        if (amount === 42) {
+      const customParser = async (amount: string | number, _network: string) => {
+        if (Number(amount) === 42) {
           return { amount: "42000000", asset: "custom_asset_address", extra: {} };
         }
         return null;
@@ -242,12 +420,12 @@ describe("@x402/svm", () => {
 
     it("should try custom parsers in registration order", async () => {
       const customServer = new ServerExactSvmScheme();
-      const firstParser = async (amount: number) => {
-        if (amount > 0) return { amount: "first", asset: "first_asset", extra: {} };
+      const firstParser = async (amount: string | number) => {
+        if (Number(amount) > 0) return { amount: "first", asset: "first_asset", extra: {} };
         return null;
       };
-      const secondParser = async (amount: number) => {
-        if (amount > 0) return { amount: "second", asset: "second_asset", extra: {} };
+      const secondParser = async (amount: string | number) => {
+        if (Number(amount) > 0) return { amount: "second", asset: "second_asset", extra: {} };
         return null;
       };
       customServer.registerMoneyParser(firstParser).registerMoneyParser(secondParser);

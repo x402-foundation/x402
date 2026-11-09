@@ -9,14 +9,24 @@ packages:
   - site
 overrides:
   cssstyle: 5.3.6
+  # GHSA-mrhx-c7xc-m3w5 has no patched zod 3.x.
+  zod: ^4.6.6
+packageExtensions:
+  # @keetanetwork/anchor imports tslib at runtime but does not declare it.
+  "@keetanetwork/anchor@*":
+    dependencies:
+      tslib: "^2.8.1"
 minimumReleaseAge: 4320 # Only install package versions that have been published for at least 3 days.
 minimumReleaseAgeStrict: true
 allowBuilds:
+  '@parcel/watcher': true
   bigint-buffer: true
   bufferutil: true
   esbuild: true
   keccak: true
+  msgpackr-extract: true
   protobufjs: true
+  secp256k1: true
   sharp: true
   unrs-resolver: true
   utf-8-validate: true

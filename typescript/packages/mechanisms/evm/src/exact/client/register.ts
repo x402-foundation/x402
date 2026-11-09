@@ -1,10 +1,11 @@
 import { x402Client, SelectPaymentRequirements, PaymentPolicy } from "@x402/core/client";
 import { Network } from "@x402/core/types";
+import { networkMatchesPattern } from "@x402/core/utils";
 import { ClientEvmSigner } from "../../signer";
 import { ExactEvmScheme } from "./scheme";
-import { ExactEvmSchemeOptions } from "./rpc";
+import type { EvmSchemeOptions } from "../../shared/rpc";
 import { ExactEvmSchemeV1 } from "../v1/client/scheme";
-import { NETWORKS } from "../../v1";
+import { NETWORKS, getEvmChainIdV1 } from "../../v1";
 
 /**
  * Configuration options for registering EVM schemes to an x402Client
@@ -31,7 +32,7 @@ export interface EvmClientConfig {
    * Supports either a single config ({ rpcUrl }) or per-chain configs
    * keyed by EVM chain ID ({ 8453: { rpcUrl: "..." } }).
    */
-  schemeOptions?: ExactEvmSchemeOptions;
+  schemeOptions?: EvmSchemeOptions;
 
   /**
    * Optional specific networks to register.
@@ -78,8 +79,16 @@ export function registerExactEvmScheme(client: x402Client, config: EvmClientConf
     client.register("eip155:*", evmScheme);
   }
 
-  // Register all V1 networks
-  NETWORKS.forEach(network => {
+  const v1Networks =
+    config.networks && config.networks.length > 0
+      ? NETWORKS.filter(name =>
+          config.networks!.some(pattern =>
+            networkMatchesPattern(pattern, `eip155:${getEvmChainIdV1(name)}` as Network),
+          ),
+        )
+      : NETWORKS;
+
+  v1Networks.forEach(network => {
     client.registerV1(network as Network, new ExactEvmSchemeV1(config.signer));
   });
 

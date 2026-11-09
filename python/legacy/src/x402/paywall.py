@@ -7,6 +7,22 @@ from x402.evm_paywall_template import EVM_PAYWALL_TEMPLATE
 from x402.svm_paywall_template import SVM_PAYWALL_TEMPLATE
 
 
+# Escape characters that have special meaning when JSON is embedded in a
+# <script> block. Without this, an attacker-controlled string containing
+# `</script>` (e.g. via the request URL that becomes payment_requirements.resource)
+# closes the script tag and lets arbitrary HTML/JS run on the merchant's origin.
+_JSON_SCRIPT_ESCAPES = {
+    ord(">"): "\\u003E",
+    ord("<"): "\\u003C",
+    ord("&"): "\\u0026",
+}
+
+
+def _htmlsafe_json_dumps(obj: Any) -> str:
+    """Serialize ``obj`` to JSON safe for inline ``<script>`` embedding."""
+    return json.dumps(obj).translate(_JSON_SCRIPT_ESCAPES)
+
+
 def get_paywall_template(network: str) -> str:
     """Get the appropriate paywall template for the given network."""
     if network.startswith("solana:"):
@@ -96,7 +112,7 @@ def inject_payment_data(
 
     config_script = f"""
   <script>
-    window.x402 = {json.dumps(x402_config)};
+    window.x402 = {_htmlsafe_json_dumps(x402_config)};
     {log_on_testnet}
   </script>"""
 

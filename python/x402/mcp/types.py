@@ -23,6 +23,9 @@ class ResourceInfo:
         url: str,
         description: str | None = None,
         mime_type: str | None = None,
+        service_name: str | None = None,
+        tags: list[str] | None = None,
+        icon_url: str | None = None,
     ):
         """Initialize resource info.
 
@@ -30,10 +33,16 @@ class ResourceInfo:
             url: Resource URL
             description: Optional description
             mime_type: Optional MIME type
+            service_name: Optional human-readable service name for bazaar discovery
+            tags: Optional topical tags for bazaar discovery search
+            icon_url: Optional absolute http(s) URL to a service icon
         """
         self.url = url
         self.description = description
         self.mime_type = mime_type
+        self.service_name = service_name
+        self.tags = tags
+        self.icon_url = icon_url
 
 
 class PaymentRequiredContext:
@@ -97,7 +106,7 @@ class AfterPaymentContext:
             tool_name: Name of the tool
             payment_payload: Payment payload that was used
             result: Tool result
-            settle_response: Optional settlement response
+            settle_response: Successful receipt after core response processing, if available
         """
         self.tool_name = tool_name
         self.payment_payload = payment_payload
@@ -159,19 +168,35 @@ class MCPToolCallResult:
         is_error: bool = False,
         payment_response: SettleResponse | None = None,
         payment_made: bool = False,
+        raw_result: MCPToolResult | None = None,
     ):
         """Initialize tool call result.
 
         Args:
             content: Content items
             is_error: Whether this is an error result
-            payment_response: Optional settlement response
-            payment_made: Whether payment was made
+            payment_response: Successful settlement response, if available
+            payment_made: Whether a payment payload was submitted, including failed
+                or pending settlement; this alone does not confirm settlement
+            raw_result: Original tool result, including failed settlement details
         """
         self.content = content
         self.is_error = is_error
         self.payment_response = payment_response
         self.payment_made = payment_made
+        self.raw_result = raw_result
+
+
+class PaymentResponseError(Exception):
+    """Receipt validation failed after a tool returned.
+
+    ``result`` keeps the tool output. Retrying is unsafe because payment may already have settled.
+    """
+
+    def __init__(self, message: str, result: Any):
+        """Initialize an error carrying the tool result."""
+        super().__init__(message)
+        self.result = result
 
 
 class SyncPaymentWrapperConfig:
@@ -339,19 +364,25 @@ DynamicPrice = Callable[[MCPToolContext], Price]
 
 
 class PaymentRequiredError(Exception):
-    """Error indicating payment is required."""
+    """Error indicating payment is required.
+
+    ``result`` carries the paid tool result when a submitted retry is refused.
+    """
 
     def __init__(
         self,
         message: str,
         payment_required: Any | None = None,  # PaymentRequired
+        result: Any | None = None,  # MCPToolCallResult
     ):
         """Initialize payment required error.
 
         Args:
             message: Error message
             payment_required: Optional payment required response
+            result: Tool result of an already submitted payment, if any
         """
         super().__init__(message)
         self.code = MCP_PAYMENT_REQUIRED_CODE
         self.payment_required = payment_required
+        self.result = result

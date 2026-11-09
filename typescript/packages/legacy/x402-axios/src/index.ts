@@ -22,12 +22,14 @@ import {
  *
  * When a request receives a 402 response:
  * 1. Extracts payment requirements from the response
- * 2. Creates a payment header using the provided wallet client
- * 3. Retries the original request with the payment header
- * 4. Exposes the X-PAYMENT-RESPONSE header in the final response
+ * 2. Verifies the payment amount is within the allowed maximum
+ * 3. Creates a payment header using the provided wallet client
+ * 4. Retries the original request with the payment header
+ * 5. Exposes the X-PAYMENT-RESPONSE header in the final response
  *
  * @param axiosClient - The Axios instance to add the interceptor to
  * @param walletClient - A wallet client that can sign transactions and create payment headers
+ * @param maxValue - The maximum allowed payment amount in base units (defaults to 0.1 USDC)
  * @param paymentRequirementsSelector - A function that selects the payment requirements from the response
  * @param config - Optional configuration for X402 operations (e.g., custom RPC URLs)
  * @returns The modified Axios instance with the payment interceptor
@@ -44,16 +46,20 @@ import {
  *   axios.create(),
  *   signer,
  *   undefined,
+ *   undefined,
  *   { svmConfig: { rpcUrl: "http://localhost:8899" } }
  * );
  *
  * // The client will automatically handle 402 responses
  * const response = await client.get('https://api.example.com/premium-content');
  * ```
+ *
+ * @throws {Error} If the payment amount exceeds the maximum allowed value
  */
 export function withPaymentInterceptor(
   axiosClient: AxiosInstance,
   walletClient: Signer | MultiNetworkSigner,
+  maxValue: bigint = BigInt(0.1 * 10 ** 6), // Default to 0.10 USDC
   paymentRequirementsSelector: PaymentRequirementsSelector = selectPaymentRequirements,
   config?: X402Config,
 ) {
@@ -89,6 +95,11 @@ export function withPaymentInterceptor(
               : undefined;
 
         const selectedPaymentRequirements = paymentRequirementsSelector(parsed, network, "exact");
+
+        if (BigInt(selectedPaymentRequirements.maxAmountRequired) > maxValue) {
+          throw new Error("Payment amount exceeds maximum allowed");
+        }
+
         const paymentHeader = await createPaymentHeader(
           walletClient,
           x402Version,

@@ -3,6 +3,11 @@ import {
   SettlementOverrides,
   SkipHandlerDirective,
   PaymentCancellationDispatcher,
+  CompletedSettlement,
+  SettlePhase,
+  resolvePaymentFlow,
+  resolvePaymentFlowPhases,
+  resolveFailurePathSettlement,
 } from "../server";
 import {
   decodePaymentSignatureHeader,
@@ -22,6 +27,28 @@ import {
 import { x402Version } from "..";
 
 export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
+
+export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
+
+/**
+ * Appends the `private` directive to an existing Cache-Control header value.
+ * Shared caches must not store responses with user-specific settlement metadata.
+ *
+ * @param value - Existing Cache-Control header value, or null/empty if unset
+ * @returns Cache-Control value with `private` merged in
+ */
+export function withPrivateCacheControl(value: string | null): string {
+  if (!value) {
+    return "private";
+  }
+
+  const directives = value.split(",").map(directive => directive.trim().toLowerCase());
+  if (directives.includes("private")) {
+    return value;
+  }
+
+  return `${value}, private`;
+}
 
 /**
  * Framework-agnostic HTTP adapter interface
@@ -146,6 +173,9 @@ export interface RouteConfig {
   resource?: string;
   description?: string;
   mimeType?: string;
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
   customPaywallHtml?: string;
 
   /**
@@ -243,6 +273,7 @@ export interface HTTPRequestContext {
   method: string;
   paymentHeader?: string;
   routePattern?: string;
+  decodedPath?: string;
 }
 
 /**
@@ -275,6 +306,7 @@ export type HTTPProcessResult =
   | {
       type: "payment-verified";
       cancellationDispatcher: PaymentCancellationDispatcher;
+      beforeHandlerSettlement?: CompletedSettlement;
       paymentPayload: PaymentPayload;
       paymentRequirements: PaymentRequirements;
       declaredExtensions?: Record<string, unknown>;
@@ -313,7 +345,11 @@ export interface RouteValidationError {
   /** The network that failed validation */
   network: Network;
   /** The type of validation failure */
-  reason: "missing_scheme" | "missing_facilitator";
+  reason:
+    | "missing_scheme"
+    | "missing_facilitator"
+    | "unsupported_asset_transfer_method"
+    | "unsupported_payment_flow";
   /** Human-readable error message */
   message: string;
 }
@@ -338,6 +374,48 @@ export class RouteConfigurationError extends Error {
   }
 }
 
+// Static fallback paywall served when @x402/paywall is not installed.
+// Intentionally contains zero request- or config-derived interpolation:
+// the protocol-level payment requirements still ship in response headers
+// and the JSON 402 body for non-browser clients, so any agent or SDK can
+// read them without us reflecting attacker-controlled bytes into HTML.
+// Browser-end-user payment requires installing @x402/paywall.
+const FALLBACK_PAYWALL_HTML = `<!DOCTYPE html>
+<html>
+  <head>
+    <title>Payment Required</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  </head>
+  <body>
+    <div style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui, -apple-system, sans-serif;">
+      <h1>Payment Required</h1>
+      <p>This resource is protected by the x402 payment protocol.</p>
+      <p style="margin-top: 2rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem;">
+        <strong>Note to developers:</strong> install <code>@x402/paywall</code> to enable
+        the in-browser wallet connection and payment UI. Programmatic clients should read
+        the payment requirements from the 402 response headers and JSON body.
+      </p>
+    </div>
+  </body>
+</html>`;
+
+// Optional package, imported by a non-literal specifier so TypeScript and
+// bundlers do not try to resolve it from core.
+const PAYWALL_PACKAGE = "@x402/paywall";
+
+/**
+ * Network handler exported by @x402/paywall (its PaywallNetworkHandler)
+ */
+interface PaywallNetworkHandler {
+  supports(requirement: PaymentRequirements): boolean;
+  generateHtml(
+    requirement: PaymentRequirements,
+    paymentRequired: PaymentRequired,
+    config: PaywallConfig,
+  ): string;
+}
+
 /**
  * HTTP-enhanced x402 resource server
  * Provides framework-agnostic HTTP protocol handling
@@ -347,13 +425,18 @@ export class x402HTTPResourceServer {
   private compiledRoutes: CompiledRoute[] = [];
   private routesConfig: RoutesConfig;
   private paywallProvider?: PaywallProvider;
+  private defaultPaywallHandlers?: PaywallNetworkHandler[];
+  private defaultPaywallLoad?: Promise<void>;
   private protectedRequestHooks: ProtectedRequestHook[] = [];
+  private warnedMissingBeforeHandlerSettlement = false;
 
   /**
    * Creates a new x402HTTPResourceServer instance.
    *
    * @param ResourceServer - The core x402ResourceServer instance to use
    * @param routes - Route configuration for payment-protected endpoints
+   * @throws RouteConfigurationError if a registered scheme does not support the
+   *         declared paymentFlow / assetTransferMethod
    */
   constructor(ResourceServer: x402ResourceServer, routes: RoutesConfig) {
     this.ResourceServer = ResourceServer;
@@ -373,6 +456,14 @@ export class x402HTTPResourceServer {
         config,
         pattern: parsed.path,
       });
+    }
+
+    const paymentFlowErrors = this.validateRouteConfiguration({
+      includeMissingScheme: false,
+      includeFacilitator: false,
+    });
+    if (paymentFlowErrors.length > 0) {
+      throw new RouteConfigurationError(paymentFlowErrors);
     }
   }
 
@@ -461,7 +552,7 @@ export class x402HTTPResourceServer {
     const { adapter, path } = context;
 
     // Find matching route
-    const routeMatch = this.getRouteConfig(path, method);
+    const routeMatch = this.getRouteConfig(path, method, context.decodedPath);
     if (!routeMatch) {
       return { type: "no-payment-required" }; // No payment required for this route
     }
@@ -497,6 +588,9 @@ export class x402HTTPResourceServer {
       url: routeConfig.resource || enrichedContext.adapter.getUrl(),
       description: routeConfig.description || "",
       mimeType: routeConfig.mimeType || "",
+      ...(routeConfig.serviceName !== undefined && { serviceName: routeConfig.serviceName }),
+      ...(routeConfig.tags !== undefined && { tags: routeConfig.tags }),
+      ...(routeConfig.iconUrl !== undefined && { iconUrl: routeConfig.iconUrl }),
     };
 
     // Build requirements from all payment options
@@ -528,11 +622,16 @@ export class x402HTTPResourceServer {
         ? await routeConfig.unpaidResponseBody(enrichedContext)
         : undefined;
 
+      const isWebBrowser = this.isWebBrowser(adapter);
+      if (isWebBrowser && !this.paywallProvider && !routeConfig.customPaywallHtml) {
+        await this.loadDefaultPaywallHandlers();
+      }
+
       return {
         type: "payment-error",
         response: this.createHTTPResponse(
           paymentRequired,
-          this.isWebBrowser(adapter),
+          isWebBrowser,
           paywallConfig,
           routeConfig.customPaywallHtml,
           unpaidBody,
@@ -540,7 +639,7 @@ export class x402HTTPResourceServer {
       };
     }
 
-    // Verify payment
+    // Match requirements, resolve flow, then verify/settle per flow phases
     try {
       const matchingRequirements = this.ResourceServer.findMatchingRequirements(
         paymentRequired.accepts,
@@ -560,6 +659,28 @@ export class x402HTTPResourceServer {
           response: this.createHTTPResponse(errorResponse, false, paywallConfig),
         };
       }
+
+      const extensionResult = this.ResourceServer.validateExtensions(
+        paymentRequired,
+        paymentPayload,
+      );
+      if (!extensionResult.valid) {
+        const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
+          requirements,
+          resourceInfo,
+          extensionResult.invalidReason,
+          extensions,
+          transportContext,
+          paymentPayload,
+        );
+        return {
+          type: "payment-error",
+          response: this.createHTTPResponse(errorResponse, false, paywallConfig),
+        };
+      }
+
+      const flow = this.ResourceServer.getPaymentFlow(paymentPayload, matchingRequirements);
+      const phases = resolvePaymentFlowPhases(flow);
 
       const verifyResult = await this.ResourceServer.verifyPayment(
         paymentPayload,
@@ -594,17 +715,46 @@ export class x402HTTPResourceServer {
         );
       }
 
+      let beforeHandlerSettlement: CompletedSettlement | undefined;
+
+      if (phases.settleBeforeHandler) {
+        const beforeSettleResult = await this.processSettlement(
+          paymentPayload,
+          matchingRequirements,
+          extensions,
+          transportContext,
+          undefined,
+          undefined,
+          "before-handler",
+        );
+        if (!beforeSettleResult.success) {
+          return { type: "payment-error", response: beforeSettleResult.response };
+        }
+        // Store SettleResponse only — omit SDK-only headers from CompletedSettlement.
+        const { result, requirements } = (({ headers: _, requirements, ...result }) => ({
+          result,
+          requirements,
+        }))(beforeSettleResult);
+        beforeHandlerSettlement = {
+          phase: "before-handler",
+          flow,
+          result,
+          requirements,
+        };
+      }
+
       const cancellationDispatcher = this.ResourceServer.createPaymentCancellationDispatcher(
         paymentPayload,
         matchingRequirements,
         extensions,
         transportContext,
+        beforeHandlerSettlement ? ["before-handler"] : [],
       );
 
-      // Payment is valid, return data needed for settlement
       return {
         type: "payment-verified",
         cancellationDispatcher,
+        beforeHandlerSettlement,
         paymentPayload,
         paymentRequirements: matchingRequirements,
         declaredExtensions: extensions,
@@ -635,6 +785,8 @@ export class x402HTTPResourceServer {
    * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
    * @param transportContext - Optional HTTP transport context
    * @param settlementOverrides - Optional settlement overrides (e.g., partial settlement amount)
+   * @param beforeHandlerSettlement - Before-handler settle from processHTTPRequest (for PAYMENT-RESPONSE echo)
+   * @param phase - Explicit settle phase; omit to derive from the payment flow
    * @returns ProcessSettleResultResponse - SettleResponse with headers if success or errorReason if failure
    */
   async processSettlement(
@@ -643,6 +795,8 @@ export class x402HTTPResourceServer {
     declaredExtensions?: Record<string, unknown>,
     transportContext?: HTTPTransportContext,
     settlementOverrides?: SettlementOverrides,
+    beforeHandlerSettlement?: CompletedSettlement,
+    phase?: SettlePhase,
   ): Promise<ProcessSettleResultResponse> {
     if (transportContext?.request && !transportContext.request.method) {
       transportContext = {
@@ -653,6 +807,41 @@ export class x402HTTPResourceServer {
         },
       };
     }
+
+    const flow =
+      beforeHandlerSettlement?.flow ??
+      this.ResourceServer.getPaymentFlow(paymentPayload, requirements);
+    const phases = resolvePaymentFlowPhases(flow);
+
+    // After-handler path for flows that do not settle again: echo before-handler settle or no-op.
+    if (phase !== "before-handler" && !phases.settleAfterHandler) {
+      if (beforeHandlerSettlement) {
+        return {
+          ...beforeHandlerSettlement.result,
+          success: true,
+          headers: this.createSettlementHeaders(beforeHandlerSettlement.result),
+          requirements: beforeHandlerSettlement.requirements,
+        };
+      }
+      if (phases.settleBeforeHandler && !beforeHandlerSettlement) {
+        if (!this.warnedMissingBeforeHandlerSettlement) {
+          this.warnedMissingBeforeHandlerSettlement = true;
+          console.warn(
+            `[x402] Payment flow "${flow}" settles before the handler, but processSettlement was called without beforeHandlerSettlement from processHTTPRequest. Skipping after-handler settle. Pass that settle result to echo the before-handler PAYMENT-RESPONSE.`,
+          );
+        }
+      }
+      return {
+        success: true,
+        transaction: "",
+        network: requirements.network as Network,
+        headers: {},
+        requirements,
+      };
+    }
+
+    const resolvedPhase: SettlePhase = phase ?? "after-handler";
+
     try {
       // Resolve overrides: explicit param takes precedence, fall back to response header
       let resolvedOverrides = settlementOverrides;
@@ -676,15 +865,16 @@ export class x402HTTPResourceServer {
         declaredExtensions,
         transportContext,
         resolvedOverrides,
+        resolvedPhase,
       );
 
       if (!settleResponse.success) {
+        const errorReason = settleResponse.errorReason || "Settlement failed";
         const failure = {
           ...settleResponse,
           success: false as const,
-          errorReason: settleResponse.errorReason || "Settlement failed",
-          errorMessage:
-            settleResponse.errorMessage || settleResponse.errorReason || "Settlement failed",
+          errorReason,
+          errorMessage: settleResponse.errorMessage || errorReason,
           headers: this.createSettlementHeaders(settleResponse),
         };
         const response = await this.buildSettlementFailureResponse(failure, transportContext);
@@ -747,7 +937,68 @@ export class x402HTTPResourceServer {
    */
   requiresPayment(context: HTTPRequestContext): boolean {
     const method = context.method || context.adapter.getMethod();
-    return this.getRouteConfig(context.path, method) !== undefined;
+    return this.getRouteConfig(context.path, method, context.decodedPath) !== undefined;
+  }
+
+  /**
+   * Create settlement response headers
+   *
+   * @param settleResponse - Settlement response
+   * @returns Headers to add to response
+   */
+  createSettlementHeaders(settleResponse: SettleResponse): Record<string, string> {
+    const encoded = encodePaymentResponseHeader(settleResponse);
+    return { "PAYMENT-RESPONSE": encoded };
+  }
+
+  /**
+   * Headers for echoing a completed before-handler settle onto a response.
+   * Merges `private` into Cache-Control so shared caches do not store settlement metadata.
+   *
+   * Used when the resource handler fails after payment was already committed (e.g. `upfront`).
+   *
+   * @param settlement - Completed before-handler settle
+   * @param existingCacheControl - Existing Cache-Control value, if any
+   * @returns PAYMENT-RESPONSE and Cache-Control headers
+   */
+  createCompletedSettlementHeaders(
+    settlement: CompletedSettlement,
+    existingCacheControl?: string | null,
+  ): Record<string, string> {
+    return {
+      ...this.createSettlementHeaders(settlement.result),
+      "Cache-Control": withPrivateCacheControl(existingCacheControl ?? null),
+    };
+  }
+
+  /**
+   * PAYMENT-RESPONSE headers when the resource handler fails after before-handler settle.
+   * Prefers cancel/refund settle when present; otherwise echoes the upfront deposit receipt.
+   *
+   * @param cancelSettlement - Result from {@link PaymentCancellationDispatcher.cancel}, if any
+   * @param beforeHandlerSettlement - Completed before-handler settle, when present
+   * @param paymentPayload - Client payment payload (for escrow deposit recovery fields)
+   * @param existingCacheControl - Existing Cache-Control value, if any
+   * @returns PAYMENT-RESPONSE and Cache-Control headers, or undefined when neither receipt applies
+   */
+  createFailurePathSettlementHeaders(
+    cancelSettlement: SettleResponse | void | undefined,
+    beforeHandlerSettlement?: CompletedSettlement,
+    paymentPayload?: PaymentPayload,
+    existingCacheControl?: string | null,
+  ): Record<string, string> | undefined {
+    const receipt = resolveFailurePathSettlement(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+    );
+    if (!receipt) {
+      return undefined;
+    }
+    return {
+      ...this.createSettlementHeaders(receipt),
+      "Cache-Control": withPrivateCacheControl(existingCacheControl ?? null),
+    };
   }
 
   /**
@@ -777,6 +1028,9 @@ export class x402HTTPResourceServer {
       requirements,
       declaredExtensions,
       transportContext,
+      undefined,
+      undefined,
+      "after-handler",
     );
 
     if (!settleResult.success) {
@@ -793,6 +1047,7 @@ export class x402HTTPResourceServer {
         headers: {
           "Content-Type": contentType,
           ...settleResult.headers,
+          "Cache-Control": withPrivateCacheControl(null),
         },
         body,
         isHtml: contentType.includes("text/html"),
@@ -814,7 +1069,11 @@ export class x402HTTPResourceServer {
   ): Promise<HTTPResponseInstructions> {
     const settlementHeaders = failure.headers;
     const routeConfig = transportContext
-      ? this.getRouteConfig(transportContext.request.path, transportContext.request.method)
+      ? this.getRouteConfig(
+          transportContext.request.path,
+          transportContext.request.method,
+          transportContext.request.decodedPath,
+        )
       : undefined;
 
     const customBody = routeConfig?.config.settlementFailedResponseBody
@@ -829,6 +1088,7 @@ export class x402HTTPResourceServer {
       headers: {
         "Content-Type": contentType,
         ...settlementHeaders,
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
       body,
       isHtml: contentType.includes("text/html"),
@@ -870,12 +1130,19 @@ export class x402HTTPResourceServer {
   }
 
   /**
-   * Validates that all payment options in routes have corresponding registered schemes
-   * and facilitator support.
+   * Validates that all payment options in routes have corresponding registered schemes,
+   * supported paymentFlow / assetTransferMethod and facilitator support.
    *
+   * @param options - Validation options
+   * @param options.includeMissingScheme - When true (default), report unregistered schemes
+   * @param options.includeFacilitator - When true (default), also check facilitator kinds
    * @returns Array of validation errors (empty if all routes are valid)
    */
-  private validateRouteConfiguration(): RouteValidationError[] {
+  private validateRouteConfiguration(
+    options: { includeMissingScheme?: boolean; includeFacilitator?: boolean } = {},
+  ): RouteValidationError[] {
+    const includeMissingScheme = options.includeMissingScheme !== false;
+    const includeFacilitator = options.includeFacilitator !== false;
     const errors: RouteValidationError[] = [];
 
     // Normalize routes to array of [pattern, config] pairs
@@ -904,19 +1171,67 @@ export class x402HTTPResourceServer {
 
       for (const option of paymentOptions) {
         // Check 1: Is scheme registered?
-        if (!this.ResourceServer.hasRegisteredScheme(option.network, option.scheme)) {
+        const schemeServer = this.ResourceServer.getRegisteredScheme(option.network, option.scheme);
+        if (!schemeServer) {
+          if (includeMissingScheme) {
+            errors.push({
+              routePattern: pattern,
+              scheme: option.scheme,
+              network: option.network,
+              reason: "missing_scheme",
+              message: `Route "${pattern}": No scheme implementation registered for "${option.scheme}" on network "${option.network}"`,
+            });
+          }
+          // Skip further checks if scheme isn't registered
+          continue;
+        }
+
+        // Check 2: Does the scheme support the declared ATM / paymentFlow?
+        const atm =
+          typeof option.extra?.assetTransferMethod === "string"
+            ? option.extra.assetTransferMethod
+            : schemeServer.defaultAssetTransferMethod;
+        if (!schemeServer.paymentFlows[atm]) {
           errors.push({
             routePattern: pattern,
             scheme: option.scheme,
             network: option.network,
-            reason: "missing_scheme",
-            message: `Route "${pattern}": No scheme implementation registered for "${option.scheme}" on network "${option.network}"`,
+            reason: "unsupported_asset_transfer_method",
+            message:
+              `Route "${pattern}": [x402] Scheme "${schemeServer.scheme}" does not support ` +
+              `assetTransferMethod "${atm}". Supported: ${Object.keys(schemeServer.paymentFlows).join(", ")}.`,
           });
-          // Skip facilitator check if scheme isn't registered
           continue;
         }
 
-        // Check 2: Does facilitator support this scheme/network combination?
+        try {
+          resolvePaymentFlow(schemeServer, {
+            scheme: option.scheme,
+            network: option.network,
+            asset: "",
+            amount: "0",
+            payTo: "",
+            maxTimeoutSeconds: 0,
+            extra: option.extra ?? {},
+          });
+        } catch (error) {
+          errors.push({
+            routePattern: pattern,
+            scheme: option.scheme,
+            network: option.network,
+            reason: "unsupported_payment_flow",
+            message:
+              error instanceof Error
+                ? `Route "${pattern}": ${error.message}`
+                : `Route "${pattern}": Unsupported paymentFlow`,
+          });
+        }
+
+        if (!includeFacilitator) {
+          continue;
+        }
+
+        // Check 3: Does facilitator support this scheme/network combination?
         const supportedKind = this.ResourceServer.getSupportedKind(
           x402Version,
           option.network,
@@ -943,22 +1258,44 @@ export class x402HTTPResourceServer {
    *
    * @param path - Request path
    * @param method - HTTP method
+   * @param decodedPath - Framework decoded routing view, if distinct from path
    * @returns Route configuration and pattern, or undefined if no match
    */
   private getRouteConfig(
     path: string,
     method: string,
+    decodedPath?: string,
   ): { config: RouteConfig; pattern: string } | undefined {
-    const normalizedPath = this.normalizePath(path);
     const upperMethod = method.toUpperCase();
+    // A method-less route must not gate the CORS preflight: the browser sends
+    // OPTIONS without a payment and only sends the paid request if it succeeds.
+    // An explicit "OPTIONS /path" route still matches.
+    const matchesVerb = (verb: string): boolean =>
+      verb === upperMethod || (verb === "*" && upperMethod !== "OPTIONS");
 
-    const matchingRoute = this.compiledRoutes.find(
-      route =>
-        route.regex.test(normalizedPath) && (route.verb === "*" || route.verb === upperMethod),
-    );
+    const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
+      let matchingRoute = this.compiledRoutes.find(
+        route => route.regex.test(candidate) && matchesVerb(route.verb),
+      );
+      if (!matchingRoute && upperMethod === "HEAD") {
+        matchingRoute = this.compiledRoutes.find(
+          route => route.regex.test(candidate) && route.verb === "GET",
+        );
+      }
+      if (!matchingRoute) return undefined;
+      return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+    };
 
-    if (!matchingRoute) return undefined;
-    return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+    const match = findMatch(this.normalizePath(path));
+    if (match !== undefined) {
+      return match;
+    }
+
+    if (decodedPath !== undefined && decodedPath !== path) {
+      return findMatch(this.normalizeDecodedPath(decodedPath));
+    }
+
+    return undefined;
   }
 
   /**
@@ -1014,22 +1351,30 @@ export class x402HTTPResourceServer {
     // Use 412 Precondition Failed for permit2_allowance_required error
     // This signals client needs to approve Permit2 before retrying
     const status = paymentRequired.error === "permit2_allowance_required" ? 412 : 402;
+    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
 
     if (isWebBrowser) {
       const html = this.generatePaywallHTML(paymentRequired, paywallConfig, customHtml);
       return {
         status,
-        headers: { "Content-Type": "text/html" },
+        headers: {
+          "Content-Type": "text/html",
+          ...response.headers,
+        },
         body: html,
         isHtml: true,
       };
     }
 
-    const response = this.createHTTPPaymentRequiredResponse(paymentRequired);
-
-    // Use callback result if provided, otherwise default to JSON with empty object
+    // Use callback result if provided, otherwise include the error reason so
+    // non-browser clients can tell WHY a payment was rejected without decoding
+    // the PAYMENT-REQUIRED header (e.g. insufficient_funds vs. signature error).
     const contentType = unpaidResponse ? unpaidResponse.contentType : "application/json";
-    const body = unpaidResponse ? unpaidResponse.body : {};
+    const body = unpaidResponse
+      ? unpaidResponse.body
+      : paymentRequired.error
+        ? { error: paymentRequired.error }
+        : {};
 
     return {
       status,
@@ -1053,19 +1398,9 @@ export class x402HTTPResourceServer {
     return {
       headers: {
         "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
+        "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
       },
     };
-  }
-
-  /**
-   * Create settlement response headers
-   *
-   * @param settleResponse - Settlement response
-   * @returns Headers to add to response
-   */
-  private createSettlementHeaders(settleResponse: SettleResponse): Record<string, string> {
-    const encoded = encodePaymentResponseHeader(settleResponse);
-    return { "PAYMENT-RESPONSE": encoded };
   }
 
   /**
@@ -1077,17 +1412,29 @@ export class x402HTTPResourceServer {
   private parseRoutePattern(pattern: string): { verb: string; regex: RegExp; path: string } {
     const [verb, path] = pattern.includes(" ") ? pattern.split(/\s+/) : ["*", pattern];
 
+    // A trailing "/*" must also match the bare prefix. normalizePath strips the
+    // trailing slash, so a request for "/api/premium/" arrives as "/api/premium",
+    // which a literal "/.*?" suffix would not match even though routers dispatch
+    // it to the protected handler.
+    const trailingWildcard = path.endsWith("/*");
+    const pathForRegex = trailingWildcard ? path.slice(0, -2) : path;
+
+    let regexBody = pathForRegex
+      .replace(/\\/g, "\\\\") // Escape backslashes first
+      .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
+      .replace(/\*/g, ".*?") // Wildcards
+      .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])
+      .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
+      .replace(/\//g, "\\/"); // Escape slashes
+
+    if (trailingWildcard) {
+      regexBody += "(?:/.*?)?";
+    }
+
     const regex = new RegExp(
-      `^${
-        path
-          .replace(/\\/g, "\\\\") // Escape backslashes first
-          .replace(/[$()+.?^{|}]/g, "\\$&") // Escape regex special chars
-          .replace(/\*/g, ".*?") // Wildcards
-          .replace(/\[([^\]]+)\]/g, "[^/]+") // Parameters (Next.js style [param])
-          .replace(/:([a-zA-Z_][a-zA-Z0-9_]*)/g, "[^/]+") // Parameters (Express style :param)
-          .replace(/\//g, "\\/") // Escape slashes
-      }$`,
-      "i",
+      `^${regexBody}$`,
+      // "s" (dotAll): without it, "." can't match LF/CR/U+2028/U+2029, so a wildcard segment containing one fails to match.
+      "is",
     );
 
     return { verb: verb.toUpperCase(), regex, path };
@@ -1102,17 +1449,38 @@ export class x402HTTPResourceServer {
   private normalizePath(path: string): string {
     const pathWithoutQuery = path.split(/[?#]/)[0];
 
-    let decodedOrRawPath: string;
-    try {
-      decodedOrRawPath = decodeURIComponent(pathWithoutQuery);
-    } catch {
-      decodedOrRawPath = pathWithoutQuery;
-    }
+    // Decode percent-escapes per segment and re-escape any separator the decode
+    // yields, so a decoded byte can never create a segment boundary the router
+    // did not see. "\" is escaped rather than folded into "/" because routers
+    // treat it as an ordinary in-segment character; folding it would split the
+    // path into more segments than the router saw and fail open on a :param
+    // route whose regex compiles to [^/]+.
+    const normalized = pathWithoutQuery
+      .split("/")
+      .map(segment => {
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(segment);
+        } catch {
+          // Malformed escape: match the raw segment rather than widening it.
+          return segment;
+        }
+        return decoded.replace(/\//g, "%2F").replace(/\\/g, "%5C");
+      })
+      .join("/");
 
-    return decodedOrRawPath
-      .replace(/\\/g, "/")
-      .replace(/\/+/g, "/")
-      .replace(/(.+?)\/+$/, "$1");
+    return normalized.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1");
+  }
+
+  /**
+   * Normalize a framework-decoded path without re-decoding percent-escapes.
+   *
+   * @param path - Framework-decoded path
+   * @returns Normalized path
+   */
+  private normalizeDecodedPath(path: string): string {
+    const pathWithoutQuery = path.split(/[?#]/)[0];
+    return pathWithoutQuery.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1") || "/";
   }
 
   /**
@@ -1137,88 +1505,40 @@ export class x402HTTPResourceServer {
       return this.paywallProvider.generateHtml(paymentRequired, paywallConfig);
     }
 
-    // Try to use @x402/paywall if available (optional dependency)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const paywall = require("@x402/paywall");
-      const displayAmount = this.getDisplayAmount(paymentRequired);
-      const resource = paymentRequired.resource;
-
-      return paywall.getPaywallHtml({
-        amount: displayAmount,
-        paymentRequired,
-        currentUrl: resource?.url || paywallConfig?.currentUrl || "",
-        testnet: paywallConfig?.testnet ?? true,
-        appName: paywallConfig?.appName,
-        appLogo: paywallConfig?.appLogo,
-        sessionTokenEndpoint: paywallConfig?.sessionTokenEndpoint,
-      });
-    } catch {
-      // @x402/paywall not installed, fall back to basic HTML
+    // Use @x402/paywall if installed (see loadDefaultPaywallHandlers). Only
+    // accepts[0] is inspected: createPaywall() iterates accepts, but the bundled
+    // UIs render accepts[0] (the EVM one derives its chain from it and throws
+    // for any other network), so a handler picked for a later option would
+    // serve a page for an option it cannot show. The UIs also only register
+    // the exact scheme clients. Anything else keeps the static page.
+    const [requirement] = paymentRequired.accepts;
+    const handler =
+      requirement?.scheme === "exact"
+        ? this.defaultPaywallHandlers?.find(h => h.supports(requirement))
+        : undefined;
+    if (handler) {
+      return handler.generateHtml(requirement, paymentRequired, paywallConfig ?? {});
     }
 
-    // Fallback: Basic HTML paywall
-    const resource = paymentRequired.resource;
-    const displayAmount = this.getDisplayAmount(paymentRequired);
-    const firstAccept = paymentRequired.accepts?.[0];
-    const decimals =
-      firstAccept && "amount" in firstAccept
-        ? this.ResourceServer.getAssetDecimalsForRequirements(firstAccept)
-        : 6;
-    const safeDecimals = Math.min(Math.max(decimals, 0), 100);
-    const displayAmountText = parseFloat(displayAmount.toFixed(safeDecimals)).toString();
-    const assetLabel =
-      typeof firstAccept?.extra?.name === "string"
-        ? firstAccept.extra.name
-        : firstAccept?.asset
-          ? `...${firstAccept.asset.slice(-6)}`
-          : "Token";
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Payment Required</title>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body>
-          <div style="max-width: 600px; margin: 50px auto; padding: 20px; font-family: system-ui, -apple-system, sans-serif;">
-            ${paywallConfig?.appLogo ? `<img src="${paywallConfig.appLogo}" alt="${paywallConfig.appName || "App"}" style="max-width: 200px; margin-bottom: 20px;">` : ""}
-            <h1>Payment Required</h1>
-            ${resource ? `<p><strong>Resource:</strong> ${resource.description || resource.url}</p>` : ""}
-            <p><strong>Amount:</strong> ${displayAmountText} ${assetLabel}</p>
-            <div id="payment-widget" 
-                 data-requirements='${JSON.stringify(paymentRequired)}'
-                 data-app-name="${paywallConfig?.appName || ""}"
-                 data-testnet="${paywallConfig?.testnet || false}">
-              <!-- Install @x402/paywall for full wallet integration -->
-              <p style="margin-top: 2rem; padding: 1rem; background: #fef3c7; border-radius: 0.5rem;">
-                <strong>Note:</strong> Install <code>@x402/paywall</code> for full wallet connection and payment UI.
-              </p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    return FALLBACK_PAYWALL_HTML;
   }
 
   /**
-   * Extract display amount from payment requirements.
-   * Uses the registered scheme's decimal precision for the asset, falling back to 6.
+   * Load the @x402/paywall network handlers, if the package is installed.
+   * Resolved at runtime so core neither depends on nor bundles it.
    *
-   * @param paymentRequired - The payment required object
-   * @returns The display amount in decimal format
+   * @returns Promise that resolves once loading has been attempted
    */
-  private getDisplayAmount(paymentRequired: PaymentRequired): number {
-    const accepts = paymentRequired.accepts;
-    if (accepts && accepts.length > 0) {
-      const firstReq = accepts[0];
-      if ("amount" in firstReq) {
-        const decimals = this.ResourceServer.getAssetDecimalsForRequirements(firstReq);
-        return parseFloat(firstReq.amount) / 10 ** decimals;
-      }
+  private loadDefaultPaywallHandlers(): Promise<void> {
+    if (!this.defaultPaywallLoad) {
+      this.defaultPaywallLoad = import(/* webpackIgnore: true */ PAYWALL_PACKAGE)
+        .then(({ evmPaywall, svmPaywall, avmPaywall }) => {
+          this.defaultPaywallHandlers = [evmPaywall, svmPaywall, avmPaywall];
+        })
+        .catch(() => {
+          // @x402/paywall not installed, fall back to basic HTML
+        });
     }
-    return 0;
+    return this.defaultPaywallLoad;
   }
 }

@@ -2,15 +2,20 @@ package bazaar_test
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	v1 "github.com/x402-foundation/x402/go/extensions/v1"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	v1 "github.com/x402-foundation/x402/go/v2/extensions/v1"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 func TestBazaarConstant(t *testing.T) {
@@ -278,6 +283,133 @@ func TestValidateDiscoveryExtension(t *testing.T) {
 
 		result := bazaar.ValidateDiscoveryExtension(extension)
 		assert.True(t, result.Valid)
+	})
+}
+
+func TestValidateDiscoveryExtensionSpec(t *testing.T) {
+	t.Run("should pass for valid HTTP GET extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodGET,
+			map[string]interface{}{"q": "test"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"q": map[string]interface{}{"type": "string"}}},
+			"",
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for valid HTTP POST extension", func(t *testing.T) {
+		ext, _ := bazaar.DeclareDiscoveryExtension(
+			bazaar.MethodPOST,
+			map[string]interface{}{"name": "foo"},
+			bazaar.JSONSchema{"properties": map[string]interface{}{"name": map[string]interface{}{"type": "string"}}},
+			bazaar.BodyTypeJSON,
+			nil,
+		)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should pass for pre-enrichment HTTP extension (no method)", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.True(t, result.Valid)
+	})
+
+	t.Run("should fail for invalid input.type", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "grpc"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "input.type")
+	})
+
+	t.Run("should fail for invalid HTTP method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: "DESTROY"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "method")
+	})
+
+	t.Run("should fail for invalid bodyType", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "POST", BodyType: "xml"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "bodyType")
+	})
+
+	t.Run("should fail when bodyType set with non-body method", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.BodyInput{Type: "http", Method: "GET", BodyType: "json"},
+			},
+			Schema: bazaar.JSONSchema{},
+		}
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		hasBodyMethodErr := false
+		for _, e := range result.Errors {
+			if strings.Contains(e, "not a body method") {
+				hasBodyMethodErr = true
+			}
+		}
+		assert.True(t, hasBodyMethodErr)
+	})
+
+	t.Run("should fail for MCP missing toolName", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","inputSchema":{"type":"object"}}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "toolName")
+	})
+
+	t.Run("should fail for MCP missing inputSchema", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "inputSchema")
+	})
+
+	t.Run("should fail for MCP invalid transport", func(t *testing.T) {
+		ext := bazaar.DiscoveryExtension{
+			Info:   bazaar.DiscoveryInfo{},
+			Schema: bazaar.JSONSchema{},
+		}
+		extJSON := `{"info":{"input":{"type":"mcp","toolName":"t","inputSchema":{"type":"object"},"transport":"websocket"}},"schema":{}}`
+		_ = json.Unmarshal([]byte(extJSON), &ext)
+		result := bazaar.ValidateDiscoveryExtensionSpec(ext)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Errors[0], "transport")
 	})
 }
 
@@ -714,6 +846,30 @@ func TestV1Transformation(t *testing.T) {
 		assert.Equal(t, "integer parameter", queryInput.QueryParams["offset"])
 	})
 
+	t.Run("should extract discovery info from v1 GET with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"discoverable": true,
+					"method":       "GET",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+				"output": map[string]interface{}{"type": "object"},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		queryInput, ok := info.Input.(bazaar.QueryInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", queryInput.PathParams["resourceId"])
+	})
+
 	t.Run("should extract discovery info from v1 POST with bodyFields", func(t *testing.T) {
 		v1Requirements := map[string]interface{}{
 			"outputSchema": map[string]interface{}{
@@ -809,6 +965,34 @@ func TestV1Transformation(t *testing.T) {
 		bodyMap, ok := bodyInput.Body.(map[string]interface{})
 		require.True(t, ok)
 		assert.NotNil(t, bodyMap["question"])
+	})
+
+	t.Run("should extract discovery info from v1 POST with pathParams", func(t *testing.T) {
+		v1Requirements := map[string]interface{}{
+			"outputSchema": map[string]interface{}{
+				"input": map[string]interface{}{
+					"bodyFields": map[string]interface{}{
+						"name": map[string]interface{}{
+							"type": "string",
+						},
+					},
+					"discoverable": true,
+					"method":       "POST",
+					"pathParams": map[string]interface{}{
+						"resourceId": "string parameter",
+					},
+					"type": "http",
+				},
+			},
+		}
+
+		info, err := v1.ExtractDiscoveryInfoV1(v1Requirements)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+
+		bodyInput, ok := info.Input.(bazaar.BodyInput)
+		require.True(t, ok)
+		assert.Equal(t, "string parameter", bodyInput.PathParams["resourceId"])
 	})
 
 	t.Run("should extract discovery info from v1 POST with properties field", func(t *testing.T) {
@@ -1090,6 +1274,15 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 		assert.Equal(t, "Find tokens by address, ticker/symbol, or token name", info.Description)
 		assert.Equal(t, "application/json", info.MimeType)
 		assert.Equal(t, 1, info.X402Version)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		bazaarExtRaw, ok := info.Extensions[bazaar.BAZAAR.Key()]
+		require.True(t, ok)
+		bazaarExtJSON, _ := json.Marshal(bazaarExtRaw)
+		var bazaarExt bazaar.DiscoveryExtension
+		require.NoError(t, json.Unmarshal(bazaarExtJSON, &bazaarExt))
+		validation := bazaar.ValidateDiscoveryExtension(bazaarExt)
+		assert.True(t, validation.Valid)
 	})
 
 	t.Run("should handle unified extraction for both v1 and v2", func(t *testing.T) {
@@ -1504,6 +1697,10 @@ func TestExtractDiscoveredResourceFromPaymentRequired(t *testing.T) {
 		queryInput, ok := info.DiscoveryInfo.Input.(bazaar.QueryInput)
 		require.True(t, ok)
 		assert.Equal(t, bazaar.MethodGET, queryInput.Method)
+		require.NotNil(t, info.Extensions)
+		assert.NotContains(t, info.Extensions, "outputSchema")
+		_, ok = info.Extensions[bazaar.BAZAAR.Key()]
+		assert.True(t, ok)
 	})
 
 	t.Run("v1: should return nil when accepts array is empty", func(t *testing.T) {
@@ -1680,11 +1877,9 @@ func extractRequiredFields(t *testing.T, schema bazaar.JSONSchema) []string {
 }
 
 func TestBazaarResourceServerExtension(t *testing.T) {
-	// NOTE: Go's API is different from TypeScript.
-	// In Go, DeclareDiscoveryExtension takes the method as a parameter,
-	// so the schema is already narrow at creation time.
-	// In TypeScript, the method is inferred at runtime from the route key,
-	// so declareDiscoveryExtension creates a broad enum and enrichDeclaration narrows it.
+	// DeclareDiscoveryExtension already narrows the schema to the declared method.
+	// EnrichDeclaration then picks the request method when it fits the input
+	// shape, otherwise POST for a body and GET for a query.
 
 	t.Run("should enrich declaration with method from HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
@@ -1892,6 +2087,89 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 		resultExt, ok := result.(bazaar.DiscoveryExtension)
 		require.True(t, ok)
 		assert.Equal(t, extension.Info, resultExt.Info)
+	})
+
+	t.Run("should not advertise the probe method when it disagrees with the declared input", func(t *testing.T) {
+		stringSchema := map[string]interface{}{"type": "string"}
+		tests := []struct {
+			name     string
+			method   interface{}
+			input    map[string]interface{}
+			bodyType bazaar.BodyType
+			probe    string
+			expected string
+		}{
+			{
+				name:     "body declaration probed with GET",
+				method:   bazaar.MethodPUT,
+				input:    map[string]interface{}{"prompt": "hi"},
+				bodyType: bazaar.BodyTypeJSON,
+				probe:    "GET",
+				expected: "POST",
+			},
+			{
+				name:     "query declaration probed with POST",
+				method:   bazaar.MethodDELETE,
+				input:    map[string]interface{}{"q": "hi"},
+				bodyType: "",
+				probe:    "POST",
+				expected: "GET",
+			},
+			{
+				name:     "body declaration probed with PUT",
+				method:   bazaar.MethodPOST,
+				input:    map[string]interface{}{"prompt": "hi"},
+				bodyType: bazaar.BodyTypeJSON,
+				probe:    "PUT",
+				expected: "PUT",
+			},
+			{
+				name:     "query declaration probed with DELETE",
+				method:   bazaar.MethodGET,
+				input:    map[string]interface{}{"q": "hi"},
+				bodyType: "",
+				probe:    "DELETE",
+				expected: "DELETE",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				properties := map[string]interface{}{}
+				for key := range tt.input {
+					properties[key] = stringSchema
+				}
+				extension, err := bazaar.DeclareDiscoveryExtension(
+					tt.method,
+					tt.input,
+					bazaar.JSONSchema{"properties": properties},
+					tt.bodyType,
+					nil,
+				)
+				require.NoError(t, err)
+
+				enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, x402http.HTTPRequestContext{
+					Method:  tt.probe,
+					Path:    "/test",
+					Adapter: &mockHTTPAdapterForBazaar{method: tt.probe, path: "/test"},
+				})
+				enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+				require.True(t, ok)
+
+				switch input := enrichedExt.Info.Input.(type) {
+				case bazaar.BodyInput:
+					assert.Equal(t, bazaar.BodyMethods(tt.expected), input.Method)
+				case bazaar.QueryInput:
+					assert.Equal(t, bazaar.QueryParamMethods(tt.expected), input.Method)
+				default:
+					t.Fatalf("unexpected input type %T", enrichedExt.Info.Input)
+				}
+
+				assert.Equal(t, []string{tt.expected}, extractMethodEnum(t, enrichedExt.Schema))
+				assert.Equal(t, bazaar.ValidationResult{Valid: true}, bazaar.ValidateDiscoveryExtensionSpec(enrichedExt))
+				assert.Equal(t, bazaar.ValidationResult{Valid: true}, bazaar.ValidateDiscoveryExtension(enrichedExt))
+			})
+		}
 	})
 }
 
@@ -2129,7 +2407,7 @@ func TestBazaarDynamicRoutes(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://example.com/search?q=test"},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): extension,
@@ -2863,7 +3141,7 @@ func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://api.example.com/users/" + userID},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): enrichedExt,
@@ -2967,4 +3245,148 @@ func TestExtractDiscoveredResource_ServiceMetadata(t *testing.T) {
 		assert.Equal(t, []string{"weather"}, discovered.Tags)
 		assert.Equal(t, "https://api.example.com/icon.png", discovered.IconUrl)
 	})
+}
+
+// TestValidateDiscoveryExtension_SSRF reproduces CWE-918: a client-controlled schema `$ref`/`$id`
+// must never be dereferenced. gojsonschema's default loader resolves any unregistered `$ref` via
+// an outbound HTTP request or a filesystem read during schema compilation, before the instance is
+// ever checked. Since `schema` arrives in the client's payment payload, this is a real SSRF /
+// local file disclosure vector.
+func TestValidateDiscoveryExtension_SSRF(t *testing.T) {
+	t.Run("rejects a $ref over http without dereferencing it", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+			"an attacker-controlled $ref must never cause an outbound HTTP request (CWE-918 SSRF)")
+		assert.False(t, result.Valid, "schema with an external $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref via file:// URI without reading the file", func(t *testing.T) {
+		dir := t.TempDir()
+		secretPath := filepath.Join(dir, "attacker-schema.json")
+		require.NoError(t, os.WriteFile(secretPath, []byte(`{"type": "object"}`), 0o600))
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$ref": "file://" + secretPath},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with a file:// $ref must be rejected")
+	})
+
+	t.Run("rejects a $ref nested inside schema properties", func(t *testing.T) {
+		var hits int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"type": "object"}`))
+		}))
+		defer server.Close()
+
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{"$ref": server.URL + "/attacker-schema.json"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.Equal(t, int32(0), atomic.LoadInt32(&hits), "nested $ref must not be dereferenced")
+		assert.False(t, result.Valid)
+	})
+
+	t.Run("rejects an external $id", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{"$id": "https://evil.example.com/schema.json", "type": "object"},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.False(t, result.Valid, "schema with an external $id must be rejected")
+	})
+
+	t.Run("still validates schemas with only local fragment refs", func(t *testing.T) {
+		extension := bazaar.DiscoveryExtension{
+			Info: bazaar.DiscoveryInfo{
+				Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+			},
+			Schema: bazaar.JSONSchema{
+				"$ref": "#/definitions/root",
+				"definitions": map[string]interface{}{
+					"root": map[string]interface{}{"type": "object"},
+				},
+			},
+		}
+
+		result := bazaar.ValidateDiscoveryExtension(extension)
+
+		assert.True(t, result.Valid, "local fragment $ref should still validate: %v", result.Errors)
+	})
+}
+
+// TestExtractDiscoveredResourceFromPaymentPayload_SSRF matches the real attack path: a client's
+// paymentPayload with a malicious extensions.bazaar.schema, processed via
+// ExtractDiscoveredResourceFromPaymentPayload(validate=true) the way a facilitator's
+// OnAfterVerify hook does.
+func TestExtractDiscoveredResourceFromPaymentPayload_SSRF(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type": "object"}`))
+	}))
+	defer server.Close()
+
+	extension := bazaar.DiscoveryExtension{
+		Info: bazaar.DiscoveryInfo{
+			Input: bazaar.QueryInput{Type: "http", Method: bazaar.MethodGET},
+		},
+		Schema: bazaar.JSONSchema{"$ref": server.URL + "/attacker-schema.json"},
+	}
+
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    x402.PaymentRequirements{Scheme: "exact", Network: "eip155:84532"},
+		Payload:     map[string]interface{}{},
+		Resource:    &x402.ResourceInfo{URL: "http://api.example.com/weather"},
+		Extensions:  map[string]interface{}{bazaar.BAZAAR.Key(): extension},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	discovered, err := bazaar.ExtractDiscoveredResourceFromPaymentPayload(payloadBytes, nil, true)
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+		"an attacker-controlled $ref in extensions.bazaar.schema must never cause the facilitator "+
+			"to make an outbound HTTP request (CWE-918 SSRF)")
+	assert.Error(t, err,
+		"a schema containing an external $ref should fail validation, not silently succeed")
+	assert.Nil(t, discovered)
 }

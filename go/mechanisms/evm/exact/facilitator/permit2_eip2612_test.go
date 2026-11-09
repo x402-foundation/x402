@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 func TestValidateEip2612PermitForPayment(t *testing.T) {

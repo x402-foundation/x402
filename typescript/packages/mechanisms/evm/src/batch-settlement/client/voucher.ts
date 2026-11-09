@@ -12,7 +12,9 @@ import { getBatchSettlementEip712Domain } from "../utils";
  * under the batched domain.
  *
  * @param signer - Client wallet used to produce the EIP-712 signature.
- * @param channelId - Identifier of the payment channel (`keccak256(abi.encode(ChannelConfig))`).
+ * @param channelId - Identifier of the payment channel. This is the EIP-712
+ * hash of the `ChannelConfig` typed data for the batch settlement domain; see
+ * `computeChannelId`.
  * @param maxClaimableAmount - Cumulative ceiling the receiver may claim (decimal string in token units).
  * @param network - CAIP-2 network identifier (e.g. `eip155:84532`).
  * @returns Signed voucher fields ready to be included in a payment payload.

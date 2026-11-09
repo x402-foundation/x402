@@ -1,9 +1,11 @@
 """Utility functions for the x402 Python SDK."""
 
 import json
-from typing import Any, TypeVar
+import math
+import re
+from typing import Any, TypedDict, TypeVar
 
-from .base import Network
+from .base import Money, Network
 from .payments import PaymentPayload, PaymentRequired, PaymentRequirements
 from .v1 import PaymentPayloadV1, PaymentRequiredV1, PaymentRequirementsV1
 
@@ -24,6 +26,8 @@ def detect_version(data: bytes | dict[str, Any]) -> int:
         parsed = json.loads(data)
     else:
         parsed = data
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment data must be a JSON object")
 
     version = parsed.get("x402Version")
     if version is None:
@@ -55,6 +59,8 @@ def get_scheme_and_network(
         parsed = json.loads(payload)
     else:
         parsed = payload
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment payload must be a JSON object")
 
     if version == 1:
         # V1: scheme/network at top level
@@ -63,6 +69,8 @@ def get_scheme_and_network(
     else:
         # V2: scheme/network in accepted field
         accepted = parsed.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         scheme = accepted.get("scheme")
         network = accepted.get("network")
 
@@ -88,11 +96,18 @@ def match_payload_to_requirements(
 
     Returns:
         True if payload matches requirements.
+
+    Raises:
+        ValueError: If payload, requirements or accepted is not a JSON object.
     """
     if isinstance(payload, bytes):
         payload = json.loads(payload)
     if isinstance(requirements, bytes):
         requirements = json.loads(requirements)
+    if not isinstance(payload, dict):
+        raise ValueError("Payment payload must be a JSON object")
+    if not isinstance(requirements, dict):
+        raise ValueError("Payment requirements must be a JSON object")
 
     if version == 1:
         # V1: Compare scheme and network
@@ -102,6 +117,8 @@ def match_payload_to_requirements(
     else:
         # V2: Compare scheme, network, amount, asset, payTo
         accepted = payload.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         return (
             accepted.get("scheme") == requirements.get("scheme")
             and accepted.get("network") == requirements.get("network")
@@ -219,8 +236,9 @@ def matches_network_pattern(network: Network, pattern: Network) -> bool:
 def derive_network_pattern(networks: list[Network]) -> Network:
     """Derive common pattern from list of networks.
 
-    If all networks share same namespace, returns wildcard pattern.
-    Otherwise returns first network.
+    A single network stays an exact match. Several networks that share one
+    namespace return that namespace's wildcard. Mixed namespaces return the
+    first network.
 
     Args:
         networks: List of networks.
@@ -232,6 +250,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
         ValueError: If networks list is empty.
 
     Examples:
+        >>> derive_network_pattern(["eip155:8453"])
+        'eip155:8453'
         >>> derive_network_pattern(["eip155:8453", "eip155:84532"])
         'eip155:*'
         >>> derive_network_pattern(["eip155:8453", "solana:mainnet"])
@@ -239,6 +259,8 @@ def derive_network_pattern(networks: list[Network]) -> Network:
     """
     if not networks:
         raise ValueError("At least one network required")
+    if len(networks) == 1:
+        return networks[0]
 
     namespaces = {n.split(":")[0] for n in networks}
     if len(namespaces) == 1:
@@ -272,3 +294,95 @@ def find_schemes_by_network(
             return scheme_map
 
     return None
+
+
+class ParsedMoney(TypedDict, total=False):
+    """Result of :func:`parse_money`."""
+
+    amount: str
+    symbol: str
+
+
+def number_to_decimal_string(n: int | float) -> str:
+    """Convert a number to a plain decimal string, expanding scientific notation.
+
+    Digits already lost in the caller's ``int``/``float`` stay lost.
+    """
+    s = str(n)
+    if not re.search(r"[eE]", s):
+        return s
+
+    significand, exponent_str = re.split(r"[eE]", s, maxsplit=1)
+    exp = int(exponent_str)
+    negative = significand.startswith("-")
+    abs_s = significand[1:] if negative else significand
+    parts = abs_s.split(".")
+    int_digits = parts[0]
+    frac_digits = parts[1] if len(parts) > 1 else ""
+    all_digits = int_digits + frac_digits
+    decimal_pos = len(int_digits) + exp
+    if decimal_pos <= 0:
+        result = "0." + "0" * (-decimal_pos) + all_digits
+    elif decimal_pos >= len(all_digits):
+        result = all_digits + "0" * (decimal_pos - len(all_digits))
+    else:
+        result = all_digits[:decimal_pos] + "." + all_digits[decimal_pos:]
+    return ("-" if negative else "") + result
+
+
+def parse_money_string(money: str) -> str:
+    """Parse a money string into a finite, non-negative decimal string.
+
+    Accepts plain decimal strings with an optional leading dollar sign.
+    Rejects ticker suffixes — use :func:`parse_money` when a symbol may be present.
+    """
+    cleaned = re.sub(r"^\$", "", money).strip()
+    if not re.fullmatch(r"\d+(?:\.\d+)?", cleaned) or re.search(r"[eE]", cleaned):
+        raise ValueError(f"Invalid money format: {money}")
+    return cleaned
+
+
+def parse_money(money: Money) -> ParsedMoney:
+    """Parse money into ``{amount, symbol?}``.
+
+    ``"1.50 USDT"`` → symbol; ``"1.50 USD"`` and bare amounts have none.
+    Glued tickers (``"1.50USDT"``) are rejected.
+
+    String prices keep the extracted decimal substring. Number prices are
+    stringified once via :func:`number_to_decimal_string`.
+    """
+    if isinstance(money, int | float):
+        if not math.isfinite(money) or money < 0:
+            raise ValueError(f"Invalid money format: {money}")
+        return {"amount": number_to_decimal_string(money)}
+
+    trimmed = money.strip()
+    match = re.fullmatch(
+        r"\$?\s*(-?\d+(?:\.\d+)?)(?:\s+([A-Za-z][A-Za-z0-9.]*))?",
+        trimmed,
+    )
+    if not match:
+        raise ValueError(f"Invalid money format: {money}")
+
+    amount = parse_money_string(match.group(1))
+    raw_symbol = match.group(2)
+    if not raw_symbol or raw_symbol.upper() == "USD":
+        return {"amount": amount}
+    return {"amount": amount, "symbol": raw_symbol.upper()}
+
+
+def convert_to_token_amount(decimal_amount: str, decimals: int) -> str:
+    """Convert a decimal amount to token smallest units.
+
+    Accepts only plain decimal strings — scientific notation is not allowed.
+    Pads or truncates toward zero, including to ``"0"``. Does not round.
+    """
+    if re.search(r"[eE]", decimal_amount):
+        raise ValueError(
+            f"Invalid amount: {decimal_amount} — use decimal notation, not scientific notation"
+        )
+    if not re.fullmatch(r"-?\d+\.?\d*", decimal_amount):
+        raise ValueError(f"Invalid amount: {decimal_amount}")
+    int_part, _, dec_part = decimal_amount.partition(".")
+    padded_dec = (dec_part + "0" * decimals)[:decimals]
+    return (int_part + padded_dec).lstrip("0") or "0"

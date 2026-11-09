@@ -1,7 +1,0 @@
-{
-  "name": "Snack Money API",
-  "description": "Micropayment platform for X, Farcaster, baseapp and verifiable identities.",
-  "logoUrl": "/logos/snackmoney.png",
-  "websiteUrl": "https://api.snack.money/docs",
-  "category": "Services/Endpoints"
-}

@@ -17,6 +17,7 @@ Per-extension guides live next to the TypeScript sources in this repository:
 | Extension | Summary | Typical import | Documentation |
 |-----------|---------|----------------|-----------------|
 | Bazaar discovery | Facilitators catalog paid HTTP or MCP tools from server-declared input/output hints | `@x402/extensions/bazaar` | [src/bazaar/README.md](src/bazaar/README.md) |
+| Builder code (ERC-8021) | On-chain attribution: app (`a`), service (`s`), and wallet (`w`) codes appended to settlement calldata | `@x402/extensions/builder-code` | [src/builder-code/README.md](src/builder-code/README.md) |
 | Sign-In-With-X (SIWx) | CAIP-122 wallet auth for repeat access without repaying | `@x402/extensions/sign-in-with-x` | [src/sign-in-with-x/README.md](src/sign-in-with-x/README.md) |
 | Offer / receipt | Signed offers in 402 responses and signed receipts after settlement | `@x402/extensions/offer-receipt` | [src/offer-receipt/README.md](src/offer-receipt/README.md) |
 | Payment identifier | Client-supplied idempotency `id` for deduplication | `@x402/extensions/payment-identifier` | [src/payment-identifier/README.md](src/payment-identifier/README.md) |

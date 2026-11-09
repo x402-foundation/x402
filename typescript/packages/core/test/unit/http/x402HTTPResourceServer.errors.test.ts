@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { x402HTTPResourceServer, HTTPAdapter } from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
-import { FacilitatorResponseError, Network } from "../../../src/types";
+import { FacilitatorResponseError, Network, SettleError } from "../../../src/types";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
   buildPaymentPayload,
   buildPaymentRequirements,
+  buildSettleResponse,
   buildSupportedResponse,
+  buildVerifyResponse,
 } from "../../mocks";
-import { encodePaymentSignatureHeader } from "../../../src/http";
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  encodePaymentSignatureHeader,
+} from "../../../src/http";
 
 class MockHTTPAdapter implements HTTPAdapter {
   constructor(private readonly headers: Record<string, string> = {}) {}
@@ -112,5 +118,169 @@ describe("x402HTTPResourceServer facilitator response errors", () => {
     await expect(
       httpServer.processSettlement(buildPaymentPayload({ x402Version: 2, accepted }), accepted),
     ).rejects.toThrow(FacilitatorResponseError);
+  });
+
+  it.each([
+    { x402Version: 1 as const, accepted: undefined },
+    { x402Version: 1 as const, accepted: null },
+    { x402Version: 2 as const, accepted: undefined },
+    { x402Version: 2 as const, accepted: null },
+  ])(
+    "returns a stable payment error when v$x402Version accepted is $accepted",
+    async ({ x402Version, accepted }) => {
+      const payload = Object.assign(buildPaymentPayload({ x402Version }), { accepted });
+      const paymentHeader = encodePaymentSignatureHeader(payload);
+
+      const result = await httpServer.processHTTPRequest({
+        adapter: new MockHTTPAdapter({ "payment-signature": paymentHeader }),
+        path: "/api/test",
+        method: "GET",
+        paymentHeader,
+      });
+
+      expect(result.type).toBe("payment-error");
+      if (result.type !== "payment-error") {
+        throw new Error("Expected payment-error");
+      }
+
+      const response = decodePaymentRequiredHeader(result.response.headers["PAYMENT-REQUIRED"]);
+      expect(response.error).toBe("No matching payment requirements");
+      expect(facilitator.verifyCalls).toHaveLength(0);
+    },
+  );
+
+  it("keeps the transaction hash for a settlement_pending settle failure (direct response)", async () => {
+    facilitator.setSettleResponse(
+      buildSettleResponse({
+        success: false,
+        errorReason: "settlement_pending",
+        transaction: "0xpendingtx",
+        network,
+      }),
+    );
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const result = await httpServer.processSettlement(
+      buildPaymentPayload({ x402Version: 2, accepted }),
+      accepted,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.transaction).toBe("0xpendingtx");
+    const decoded = decodePaymentResponseHeader(result.headers["PAYMENT-RESPONSE"]);
+    expect(decoded.transaction).toBe("0xpendingtx");
+  });
+
+  it("keeps the transaction hash for a settlement_pending settle failure (thrown SettleError)", async () => {
+    facilitator.setSettleResponse(
+      new SettleError(402, {
+        success: false,
+        errorReason: "settlement_pending",
+        transaction: "0xpendingtx",
+        network,
+      }),
+    );
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const result = await httpServer.processSettlement(
+      buildPaymentPayload({ x402Version: 2, accepted }),
+      accepted,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.transaction).toBe("0xpendingtx");
+    const decoded = decodePaymentResponseHeader(result.headers["PAYMENT-RESPONSE"]);
+    expect(decoded.transaction).toBe("0xpendingtx");
+  });
+
+  it("returns payment-error when client extension echo mismatches before facilitator verify", async () => {
+    const httpServerWithExtensions = new x402HTTPResourceServer(resourceServer, {
+      "/api/test": {
+        accepts: {
+          scheme: "exact",
+          payTo: "0xabc",
+          price: "$1.00",
+          network,
+        },
+        extensions: {
+          bazaar: { info: { tool: "search" } },
+        },
+      },
+    });
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const payload = buildPaymentPayload({
+      x402Version: 2,
+      accepted,
+      extensions: {
+        bazaar: { info: { tool: "modified" } },
+      },
+    });
+
+    const result = await httpServerWithExtensions.processHTTPRequest({
+      adapter: new MockHTTPAdapter({
+        "payment-signature": encodePaymentSignatureHeader(payload),
+      }),
+      path: "/api/test",
+      method: "GET",
+      paymentHeader: encodePaymentSignatureHeader(payload),
+    });
+
+    expect(result.type).toBe("payment-error");
+    expect(facilitator.verifyCalls).toHaveLength(0);
+  });
+
+  it("includes the invalidReason in the JSON 402 body when verification fails", async () => {
+    facilitator.setVerifyResponse(
+      buildVerifyResponse({ isValid: false, invalidReason: "insufficient_funds" }),
+    );
+
+    const accepted = buildPaymentRequirements({
+      scheme: "exact",
+      network,
+      payTo: "0xabc",
+      asset: "USDC",
+      amount: "1000000",
+    });
+    const payload = buildPaymentPayload({
+      x402Version: 2,
+      accepted,
+    });
+
+    const result = await httpServer.processHTTPRequest({
+      adapter: new MockHTTPAdapter({
+        "payment-signature": encodePaymentSignatureHeader(payload),
+      }),
+      path: "/api/test",
+      method: "GET",
+      paymentHeader: encodePaymentSignatureHeader(payload),
+    });
+
+    expect(result.type).toBe("payment-error");
+    if (result.type !== "payment-error") throw new Error("expected payment-error");
+    expect(result.response.status).toBe(402);
+    expect(result.response.isHtml).toBeFalsy();
+    expect(result.response.body).toEqual({ error: "insufficient_funds" });
+    expect(decodePaymentRequiredHeader(result.response.headers["PAYMENT-REQUIRED"]).error).toBe(
+      "insufficient_funds",
+    );
   });
 });

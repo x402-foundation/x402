@@ -86,6 +86,30 @@ Client echoes the extension and appends an `id`:
 | Same `id`, different payload | Return 409 Conflict |
 | `required: true`, no `id` provided | Return 400 Bad Request |
 
+### Request Binding
+
+Resource servers and facilitators should bind each `id` to a normalized request
+fingerprint before returning a cached result. The fingerprint should cover the
+parts of the request that make the paid operation unique, such as:
+
+- `scheme`
+- `network`
+- `asset`
+- `amount`
+- `payTo`
+- resource path and method
+- application-level operation or order identifier
+
+Implementations should store the first observed fingerprint with the `id`.
+Later requests with the same `id` and the same fingerprint can return the
+cached response. Later requests with the same `id` and a different fingerprint
+should fail with `409 Conflict` instead of reusing the cached response or
+executing a second operation.
+
+Servers should avoid using `id` alone as the storage key for authorization
+decisions when the same backend handles multiple paid resources. Scope the key
+by tenant, merchant, route, or facilitator account when those boundaries exist.
+
 ---
 
 ## Responsibilities

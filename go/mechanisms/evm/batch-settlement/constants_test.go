@@ -99,9 +99,29 @@ func TestErrorCodes(t *testing.T) {
 		ErrRefundNoBalance,
 		ErrRefundAmountInvalid,
 		ErrRefundAmountExceedsBalance,
+		ErrDepositBelowMinDeposit,
+		ErrRefundAuthorizerMismatch,
+		ErrRefundAuthorizerSignature,
+		ErrVoucherStoreUnavailable,
+		ErrVoucherStoreModeMismatch,
+		ErrUnexpectedPendingId,
+		ErrUnexpectedCancel,
+		ErrPendingIdMismatch,
+		ErrReceiverMismatch,
+		ErrReceiverAuthorizerMismatch,
+		ErrTokenMismatch,
+		ErrWithdrawDelayMismatch,
+		ErrWithdrawDelayOutOfRange,
+		ErrCumulativeExceedsBalance,
 	} {
 		if !strings.HasPrefix(code, wirePrefix) {
 			t.Fatalf("error reason must start with %q, got %q", wirePrefix, code)
 		}
+	}
+}
+
+func TestVoucherManagerValues(t *testing.T) {
+	if VoucherManagerServer != "server" || VoucherManagerFacilitator != "facilitator" {
+		t.Fatalf("voucher manager values = %q, %q", VoucherManagerServer, VoucherManagerFacilitator)
 	}
 }

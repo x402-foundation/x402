@@ -1,21 +1,14 @@
 "use client";
 
-import { useMiniKit, useAddFrame } from "@coinbase/onchainkit/minikit";
-import {
-  Name,
-  Identity,
-  Address,
-  Avatar,
-  EthBalance,
-} from "@coinbase/onchainkit/identity";
-import {
-  ConnectWallet,
-  Wallet,
-  WalletDropdown,
-  WalletDropdownDisconnect,
-} from "@coinbase/onchainkit/wallet";
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useAccount, useWalletClient, useSwitchChain, usePublicClient } from "wagmi";
+import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useWalletClient,
+  useSwitchChain,
+  usePublicClient,
+} from "wagmi";
 import { baseSepolia } from "wagmi/chains";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
@@ -65,27 +58,26 @@ function wagmiToClientSigner(
 }
 
 export default function App() {
-  const { setMiniAppReady, isMiniAppReady, context } = useMiniKit();
   const [frameAdded, setFrameAdded] = useState(false);
   const [isInMiniApp, setIsInMiniApp] = useState(false);
+  const [miniAppAdded, setMiniAppAdded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
   const { address, isConnected, chainId } = useAccount();
+  const { connect, connectors, isPending: isConnecting } = useConnect();
+  const { disconnect } = useDisconnect();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const { switchChainAsync } = useSwitchChain();
 
-  sdk.actions.ready();
-
-  const addFrame = useAddFrame();
-
-  // Check if running in Mini App context
   useEffect(() => {
     const initMiniApp = async () => {
       try {
         await sdk.actions.ready();
         const inMiniApp = await sdk.isInMiniApp();
         setIsInMiniApp(inMiniApp);
+        const context = await sdk.context;
+        setMiniAppAdded(Boolean(context.client.added));
       } catch (error) {
         console.log(
           "Not running in Mini App context or SDK not available:",
@@ -96,12 +88,6 @@ export default function App() {
     initMiniApp();
   }, []);
 
-  useEffect(() => {
-    if (!isMiniAppReady) {
-      setMiniAppReady();
-    }
-  }, [setMiniAppReady, isMiniAppReady]);
-
   // Auto-switch to Base Sepolia on connect
   useEffect(() => {
     if (isConnected && chainId !== baseSepolia.id) {
@@ -110,9 +96,13 @@ export default function App() {
   }, [isConnected, chainId, switchChainAsync]);
 
   const handleAddFrame = useCallback(async () => {
-    const result = await addFrame();
-    setFrameAdded(Boolean(result));
-  }, [addFrame]);
+    const result = await sdk.actions.addFrame();
+    const added = Boolean(result.notificationDetails);
+    setFrameAdded(added);
+    if (added) {
+      setMiniAppAdded(true);
+    }
+  }, []);
 
   const handleProtectedAction = useCallback(async () => {
     if (!isConnected || !walletClient || !publicClient) {
@@ -159,7 +149,7 @@ export default function App() {
   }, [isConnected, walletClient, publicClient, chainId, switchChainAsync]);
 
   const saveFrameButton = useMemo(() => {
-    if (context && !context.client.added) {
+    if (!miniAppAdded) {
       return (
         <button
           onClick={handleAddFrame}
@@ -186,7 +176,7 @@ export default function App() {
     }
 
     return null;
-  }, [context, frameAdded, handleAddFrame]);
+  }, [miniAppAdded, frameAdded, handleAddFrame]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -205,20 +195,29 @@ export default function App() {
 
             <div className="flex items-center space-x-2">
               <div className="flex-shrink-0">
-                <Wallet className="z-10">
-                  <ConnectWallet>
-                    <Name className="text-inherit" />
-                  </ConnectWallet>
-                  <WalletDropdown>
-                    <Identity className="px-4 pt-3 pb-2" hasCopyAddressOnClick>
-                      <Avatar />
-                      <Name />
-                      <Address />
-                      <EthBalance />
-                    </Identity>
-                    <WalletDropdownDisconnect />
-                  </WalletDropdown>
-                </Wallet>
+                {isConnected ? (
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono text-sm text-gray-900 dark:text-white">
+                      {address?.slice(0, 6)}...{address?.slice(-4)}
+                    </span>
+                    <button
+                      onClick={() => disconnect()}
+                      className="text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() =>
+                      connect({ connector: connectors[0], chainId: baseSepolia.id })
+                    }
+                    disabled={isConnecting || connectors.length === 0}
+                    className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 px-4 py-2 rounded-lg"
+                  >
+                    {isConnecting ? "Connecting..." : "Connect Wallet"}
+                  </button>
+                )}
               </div>
               <div>{saveFrameButton}</div>
             </div>

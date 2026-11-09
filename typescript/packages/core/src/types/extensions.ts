@@ -9,6 +9,7 @@ import type {
   SettleContext,
   SettleFailureContext,
   VerifiedPaymentCanceledContext,
+  SkipHandlerDirective,
 } from "../server/x402ResourceServer";
 import type { ResourceServerTransportExtensionHooks } from "../http/x402HTTPResourceServer";
 export type {
@@ -58,7 +59,14 @@ export interface ResourceServerExtensionHooks {
     | { abort: true; reason: string; message?: string }
     | { skip: true; result: VerifyResponse }
   >;
-  onAfterVerify?: (declaration: unknown, context: VerifyResultContext) => Promise<void>;
+  onAfterVerify?: (
+    declaration: unknown,
+    context: VerifyResultContext,
+  ) => Promise<
+    | void
+    | { skipHandler: true; response?: SkipHandlerDirective }
+    | { abort: true; reason: string; message?: string }
+  >;
   onVerifyFailure?: (
     declaration: unknown,
     context: VerifyFailureContext,
@@ -84,12 +92,20 @@ export interface ResourceServerExtensionHooks {
 
 export interface ResourceServerExtension {
   key: string;
+  /**
+   * Names of fields under the extension's `info` that are dynamic - regenerated
+   * on every PaymentRequired response (e.g. nonces, timestamps) - rather than
+   * static committed terms. Dynamic fields are excluded from client echo
+   * validation. Defaults to none (all info fields treated as static / strict).
+   */
+  dynamicInfoFields?: string[];
   enrichDeclaration?: (declaration: unknown, transportContext: unknown) => unknown;
   /**
    * Return value merges into `extensions[key]`. In-place edits to `accepts` are allowlisted only
    * (see server `assertAcceptsAllowlistedAfterExtensionEnrich`): vacant `payTo` / `amount` / `asset`
    * may be filled; locked values and `scheme` / `network` / `maxTimeoutSeconds` / baseline `extra`
-   * entries are immutable.
+   * entries are immutable. `extra.paymentFlow` and `extra.assetTransferMethod` are
+   * protocol-reserved and must not be added or changed during enrichment.
    */
   enrichPaymentRequiredResponse?: (
     declaration: unknown,

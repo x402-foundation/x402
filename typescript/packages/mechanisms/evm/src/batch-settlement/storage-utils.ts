@@ -1,5 +1,22 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+
+/**
+ * Resolves `filename` under `baseDir` and asserts the result stays within `baseDir`.
+ *
+ * @param baseDir - Directory that must contain the resolved path.
+ * @param filename - Filename to resolve against `baseDir`.
+ * @returns The absolute resolved path.
+ * @throws When the resolved path escapes `baseDir` (e.g. via `..` or separators).
+ */
+export function resolveWithinDir(baseDir: string, filename: string): string {
+  const base = resolve(baseDir);
+  const target = resolve(base, filename);
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new Error("resolved channel path escapes storage root");
+  }
+  return target;
+}
 
 /**
  * Returns true when `err` is a Node.js `ENOENT` filesystem error (file does not exist).

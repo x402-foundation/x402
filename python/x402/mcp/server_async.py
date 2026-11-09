@@ -6,7 +6,15 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..hook_policy import snapshot_payment_requirements_list
+from ..payment_flow import (
+    resolve_failure_path_settlement,
+    resolve_payment_flow_phases,
+)
 from ..schemas import PaymentRequirements, ResourceInfo
+from ..schemas.errors import PaymentAbortedError
+from ..schemas.hooks import CompletedSettlement, SkipHandlerDirective, VerifiedPaymentCancelOptions
+from ..schemas.responses import SettleResponse
 from ..server import x402ResourceServer as x402ResourceServerAsync
 from .types import (
     MCP_PAYMENT_RESPONSE_META_KEY,
@@ -18,8 +26,12 @@ from .types import (
     SettlementContext,
 )
 from .utils import (
-    create_tool_resource_url,
+    attach_failure_path_receipt,
+    build_tool_resource_info,
     extract_payment_from_meta,
+    metered_payment_requirements,
+    post_enrichment_accepts,
+    validate_payment_wrapper_accepts,
 )
 
 # Async tool handler type
@@ -140,143 +152,522 @@ def create_payment_wrapper(
     if not config.accepts:
         raise ValueError("PaymentWrapperConfig.accepts must have at least one payment requirement")
 
-    # Return wrapper function that takes a handler and returns a wrapped handler
+    validate_payment_wrapper_accepts(resource_server, config.accepts)
+
     def wrapper(handler: AsyncToolHandler) -> AsyncToolHandler:
         async def wrapped_handler(args: dict[str, Any], extra: dict[str, Any]) -> MCPToolResult:
-            # Extract _meta from extra
-            meta = extra.get("_meta", {})
-            if not isinstance(meta, dict):
-                meta = {}
+            handler_threw = False
 
-            # Derive toolName from context or resource URL
-            tool_name = extra.get("toolName", "paid_tool")
-            if config.resource and config.resource.url:
-                # Try to extract from URL
-                if config.resource.url.startswith("mcp://tool/"):
-                    tool_name = config.resource.url[len("mcp://tool/") :]
+            def mark_threw() -> None:
+                nonlocal handler_threw
+                handler_threw = True
 
-            # Build tool context
-            tool_context = MCPToolContext(
-                tool_name=tool_name,
-                arguments=args,
-                meta=meta,
-            )
-
-            # Extract payment from _meta
-            payment_payload = extract_payment_from_meta(
-                {"name": tool_name, "arguments": args, "_meta": meta}
-            )
-
-            if payment_payload is None:
-                return await _create_payment_required_result_async(
-                    resource_server,
-                    tool_name,
-                    config,
-                    "Payment required to access this tool",
-                )
-
-            # Match the client's chosen payment method against config.accepts
-            payment_requirements = resource_server.find_matching_requirements(
-                config.accepts, payment_payload
-            )
-
-            if payment_requirements is None:
-                return await _create_payment_required_result_async(
-                    resource_server,
-                    tool_name,
-                    config,
-                    "No matching payment requirements found",
-                )
-
-            # Verify payment (async)
-            verify_result = await resource_server.verify_payment(
-                payment_payload, payment_requirements
-            )
-
-            if not verify_result.is_valid:
-                reason = verify_result.invalid_reason or "Payment verification failed"
-                return await _create_payment_required_result_async(
-                    resource_server, tool_name, config, reason
-                )
-
-            # Build hook context
-            hook_context = ServerHookContext(
-                tool_name=tool_name,
-                arguments=args,
-                payment_requirements=payment_requirements,
-                payment_payload=payment_payload,
-            )
-
-            # Run onBeforeExecution hook if present
-            if config.hooks and config.hooks.on_before_execution:
-                proceed = config.hooks.on_before_execution(hook_context)
-                if hasattr(proceed, "__await__"):
-                    proceed = await proceed
-                if not proceed:
-                    return await _create_payment_required_result_async(
-                        resource_server, tool_name, config, "Execution blocked by hook"
-                    )
-
-            # Execute the tool handler
-            handler_result = handler(args, tool_context)
-            if hasattr(handler_result, "__await__"):
-                handler_result = await handler_result
-
-            # Convert handler result to MCPToolResult if needed
-            if isinstance(handler_result, dict):
-                result = MCPToolResult(
-                    content=handler_result.get("content", []),
-                    is_error=handler_result.get("isError", False),
-                    meta=handler_result.get("_meta", {}),
-                    structured_content=handler_result.get("structuredContent"),
-                )
-            elif isinstance(handler_result, MCPToolResult):
-                result = handler_result
-            else:
-                # Try to convert
-                result = MCPToolResult(
-                    content=[{"type": "text", "text": str(handler_result)}],
-                    is_error=False,
-                )
-
-            # Build after execution context
-            after_exec_context = AfterExecutionContext(
-                tool_name=tool_name,
-                arguments=args,
-                payment_requirements=payment_requirements,
-                payment_payload=payment_payload,
-                result=result,
-            )
-
-            # Run onAfterExecution hook if present
-            if config.hooks and config.hooks.on_after_execution:
-                try:
-                    coro = config.hooks.on_after_execution(after_exec_context)
-                    if hasattr(coro, "__await__"):
-                        await coro
-                except Exception:
-                    # Log but continue
-                    pass
-
-            # If tool returned error, don't settle
-            if result.is_error:
-                return result
-
-            # Settle payment (async)
             try:
-                settle_result = await resource_server.settle_payment(
+                return await _process_paid_tool_call_async(
+                    resource_server, config, handler, args, extra, mark_threw
+                )
+            except Exception:
+                if handler_threw:
+                    raise
+                return MCPToolResult(
+                    content=[{"type": "text", "text": "Internal Server Error"}],
+                    is_error=True,
+                )
+
+        return wrapped_handler
+
+    return wrapper
+
+
+def _normalize_tool_result(handler_result: Any) -> MCPToolResult:
+    if isinstance(handler_result, dict):
+        return MCPToolResult(
+            content=handler_result.get("content", []),
+            is_error=handler_result.get("isError", False),
+            meta=handler_result.get("_meta", {}),
+            structured_content=handler_result.get("structuredContent"),
+        )
+    if isinstance(handler_result, MCPToolResult):
+        return handler_result
+    return MCPToolResult(
+        content=[{"type": "text", "text": str(handler_result)}],
+        is_error=False,
+    )
+
+
+def _settle_meta(settle_result: Any) -> Any:
+    if hasattr(settle_result, "model_dump"):
+        return settle_result.model_dump(by_alias=True, exclude_none=True)
+    return settle_result
+
+
+async def _process_paid_tool_call_async(
+    resource_server: x402ResourceServerAsync,
+    config: PaymentWrapperConfig,
+    handler: AsyncToolHandler,
+    args: dict[str, Any],
+    extra: dict[str, Any],
+    mark_handler_threw: Callable[[], None],
+) -> MCPToolResult:
+    meta = extra.get("_meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+
+    tool_name = extra.get("toolName", "paid_tool")
+    if config.resource and config.resource.url:
+        if config.resource.url.startswith("mcp://tool/"):
+            tool_name = config.resource.url[len("mcp://tool/") :]
+
+    tool_context = MCPToolContext(
+        tool_name=tool_name,
+        arguments=args,
+        meta=meta,
+    )
+    transport_context = {
+        "toolName": tool_name,
+        "arguments": args,
+        "meta": meta,
+    }
+
+    payment_payload = extract_payment_from_meta(
+        {"name": tool_name, "arguments": args, "_meta": meta}
+    )
+    if payment_payload is None:
+        return await _create_payment_required_result_async(
+            resource_server,
+            tool_name,
+            config,
+            "Payment required to access this tool",
+            transport_context=transport_context,
+        )
+
+    resource_info = build_tool_resource_info(tool_name, config.resource)
+    try:
+        payment_required = await resource_server.create_payment_required_response(
+            snapshot_payment_requirements_list(config.accepts),
+            resource_info,
+            None,
+            config.extensions,
+            transport_context,
+        )
+    except TypeError:
+        payment_required = await resource_server.create_payment_required_response(
+            snapshot_payment_requirements_list(config.accepts),
+            resource_info,
+            None,
+            config.extensions,
+        )
+    accepts = post_enrichment_accepts(payment_required, config.accepts)
+    payment_requirements = resource_server.find_matching_requirements(accepts, payment_payload)
+    if payment_requirements is None:
+        return await _create_payment_required_result_async(
+            resource_server,
+            tool_name,
+            config,
+            "No matching payment requirements found",
+            transport_context=transport_context,
+        )
+
+    validate_extensions = getattr(resource_server, "validate_extensions", None)
+    if callable(validate_extensions):
+        extension_result = validate_extensions(payment_required, payment_payload)
+        if not getattr(extension_result, "valid", True):
+            return await _create_payment_required_result_async(
+                resource_server,
+                tool_name,
+                config,
+                getattr(extension_result, "invalid_reason", None) or "Payment verification failed",
+                transport_context=transport_context,
+                payment_payload=payment_payload,
+            )
+
+    ext_map = config.extensions or {}
+    get_flow = getattr(resource_server, "get_payment_flow", None)
+    if callable(get_flow):
+        flow = get_flow(payment_payload, payment_requirements)
+        try:
+            phases = resolve_payment_flow_phases(flow)
+        except ValueError:
+            phases = resolve_payment_flow_phases("authorization")
+            flow = "authorization"
+    else:
+        flow = "authorization"
+        phases = resolve_payment_flow_phases(flow)
+
+    hook_context = ServerHookContext(
+        tool_name=tool_name,
+        arguments=args,
+        payment_requirements=payment_requirements.model_copy(deep=True),
+        payment_payload=payment_payload,
+    )
+
+    try:
+        verify_result = await resource_server.verify_payment(
+            payment_payload,
+            payment_requirements,
+            declared_extensions=ext_map,
+            transport_context=transport_context,
+        )
+    except TypeError:
+        verify_result = await resource_server.verify_payment(payment_payload, payment_requirements)
+    if not verify_result.is_valid:
+        reason = verify_result.invalid_reason or "Payment verification failed"
+        return await _create_payment_required_result_async(
+            resource_server,
+            tool_name,
+            config,
+            reason,
+            transport_context=transport_context,
+            payment_payload=payment_payload,
+        )
+
+    skip_handler = getattr(verify_result, "skip_handler", None)
+    if isinstance(skip_handler, SkipHandlerDirective):
+        body = getattr(skip_handler, "body", None)
+        skip_result = MCPToolResult(
+            content=[
+                {
+                    "type": "text",
+                    "text": body if isinstance(body, str) else json.dumps(body or {}),
+                }
+            ],
+            structured_content=body if isinstance(body, dict) else None,
+        )
+        return await _settle_payment_result_async(
+            resource_server,
+            tool_name,
+            config,
+            hook_context,
+            payment_payload,
+            payment_requirements,
+            ext_map,
+            transport_context,
+            skip_result,
+            verified_requirements=payment_requirements,
+        )
+
+    before_handler_settlement = None
+    if phases.settle_before_handler:
+        try:
+            try:
+                before_settle = await resource_server.settle_payment(
+                    payment_payload,
+                    payment_requirements,
+                    declared_extensions=ext_map,
+                    transport_context=transport_context,
+                    phase="before-handler",
+                )
+            except TypeError:
+                before_settle = await resource_server.settle_payment(
                     payment_payload, payment_requirements
                 )
-            except Exception as e:
+            if not before_settle.success:
                 return await _create_settlement_failed_result_async(
-                    resource_server, tool_name, config, str(e)
+                    resource_server,
+                    tool_name,
+                    config,
+                    before_settle.error_reason
+                    or before_settle.error_message
+                    or "Settlement failed",
+                    settle_response=before_settle,
                 )
+            before_handler_settlement = CompletedSettlement(
+                phase="before-handler",
+                flow=flow,
+                result=before_settle,
+                requirements=payment_requirements,
+            )
+        except Exception as error:
+            if isinstance(error, PaymentAbortedError):
+                canceled = await _cancel_aborted_settlement_async(
+                    resource_server,
+                    payment_payload,
+                    payment_requirements,
+                    ext_map,
+                    transport_context,
+                    error,
+                )
+                if canceled is not None:
+                    return canceled
+            return await _create_settlement_failed_result_async(
+                resource_server, tool_name, config, "Settlement failed"
+            )
 
-            # Run onAfterSettlement hook if present
+    try:
+        dispatcher = resource_server.create_payment_cancellation_dispatcher(
+            payment_payload,
+            payment_requirements,
+            ext_map,
+            transport_context,
+            ["before-handler"] if before_handler_settlement is not None else [],
+        )
+    except TypeError:
+        dispatcher = resource_server.create_payment_cancellation_dispatcher(
+            payment_payload,
+            payment_requirements,
+            ext_map,
+            transport_context,
+        )
+
+    async def cancel_before_execution(error: Exception | None = None) -> SettleResponse | None:
+        cancel_settlement = None
+        options = VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(options)
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+        except Exception:
+            cancel_settlement = None
+            if before_handler_settlement is None:
+                raise
+            # A failed cancellation does not undo the completed upfront transfer.
+        return resolve_failure_path_settlement(
+            cancel_settlement, before_handler_settlement, payment_payload
+        )
+
+    async def cancel_failed_execution(
+        result: MCPToolResult, metering_error: Exception | None = None
+    ) -> MCPToolResult:
+        cancel_settlement = None
+        cancellation_completed = False
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted"
+                        if metering_error is not None
+                        else "handler_failed",
+                        error=metering_error,
+                    )
+                )
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+                cancellation_completed = True
+        except Exception:
+            cancel_settlement = None
+            # Report the failure without claiming a refund or offering another
+            # payment. Any upfront receipt is still a known fact and is attached below.
+            result.content.append({"type": "text", "text": "Payment cancellation outcome unknown"})
+        failure_receipt = resolve_failure_path_settlement(
+            cancel_settlement, before_handler_settlement, payment_payload
+        )
+        if failure_receipt is None:
+            if metering_error is not None and cancellation_completed:
+                return await _create_settlement_failed_result_async(
+                    resource_server, tool_name, config, "Payment metering failed"
+                )
+            return result
+        return attach_failure_path_receipt(result, failure_receipt)
+
+    settlement_requirements = payment_requirements.model_copy(deep=True)
+    if config.hooks and config.hooks.on_before_execution:
+        try:
+            proceed = config.hooks.on_before_execution(hook_context)
+            if hasattr(proceed, "__await__"):
+                proceed = await proceed
+        except Exception as error:
+            receipt = await cancel_before_execution(error)
+            if receipt is None:
+                raise
+            return attach_failure_path_receipt(
+                MCPToolResult(
+                    content=[{"type": "text", "text": "Execution hook failed"}], is_error=True
+                ),
+                receipt,
+            )
+        if not proceed:
+            receipt = await cancel_before_execution()
+            if receipt is not None:
+                return attach_failure_path_receipt(
+                    MCPToolResult(
+                        content=[{"type": "text", "text": "Execution blocked by hook"}],
+                        is_error=True,
+                    ),
+                    receipt,
+                )
+            return await _create_payment_required_result_async(
+                resource_server,
+                tool_name,
+                config,
+                "Execution blocked by hook",
+                transport_context=transport_context,
+            )
+
+        try:
+            settlement_requirements = metered_payment_requirements(
+                payment_requirements, hook_context.payment_requirements.amount
+            )
+        except ValueError as error:
+            return await cancel_failed_execution(
+                MCPToolResult(
+                    content=[{"type": "text", "text": "Payment metering failed"}], is_error=True
+                ),
+                error,
+            )
+
+    try:
+        handler_result = handler(args, tool_context)
+        if hasattr(handler_result, "__await__"):
+            handler_result = await handler_result
+        result = _normalize_tool_result(handler_result)
+    except Exception as error:
+        mark_handler_threw()
+        cancel_settlement = None
+        try:
+            if dispatcher is not None:
+                cancel_settlement = dispatcher.cancel(
+                    VerifiedPaymentCancelOptions(reason="handler_threw", error=error)
+                )
+                if hasattr(cancel_settlement, "__await__"):
+                    cancel_settlement = await cancel_settlement
+        except Exception:
+            cancel_settlement = None
+            if before_handler_settlement is None:
+                raise
+        failure_receipt = resolve_failure_path_settlement(
+            cancel_settlement, before_handler_settlement, payment_payload
+        )
+        if failure_receipt is None:
+            raise
+        return attach_failure_path_receipt(
+            MCPToolResult(
+                content=[{"type": "text", "text": "Internal Server Error"}], is_error=True
+            ),
+            failure_receipt,
+        )
+
+    transport_context["result"] = result
+
+    after_exec_context = AfterExecutionContext(
+        tool_name=tool_name,
+        arguments=args,
+        payment_requirements=settlement_requirements,
+        payment_payload=payment_payload,
+        result=result,
+    )
+    metering_error = None
+    try:
+        if config.hooks and config.hooks.on_after_execution:
+            coro = config.hooks.on_after_execution(after_exec_context)
+            if hasattr(coro, "__await__"):
+                await coro
+        settlement_requirements = metered_payment_requirements(
+            payment_requirements, settlement_requirements.amount
+        )
+    except Exception as error:
+        metering_error = error
+        # Metering is part of choosing what to charge, not an observer.
+        # Reuse cancellation below; never fall back to the signed ceiling.
+        result = MCPToolResult(
+            content=[{"type": "text", "text": "Payment metering failed"}],
+            is_error=True,
+        )
+
+    if result.is_error:
+        return await cancel_failed_execution(result, metering_error)
+
+    return await _settle_payment_result_async(
+        resource_server,
+        tool_name,
+        config,
+        hook_context,
+        payment_payload,
+        settlement_requirements,
+        ext_map,
+        transport_context,
+        result,
+        before_handler_settlement,
+        verified_requirements=payment_requirements,
+    )
+
+
+async def _cancel_aborted_settlement_async(
+    resource_server: x402ResourceServerAsync,
+    payment_payload: Any,
+    payment_requirements: Any,
+    ext_map: dict[str, Any],
+    transport_context: Any,
+    error: Exception,
+    before_handler_settlement: CompletedSettlement | None = None,
+) -> MCPToolResult | None:
+    """Release an explicit pre-submission abort, retaining any known deposit."""
+    cancel_settlement = None
+    try:
+        try:
+            dispatcher = resource_server.create_payment_cancellation_dispatcher(
+                payment_payload,
+                payment_requirements,
+                ext_map,
+                transport_context,
+                ["before-handler"] if before_handler_settlement is not None else [],
+            )
+        except TypeError:
+            dispatcher = resource_server.create_payment_cancellation_dispatcher(
+                payment_payload,
+                payment_requirements,
+                ext_map,
+                transport_context,
+            )
+        if dispatcher is not None:
+            cancel_settlement = dispatcher.cancel(
+                VerifiedPaymentCancelOptions(reason="after_verify_aborted", error=error)
+            )
+            if hasattr(cancel_settlement, "__await__"):
+                cancel_settlement = await cancel_settlement
+    except Exception:
+        cancel_settlement = None
+        if before_handler_settlement is None:
+            raise
+    receipt = resolve_failure_path_settlement(
+        cancel_settlement, before_handler_settlement, payment_payload
+    )
+    if receipt is None:
+        return None
+    return attach_failure_path_receipt(
+        MCPToolResult(content=[{"type": "text", "text": str(error)}], is_error=True), receipt
+    )
+
+
+async def _settle_payment_result_async(
+    resource_server: x402ResourceServerAsync,
+    tool_name: str,
+    config: PaymentWrapperConfig,
+    hook_context: ServerHookContext,
+    payment_payload: Any,
+    payment_requirements: Any,
+    ext_map: dict[str, Any],
+    transport_context: Any,
+    result: MCPToolResult,
+    before_handler_settlement: CompletedSettlement | None = None,
+    *,
+    verified_requirements: PaymentRequirements,
+) -> MCPToolResult:
+    try:
+        if before_handler_settlement is not None:
+            flow = before_handler_settlement.flow
+        else:
+            get_flow = getattr(resource_server, "get_payment_flow", None)
+            flow = (
+                get_flow(payment_payload, payment_requirements)
+                if callable(get_flow)
+                else "authorization"
+            )
+        try:
+            phases = resolve_payment_flow_phases(flow)
+        except ValueError:
+            phases = resolve_payment_flow_phases("authorization")
+
+        if not phases.settle_after_handler:
+            settle_result = (
+                before_handler_settlement.result if before_handler_settlement is not None else None
+            )
+            if settle_result is None:
+                return result
             if config.hooks and config.hooks.on_after_settlement:
                 settlement_context = SettlementContext(
-                    tool_name=tool_name,
-                    arguments=args,
+                    tool_name=hook_context.tool_name,
+                    arguments=hook_context.arguments,
                     payment_requirements=payment_requirements,
                     payment_payload=payment_payload,
                     settlement=settle_result,
@@ -286,23 +677,69 @@ def create_payment_wrapper(
                     if hasattr(coro, "__await__"):
                         await coro
                 except Exception:
-                    # Log but continue
                     pass
-
-            # Return result with settlement in _meta
             if result.meta is None:
                 result.meta = {}
-            result.meta[MCP_PAYMENT_RESPONSE_META_KEY] = (
-                settle_result.model_dump(by_alias=True)
-                if hasattr(settle_result, "model_dump")
-                else settle_result
-            )
-
+            result.meta[MCP_PAYMENT_RESPONSE_META_KEY] = _settle_meta(settle_result)
             return result
 
-        return wrapped_handler
+        try:
+            settle_result = await resource_server.settle_payment(
+                payment_payload,
+                payment_requirements,
+                declared_extensions=ext_map,
+                transport_context=transport_context,
+                phase="after-handler",
+            )
+        except TypeError:
+            settle_result = await resource_server.settle_payment(
+                payment_payload, payment_requirements
+            )
+    except Exception as e:
+        if isinstance(e, PaymentAbortedError):
+            canceled = await _cancel_aborted_settlement_async(
+                resource_server,
+                payment_payload,
+                verified_requirements,
+                ext_map,
+                transport_context,
+                e,
+                before_handler_settlement,
+            )
+            if canceled is not None:
+                return canceled
+        return await _create_settlement_failed_result_async(
+            resource_server, tool_name, config, str(e)
+        )
 
-    return wrapper
+    if not settle_result.success:
+        return await _create_settlement_failed_result_async(
+            resource_server,
+            tool_name,
+            config,
+            settle_result.error_reason or "Unknown settlement failure",
+            settle_response=settle_result,
+        )
+
+    if config.hooks and config.hooks.on_after_settlement:
+        settlement_context = SettlementContext(
+            tool_name=hook_context.tool_name,
+            arguments=hook_context.arguments,
+            payment_requirements=payment_requirements,
+            payment_payload=payment_payload,
+            settlement=settle_result,
+        )
+        try:
+            coro = config.hooks.on_after_settlement(settlement_context)
+            if hasattr(coro, "__await__"):
+                await coro
+        except Exception:
+            pass
+
+    if result.meta is None:
+        result.meta = {}
+    result.meta[MCP_PAYMENT_RESPONSE_META_KEY] = _settle_meta(settle_result)
+    return result
 
 
 async def _create_payment_required_result_async(
@@ -310,6 +747,9 @@ async def _create_payment_required_result_async(
     tool_name: str,
     config: PaymentWrapperConfig,
     error_message: str,
+    *,
+    transport_context: Any = None,
+    payment_payload: Any = None,
 ) -> MCPToolResult:
     """Create a 402 payment required result (async).
 
@@ -322,24 +762,31 @@ async def _create_payment_required_result_async(
     Returns:
         Structured 402 error result with payment requirements
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
+    resource_info = build_tool_resource_info(tool_name, config.resource)
+    # Enrichers may mutate Extra in place (e.g. batch-settlement channelState).
+    # Snapshot so wrapper config stays a stable match baseline across tool calls.
+    accepts = snapshot_payment_requirements_list(config.accepts)
 
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
-
-    payment_required = await resource_server.create_payment_required_response(
-        config.accepts,
-        resource_info,
-        error_message,
-        config.extensions,
-    )
+    try:
+        payment_required = await resource_server.create_payment_required_response(
+            accepts,
+            resource_info,
+            error_message,
+            config.extensions,
+            transport_context,
+            payment_payload,
+        )
+    except TypeError:
+        payment_required = await resource_server.create_payment_required_response(
+            accepts,
+            resource_info,
+            error_message,
+            config.extensions,
+        )
 
     # Convert to dict for structuredContent
     payment_required_dict = (
-        payment_required.model_dump(by_alias=True)
+        payment_required.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payment_required, "model_dump")
         else payment_required
     )
@@ -359,6 +806,8 @@ async def _create_settlement_failed_result_async(
     tool_name: str,
     config: PaymentWrapperConfig,
     error_message: str,
+    *,
+    settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (async).
 
@@ -367,20 +816,16 @@ async def _create_settlement_failed_result_async(
         tool_name: Name of the tool for resource URL
         config: Payment wrapper configuration
         error_message: Error message describing settlement failure
+        settle_response: Failed settle response; its receipt is attached to ``_meta``
+            when an after-settle abort failed an onchain settle
 
     Returns:
         Structured 402 error result with settlement failure details
     """
-    from ..schemas import ResourceInfo as CoreResourceInfo
-
-    resource_info = CoreResourceInfo(
-        url=create_tool_resource_url(tool_name, config.resource.url if config.resource else None),
-        description=(config.resource.description if config.resource else f"Tool: {tool_name}"),
-        mime_type=config.resource.mime_type if config.resource else "application/json",
-    )
+    resource_info = build_tool_resource_info(tool_name, config.resource)
 
     payment_required = await resource_server.create_payment_required_response(
-        config.accepts,
+        snapshot_payment_requirements_list(config.accepts),
         resource_info,
         f"Payment settlement failed: {error_message}",
         config.extensions,
@@ -392,10 +837,12 @@ async def _create_settlement_failed_result_async(
         "transaction": "",
         "network": config.accepts[0].network,
     }
+    if settle_response is not None:
+        settlement_failure = settle_response.model_dump(by_alias=True, exclude_none=True)
 
     # Merge paymentRequired with settlement failure (camelCase for wire format)
     error_data = (
-        payment_required.model_dump(by_alias=True)
+        payment_required.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payment_required, "model_dump")
         else payment_required
     )
@@ -403,8 +850,14 @@ async def _create_settlement_failed_result_async(
 
     content_text = json.dumps(error_data)
 
+    meta = (
+        {MCP_PAYMENT_RESPONSE_META_KEY: _settle_meta(settle_response)}
+        if settle_response is not None and settle_response.after_settle_aborted
+        else None
+    )
     return MCPToolResult(
         structured_content=error_data,
         content=[{"type": "text", "text": content_text}],
         is_error=True,
+        meta=meta,
     )

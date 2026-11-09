@@ -25,16 +25,27 @@ export const ErrErc3009AuthorizationRequired =
   "invalid_batch_settlement_evm_erc3009_authorization_required";
 export const ErrRefundTransactionFailed = "invalid_batch_settlement_evm_refund_transaction_failed";
 export const ErrInvalidPayloadType = "invalid_batch_settlement_evm_payload_type";
+export const ErrInvalidVoucherPayload = "invalid_batch_settlement_evm_voucher_payload";
+export const ErrInvalidDepositPayload = "invalid_batch_settlement_evm_deposit_payload";
 export const ErrWithdrawDelayOutOfRange =
   "invalid_batch_settlement_evm_withdraw_delay_out_of_range";
 export const ErrChannelIdMismatch = "invalid_batch_settlement_evm_channel_id_mismatch";
+export const ErrInvalidChannelId = "invalid_batch_settlement_evm_channel_id_invalid";
 export const ErrReceiverMismatch = "invalid_batch_settlement_evm_receiver_mismatch";
 export const ErrReceiverAuthorizerMismatch =
   "invalid_batch_settlement_evm_receiver_authorizer_mismatch";
 export const ErrWithdrawDelayMismatch = "invalid_batch_settlement_evm_withdraw_delay_mismatch";
 export const ErrAuthorizerAddressMismatch =
   "invalid_batch_settlement_evm_authorizer_address_mismatch";
+export const ErrAuthorizerNotConfigured = "invalid_batch_settlement_evm_authorizer_not_configured";
 export const ErrDepositSimulationFailed = "invalid_batch_settlement_evm_deposit_simulation_failed";
+export const ErrDepositBelowMinDeposit = "invalid_batch_settlement_evm_deposit_below_min_deposit";
+
+// ERC-6492 counterfactual deployment errors (ERC-3009 deposit path). Wire values keep the
+// scheme prefix to match the rest of this module's contract.
+export const ErrFactoryNotAllowed = "invalid_batch_settlement_evm_eip6492_factory_not_allowed";
+export const ErrSmartWalletDeploymentFailed =
+  "invalid_batch_settlement_evm_smart_wallet_deployment_failed";
 export const ErrClaimSimulationFailed = "invalid_batch_settlement_evm_claim_simulation_failed";
 export const ErrSettleSimulationFailed = "invalid_batch_settlement_evm_settle_simulation_failed";
 export const ErrNothingToSettle = "invalid_batch_settlement_evm_nothing_to_settle";
@@ -61,8 +72,23 @@ export const ErrErc20ApprovalUnavailable =
 export const ErrCumulativeAmountMismatch =
   "invalid_batch_settlement_evm_cumulative_amount_mismatch";
 export const ErrChannelBusy = "invalid_batch_settlement_evm_channel_busy";
+export const ErrVerificationStateUnavailable =
+  "invalid_batch_settlement_evm_verification_state_unavailable";
+export const ErrVoucherStoreUnavailable = "invalid_batch_settlement_evm_voucher_store_unavailable";
 export const ErrChargeExceedsSignedCumulative =
   "invalid_batch_settlement_evm_charge_exceeds_signed_cumulative";
 export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";
 export const ErrRefundNoBalance = "invalid_batch_settlement_evm_refund_no_balance";
+export const ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch";
 export const ErrRefundAmountInvalid = "invalid_batch_settlement_evm_refund_amount_invalid";
+export const ErrRefundAuthorizerMismatch =
+  "invalid_batch_settlement_evm_refund_authorizer_mismatch";
+export const ErrRefundAuthorizerSignature =
+  "invalid_batch_settlement_evm_refund_authorizer_signature";
+export const ErrVoucherStoreModeMismatch =
+  "invalid_batch_settlement_evm_voucher_store_mode_mismatch";
+export const ErrUnexpectedPendingId = "invalid_batch_settlement_evm_unexpected_pending_id";
+export const ErrUnexpectedCancel = "invalid_batch_settlement_evm_unexpected_cancel";
+export const ErrPendingIdMismatch = "invalid_batch_settlement_evm_pending_id_mismatch";
+export const ErrDelegatedSettleUnauthenticated =
+  "invalid_batch_settlement_evm_delegated_settle_unauthenticated";

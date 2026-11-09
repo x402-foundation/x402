@@ -4,7 +4,7 @@ import { WalletManager, WalletId, NetworkId } from "@txnlab/use-wallet";
 import { AlgorandClient } from "@algorandfoundation/algokit-utils/algorand-client";
 import { AvmPaywall } from "./AvmPaywall";
 import type {} from "../window";
-import { ALGORAND_NETWORK_REFS } from "../paywallUtils";
+import { isTestnetNetwork } from "../paywallUtils";
 
 // AVM-specific paywall entry point
 window.addEventListener("load", async () => {
@@ -23,7 +23,7 @@ window.addEventListener("load", async () => {
   }
 
   const network = paymentRequired.accepts[0].network;
-  const isTestnet = network.includes(ALGORAND_NETWORK_REFS.TESTNET);
+  const isTestnet = isTestnetNetwork(network);
 
   // Create AlgorandClient using algokit-utils built-in network defaults
   const algorandClient = isTestnet ? AlgorandClient.testNet() : AlgorandClient.mainNet();

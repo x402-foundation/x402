@@ -36,6 +36,13 @@ class VerifyResponse(BaseX402Model):
     invalid_reason: str | None = None
     invalid_message: str | None = None
     payer: str | None = None
+    extensions: dict[str, Any] | None = None
+    extension_responses: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        description="Facilitator extension sidechannel; not serialized to buyers.",
+    )
+    extra: dict[str, Any] | None = None
 
 
 class SettleRequest(BaseX402Model):
@@ -72,6 +79,18 @@ class SettleResponse(BaseX402Model):
     transaction: str
     network: Network
     amount: str | None = None
+    extensions: dict[str, Any] | None = None
+    extension_responses: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        description="Facilitator extension sidechannel; not serialized to buyers.",
+    )
+    extra: dict[str, Any] | None = None
+    after_settle_aborted: bool = Field(
+        default=False,
+        exclude=True,
+        description="Set when an after-settle abort failed an onchain settle; not serialized.",
+    )
 
 
 class SupportedKind(BaseX402Model):

@@ -21,6 +21,7 @@ import (
  * - error-recovery: Advanced error handling and automatic recovery strategies
  * - multi-network-priority: Network selection with priority and fallback
  * - hooks: Payment lifecycle hooks for custom logic at different stages
+ * - spend-controls: Client-side asset allowlist and USD spend caps
  *
  * Usage:
  *   go run . all-networks
@@ -98,9 +99,15 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "spend-controls":
+		if err := runSpendControlsExample(ctx, evmPrivateKey, url); err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Printf("❌ Unknown pattern: %s\n", pattern)
-		fmt.Println("Available patterns: all-networks, custom-transport, error-recovery, multi-network-priority, hooks")
+		fmt.Println("Available patterns: all-networks, custom-transport, error-recovery, multi-network-priority, hooks, spend-controls")
 		os.Exit(1)
 	}
 }

@@ -2,13 +2,17 @@
 
 # Constants
 from .constants import (
+    ACCEPTED_TRANSACTION_VERSIONS,
+    ADVERTISED_TRANSACTION_VERSIONS,
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
     DEFAULT_COMPUTE_UNIT_LIMIT,
     DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     DEFAULT_DECIMALS,
+    DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
     DEVNET_RPC_URL,
     DEVNET_WS_URL,
     ERR_AMOUNT_INSUFFICIENT,
+    ERR_COMPUTE_LIMIT_TOO_HIGH,
     ERR_COMPUTE_PRICE_TOO_HIGH,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
@@ -16,20 +20,34 @@ from .constants import (
     ERR_INVALID_COMPUTE_LIMIT,
     ERR_INVALID_COMPUTE_PRICE,
     ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
     ERR_INVALID_PAYLOAD,
+    ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING,
     ERR_MEMO_COUNT,
     ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+    ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED,
+    ERR_PROTOCOL_INSTRUCTION_ORDER,
+    ERR_RECIPIENT_ATA_MISSING,
+    ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER,
     ERR_RECIPIENT_MISMATCH,
+    ERR_SETTLEMENT_PENDING,
     ERR_SIMULATION_FAILED,
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
+    ERR_TRANSACTION_SIZE_EXCEEDED,
     ERR_UNKNOWN_FIFTH_INSTRUCTION,
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_INSTRUCTION,
+    ERR_UNKNOWN_SEVENTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
+    ERR_V1_COMPUTE_BUDGET_INSTRUCTION,
+    ERR_V1_HEAP_SIZE,
     LIGHTHOUSE_PROGRAM_ADDRESS,
     MAINNET_RPC_URL,
     MAINNET_WS_URL,
@@ -55,6 +73,10 @@ from .constants import (
     NetworkConfig,
 )
 
+# Default assets
+from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
+from .errors import TransactionOnchainFailureError
+
 # Settlement cache (shared across V1/V2 facilitator instances)
 from .settlement_cache import SettlementCache
 
@@ -74,6 +96,7 @@ from .types import (
 
 # Utilities
 from .utils import (
+    check_transaction_v1_config,
     convert_to_token_amount,
     decode_transaction_from_payload,
     derive_ata,
@@ -82,10 +105,14 @@ from .utils import (
     get_asset_info,
     get_network_config,
     get_token_payer_from_transaction,
+    get_transaction_version,
     get_usdc_address,
+    is_accepted_transaction_version,
+    normalize_accepted_transaction_versions,
     normalize_network,
     parse_amount,
-    parse_money_to_decimal,
+    peek_wire_transaction_version,
+    resolve_transaction_version,
     validate_svm_address,
 )
 
@@ -99,9 +126,12 @@ __all__ = [
     "MEMO_PROGRAM_ADDRESS",
     "LIGHTHOUSE_PROGRAM_ADDRESS",
     "DEFAULT_COMPUTE_UNIT_LIMIT",
+    "DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT",
     "DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS",
     "MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS",
     "MAX_MEMO_BYTES",
+    "ACCEPTED_TRANSACTION_VERSIONS",
+    "ADVERTISED_TRANSACTION_VERSIONS",
     "DEVNET_RPC_URL",
     "TESTNET_RPC_URL",
     "MAINNET_RPC_URL",
@@ -129,9 +159,17 @@ __all__ = [
     "ERR_UNKNOWN_FOURTH_INSTRUCTION",
     "ERR_UNKNOWN_FIFTH_INSTRUCTION",
     "ERR_UNKNOWN_SIXTH_INSTRUCTION",
+    "ERR_UNKNOWN_SEVENTH_INSTRUCTION",
+    "ERR_UNKNOWN_INSTRUCTION",
+    "ERR_PROTOCOL_INSTRUCTION_ORDER",
+    "ERR_INVALID_LIGHTHOUSE_INSTRUCTION",
+    "ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED",
+    "ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED",
     "ERR_INVALID_COMPUTE_LIMIT",
     "ERR_INVALID_COMPUTE_PRICE",
     "ERR_COMPUTE_PRICE_TOO_HIGH",
+    "ERR_COMPUTE_LIMIT_TOO_HIGH",
+    "ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING",
     "ERR_NO_TRANSFER_INSTRUCTION",
     "ERR_MEMO_MISMATCH",
     "ERR_MEMO_COUNT",
@@ -142,7 +180,14 @@ __all__ = [
     "ERR_FEE_PAYER_NOT_MANAGED",
     "ERR_FEE_PAYER_TRANSFERRING",
     "ERR_SIMULATION_FAILED",
+    "ERR_RECIPIENT_ATA_MISSING",
+    "ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER",
     "ERR_TRANSACTION_FAILED",
+    "ERR_SETTLEMENT_PENDING",
+    "ERR_UNSUPPORTED_TRANSACTION_VERSION",
+    "ERR_V1_COMPUTE_BUDGET_INSTRUCTION",
+    "ERR_TRANSACTION_SIZE_EXCEEDED",
+    "ERR_V1_HEAP_SIZE",
     # Types
     "ExactSvmPayload",
     "ExactSvmPayloadV1",
@@ -156,6 +201,7 @@ __all__ = [
     # Signer implementations
     "KeypairSigner",
     "FacilitatorKeypairSigner",
+    "TransactionOnchainFailureError",
     # Utilities
     "normalize_network",
     "get_network_config",
@@ -165,9 +211,18 @@ __all__ = [
     "convert_to_token_amount",
     "parse_amount",
     "format_amount",
-    "parse_money_to_decimal",
     "decode_transaction_from_payload",
     "get_token_payer_from_transaction",
+    "get_transaction_version",
+    "is_accepted_transaction_version",
+    "normalize_accepted_transaction_versions",
+    "peek_wire_transaction_version",
+    "resolve_transaction_version",
+    "check_transaction_v1_config",
     "extract_transaction_info",
     "derive_ata",
+    # Default assets
+    "DEFAULT_ASSETS",
+    "find_default_asset",
+    "get_default_asset",
 ]

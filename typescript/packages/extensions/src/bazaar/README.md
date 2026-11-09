@@ -1,6 +1,6 @@
 # Bazaar Discovery Extension
 
-Part of [`@x402/extensions`](../README.md). Import from `@x402/extensions/bazaar`.
+Part of [`@x402/extensions`](../../README.md). Import from `@x402/extensions/bazaar`.
 
 The Bazaar Discovery Extension enables facilitators to automatically catalog and index x402-enabled resources by following server-declared discovery instructions. This allows users to discover paid APIs and services through facilitator catalogs.
 
@@ -222,7 +222,7 @@ import { HTTPFacilitatorClient } from "@x402/core/http";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-const facilitatorClient = new HTTPFacilitatorClient({ url: "https://facilitator.x402.org" });
+const facilitatorClient = new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme());
 

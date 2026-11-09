@@ -1,0 +1,313 @@
+import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { UptoEvmScheme } from "@x402/evm/upto/server";
+import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/server";
+import { BatchSvmScheme as BatchSettlementSvmScheme } from "@x402/svm/batch-settlement/server";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
+import { UptoSvmScheme } from "@x402/svm/upto/server";
+import { base58 } from "@scure/base";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { ExactAptosScheme } from "@x402/aptos/exact/server";
+import { ExactCasperScheme } from "@x402/casper/exact/server";
+import { ExactHederaScheme } from "@x402/hedera/exact/server";
+import { ExactKeetaScheme } from "@x402/keeta/exact/server";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { ExactTvmScheme } from "@x402/tvm/exact/server";
+import { ExactNearScheme } from "@x402/near/exact/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
+import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
+import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+import { toMasumiSellerSigner } from "@x402/cardano";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
+import {
+  declareEip2612GasSponsoringExtension,
+  declareErc20ApprovalGasSponsoringExtension,
+} from "@x402/extensions";
+import {
+  HTTPFacilitatorClient,
+  type RoutesConfig,
+  type x402ResourceServer,
+} from "@x402/core/server";
+import {
+  createAuthCaptureLifecycleManager,
+  setAuthCaptureLifecycleManager,
+} from "./auth-capture-e2e";
+import { privateKeyToAccount } from "viem/accounts";
+import type { Caip2Network, ServerEnvConfig } from "../../src/server-env";
+import {
+  getServerAddress,
+  isFamilyConfigured,
+} from "../../src/server-env";
+import {
+  PROTOCOL_FAMILIES,
+  type ProtocolFamily,
+} from "../../src/networks/networks";
+import { resolvedRoutes, type ResolvedRoute } from "./catalog";
+import {
+  networkCaip2Pattern,
+  routeDiscoveryOutput,
+  mcpToolName,
+  schemesForSdkNetwork,
+  type RouteTransport,
+} from "../../src/mechanisms";
+
+export type { Caip2Network, ServerEnvConfig } from "../../src/server-env";
+export { loadServerEnv } from "../../src/server-env";
+
+/**
+ * Builds facilitator clients from FACILITATOR_URL (+ optional MOCK_FACILITATOR_URL).
+ */
+export function createFacilitatorClients(facilitatorUrl: string): HTTPFacilitatorClient[] {
+  const facilitatorClients = [new HTTPFacilitatorClient({ url: facilitatorUrl })];
+  const mockFacilitatorUrl = process.env.MOCK_FACILITATOR_URL;
+  if (mockFacilitatorUrl) {
+    facilitatorClients.push(new HTTPFacilitatorClient({ url: mockFacilitatorUrl }));
+  }
+  return facilitatorClients;
+}
+
+/** Register schemes for one configured family. */
+async function registerFamilySchemes(
+  server: x402ResourceServer,
+  family: ProtocolFamily,
+  cfg: ServerEnvConfig,
+  primaryFacilitator?: HTTPFacilitatorClient,
+): Promise<void> {
+  const pattern = networkCaip2Pattern(family);
+
+  switch (family) {
+    case "avm":
+      server.register(pattern, new ExactAvmScheme());
+      return;
+    case "canton":
+      server.register(pattern, new ExactCantonScheme());
+      return;
+    case "ccd":
+      server.register(pattern, new ExactConcordiumScheme());
+      return;
+    case "cardano": {
+      const sellerMnemonic = process.env.SERVER_CARDANO_SELLER_MNEMONIC;
+      if (!sellerMnemonic) break;
+      server.register(
+        pattern,
+        new ExactCardanoScheme({
+          masumi: {
+            seller: network => toMasumiSellerSigner({ mnemonic: sellerMnemonic, network }),
+          },
+        }),
+      );
+      return;
+    }
+    case "evm": {
+      server.register(pattern, new ExactEvmScheme());
+      server.register(pattern, new UptoEvmScheme());
+      const payTo = getServerAddress(cfg, "evm") as `0x${string}`;
+      const voucherStoreModeRaw =
+        process.env.EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE?.trim().toLowerCase() ||
+        (process.env.E2E_BATCH_SERVER_ROLE?.trim().toLowerCase() === 'managed-batch'
+          ? 'facilitator'
+          : 'self');
+      if (voucherStoreModeRaw === 'facilitator') {
+        if (process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim()) {
+          console.error(
+            'EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=facilitator cannot be combined with SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY',
+          );
+          process.exit(1);
+        }
+        const refundAuthorizerPrivateKey = process.env
+          .SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY as `0x${string}` | undefined;
+        const refundAuthorizerSigner = refundAuthorizerPrivateKey?.trim()
+          ? privateKeyToAccount(refundAuthorizerPrivateKey)
+          : undefined;
+        if (refundAuthorizerSigner) {
+          console.info(
+            `Batch-settlement refund authorizer (facilitator-managed): ${refundAuthorizerSigner.address}`,
+          );
+        } else {
+          console.info('Batch-settlement refund authorizer: facilitator delegatedRefund (no local signer, 402 omits refundAuthorizer)');
+        }
+        console.info('Batch-settlement voucher custody: facilitator-managed (pass-through verify/settle)');
+        server.register(
+          pattern,
+          new BatchSettlementEvmScheme(payTo, {
+            voucherStoreMode: 'facilitator',
+            ...(refundAuthorizerSigner ? { refundAuthorizerSigner } : {}),
+            enforceMinDeposit: false,
+          }),
+        );
+        return;
+      }
+      const receiverAuthorizerPrivateKey = process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as
+        | `0x${string}`
+        | undefined;
+      const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
+        ? privateKeyToAccount(receiverAuthorizerPrivateKey)
+        : undefined;
+      server.register(
+        pattern,
+        new BatchSettlementEvmScheme(payTo, {
+          ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
+        }),
+      );
+      if (schemesForSdkNetwork("typescript", "evm").includes("auth-capture")) {
+        const authCaptureScheme = new AuthCaptureEvmScheme(
+          receiverAuthorizerSigner
+            ? { receiverAuthorizerSigner }
+            : { collectOnlyRoutes: true },
+        );
+        if (receiverAuthorizerSigner) {
+          console.info(`Auth-capture receiver authorizer (self-managed): ${receiverAuthorizerSigner.address}`);
+        } else {
+          console.info("Auth-capture receiver authorizer: facilitator-delegated (collect-only routes enabled)");
+        }
+        server.register(pattern, authCaptureScheme);
+        if (primaryFacilitator) {
+          setAuthCaptureLifecycleManager(
+            createAuthCaptureLifecycleManager(authCaptureScheme, primaryFacilitator),
+          );
+        }
+      }
+      return;
+    }
+    case "svm": {
+      server.register(pattern, new ExactSvmScheme());
+      const receiverAuthorizerPrivateKey = process.env.SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
+      const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
+        ? await createKeyPairSignerFromBytes(base58.decode(receiverAuthorizerPrivateKey))
+        : undefined;
+      if (!receiverAuthorizerSigner) return;
+      console.info(`SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
+      server.register(
+        pattern,
+        new UptoSvmScheme({
+          receiverAuthorizerSigner,
+          rpcUrl: process.env.SVM_RPC_URL,
+        }),
+      );
+      const operatorPrivateKey = process.env.SERVER_SVM_OPERATOR_PRIVATE_KEY;
+      const operatorSigner = operatorPrivateKey
+        ? await createKeyPairSignerFromBytes(base58.decode(operatorPrivateKey))
+        : undefined;
+      if (operatorSigner) {
+        console.info(`SVM batch-settlement operator: ${operatorSigner.address}`);
+      }
+      server.register(
+        pattern,
+        new BatchSettlementSvmScheme({
+          receiverAuthorizer: receiverAuthorizerSigner,
+          ...(operatorSigner ? { operator: operatorSigner } : {}),
+        }),
+      );
+      return;
+    }
+    case "aptos":
+      server.register(pattern, new ExactAptosScheme());
+      return;
+    case "casper":
+      server.register(pattern, new ExactCasperScheme());
+      return;
+    case "hedera":
+      server.register(pattern, new ExactHederaScheme());
+      return;
+    case "keeta":
+      server.register(pattern, new ExactKeetaScheme());
+      return;
+    case "stellar":
+      server.register(pattern, new ExactStellarScheme());
+      return;
+    case "tvm":
+      server.register(pattern, new ExactTvmScheme());
+      return;
+    case "near":
+      server.register(pattern, new ExactNearScheme());
+      return;
+    case "xrpl":
+      server.register(pattern, new ExactXrplScheme());
+      return;
+  }
+}
+
+/**
+ * Registers e2e schemes + bazaar extension for every family with a payee address
+ * configured (catalog-driven via {@link isFamilyConfigured}).
+ */
+export async function configureResourceServer(
+  server: x402ResourceServer,
+  cfg: ServerEnvConfig,
+  primaryFacilitator?: HTTPFacilitatorClient,
+): Promise<void> {
+  for (const family of PROTOCOL_FAMILIES) {
+    if (isFamilyConfigured(cfg, family)) {
+      await registerFamilySchemes(server, family, cfg, primaryFacilitator);
+    }
+  }
+
+  server.registerExtension(bazaarResourceServerExtension);
+}
+
+/**
+ * Maps a catalog extension id to the SDK call that declares it on a route.
+ * Declaration comes from mechanisms JSON `extensions` per route; process-level
+ * registration (e.g. {@link configureResourceServer}'s bazaar handler) is
+ * separate and enables enriching/honoring those declarations.
+ */
+function declareExtension(
+  id: string,
+  route: ResolvedRoute,
+  transport: RouteTransport = "http",
+): Record<string, unknown> {
+  switch (id) {
+    case "bazaar":
+      return transport === "mcp"
+        ? declareDiscoveryExtension({
+          toolName: mcpToolName(route.path),
+          transport: "sse",
+          inputSchema: { type: "object", properties: {} },
+          output: routeDiscoveryOutput(),
+        })
+        : declareDiscoveryExtension({ output: routeDiscoveryOutput() });
+    case "eip2612GasSponsoring":
+      return declareEip2612GasSponsoringExtension();
+    case "erc20ApprovalGasSponsoring":
+      return declareErc20ApprovalGasSponsoringExtension();
+    default:
+      throw new Error(`Route ${route.path} declares unknown extension "${id}"`);
+  }
+}
+
+/** Single-route payment config shared by HTTP frameworks, the Next e2e server, and MCP tools. */
+export function buildResolvedRouteConfig(
+  route: ResolvedRoute,
+  transport: RouteTransport = "http",
+): Record<string, unknown> {
+  const extensions = Object.assign({}, ...route.extensions.map(id => declareExtension(id, route, transport)));
+
+  return {
+    accepts: {
+      payTo: route.payTo,
+      scheme: route.scheme,
+      network: route.network as Caip2Network,
+      price: route.price,
+      ...(route.maxTimeoutSeconds ? { maxTimeoutSeconds: route.maxTimeoutSeconds } : {}),
+      ...(route.extra ? { extra: route.extra } : {}),
+    },
+    ...(route.extensions.length > 0 ? { extensions } : {}),
+  };
+}
+
+/**
+ * Payment-middleware route map for the express/hono/fastify e2e servers, derived
+ * from config/mechanisms.json. Routes whose network has no payee address
+ * configured are omitted by the resolver.
+ */
+export function buildPaymentRoutes(cfg: ServerEnvConfig): RoutesConfig {
+  const routes: Record<string, unknown> = {};
+
+  for (const route of resolvedRoutes(cfg)) {
+    routes[`GET ${route.path}`] = buildResolvedRouteConfig(route);
+  }
+
+  return routes as RoutesConfig;
+}

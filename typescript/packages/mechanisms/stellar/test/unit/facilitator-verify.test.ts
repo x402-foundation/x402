@@ -3,6 +3,8 @@ import {
   Address,
   Networks as StellarNetworks,
   SorobanDataBuilder,
+  authorizeEntry,
+  buildAuthorizationEntryPreimage,
   rpc,
   Transaction,
   TransactionBuilder,
@@ -144,6 +146,8 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
   } as unknown as rpc.Server;
 
   const CLIENT_PUBLIC = "GBBO4ZDDZTSM2IUKQYBAST3CFHNPFXECGEFTGWTA2WELR2BIWDK57UVE";
+  // Matches CLIENT_PUBLIC; needed to re-sign fixture auth entries over the CAP-71 V2 preimage
+  const CLIENT_SECRET = "SDV3OZOPGIO6GQAVI7T6ZJ7NSNFB26JX6QZYCI64TBC7BAZY6FQVAXXK";
   const FACILITATOR_PUBLIC = "GCQAXB2D77Y4C66CTGVH25H2RMUKMQJGOWUPK7UXGG5MAQBONUEKFQ4P";
   const TRANSACTION_RECIPIENT = "GCHEI4PQEFJOA27MNZRPQNLGURS6KASW76X5UZCUZIXCOJLKXYCXOR2W";
   const ASSET = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
@@ -309,7 +313,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
     it("should reject transactions with fees exceeding the maximum", async () => {
       const lowMaxFeeFacilitator = new ExactStellarScheme(facilitatorSigners, {
         areFeesSponsored: true,
-        maxTransactionFeeStroops: 1000, // 1000 stroops max
+        maxTransactionFeeStroops: 150,
       });
 
       vi.mocked(stellarUtils.getRpcClient).mockReturnValue(mockServer as rpc.Server);
@@ -317,47 +321,32 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
       const result = await lowMaxFeeFacilitator.verify(validPayload, validRequirements);
       expect(result).toEqual(
-        invalidVerifyResponse("invalid_exact_stellar_payload_fee_exceeds_maximum"),
+        invalidVerifyResponse(
+          "invalid_exact_stellar_payload_fee_exceeds_maximum",
+          CLIENT_PUBLIC,
+          "simulation-derived fee 200 stroops exceeds ceiling 150 stroops",
+        ),
       );
     });
 
-    it("should reject transactions with fees below simulation minimum", async () => {
-      const expectedAssetHashForFeeTest = new Address(ASSET).toScAddress().contractId();
-      const mockTransferEventForFeeTest = createMockContractEvent({
-        from: CLIENT_PUBLIC,
-        to: TRANSACTION_RECIPIENT,
-        amount: BigInt("10000"),
-        contractId: expectedAssetHashForFeeTest,
+    it("should count the configured inclusion fee against the maximum", async () => {
+      const highInclusionFacilitator = new ExactStellarScheme(facilitatorSigners, {
+        areFeesSponsored: true,
+        maxTransactionFeeStroops: 1_000,
+        inclusionFeeStroops: 950,
       });
 
-      const originalSimulate = vi.mocked(stellarUtils.getRpcClient).getMockImplementation();
-      const mockServerWithHighMinFee = {
-        ...mockServer,
-        simulateTransaction: vi.fn().mockResolvedValue({
-          id: "test",
-          latestLedger: 123,
-          events: [mockTransferEventForFeeTest],
-          _parsed: true,
-          transactionData: new SorobanDataBuilder(),
-          minResourceFee: "999999999",
-          cost: { cpuInsns: "0", memBytes: "0" },
-          results: [],
-        } as Api.SimulateTransactionSuccessResponse),
-      };
-
-      vi.mocked(stellarUtils.getRpcClient).mockReturnValue(
-        mockServerWithHighMinFee as unknown as rpc.Server,
-      );
+      vi.mocked(stellarUtils.getRpcClient).mockReturnValue(mockServer as rpc.Server);
       vi.mocked(stellarUtils.getNetworkPassphrase).mockReturnValue(StellarNetworks.TESTNET);
 
-      try {
-        const result = await facilitator.verify(validPayload, validRequirements);
-        expect(result).toEqual(
-          invalidVerifyResponse("invalid_exact_stellar_payload_fee_below_minimum", CLIENT_PUBLIC),
-        );
-      } finally {
-        vi.mocked(stellarUtils.getRpcClient).mockImplementation(originalSimulate!);
-      }
+      const result = await highInclusionFacilitator.verify(validPayload, validRequirements);
+      expect(result).toEqual(
+        invalidVerifyResponse(
+          "invalid_exact_stellar_payload_fee_exceeds_maximum",
+          CLIENT_PUBLIC,
+          "simulation-derived fee 1050 stroops exceeds ceiling 1000 stroops",
+        ),
+      );
     });
 
     describe("mismatching networks", () => {
@@ -514,6 +503,55 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         expect(result.invalidReason).toBe("invalid_exact_stellar_payload_facilitator_is_payer");
       });
 
+      it("should reject when a configured feeBumpSigner is the payer (from address)", async () => {
+        const feeBumpSigner = createEd25519Signer(
+          "SCKTFQJ2ASXITWPDKJ2KMQB7WOBNFV23OOTT6ZVO6AXVNAA3IJ7TRZFP",
+          STELLAR_TESTNET_CAIP2,
+        );
+        const facilitatorWithFeeBump = new ExactStellarScheme(facilitatorSigners, {
+          areFeesSponsored: true,
+          maxTransactionFeeStroops: 1_000_000,
+          feeBumpSigner,
+        });
+
+        if (!baseSorobanData || !baseOperation.auth?.length) {
+          throw new Error("Missing sorobanData or auth in test transaction");
+        }
+
+        const originalArgs = baseInvokeContractArgs.args();
+        const feeBumpKeypair = Keypair.fromPublicKey(feeBumpSigner.address);
+        const feeBumpScAddress = xdr.ScVal.scvAddress(
+          xdr.ScAddress.scAddressTypeAccount(
+            xdr.PublicKey.publicKeyTypeEd25519(feeBumpKeypair.rawPublicKey()),
+          ),
+        );
+
+        const modifiedInvokeContractArgs = new xdr.InvokeContractArgs({
+          contractAddress: baseInvokeContractArgs.contractAddress(),
+          functionName: baseInvokeContractArgs.functionName(),
+          args: [
+            feeBumpScAddress, // ❌ feeBumpSigner is facilitator-controlled too and must not be the payer
+            originalArgs[1],
+            originalArgs[2],
+          ],
+        });
+        const modifiedFunc = xdr.HostFunction.hostFunctionTypeInvokeContract(
+          modifiedInvokeContractArgs,
+        );
+        const modifiedOperation = Operation.invokeHostFunction({
+          ...baseOperation,
+          func: modifiedFunc,
+        });
+        const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
+
+        const result = await facilitatorWithFeeBump.verify(
+          modifiedStellarPayload,
+          validRequirements,
+        );
+        expect(result.isValid).toBe(false);
+        expect(result.invalidReason).toBe("invalid_exact_stellar_payload_facilitator_is_payer");
+      });
+
       it("should reject empty auth entries array", async () => {
         const modifiedOperation = Operation.invokeHostFunction({
           ...baseOperation,
@@ -648,6 +686,118 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           const modifiedOperation = Operation.invokeHostFunction({
             ...baseOperation,
             auth: [sourceAccountAuth],
+          });
+          const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
+
+          const result = await facilitator.verify(modifiedStellarPayload, validRequirements);
+          expect(result.isValid).toBe(false);
+          expect(result.invalidReason).toBe(
+            "invalid_exact_stellar_payload_unsupported_credential_type",
+          );
+        });
+
+        it("should accept CAP-71 V2 address credentials signed over the V2 preimage", async () => {
+          if (!baseSorobanData || !baseOperation.auth || baseOperation.auth.length === 0) {
+            throw new Error("Missing sorobanData or auth in test transaction");
+          }
+
+          // Protocol 28 activates the V2 arm, so clients can submit V2-signed
+          // entries and the facilitator must accept them alongside legacy V1.
+          // The entry is re-signed over the address-bound CAP-71 preimage rather
+          // than relabelling the V1 fixture's signature, so the payload matches
+          // what an upgraded network actually accepts.
+          const originalAuth = baseOperation.auth[0];
+          const originalCredentials = originalAuth.credentials().address();
+          const expirationLedger = originalCredentials.signatureExpirationLedger();
+
+          const unsignedV2Auth = new xdr.SorobanAuthorizationEntry({
+            credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+              new xdr.SorobanAddressCredentials({
+                address: originalCredentials.address(),
+                nonce: originalCredentials.nonce(),
+                signatureExpirationLedger: 0, // replaced by authorizeEntry
+                signature: xdr.ScVal.scvVoid(),
+              }),
+            ),
+            rootInvocation: originalAuth.rootInvocation(),
+          });
+          const v2Auth = await authorizeEntry(
+            unsignedV2Auth,
+            Keypair.fromSecret(CLIENT_SECRET),
+            expirationLedger,
+            networkPassphrase,
+          );
+
+          // The signature must commit to the CAP-71 address-bound preimage
+          const v2Preimage = buildAuthorizationEntryPreimage(
+            v2Auth,
+            expirationLedger,
+            networkPassphrase,
+          );
+          expect(v2Preimage.switch().name).toBe("envelopeTypeSorobanAuthorizationWithAddress");
+
+          const modifiedOperation = Operation.invokeHostFunction({
+            ...baseOperation,
+            auth: [v2Auth],
+          });
+          const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
+
+          const result = await facilitator.verify(modifiedStellarPayload, validRequirements);
+          expect(result).toEqual(validVerifyResponse(CLIENT_PUBLIC));
+        });
+
+        it("should reject an unsigned V2 entry as a missing payer signature", async () => {
+          if (!baseSorobanData || !baseOperation.auth || baseOperation.auth.length === 0) {
+            throw new Error("Missing sorobanData or auth in test transaction");
+          }
+
+          const originalAuth = baseOperation.auth[0];
+          const originalCredentials = originalAuth.credentials().address();
+
+          const unsignedV2Auth = new xdr.SorobanAuthorizationEntry({
+            credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+              new xdr.SorobanAddressCredentials({
+                address: originalCredentials.address(),
+                nonce: originalCredentials.nonce(),
+                signatureExpirationLedger: originalCredentials.signatureExpirationLedger(),
+                signature: xdr.ScVal.scvVoid(), // ❌ never signed
+              }),
+            ),
+            rootInvocation: originalAuth.rootInvocation(),
+          });
+
+          const modifiedOperation = Operation.invokeHostFunction({
+            ...baseOperation,
+            auth: [unsignedV2Auth],
+          });
+          const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
+
+          const result = await facilitator.verify(modifiedStellarPayload, validRequirements);
+          expect(result.isValid).toBe(false);
+          expect(result.invalidReason).toBe(
+            "invalid_exact_stellar_payload_missing_payer_signature",
+          );
+        });
+
+        it("should reject delegated (addressWithDelegates) credentials", async () => {
+          if (!baseSorobanData || !baseOperation.auth || baseOperation.auth.length === 0) {
+            throw new Error("Missing sorobanData or auth in test transaction");
+          }
+
+          const originalAuth = baseOperation.auth[0];
+          const delegatedAuth = new xdr.SorobanAuthorizationEntry({
+            credentials: xdr.SorobanCredentials.sorobanCredentialsAddressWithDelegates(
+              new xdr.SorobanAddressCredentialsWithDelegates({
+                addressCredentials: originalAuth.credentials().address(),
+                delegates: [],
+              }),
+            ),
+            rootInvocation: originalAuth.rootInvocation(),
+          });
+
+          const modifiedOperation = Operation.invokeHostFunction({
+            ...baseOperation,
+            auth: [delegatedAuth],
           });
           const modifiedStellarPayload = buildStellarPayloadFromOp(modifiedOperation);
 

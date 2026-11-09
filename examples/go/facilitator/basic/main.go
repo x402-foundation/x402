@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,13 +11,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	x402 "github.com/x402-foundation/x402/go"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmv1 "github.com/x402-foundation/x402/go/mechanisms/evm/exact/v1/facilitator"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
-	svmv1 "github.com/x402-foundation/x402/go/mechanisms/svm/exact/v1/facilitator"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
 )
 
 const (
@@ -50,22 +51,26 @@ func main() {
 
 	facilitator := x402.Newx402Facilitator()
 
-	// Register V2 EVM scheme with smart wallet deployment enabled
+	// Register V2 EVM scheme with smart wallet deployment support
 	evmConfig := &evm.ExactEvmSchemeConfig{
-		DeployERC4337WithEIP6492: true,
+		// Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+		// A non-empty slice enables smart wallet deployment; an empty slice denies all factory calls.
+		EIP6492AllowedFactories: []string{},
 	}
 	facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 	facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
 
-	// Register V1 EVM scheme with smart wallet deployment enabled
+	// Register V1 EVM scheme with smart wallet deployment support
 	evmV1Config := &evmv1.ExactEvmSchemeV1Config{
-		DeployERC4337WithEIP6492: true,
+		// Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+		// A non-empty slice enables smart wallet deployment; an empty slice denies all factory calls.
+		EIP6492AllowedFactories: []string{},
 	}
 	facilitator.RegisterV1([]x402.Network{"base-sepolia"}, evmv1.NewExactEvmSchemeV1(evmSigner, evmV1Config))
 
 	if svmSigner != nil {
 		settlementCache := svmmech.NewSettlementCache()
-		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner, settlementCache))
+		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner, &svm.Config{SettlementCache: settlementCache}))
 		facilitator.RegisterV1([]x402.Network{"solana-devnet"}, svmv1.NewExactSvmSchemeV1(svmSigner, settlementCache))
 	}
 
@@ -92,6 +97,11 @@ func main() {
 
 	// Verify endpoint - verifies payment signatures
 	r.POST("/verify", func(c *gin.Context) {
+		endpointT0 := time.Now()
+		defer func() {
+			fmt.Printf("/verify completed in %.3fs\n", time.Since(endpointT0).Seconds())
+		}()
+
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
 
@@ -109,12 +119,18 @@ func main() {
 		// Verify payment
 		result, err := facilitator.Verify(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
-			// All failures (business logic and system errors) are returned as errors
-			// You can extract structured information from VerifyError if needed:
-			// if ve, ok := err.(*x402.VerifyError); ok {
-			//     log.Printf("Verification failed: reason=%s, payer=%s, network=%s",
-			//                ve.Reason, ve.Payer, ve.Network)
-			// }
+			// Invalid payments come back as *x402.VerifyError and are answered with
+			// 200 {"isValid": false, ...}; any other error is a facilitator failure (500).
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -125,6 +141,11 @@ func main() {
 
 	// Settle endpoint - settles payments on-chain
 	r.POST("/settle", func(c *gin.Context) {
+		endpointT0 := time.Now()
+		defer func() {
+			fmt.Printf("/settle completed in %.3fs\n", time.Since(endpointT0).Seconds())
+		}()
+
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 		defer cancel()
 

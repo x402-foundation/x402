@@ -6,8 +6,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // Permit2SettleArgs holds the parsed and typed arguments for settle() / settleWithPermit().
@@ -51,6 +51,10 @@ func BuildPermit2SettleArgs(permit2Payload *evm.ExactPermit2Payload) (*Permit2Se
 	if err != nil {
 		return nil, err
 	}
+	sigData, err := evm.ParseERC6492Signature(signatureBytes)
+	if err != nil {
+		return nil, err
+	}
 
 	args := &Permit2SettleArgs{}
 	args.Permit.Permitted.Token = common.HexToAddress(permit2Payload.Permit2Authorization.Permitted.Token)
@@ -60,7 +64,7 @@ func BuildPermit2SettleArgs(permit2Payload *evm.ExactPermit2Payload) (*Permit2Se
 	args.Owner = common.HexToAddress(permit2Payload.Permit2Authorization.From)
 	args.Witness.To = common.HexToAddress(permit2Payload.Permit2Authorization.Witness.To)
 	args.Witness.ValidAfter = validAfter
-	args.Signature = signatureBytes
+	args.Signature = sigData.InnerSignature
 	return args, nil
 }
 

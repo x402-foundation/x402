@@ -1,4 +1,4 @@
-import { config } from 'dotenv';
+import 'dotenv/config';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
@@ -6,18 +6,29 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther, 
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointAuthCaptureCoverageBranch, endpointAuthCaptureNeedsDeferredCapture, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement, endpointUsesFacilitatorManagedBatch, type BatchServerRole } from './src/types';
+import { AUTH_CAPTURE_E2E_CAPTURE_PATH } from './src/mechanisms';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
-import { handleDiscoveryValidation, shouldRunDiscoveryValidation } from './extensions/bazaar';
+import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
 import { parseArgs, printHelp } from './src/cli/args';
 import { runInteractiveMode } from './src/cli/interactive';
-import { filterScenarios, TestFilters, shouldShowExtensionOutput } from './src/cli/filters';
+import { filterScenarios, TestFilters, shouldShowExtensionOutput, getUniquePaymentSchemes } from './src/cli/filters';
 import { minimizeScenarios } from './src/sampling';
-import { getNetworkSet, NetworkMode, getNetworkModeDescription, resolveEvmPermit2Asset } from './src/networks/networks';
+import { getNetworkSet, NetworkMode, NetworkConfig, getNetworkModeDescription, resolveEvmPermit2Asset, PROTOCOL_FAMILIES, requiredEnvForFamily, requiredRpcEnvForFamily, protocolFamilyForCredentialKey } from './src/networks/networks';
+import { injectNetworkEnv } from './src/env';
+import {
+  FACILITATOR_ENV_PREFLIGHT_ALLOWLIST,
+  batchVoucherStoreOverrideFromEnv,
+  runRouteFilterForHarness,
+} from './src/mechanisms';
 import { GenericServerProxy } from './src/servers/generic-server';
-import { Semaphore, FacilitatorLock } from './src/concurrency';
+import { Semaphore, ResourceLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
 import { waitForHealth } from './src/health';
+import { probeMcpReady } from './src/mcpHealth';
+import { createPortAllocator } from './src/ports';
+import { base58 } from '@scure/base';
+import { createKeyPairSignerFromBytes } from '@solana/kit';
 
 /**
  * Generates a fresh 32-byte hex salt for a batch-settlement test scenario so
@@ -25,17 +36,74 @@ import { waitForHealth } from './src/health';
  *
  * @returns Hex-encoded 32-byte salt prefixed with `0x`.
  */
+/**
+ * Operator pubkeys the SVM client should trust for server-signed batch routes.
+ * Uses CLIENT_SVM_SERVER_SIGNED_OPERATORS when set; otherwise derives the pubkey
+ * from SERVER_SVM_OPERATOR_PRIVATE_KEY for /batch-settlement-server-signed/* routes.
+ */
+async function resolveSvmServerSignedOperators(endpointPath: string): Promise<string | undefined> {
+  const explicit = process.env.CLIENT_SVM_SERVER_SIGNED_OPERATORS?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (!endpointPath.includes('/batch-settlement-server-signed/')) {
+    return undefined;
+  }
+  const operatorKey = process.env.SERVER_SVM_OPERATOR_PRIVATE_KEY?.trim();
+  if (!operatorKey) {
+    return undefined;
+  }
+  const signer = await createKeyPairSignerFromBytes(base58.decode(operatorKey));
+  return signer.address;
+}
+
 function generateChannelSalt(): `0x${string}` {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return toHex(bytes);
 }
 
+// ── Transient on-chain failure resilience ───────────────────────────────────
+// EVM Permit2 / gas-sponsoring / coldstart flows depend on testnet RPC state
+// (Permit2 allowance + account nonce) being visible across load-balanced nodes.
+// When that state hasn't propagated yet, the resource server's local pre-check
+// rejects the payment with a transient 402 before it ever reaches the
+// facilitator. These failures are non-deterministic (a different subset fails
+// each run) and clear on a short retry once state settles. eip3009 and non-EVM
+// flows don't exhibit this, so retries are scoped to EVM Permit2 scenarios.
+const EVM_PAYMENT_MAX_ATTEMPTS = 3;
+const EVM_PAYMENT_RETRY_DELAY_MS = 4000;
+
+/**
+ * Heuristic for whether a failed EVM payment is a transient on-chain/RPC issue
+ * worth retrying (vs a deterministic structural failure that would just repeat).
+ */
+function isTransientPaymentFailure(error?: string): boolean {
+  if (!error) return false;
+  const e = error.toLowerCase();
+  return (
+    e.includes('402') ||
+    e.includes('payment required') ||
+    e.includes('payment failed') ||
+    e.includes('nonce') ||
+    e.includes('replacement transaction') ||
+    e.includes('underpriced') ||
+    e.includes('insufficient allowance') ||
+    e.includes('allowance_required') ||
+    e.includes('timeout') ||
+    e.includes('timed out') ||
+    e.includes('econnreset') ||
+    e.includes('econnrefused') ||
+    e.includes('fetch failed') ||
+    e.includes('socket hang up')
+  );
+}
+
 /**
  * Approve Permit2 so that the standard/direct settle path can be exercised.
  * Grants unlimited Permit2 allowance for the given token (permit2-approval script default if omitted).
  */
-async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
+async function approvePermit2Approval(evm: NetworkConfig, tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
     const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Approving Permit2 for ${label}...`);
@@ -47,7 +115,7 @@ async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
     const child = spawn('tsx', args, {
       cwd: process.cwd(),
       stdio: 'pipe',
-      shell: true,
+      env: { ...process.env, EVM_NETWORK: evm.caip2, EVM_RPC_URL: evm.rpcUrl },
     });
 
     let stderr = '';
@@ -85,7 +153,7 @@ async function approvePermit2Approval(tokenAddress?: string): Promise<boolean> {
  * Revoke Permit2 approval so that gas sponsoring extensions are exercised.
  * Sets the Permit2 allowance to 0 for the given token (permit2-approval script default if omitted).
  */
-async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
+async function revokePermit2Approval(evm: NetworkConfig, tokenAddress?: string): Promise<boolean> {
   return new Promise((resolve) => {
     const label = tokenAddress ? `token ${tokenAddress}` : '(script default token)';
     verboseLog(`  🔓 Revoking Permit2 approval for ${label}...`);
@@ -97,7 +165,7 @@ async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
     const child = spawn('tsx', args, {
       cwd: process.cwd(),
       stdio: 'pipe',
-      shell: true,
+      env: { ...process.env, EVM_NETWORK: evm.caip2, EVM_RPC_URL: evm.rpcUrl },
     });
 
     let stderr = '';
@@ -131,15 +199,138 @@ async function revokePermit2Approval(tokenAddress?: string): Promise<boolean> {
   });
 }
 
+/** True when a client declares Swig setup env (svm-smart-wallet overlay). */
+function clientRequiresSwigSetup(client: { config: { environment?: { required?: string[] } } }): boolean {
+  return (client.config.environment?.required ?? []).includes('SWIG_ACCOUNT_ADDRESS');
+}
+
+type SwigSetupResult = {
+  ok?: boolean;
+  swigAccountAddress?: string;
+  created?: boolean;
+  swigIdBase58?: string;
+};
+
+function applySwigSetupResult(result: SwigSetupResult, logCreation: boolean): boolean {
+  if (!result.ok || !result.swigAccountAddress) {
+    return false;
+  }
+
+  process.env.SWIG_ACCOUNT_ADDRESS = result.swigAccountAddress;
+  if (result.swigIdBase58) {
+    process.env.SWIG_ID_BASE58 = result.swigIdBase58;
+  }
+
+  if (logCreation && result.created) {
+    log(`  ✅ New Swig smart wallet: SWIG_ACCOUNT_ADDRESS=${result.swigAccountAddress}`);
+    if (result.swigIdBase58) {
+      log(`     SWIG_ID_BASE58=${result.swigIdBase58}`);
+    }
+  } else {
+    verboseLog(`  ✅ Swig setup complete: ${result.swigAccountAddress}`);
+  }
+
+  return true;
+}
+
+function parseSwigSetupOutput(stdout: string): SwigSetupResult | undefined {
+  const lines = stdout.trim().split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(lines[i]!) as SwigSetupResult;
+      if (parsed.ok && parsed.swigAccountAddress) {
+        return parsed;
+      }
+    } catch {
+      // not JSON — keep scanning
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Prepare Swig smart-wallet state for svm-smart-wallet e2e client tests.
+ * Creates/funds via scripts/swig-setup.ts when SWIG_ACCOUNT_ADDRESS is unset or
+ * USDC balance is low; reuses SWIG_ACCOUNT_ADDRESS from env when already set.
+ */
+async function setupSwigWallet(svmRpcUrl: string, logCreation = false): Promise<boolean> {
+  return new Promise((resolve) => {
+    verboseLog('  🔧 Running Swig wallet setup...');
+
+    const child = spawn('tsx', ['scripts/swig-setup.ts'], {
+      cwd: process.cwd(),
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        SVM_RPC_URL: svmRpcUrl,
+      },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      const text = data.toString();
+      stdout += text;
+      if (logCreation) {
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            log(trimmed);
+          }
+        }
+      } else {
+        verboseLog(text.trim());
+      }
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+      verboseLog(data.toString().trim());
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        errorLog(`  ❌ Swig setup failed (exit code ${code})`);
+        if (stderr) {
+          errorLog(`  Error: ${stderr}`);
+        }
+        resolve(false);
+        return;
+      }
+
+      const parsed = parseSwigSetupOutput(stdout);
+      if (parsed && applySwigSetupResult(parsed, logCreation)) {
+        resolve(true);
+        return;
+      }
+
+      if (process.env.SWIG_ACCOUNT_ADDRESS) {
+        verboseLog(`  ✅ Swig setup complete (using SWIG_ACCOUNT_ADDRESS=${process.env.SWIG_ACCOUNT_ADDRESS})`);
+        resolve(true);
+        return;
+      }
+
+      errorLog('  ❌ Swig setup succeeded but no swigAccountAddress in output');
+      resolve(false);
+    });
+
+    child.on('error', (error) => {
+      errorLog(`  ❌ Failed to run Swig setup: ${error.message}`);
+      resolve(false);
+    });
+  });
+}
+
 /**
  * Shared EVM clients for the ETH sandwich helpers.
- * Lazily initialised on first use so that missing env vars don't blow up
- * non-EVM test runs.
+ * Fed from the resolved NetworkSet (not the parent process env) so cold-start
+ * approve/revoke honor `--mainnet`/`--testnet` instead of silently reading
+ * whatever `EVM_RPC_URL` happens to be set to on the harness process.
  */
-function getEvmClients() {
-  const evmNetwork = process.env.EVM_NETWORK || 'eip155:84532';
-  const evmRpcUrl = process.env.EVM_RPC_URL;
-  const evmChain = evmNetwork === 'eip155:8453' ? base : baseSepolia;
+function getEvmClients(evm: NetworkConfig) {
+  const evmChain = evm.caip2 === 'eip155:8453' ? base : baseSepolia;
+  const evmRpcUrl = evm.rpcUrl;
 
   const facilitatorKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
   const clientKey = process.env.CLIENT_EVM_PRIVATE_KEY;
@@ -168,14 +359,59 @@ function getEvmClients() {
   return { publicClient, facilitatorWallet, clientWallet, facilitatorAccount, clientAccount };
 }
 
+type EvmResourceKeyContext = {
+  evmCaip2: string;
+  evmPermit2Asset: string | undefined;
+  clientEvmAddress: string | undefined;
+  facilitatorEvmAddress: string | undefined;
+};
+
+/**
+ * Derive shared-resource lock keys for a scenario. Scenarios without shared
+ * mutable state return an empty list and stay fully parallel.
+ */
+function getScenarioResourceKeys(
+  scenario: TestScenario,
+  ctx: EvmResourceKeyContext,
+): string[] {
+  // Serialize Cardano scenarios in --parallel mode: shared wallet UTXO contention.
+  if (scenario.protocolFamily === 'cardano') {
+    return ['cardano:client-wallet'];
+  }
+  if (scenario.protocolFamily !== 'evm') {
+    return [];
+  }
+
+  const facilitatorAddress = ctx.facilitatorEvmAddress;
+  if (!facilitatorAddress) {
+    return [];
+  }
+
+  const keys: string[] = [
+    `evm:${ctx.evmCaip2}:facilitator:${facilitatorAddress.toLowerCase()}`,
+  ];
+
+  const touchesClientPermit2State =
+    scenario.endpoint.schemeOptions?.permit2Direct === true ||
+    scenario.endpoint.schemeOptions?.coldstart === true;
+
+  if (touchesClientPermit2State && ctx.clientEvmAddress && ctx.evmPermit2Asset) {
+    keys.push(
+      `evm:${ctx.evmCaip2}:client:${ctx.clientEvmAddress.toLowerCase()}:permit2:${ctx.evmPermit2Asset.toLowerCase()}`,
+    );
+  }
+
+  return keys;
+}
+
 const REVOKE_FUND_AMOUNT = parseEther('0.001');
 
 /**
  * Send a small amount of ETH from the facilitator wallet to the client wallet
  * so the client can pay gas for Permit2 revocation transactions.
  */
-async function fundClientForRevoke(): Promise<boolean> {
-  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients();
+async function fundClientForRevoke(evm: NetworkConfig): Promise<boolean> {
+  const { publicClient, facilitatorWallet, facilitatorAccount, clientAccount } = getEvmClients(evm);
 
   const clientBalance = await publicClient.getBalance({ address: clientAccount.address });
   if (clientBalance >= REVOKE_FUND_AMOUNT) {
@@ -226,9 +462,9 @@ async function fundClientForRevoke(): Promise<boolean> {
  * leaving the client with ~0 ETH so the gas sponsoring funding step is
  * exercised during the test.
  */
-async function drainClientETH(): Promise<boolean> {
+async function drainClientETH(evm: NetworkConfig): Promise<boolean> {
   try {
-    const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients();
+    const { publicClient, clientWallet, facilitatorAccount, clientAccount } = getEvmClients(evm);
 
     // Use pending balance so we see any in-flight fund transaction that hasn't confirmed yet.
     const balance = await publicClient.getBalance({ address: clientAccount.address, blockTag: 'pending' });
@@ -283,22 +519,48 @@ async function drainClientETH(): Promise<boolean> {
   }
 }
 
-// Load environment variables
-config();
-
 // Parse command line arguments
 const parsedArgs = parseArgs();
 
 async function startServer(
   server: any,
-  serverConfig: ServerConfig
+  serverConfig: ServerConfig,
+  options?: { transport?: string },
 ): Promise<boolean> {
   verboseLog(`  🚀 Starting server on port ${serverConfig.port}...`);
   await server.start(serverConfig);
 
-  return waitForHealth(
+  const healthy = await waitForHealth(
     () => server.health(),
     { initialDelayMs: 250, label: 'Server' },
+  );
+
+  if (!healthy) {
+    return false;
+  }
+
+  if (options?.transport !== 'mcp') {
+    if (typeof server.verifyPaidRoutes === 'function') {
+      const { ok, problems } = await server.verifyPaidRoutes(
+        serverConfig.enabledFamilies,
+        serverConfig.runRouteFilter,
+        serverConfig.batchServerRole ?? 'standard',
+      );
+      if (!ok) {
+        errorLog(
+          `  ❌ Server does not mount every paid route it declares in the mechanisms catalog:\n     ${problems.join('\n     ')}`,
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Probe the real protocol (SSE connect + initialize handshake) before handing off to the first real test
+  // request, to avoid racing a freshly booted server's session warm-up.
+  return waitForHealth(
+    async () => ({ success: await probeMcpReady(server.getUrl()) }),
+    { intervalMs: 500, maxAttempts: 10, label: 'MCP session' },
   );
 }
 
@@ -320,6 +582,28 @@ function isOffchainSettleResponse(paymentResponse: any): boolean {
   return isBatchSettlement;
 }
 
+function maskSecret(value: string): string {
+  if (value.length <= 10) return '[redacted]';
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}
+
+function maskPrivateKeys<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(maskPrivateKeys) as T;
+  }
+  if (value && typeof value === 'object') {
+    const masked: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      masked[key] =
+        /(privateKey|seed)$/i.test(key) && typeof entry === 'string' && entry.length > 0
+          ? maskSecret(entry)
+          : maskPrivateKeys(entry);
+    }
+    return masked as T;
+  }
+  return value;
+}
+
 async function runClientTest(
   client: any,
   callConfig: ClientConfig
@@ -331,7 +615,7 @@ async function runClientTest(
   };
 
   try {
-    bufferLog(`  📞 Running client: ${JSON.stringify(callConfig, null, 2)}`);
+    bufferLog(`  📞 Running client: ${JSON.stringify(maskPrivateKeys(callConfig), null, 2)}`);
     const result = await client.call(callConfig);
     bufferLog(`  📊 Client result: ${JSON.stringify(result, null, 2)}`);
     // Check if the client execution succeeded
@@ -436,7 +720,11 @@ function validateBatchPaymentStep(
   }
 
   if (!stepResult.success) {
-    const reason = stepResult.payment_response?.errorReason || stepResult.error || 'unknown error';
+    const reason =
+      stepResult.payment_response?.errorReason ||
+      stepResult.error ||
+      (stepResult.data as { error?: unknown })?.error ||
+      `unknown error (status_code=${stepResult.status_code ?? "n/a"}, data=${JSON.stringify(stepResult.data ?? null)})`;
     return `Batch-settlement ${label} failed: ${reason}`;
   }
 
@@ -473,6 +761,62 @@ function envFlagDefaultTrue(value: string | undefined): boolean {
   return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
 }
 
+function batchSettlementRecoveryForFamily(protocolFamily: string): boolean {
+  switch (protocolFamily) {
+    case 'evm':
+      return envFlagDefaultTrue(process.env.EVM_BATCH_SETTLEMENT_RECOVERY);
+    case 'svm':
+      return envFlagDefaultTrue(process.env.SVM_BATCH_SETTLEMENT_RECOVERY);
+    default:
+      return true;
+  }
+}
+
+function waitForChildProcess(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    const onClose = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      child.removeListener('close', onClose);
+      resolve(false);
+    }, timeoutMs);
+
+    child.once('close', onClose);
+  });
+}
+
+async function stopMockFacilitator(child: ChildProcess, url: string): Promise<void> {
+  try {
+    const response = await fetch(`${url}/close`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(2_000),
+    });
+    await response.text();
+  } catch (error) {
+    verboseLog(`Mock facilitator graceful shutdown failed: ${String(error)}`);
+  }
+
+  if (await waitForChildProcess(child, 3_000)) {
+    return;
+  }
+
+  child.kill('SIGTERM');
+  if (await waitForChildProcess(child, 3_000)) {
+    return;
+  }
+
+  child.kill('SIGKILL');
+  await waitForChildProcess(child, 2_000);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 async function runTest() {
   // Show help if requested
   if (parsedArgs.showHelp) {
@@ -483,42 +827,16 @@ async function runTest() {
   // Initialize logger
   loggerConfig({ logFile: parsedArgs.logFile, verbose: parsedArgs.verbose });
 
+  const startTime = Date.now();
+
   log('🚀 Starting X402 E2E Test Suite');
   log('===============================');
 
-  // Load configuration from environment
-  const serverEvmAddress = process.env.SERVER_EVM_ADDRESS;
-  const serverSvmAddress = process.env.SERVER_SVM_ADDRESS;
-  const serverAvmAddress = process.env.SERVER_AVM_ADDRESS;
-  const serverAptosAddress = process.env.SERVER_APTOS_ADDRESS;
-  const serverHederaAddress = process.env.SERVER_HEDERA_ADDRESS;
-  const serverStellarAddress = process.env.SERVER_STELLAR_ADDRESS;
-  const serverTvmAddress = process.env.SERVER_TVM_ADDRESS;
+  // Env keys used below (preflight + funding use catalog/process.env directly)
   const clientEvmPrivateKey = process.env.CLIENT_EVM_PRIVATE_KEY;
-  const clientSvmPrivateKey = process.env.CLIENT_SVM_PRIVATE_KEY;
-  const clientAvmPrivateKey = process.env.CLIENT_AVM_PRIVATE_KEY;
-  const clientAptosPrivateKey = process.env.CLIENT_APTOS_PRIVATE_KEY;
-  const clientHederaAccountId = process.env.CLIENT_HEDERA_ACCOUNT_ID;
-  const clientHederaPrivateKey = process.env.CLIENT_HEDERA_PRIVATE_KEY;
-  const clientStellarPrivateKey = process.env.CLIENT_STELLAR_PRIVATE_KEY;
-  const clientTvmPrivateKey = process.env.CLIENT_TVM_PRIVATE_KEY;
   const facilitatorEvmPrivateKey = process.env.FACILITATOR_EVM_PRIVATE_KEY;
-  const facilitatorSvmPrivateKey = process.env.FACILITATOR_SVM_PRIVATE_KEY;
-  const facilitatorAvmPrivateKey = process.env.FACILITATOR_AVM_PRIVATE_KEY;
-  const facilitatorAptosPrivateKey = process.env.FACILITATOR_APTOS_PRIVATE_KEY;
-  const facilitatorHederaAccountId = process.env.FACILITATOR_HEDERA_ACCOUNT_ID;
-  const facilitatorHederaPrivateKey = process.env.FACILITATOR_HEDERA_PRIVATE_KEY;
-  const facilitatorStellarPrivateKey = process.env.FACILITATOR_STELLAR_PRIVATE_KEY;
-  const facilitatorTvmPrivateKey = process.env.FACILITATOR_TVM_PRIVATE_KEY;
-  const batchSettlementRecovery = envFlagDefaultTrue(process.env.BATCH_SETTLEMENT_RECOVERY);
-  if (!serverEvmAddress || !serverSvmAddress || !clientEvmPrivateKey || !clientSvmPrivateKey || !facilitatorEvmPrivateKey || !facilitatorSvmPrivateKey) {
-    errorLog('❌ Missing required environment variables:');
-    errorLog(' SERVER_EVM_ADDRESS, SERVER_SVM_ADDRESS, CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, FACILITATOR_EVM_PRIVATE_KEY, and FACILITATOR_SVM_PRIVATE_KEY must be set');
-    process.exit(1);
-  }
-
   // Discover all servers, clients, and facilitators (always include legacy)
-  const discovery = new TestDiscovery('.', true); // Always discover legacy
+  const discovery = new TestDiscovery('.');
 
   const allClients = discovery.discoverClients();
   const allServers = discovery.discoverServers();
@@ -591,13 +909,13 @@ async function runTest() {
       : 'unset';
 
   log(`\n🌐 Network Mode: ${networkMode.toUpperCase()}`);
-  log(`   EVM: ${networks.evm.name} (${networks.evm.caip2})`);
-  log(`   EVM Permit2 asset: ${evmPermit2Asset || '(missing)'} (${permit2AssetSource})`);
-  log(`   SVM: ${networks.svm.name} (${networks.svm.caip2})`);
-  log(`   APTOS: ${networks.aptos.name} (${networks.aptos.caip2})`);
-  log(`   HEDERA: ${networks.hedera.name} (${networks.hedera.caip2})`);
-  log(`   STELLAR: ${networks.stellar.name} (${networks.stellar.caip2})`);
-  log(`   TVM: ${networks.tvm.name} (${networks.tvm.caip2})`);
+  for (const family of PROTOCOL_FAMILIES) {
+    const net = networks[family];
+    log(`   ${family.toUpperCase()}: ${net.name} (${net.caip2})`);
+    if (family === 'evm') {
+      log(`   EVM Permit2 asset: ${evmPermit2Asset || '(missing)'} (${permit2AssetSource})`);
+    }
+  }
 
   if (networkMode === 'mainnet') {
     log('\n⚠️  WARNING: Running on MAINNET - real funds will be used!');
@@ -607,43 +925,42 @@ async function runTest() {
   // Apply filters to scenarios
   let filteredScenarios = filterScenarios(allScenarios, filters);
 
+  // Facilitator-managed batch custody override (debug/CI-only): run only one custody side.
+  // CLI `--batchVoucherStore=self|facilitator` wins; otherwise honor
+  // `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self|facilitator` from env.
+  const batchCustodyOverride =
+    parsedArgs.batchVoucherStore ?? batchVoucherStoreOverrideFromEnv(key => process.env[key]);
+  if (batchCustodyOverride) {
+    const before = filteredScenarios.length;
+    if (batchCustodyOverride === 'self') {
+      filteredScenarios = filteredScenarios.filter(
+        scenario => !endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    } else {
+      filteredScenarios = filteredScenarios.filter(scenario =>
+        endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    }
+    log(
+      `\n🔀 Batch custody override: ${batchCustodyOverride} (${before} → ${filteredScenarios.length} scenarios)`,
+    );
+  }
+
   if (filteredScenarios.length === 0) {
     log('❌ No scenarios match the selections');
     log('💡 Try selecting more options or run without filters\n');
     return;
   }
 
-  const requiredEnvByFamily: Record<string, Array<[string, string | undefined]>> = {
-    evm: [
-      ['SERVER_EVM_ADDRESS', serverEvmAddress],
-      ['CLIENT_EVM_PRIVATE_KEY', clientEvmPrivateKey],
-      ['FACILITATOR_EVM_PRIVATE_KEY', facilitatorEvmPrivateKey],
-    ],
-    svm: [
-      ['SERVER_SVM_ADDRESS', serverSvmAddress],
-      ['CLIENT_SVM_PRIVATE_KEY', clientSvmPrivateKey],
-      ['FACILITATOR_SVM_PRIVATE_KEY', facilitatorSvmPrivateKey],
-    ],
-    aptos: [
-      ['SERVER_APTOS_ADDRESS', serverAptosAddress],
-      ['CLIENT_APTOS_PRIVATE_KEY', clientAptosPrivateKey],
-      ['FACILITATOR_APTOS_PRIVATE_KEY', facilitatorAptosPrivateKey],
-    ],
-    stellar: [
-      ['SERVER_STELLAR_ADDRESS', serverStellarAddress],
-      ['CLIENT_STELLAR_PRIVATE_KEY', clientStellarPrivateKey],
-      ['FACILITATOR_STELLAR_PRIVATE_KEY', facilitatorStellarPrivateKey],
-    ],
-    tvm: [
-      ['SERVER_TVM_ADDRESS', serverTvmAddress],
-      ['CLIENT_TVM_PRIVATE_KEY', clientTvmPrivateKey],
-      ['FACILITATOR_TVM_PRIVATE_KEY', facilitatorTvmPrivateKey],
-    ],
-  };
+  const requiredEnvByFamily: Record<string, Array<[string, string | undefined]>> = {};
+  for (const family of PROTOCOL_FAMILIES) {
+    const keys = [...requiredEnvForFamily(family), ...requiredRpcEnvForFamily(family, networkMode)];
+    requiredEnvByFamily[family] = keys.map(key => [key, process.env[key]]);
+  }
 
   // Apply coverage-based minimization if --min flag is set
   if (parsedArgs.minimize) {
-    filteredScenarios = minimizeScenarios(filteredScenarios);
+    filteredScenarios = minimizeScenarios(filteredScenarios, parsedArgs.seed);
 
     if (filteredScenarios.length === 0) {
       log('❌ All scenarios are already covered');
@@ -655,6 +972,8 @@ async function runTest() {
   }
 
   const selectedProtocolFamilies = new Set(filteredScenarios.map(scenario => scenario.protocolFamily));
+  const selectedPaymentSchemes = new Set(getUniquePaymentSchemes(filteredScenarios));
+  const runRouteFilter = runRouteFilterForHarness(selectedProtocolFamilies, selectedPaymentSchemes);
   const missingRequiredEnv = new Set<string>();
   for (const family of selectedProtocolFamilies) {
     for (const [name, value] of requiredEnvByFamily[family] || []) {
@@ -668,6 +987,21 @@ async function runTest() {
     errorLog('❌ Missing required environment variables for selected protocol families:');
     Array.from(missingRequiredEnv).forEach(name => errorLog(` ${name}`));
     process.exit(1);
+  }
+
+  // Facilitator-managed batch preflight: every managed scenario settles through a
+  // facilitator voucher store. Refund consent is either the server-owned refund key
+  // (SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY: `extra.refundAuthorizer` →
+  // client salt packing) or, when unset, the facilitator's `delegatedRefund: true`
+  // (402 omits `extra.refundAuthorizer`, raw salt).
+  const hasManagedBatchScenarios = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (hasManagedBatchScenarios) {
+    log('🗄️ Facilitator-managed batch scenarios detected — facilitator voucher store + dual servers enabled');
+    if (!process.env.SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY?.trim()) {
+      log('ℹ️ No refund authorizer key set — managed refunds use the facilitator delegatedRefund path');
+    }
   }
 
   if (selectedExtensions && selectedExtensions.length > 0) {
@@ -750,6 +1084,12 @@ async function runTest() {
         endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
         s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
     );
+    const hasManagedBatch = evmScenarios.some(s => endpointUsesFacilitatorManagedBatch(s.endpoint));
+    const hasSelfBatch = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        !endpointUsesFacilitatorManagedBatch(s.endpoint),
+    );
 
     log('🔍 EVM Branch Coverage Check:');
     log(`   Exact EIP-3009 route:          ${hasExactEip3009 ? '✅' : '⚠️  not found'}`);
@@ -766,6 +1106,23 @@ async function runTest() {
     log(`   Batch-settlement+direct:       ${hasBatchSettlementPermit2Direct ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+EIP2612:      ${hasBatchSettlementPermit2Eip2612 ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+ERC20:        ${hasBatchSettlementPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch self-managed custody:    ${hasSelfBatch ? '✅' : '⚠️  not found'}`);
+    log(`   Batch facilitator-managed:     ${hasManagedBatch ? '✅' : '⚠️  not found'}`);
+    log('');
+  }
+
+  const authCaptureScenarios = filteredScenarios.filter(
+    s => endpointPaymentScheme(s.endpoint) === 'auth-capture',
+  );
+  if (authCaptureScenarios.length > 0) {
+    const branchSelected = (branch: string) =>
+      authCaptureScenarios.some(s => endpointAuthCaptureCoverageBranch(s.endpoint) === branch);
+    log('🔍 Auth-capture branch coverage (--min requires each branch once; one permit2 globally):');
+    log(`   Self-managed sync EIP-3009:    ${branchSelected('self-sync-eip3009') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Self-managed sync Permit2:     ${branchSelected('self-sync-permit2') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Facilitator-authorizer sync:   ${branchSelected('facilitator-sync') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Deferred delegated:            ${branchSelected('deferred-delegated') ? '✅' : '⚠️  not in selected set'}`);
+    log(`   Custom forwarding (collect):   ${branchSelected('custom-forwarding') ? '✅' : '⚠️  not in selected set'}`);
     log('');
   }
 
@@ -782,72 +1139,80 @@ async function runTest() {
     }
   }
 
-  // Collect unique facilitators and servers
+  const hasSwigSmartWalletScenarios = filteredScenarios.some(s => clientRequiresSwigSetup(s.client));
+
+  if (hasSwigSmartWalletScenarios) {
+    log('🔧 Swig smart-wallet scenarios detected — swig-setup creates/funds when needed (see e2e/.env)');
+    log('');
+  }
+
+  // Collect unique facilitators, servers, and clients
   const uniqueFacilitators = new Map<string, any>();
   const uniqueServers = new Map<string, any>();
+  const uniqueClients = new Map<string, any>();
 
   filteredScenarios.forEach(scenario => {
     if (scenario.facilitator) {
       uniqueFacilitators.set(scenario.facilitator.name, scenario.facilitator);
     }
     uniqueServers.set(scenario.server.name, scenario.server);
+    uniqueClients.set(scenario.client.name, scenario.client);
   });
 
-  // Validate environment variables for all selected facilitators
-  log('\n🔍 Validating facilitator environment variables...\n');
-  const missingEnvVars: { facilitatorName: string; missingVars: string[] }[] = [];
-
-  // Environment variables managed by the test framework (don't require user to set)
-  const systemManagedVars = new Set([
-    'PORT',
-    'EVM_PRIVATE_KEY',
-    'SVM_PRIVATE_KEY',
-    'APTOS_PRIVATE_KEY',
-    'HEDERA_ACCOUNT_ID',
-    'HEDERA_PRIVATE_KEY',
-    'STELLAR_PRIVATE_KEY',
-    'TVM_PRIVATE_KEY',
-    'EVM_NETWORK',
-    'SVM_NETWORK',
-    'APTOS_NETWORK',
-    'HEDERA_NETWORK',
-    'STELLAR_NETWORK',
-    'TVM_NETWORK',
-    'EVM_RPC_URL',
-    'SVM_RPC_URL',
-    'APTOS_RPC_URL',
-    'HEDERA_NODE_URL',
-    'STELLAR_RPC_URL',
-    'TONCENTER_BASE_URL',
-    'TVM_PROVIDER',
-    'TONAPI_API_KEY',
-    'TONAPI_BASE_URL',
-  ]);
-
-  for (const [facilitatorName, facilitator] of uniqueFacilitators) {
-    const requiredVars = facilitator.config.environment?.required || [];
-    const missing: string[] = [];
-
-    for (const envVar of requiredVars) {
-      // Skip variables managed by the test framework
-      if (systemManagedVars.has(envVar)) {
-        continue;
-      }
-
-      if (!process.env[envVar]) {
-        missing.push(envVar);
-      }
+  for (const facilitator of uniqueFacilitators.values()) {
+    const families = facilitator.config?.protocolFamilies as string[] | undefined;
+    if (families?.length) {
+      facilitator.config.protocolFamilies = families.filter(family =>
+        selectedProtocolFamilies.has(family),
+      );
     }
+  }
 
-    if (missing.length > 0) {
-      missingEnvVars.push({ facilitatorName, missingVars: missing });
+  // Validate facilitator and client env against catalog-declared requirements.
+  log('\n🔍 Validating facilitator and client environment variables...\n');
+  const missingEnvVars: { componentName: string; missingVars: string[] }[] = [];
+
+  const componentsToValidate: Map<string, any>[] = [uniqueFacilitators, uniqueClients];
+
+  for (const components of componentsToValidate) {
+    for (const [componentName, component] of components) {
+      const requiredVars = component.config.environment?.required || [];
+      const missing: string[] = [];
+
+      for (const envVar of requiredVars) {
+        // Skip env keys the harness assigns itself (e.g. PORT), never operator-supplied
+        if (FACILITATOR_ENV_PREFLIGHT_ALLOWLIST.has(envVar)) {
+          continue;
+        }
+        // Swig smart-wallet: swig-setup creates/persists these before each scenario.
+        if (
+          clientRequiresSwigSetup(component) &&
+          (envVar === 'SWIG_ACCOUNT_ADDRESS' || envVar === 'SWIG_ID_BASE58')
+        ) {
+          continue;
+        }
+        // Skip credentials for families not in this run (catalog marks all wallet
+        // keys required per family; only selected families need them present).
+        const family = protocolFamilyForCredentialKey(envVar);
+        if (family && !selectedProtocolFamilies.has(family)) {
+          continue;
+        }
+
+        if (!process.env[envVar]) {
+          missing.push(envVar);
+        }
+      }
+
+      if (missing.length > 0) {
+        missingEnvVars.push({ componentName, missingVars: missing });
+      }
     }
   }
 
   if (missingEnvVars.length > 0) {
-    errorLog('❌ Missing required environment variables for selected facilitators:\n');
-    for (const { facilitatorName, missingVars } of missingEnvVars) {
-      errorLog(`   ${facilitatorName}:`);
+    errorLog('❌ Missing required environment variables for selected facilitators/clients:\n');
+    for (const { componentName, missingVars } of missingEnvVars) {
+      errorLog(`   ${componentName}:`);
       missingVars.forEach(varName => errorLog(` - ${varName}`));
     }
     errorLog('\n💡 Please set the required environment variables and try again.\n');
@@ -855,6 +1220,16 @@ async function runTest() {
   }
 
   log('  ✅ All required environment variables are present\n');
+
+  if (hasSwigSmartWalletScenarios) {
+    log('🔧 Bootstrapping Swig smart wallet (create if unset, fund if low)...\n');
+    const swigReady = await setupSwigWallet(networks.svm.rpcUrl, true);
+    if (!swigReady) {
+      errorLog('❌ Swig wallet bootstrap failed — fund CLIENT_SVM_PRIVATE_KEY with devnet SOL and USDC');
+      process.exit(1);
+    }
+    log('');
+  }
 
   // Clean up any processes on test ports from previous runs
   try {
@@ -872,6 +1247,11 @@ async function runTest() {
     endpoint: string;
     facilitator: string;
     protocolFamily: string;
+    scheme: string;
+    assetTransferMethod: string;
+    paymentFlow: string;
+    transport: string;
+    version: string;
     passed: boolean;
     error?: string;
     transaction?: string;
@@ -880,60 +1260,135 @@ async function runTest() {
     network?: string;
   }
 
+  function scenarioDimensions(
+    scenario: TestScenario,
+  ): Pick<DetailedTestResult, 'scheme' | 'assetTransferMethod' | 'paymentFlow' | 'transport' | 'version'> {
+    return {
+      scheme: endpointPaymentScheme(scenario.endpoint),
+      assetTransferMethod: endpointAssetTransferMethod(scenario.endpoint) ?? 'n/a',
+      paymentFlow: endpointPaymentFlow(scenario.endpoint),
+      transport: scenario.server.config.transport || 'http',
+      version: String(scenario.server.config.x402Version ?? 1),
+    };
+  }
+
+  function buildBreakdown(
+    results: DetailedTestResult[],
+    key: keyof DetailedTestResult,
+  ): Record<string, { passed: number; failed: number }> {
+    return results.reduce((acc, test) => {
+      const k = String(test[key]);
+      if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
+      if (test.passed) acc[k].passed++;
+      else acc[k].failed++;
+      return acc;
+    }, {} as Record<string, { passed: number; failed: number }>);
+  }
+
+  function logBreakdown(
+    title: string,
+    breakdown: Record<string, { passed: number; failed: number }>,
+    padEnd = 15,
+    style: 'rate' | 'total' = 'rate',
+  ): void {
+    log(`📊 ${title}:`);
+    Object.entries(breakdown).forEach(([name, stats]) => {
+      const total = stats.passed + stats.failed;
+      if (style === 'total') {
+        log(` ${name.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
+        return;
+      }
+      const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
+      log(` ${name.padEnd(padEnd)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
+    });
+    log('');
+  }
+
   let testResults: DetailedTestResult[] = [];
-  let currentPort = 4022;
+  const allocatePort = createPortAllocator(4022);
 
   // Assign ports and start all facilitators
   const facilitatorManagers = new Map<string, FacilitatorManager>();
 
-  // Group scenarios by server + facilitator combination
-  // This ensures we restart servers when switching facilitators
+  // Group scenarios by server + facilitator + batch custody combination.
+  // `voucherStoreMode` is constructor-wide on the server scheme, so one process
+  // cannot mix self-managed and facilitator-managed batch routes. Spawn two
+  // servers per (server, facilitator) pair when both sides are in scope; a single
+  // facilitator with a voucher store serves both (discriminant is
+  // `extra.voucherManager` on each 402).
   interface ServerFacilitatorCombo {
     serverName: string;
     facilitatorName: string | undefined;
+    batchServerRole: BatchServerRole;
     scenarios: typeof filteredScenarios;
     comboIndex: number;
     port: number;
   }
 
   const serverFacilitatorCombos: ServerFacilitatorCombo[] = [];
-  const groupKey = (serverName: string, facilitatorName: string | undefined) =>
-    `${serverName}::${facilitatorName || 'none'}`;
+  const batchRoleForScenario = (scenario: TestScenario): BatchServerRole =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 'managed-batch' : 'standard';
+  const groupKey = (
+    serverName: string,
+    facilitatorName: string | undefined,
+    batchServerRole: BatchServerRole,
+  ) => `${serverName}::${facilitatorName || 'none'}::${batchServerRole}`;
 
   const comboMap = new Map<string, typeof filteredScenarios>();
 
   for (const scenario of filteredScenarios) {
-    const key = groupKey(scenario.server.name, scenario.facilitator?.name);
+    const key = groupKey(scenario.server.name, scenario.facilitator?.name, batchRoleForScenario(scenario));
     if (!comboMap.has(key)) {
       comboMap.set(key, []);
     }
     comboMap.get(key)!.push(scenario);
   }
 
-  // Convert map to array of combos, assigning a unique port to each
+  // Convert map to array of combos, assigning a unique port to each.
+  // Within each combo, sort scenarios so permit2Direct tests run before
+  // coldstart tests. The coldstart flow drains the shared client wallet's
+  // ETH; if it ran first, a subsequent permit2Direct test would have no
+  // gas for its Permit2 approve transaction.
+  const schemeOptionsPriority = (scenario: TestScenario): number => {
+    if (scenario.endpoint.schemeOptions?.permit2Direct === true) return 0;
+    // No special schemeOptions (plain warmup, eip3009, etc.) — middle
+    if (!scenario.endpoint.schemeOptions?.coldstart) return 1;
+    // coldstart drains ETH — always last
+    return 2;
+  };
+
   let comboIndex = 0;
   for (const [, scenarios] of comboMap) {
-    const firstScenario = scenarios[0];
+    const sorted = [...scenarios].sort((a, b) => schemeOptionsPriority(a) - schemeOptionsPriority(b));
+    const firstScenario = sorted[0];
     serverFacilitatorCombos.push({
       serverName: firstScenario.server.name,
       facilitatorName: firstScenario.facilitator?.name,
-      scenarios,
+      batchServerRole: batchRoleForScenario(firstScenario),
+      scenarios: sorted,
       comboIndex,
-      port: currentPort++,
+      port: allocatePort(),
     });
     comboIndex++;
   }
 
+  // One facilitator serves both custody sides; enable its voucher store + channel
+  // manager whenever any managed-batch scenario is in the run.
+  const facilitatorVoucherStore = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (facilitatorVoucherStore) {
+    log('\n🗄️ Facilitator voucher store enabled (managed-batch scenarios in scope)');
+  }
+
   // Start all facilitators with unique ports
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
-    const port = currentPort++;
+    const port = allocatePort();
     log(`\n🏛️ Starting facilitator: ${facilitatorName} on port ${port}`);
 
-    const manager = new FacilitatorManager(
-      facilitator.proxy,
-      port,
-      networks
-    );
+    const manager = new FacilitatorManager(facilitator.proxy, port, networks, {
+      voucherStore: facilitatorVoucherStore,
+    });
     facilitatorManagers.set(facilitatorName, manager);
   }
 
@@ -953,20 +1408,16 @@ async function runTest() {
 
   // Start mock facilitator (claims to support everything, used as fallback so
   // servers with routes unsupported by the real facilitator can still start)
-  const mockFacilitatorPort = currentPort++;
+  const mockFacilitatorPort = allocatePort();
   log(`\n🎭 Starting mock facilitator on port ${mockFacilitatorPort}...`);
   const mockFacilitatorProcess: ChildProcess = spawn(
-    'npx', ['tsx', 'index.ts'],
+    process.execPath, ['--import', 'tsx', 'index.ts'],
     {
       cwd: join(process.cwd(), 'mock-facilitator'),
       env: {
         ...process.env,
         PORT: mockFacilitatorPort.toString(),
-        EVM_NETWORK: networks.evm.caip2,
-        SVM_NETWORK: networks.svm.caip2,
-        APTOS_NETWORK: networks.aptos.caip2,
-        STELLAR_NETWORK: networks.stellar.caip2,
-        TVM_NETWORK: networks.tvm.caip2,
+        ...injectNetworkEnv(networks),
       },
       stdio: 'pipe',
     },
@@ -992,7 +1443,7 @@ async function runTest() {
   );
   if (!mockHealthy) {
     log('❌ Failed to start mock facilitator');
-    mockFacilitatorProcess.kill();
+    await stopMockFacilitator(mockFacilitatorProcess, mockFacilitatorUrl);
     process.exit(1);
   }
   log(`  ✅ Mock facilitator ready at ${mockFacilitatorUrl}`);
@@ -1001,14 +1452,16 @@ async function runTest() {
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
   serverFacilitatorCombos.forEach(combo => {
-    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s)`);
+    log(
+      `   • ${combo.serverName} + ${combo.facilitatorName || 'none'} [${combo.batchServerRole}]: ${combo.scenarios.length} test(s)`,
+    );
   });
   if (parsedArgs.parallel) {
     log(`\n⚡ Parallel mode enabled (concurrency: ${parsedArgs.concurrency})`);
   }
   log('');
 
-  // Track which facilitators processed which servers (for discovery validation)
+  // Track which facilitators processed which servers (legacy discovery fallback)
   const facilitatorServerMap = new Map<string, Set<string>>(); // facilitatorName -> Set<serverName>
 
   // ── Helper: run a single test scenario ────────────────────────────────
@@ -1022,24 +1475,11 @@ async function runTest() {
     const testName = `${scenario.client.name} → ${scenario.server.name} → ${scenario.endpoint.path}${facilitatorLabel}`;
 
     const isBatchSettlement = endpointUsesBatchSettlement(scenario.endpoint);
-    const voucherSignerPrivateKey = process.env.CLIENT_EVM_VOUCHER_SIGNER_PRIVATE_KEY;
+    const voucherSignerPrivateKey = process.env.CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY;
     const baseClientConfig: ClientConfig = {
-      evmPrivateKey: clientEvmPrivateKey!,
-      svmPrivateKey: clientSvmPrivateKey!,
-      avmPrivateKey: clientAvmPrivateKey || '',
-      aptosPrivateKey: clientAptosPrivateKey || '',
-      hederaAccountId: clientHederaAccountId || '',
-      hederaPrivateKey: clientHederaPrivateKey || '',
-      stellarPrivateKey: clientStellarPrivateKey || '',
-      tvmPrivateKey: clientTvmPrivateKey || '',
       serverUrl: `http://localhost:${port}`,
       endpointPath: scenario.endpoint.path,
-      evmNetwork: networks.evm.caip2,
-      evmRpcUrl: networks.evm.rpcUrl,
-      hederaNetwork: networks.hedera.caip2,
-      hederaNodeUrl: networks.hedera.rpcUrl,
-      tvmNetwork: networks.tvm.caip2,
-      tvmRpcUrl: networks.tvm.rpcUrl,
+      networks,
     };
 
     try {
@@ -1047,12 +1487,14 @@ async function runTest() {
 
       if (isBatchSettlement) {
         const channelSalt = generateChannelSalt();
+        const svmServerSignedOperators = await resolveSvmServerSignedOperators(scenario.endpoint.path);
         const batchBase = {
           channelSalt,
           ...(voucherSignerPrivateKey ? { voucherSignerPrivateKey } : {}),
+          ...(svmServerSignedOperators ? { svmServerSignedOperators } : {}),
         };
 
-        if (!batchSettlementRecovery) {
+        if (!batchSettlementRecoveryForFamily(scenario.protocolFamily)) {
           const fullResult = await runClientTest(scenario.client.proxy, {
             ...baseClientConfig,
             batchSettlement: { ...batchBase, phase: 'full' },
@@ -1077,6 +1519,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: !fullError,
             error: fullError,
             transaction: refundTransaction || depositTransaction,
@@ -1117,6 +1560,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: initialError,
             depositTransaction: getBatchStep(initialResult, 'deposit')?.payment_response?.transaction,
@@ -1131,6 +1575,18 @@ async function runTest() {
           cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(initialResult, null, 2)}`);
           return detailedResult;
         }
+
+        // Let the initial deposit propagate across load-balanced RPCs before
+        // the fresh recovery process reads onchain state for cold-start
+        // recovery. Without this, the recovery voucher can rebuild against a
+        // stale balance/totalClaimed and fail as a cumulative mismatch that
+        // corrective recovery cannot resync (notably on facilitator-managed
+        // channels where the watermark lives offchain). Managed channels get
+        // a longer settle so the facilitator voucher-store write + RPC
+        // propagation both land before the recovery probe.
+        // See: go/http/nethttp+go managed-batch recovery 402s with a 2s gap.
+        const recoverySettleMs = endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 5000 : 2000;
+        await new Promise(resolve => setTimeout(resolve, recoverySettleMs));
 
         const recoveryResult = await runClientTest(scenario.client.proxy, {
           ...baseClientConfig,
@@ -1157,6 +1613,7 @@ async function runTest() {
             endpoint: scenario.endpoint.path,
             facilitator: scenario.facilitator?.name || 'none',
             protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
             passed: false,
             error: recoveryError,
             transaction: refundTransaction || depositTransaction,
@@ -1181,6 +1638,7 @@ async function runTest() {
           endpoint: scenario.endpoint.path,
           facilitator: scenario.facilitator?.name || 'none',
           protocolFamily: scenario.protocolFamily,
+          ...scenarioDimensions(scenario),
           passed: true,
           transaction: refundTransaction || depositTransaction,
           depositTransaction,
@@ -1194,6 +1652,43 @@ async function runTest() {
 
       const result = await runClientTest(scenario.client.proxy, baseClientConfig);
 
+      let deferredCaptureError: string | undefined;
+      let captureTransaction: string | undefined;
+      if (result.success && endpointAuthCaptureNeedsDeferredCapture(scenario.endpoint)) {
+        try {
+          const captureResponse = await fetch(
+            `http://localhost:${port}${AUTH_CAPTURE_E2E_CAPTURE_PATH}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: scenario.endpoint.path }),
+            },
+          );
+          const captureBody = (await captureResponse.json()) as {
+            success?: boolean;
+            transaction?: string;
+            error?: string;
+            errorReason?: string;
+          };
+          if (!captureResponse.ok) {
+            deferredCaptureError =
+              captureBody.error || `Deferred capture HTTP ${captureResponse.status}`;
+          } else if (!captureBody.success) {
+            deferredCaptureError =
+              captureBody.errorReason || captureBody.error || 'Deferred capture settle failed';
+          } else if (!captureBody.transaction) {
+            deferredCaptureError = 'Deferred capture succeeded but no transaction hash returned';
+          } else {
+            captureTransaction = captureBody.transaction;
+            cLog.verboseLog(`  🔗 Deferred capture transaction: ${captureTransaction}`);
+          }
+        } catch (error) {
+          deferredCaptureError =
+            error instanceof Error ? error.message : 'Deferred capture request failed';
+        }
+      }
+
+      const passed = result.success && !deferredCaptureError;
       const detailedResult: DetailedTestResult = {
         testNumber: localTestNumber,
         client: scenario.client.name,
@@ -1201,16 +1696,17 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
-        passed: result.success,
-        error: result.error,
-        transaction: result.payment_response?.transaction,
+        ...scenarioDimensions(scenario),
+        passed,
+        error: deferredCaptureError || result.error,
+        transaction: captureTransaction || result.payment_response?.transaction,
         network: result.payment_response?.network,
       };
 
-      if (result.success) {
+      if (passed) {
         cLog.log(`  ✅ Test passed`);
       } else {
-        cLog.log(`  ❌ Test failed: ${result.error}`);
+        cLog.log(`  ❌ Test failed: ${detailedResult.error}`);
         if (result.verboseLogs && result.verboseLogs.length > 0) {
           cLog.log(`  🔍 Verbose logs:`);
           result.verboseLogs.forEach(logLine => cLog.log(logLine));
@@ -1230,6 +1726,7 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: errorMsg,
       };
@@ -1239,12 +1736,14 @@ async function runTest() {
   // ── Execute a single server+facilitator combo ─────────────────────────
   async function executeCombo(
     combo: ServerFacilitatorCombo,
-    evmLock: FacilitatorLock | null,
+    resourceLock: ResourceLock | null,
+    evmResourceKeyContext: EvmResourceKeyContext,
     nextTestNumber: () => number,
   ): Promise<DetailedTestResult[]> {
-    const { serverName, facilitatorName, scenarios, port } = combo;
+    const { serverName, facilitatorName, batchServerRole, scenarios, port } = combo;
     const server = uniqueServers.get(serverName)!;
-    const cLog = createComboLogger(combo.comboIndex, serverName, facilitatorName);
+    const comboLabel = `${serverName}+${facilitatorName || 'none'} [${batchServerRole}]`;
+    const cLog = createComboLogger(combo.comboIndex, serverName, `${facilitatorName || 'none'} [${batchServerRole}]`);
 
     // Track facilitator→server mapping
     if (facilitatorName) {
@@ -1261,48 +1760,28 @@ async function runTest() {
       ? facilitatorUrls.get(facilitatorName)
       : undefined;
 
-    cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
+    cLog.log(`🚀 Starting server: ${serverName} (port ${port}, role ${batchServerRole}) with facilitator: ${facilitatorName || 'none'}`);
 
-    const facilitatorConfig = facilitatorName ? uniqueFacilitators.get(facilitatorName)?.config : undefined;
-    const facilitatorSupportsAvm = facilitatorConfig?.protocolFamilies?.includes('avm') ?? false;
-    const facilitatorSupportsAptos = facilitatorConfig?.protocolFamilies?.includes('aptos') ?? false;
-    const facilitatorSupportsHedera = facilitatorConfig?.protocolFamilies?.includes('hedera') ?? false;
-    const facilitatorSupportsStellar = facilitatorConfig?.protocolFamilies?.includes('stellar') ?? false;
+    const enabledFamilies = Array.from(selectedProtocolFamilies) as import('./src/types').ProtocolFamily[];
 
+    // Optional SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY (server role only) opts
+    // into self-managed batch-settlement claim/refund signing; omit to delegate
+    // to the facilitator's /supported receiverAuthorizer. Managed-batch servers
+    // must not set it (GenericServerProxy strips it from the child env); they may set
+    // SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY instead, or rely on the
+    // facilitator's delegatedRefund.
     const serverConfig: ServerConfig = {
       port,
-      evmPayTo: serverEvmAddress!,
-      svmPayTo: serverSvmAddress!,
-      avmPayTo: facilitatorSupportsAvm ? (serverAvmAddress || '') : '',
-      aptosPayTo: facilitatorSupportsAptos ? (serverAptosAddress || '') : '',
-      hederaPayTo:
-        facilitatorSupportsHedera &&
-          facilitatorHederaAccountId &&
-          facilitatorHederaPrivateKey
-          ? (serverHederaAddress || '')
-          : '',
-      hederaAsset: process.env.HEDERA_ASSET,
-      hederaAmount: process.env.HEDERA_AMOUNT,
-      stellarPayTo: facilitatorSupportsStellar ? (serverStellarAddress || '') : '',
-      tvmPayTo: serverTvmAddress || '',
       networks,
+      enabledFamilies,
+      runRouteFilter,
       facilitatorUrl,
       mockFacilitatorUrl,
-      // Forward the optional receiver-authorizer EOA key so the server can
-      // self-manage batch-settlement claim/refund signatures when set.
-      ...(process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY
-        ? {
-          batchSettlement: {
-            receiverAuthorizerPrivateKey:
-              process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY,
-          },
-        }
-        : {}),
+      batchServerRole,
     };
 
-    const started = await startServer(serverProxy, serverConfig);
-    if (!started) {
-      cLog.log(`❌ Failed to start server ${serverName}`);
+    const serverStartFailures = (error: string) => {
+      cLog.log(`❌ Failed to start server ${comboLabel}${error ? `: ${error}` : ''}`);
       return scenarios.map(scenario => ({
         testNumber: nextTestNumber(),
         client: scenario.client.name,
@@ -1310,11 +1789,22 @@ async function runTest() {
         endpoint: scenario.endpoint.path,
         facilitator: scenario.facilitator?.name || 'none',
         protocolFamily: scenario.protocolFamily,
+        ...scenarioDimensions(scenario),
         passed: false,
         error: 'Server failed to start',
       }));
+    };
+
+    let started = false;
+    try {
+      started = await startServer(serverProxy, serverConfig, { transport: server.config.transport });
+    } catch (error) {
+      return serverStartFailures(error instanceof Error ? error.message : String(error));
     }
-    cLog.log(`  ✅ Server ${serverName} ready`);
+    if (!started) {
+      return serverStartFailures('');
+    }
+    cLog.log(`  ✅ Server ${comboLabel} ready`);
 
     const results: DetailedTestResult[] = [];
     // Track which endpoint paths have already been "cold started" in this combo.
@@ -1325,46 +1815,90 @@ async function runTest() {
       for (const scenario of scenarios) {
         const tn = nextTestNumber();
         const isEvm = scenario.protocolFamily === 'evm';
-
-        if (scenario.endpoint.schemeOptions?.permit2Direct === true) {
-          await approvePermit2Approval(evmPermit2Asset);
-        } else if (scenario.endpoint.schemeOptions?.coldstart === true) {
-          // Key on (client, path) so each client independently runs its own
-          // fund → revoke → drain cycle. Without the client name, the second
-          // client in a combo silently skips the coldstart and inherits
-          // whatever wallet state the first client left behind.
-          const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
-          if (!coldStartedEndpoints.has(endpointKey)) {
-            coldStartedEndpoints.add(endpointKey);
-            await fundClientForRevoke();
-            // Give fund tx 1s to propagate before submitting revoke (from client wallet)
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            await revokePermit2Approval(evmPermit2Asset);
-            // Give revoke tx 2s to propagate before drain reads pending nonce.
-            // Load-balanced RPCs can return a stale pending nonce if queried
-            // immediately after the revoke submission, causing the drain to
-            // collide with the revoke's nonce ("replacement transaction underpriced").
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await drainClientETH();
-            // Wait for RPC nonce propagation across load-balanced nodes before the
-            // test client (which may use a separate RPC connection) queries the nonce.
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          }
-        }
-
         const isAvm = scenario.protocolFamily === 'avm';
+        const resourceKeys = getScenarioResourceKeys(scenario, evmResourceKeyContext);
 
-        if (isEvm && facilitatorName && evmLock) {
-          const releaseLock = await evmLock.acquire(facilitatorName);
-          try {
-            results.push(await runSingleTest(scenario, port, tn, cLog));
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          } finally {
-            releaseLock();
+        const runScenario = async (): Promise<DetailedTestResult> => {
+          const setupFailure = (error: string): DetailedTestResult => ({
+            testNumber: tn,
+            client: scenario.client.name,
+            server: scenario.server.name,
+            endpoint: scenario.endpoint.path,
+            facilitator: scenario.facilitator?.name || 'none',
+            protocolFamily: scenario.protocolFamily,
+            ...scenarioDimensions(scenario),
+            passed: false,
+            error,
+          });
+
+          if (clientRequiresSwigSetup(scenario.client)) {
+            const swigReady = await setupSwigWallet(networks.svm.rpcUrl);
+            if (!swigReady) {
+              return setupFailure('Swig wallet setup failed');
+            }
           }
-        } else {
-          results.push(await runSingleTest(scenario, port, tn, cLog));
-          if (isAvm) {
+
+          if (scenario.endpoint.schemeOptions?.permit2Direct === true) {
+            const approved = await approvePermit2Approval(networks.evm, evmPermit2Asset);
+            if (!approved) {
+              return setupFailure('Permit2 approval setup failed');
+            }
+          } else if (scenario.endpoint.schemeOptions?.coldstart === true) {
+            // Key on (client, path) so each client independently runs its own
+            // fund → revoke → drain cycle. Without the client name, the second
+            // client in a combo silently skips the coldstart and inherits
+            // whatever wallet state the first client left behind.
+            const endpointKey = `${scenario.client.name}::${scenario.endpoint.path}`;
+            if (!coldStartedEndpoints.has(endpointKey)) {
+              const funded = await fundClientForRevoke(networks.evm);
+              if (!funded) {
+                return setupFailure('Client gas funding setup failed');
+              }
+              // Give fund tx 1s to propagate before submitting revoke (from client wallet)
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const revoked = await revokePermit2Approval(networks.evm, evmPermit2Asset);
+              if (!revoked) {
+                return setupFailure('Permit2 revoke setup failed');
+              }
+              // Give revoke tx 2s to propagate before drain reads pending nonce.
+              // Load-balanced RPCs can return a stale pending nonce if queried
+              // immediately after the revoke submission, causing the drain to
+              // collide with the revoke's nonce ("replacement transaction underpriced").
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              const drained = await drainClientETH(networks.evm);
+              if (!drained) {
+                return setupFailure('Client ETH drain setup failed');
+              }
+              coldStartedEndpoints.add(endpointKey);
+              // Wait for RPC nonce propagation across load-balanced nodes before the
+              // test client (which may use a separate RPC connection) queries the nonce.
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+
+          // Bounded retry for EVM Permit2 flows: transient 402s here are
+          // almost always stale on-chain state (allowance/nonce not yet
+          // propagated across load-balanced RPC nodes). Retry with a delay so
+          // state can settle; eip3009 and non-EVM flows run once (maxAttempts=1).
+          const isPermit2 = endpointAssetTransferMethod(scenario.endpoint) === 'permit2';
+          const maxAttempts = isEvm && isPermit2 ? EVM_PAYMENT_MAX_ATTEMPTS : 1;
+          let result = await runSingleTest(scenario, port, tn, cLog);
+          for (
+            let attempt = 1;
+            attempt < maxAttempts && !result.passed && isTransientPaymentFailure(result.error);
+            attempt++
+          ) {
+            cLog.log(
+              `  🔁 Test #${tn} transient failure (attempt ${attempt}/${maxAttempts}): ${result.error}. ` +
+              `Retrying in ${EVM_PAYMENT_RETRY_DELAY_MS}ms to let on-chain state settle...`
+            );
+            await new Promise(resolve => setTimeout(resolve, EVM_PAYMENT_RETRY_DELAY_MS));
+            result = await runSingleTest(scenario, port, tn, cLog);
+          }
+
+          if (isEvm && resourceLock) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else if (isAvm) {
             // Pause between AVM tests to avoid 403 rate limiting on free public Algorand nodes
             await new Promise(resolve => setTimeout(resolve, 8000));
           } else if (isEvm) {
@@ -1374,10 +1908,23 @@ async function runTest() {
             // the two can collide on the same nonce on load-balanced RPCs.
             await new Promise(resolve => setTimeout(resolve, 1500));
           }
+
+          return result;
+        };
+
+        if (resourceKeys.length > 0 && resourceLock) {
+          const releaseLock = await resourceLock.acquireAll(resourceKeys);
+          try {
+            results.push(await runScenario());
+          } finally {
+            releaseLock();
+          }
+        } else {
+          results.push(await runScenario());
         }
       }
     } finally {
-      cLog.verboseLog(`  🛑 Stopping ${serverName} (finished combo)`);
+      cLog.verboseLog(`  🛑 Stopping ${comboLabel} (finished combo)`);
       await serverProxy.stop();
     }
 
@@ -1386,7 +1933,19 @@ async function runTest() {
 
   // ── Unified execution: concurrency=1 for sequential, N for parallel ──
   const effectiveConcurrency = parsedArgs.parallel ? parsedArgs.concurrency : 1;
-  const evmLock = parsedArgs.parallel ? new FacilitatorLock() : null;
+  const resourceLock = parsedArgs.parallel ? new ResourceLock() : null;
+  const clientEvmAddress = clientEvmPrivateKey
+    ? privateKeyToAccount(clientEvmPrivateKey as `0x${string}`).address
+    : undefined;
+  const facilitatorEvmAddress = facilitatorEvmPrivateKey
+    ? privateKeyToAccount(facilitatorEvmPrivateKey as `0x${string}`).address
+    : undefined;
+  const evmResourceKeyContext: EvmResourceKeyContext = {
+    evmCaip2: networks.evm.caip2,
+    evmPermit2Asset,
+    clientEvmAddress,
+    facilitatorEvmAddress,
+  };
   const semaphore = new Semaphore(effectiveConcurrency);
 
   let globalTestNumber = 0;
@@ -1395,7 +1954,7 @@ async function runTest() {
   const comboPromises = serverFacilitatorCombos.map(async (combo) => {
     const release = await semaphore.acquire();
     try {
-      return await executeCombo(combo, evmLock, nextTestNumber);
+      return await executeCombo(combo, resourceLock, evmResourceKeyContext, nextTestNumber);
     } finally {
       release();
     }
@@ -1411,11 +1970,31 @@ async function runTest() {
 
   const serversArray = Array.from(uniqueServers.values());
 
-  // Build a serverName→port map for discovery validation (first combo per server).
+  // Build a serverName→port map for legacy discovery validation fallback.
   const discoveryServerPorts = new Map<string, number>();
   for (const combo of serverFacilitatorCombos) {
     if (!discoveryServerPorts.has(combo.serverName)) {
       discoveryServerPorts.set(combo.serverName, combo.port);
+    }
+  }
+
+  // Expected discovery entries must use the port from each facilitator+server combo.
+  const testedDiscoveryScenarios: TestedDiscoveryScenario[] = [];
+  for (const combo of serverFacilitatorCombos) {
+    if (!combo.facilitatorName) {
+      continue;
+    }
+    const server = uniqueServers.get(combo.serverName);
+    if (!server) {
+      continue;
+    }
+    for (const scenario of combo.scenarios) {
+      testedDiscoveryScenarios.push({
+        facilitatorName: combo.facilitatorName,
+        server,
+        serverPort: combo.port,
+        endpoint: scenario.endpoint,
+      });
     }
   }
 
@@ -1428,7 +2007,8 @@ async function runTest() {
       facilitatorsWithConfig,
       serversArray,
       discoveryServerPorts,
-      facilitatorServerMap
+      facilitatorServerMap,
+      testedDiscoveryScenarios,
     );
     discoveryFailed = !discoveryResult.success;
   }
@@ -1443,8 +2023,10 @@ async function runTest() {
     facilitatorStopPromises.push(manager.stop());
   }
   log('  🛑 Stopping mock facilitator');
-  mockFacilitatorProcess.kill();
-  await Promise.all(facilitatorStopPromises);
+  await Promise.all([
+    stopMockFacilitator(mockFacilitatorProcess, mockFacilitatorUrl),
+    ...facilitatorStopPromises,
+  ]);
 
   // Calculate totals
   const passed = testResults.filter(r => r.passed).length;
@@ -1458,6 +2040,7 @@ async function runTest() {
   log(`✅ Passed: ${passed}`);
   log(`❌ Failed: ${failed}`);
   log(`📈 Total: ${passed + failed}`);
+  log(`⏱️  Duration: ${((Date.now() - startTime) / 60_000).toFixed(2)} min`);
   log('');
 
   // Detailed results table
@@ -1505,99 +2088,45 @@ async function runTest() {
     log('');
   }
 
-  // Breakdown by facilitator
-  const facilitatorBreakdown = testResults.reduce((acc, test) => {
-    const key = test.facilitator;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
+  logBreakdown('Breakdown by Facilitator', buildBreakdown(testResults, 'facilitator'));
+  logBreakdown('Breakdown by Server', buildBreakdown(testResults, 'server'), 20);
+  logBreakdown('Breakdown by Client', buildBreakdown(testResults, 'client'), 20);
+  logBreakdown('Breakdown by Scheme', buildBreakdown(testResults, 'scheme'));
+  logBreakdown('Breakdown by Asset Transfer Method', buildBreakdown(testResults, 'assetTransferMethod'), 20);
+  logBreakdown('Breakdown by Transport', buildBreakdown(testResults, 'transport'));
+  logBreakdown('Breakdown by Version', buildBreakdown(testResults, 'version'));
 
-  log('📊 Breakdown by Facilitator:');
-  Object.entries(facilitatorBreakdown).forEach(([facilitator, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${facilitator.padEnd(15)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
+  const paymentFlowBreakdown = buildBreakdown(testResults, 'paymentFlow');
+  if (Object.keys(paymentFlowBreakdown).length > 1) {
+    logBreakdown('Breakdown by Payment Flow', paymentFlowBreakdown);
+  }
 
-  // Breakdown by server
-  const serverBreakdown = testResults.reduce((acc, test) => {
-    const key = test.server;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Server:');
-  Object.entries(serverBreakdown).forEach(([server, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(` ${server.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Breakdown by client
-  const clientBreakdown = testResults.reduce((acc, test) => {
-    const key = test.client;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
-  log('📊 Breakdown by Client:');
-  Object.entries(clientBreakdown).forEach(([client, stats]) => {
-    const total = stats.passed + stats.failed;
-    const passRate = total > 0 ? Math.round((stats.passed / total) * 100) : 0;
-    log(`   ${client.padEnd(20)} ✅ ${stats.passed} / ❌ ${stats.failed} (${passRate}%)`);
-  });
-  log('');
-
-  // Protocol family breakdown
-  const protocolBreakdown = testResults.reduce((acc, test) => {
-    const key = test.protocolFamily;
-    if (!acc[key]) acc[key] = { passed: 0, failed: 0 };
-    if (test.passed) acc[key].passed++;
-    else acc[key].failed++;
-    return acc;
-  }, {} as Record<string, { passed: number; failed: number }>);
-
+  const protocolBreakdown = buildBreakdown(testResults, 'protocolFamily');
   if (Object.keys(protocolBreakdown).length > 1) {
-    log('📊 Protocol Family Breakdown:');
-    Object.entries(protocolBreakdown).forEach(([protocol, stats]) => {
-      const total = stats.passed + stats.failed;
-      log(` ${protocol.toUpperCase()}: ✅ ${stats.passed} / ❌ ${stats.failed} / 📈 ${total} total`);
-    });
-    log('');
+    logBreakdown('Protocol Family Breakdown', protocolBreakdown, 15, 'total');
   }
 
   // Write structured JSON output if requested
   if (parsedArgs.outputJson) {
-    const breakdown = (results: DetailedTestResult[], key: keyof DetailedTestResult) =>
-      results.reduce((acc, test) => {
-        const k = String(test[key]);
-        if (!acc[k]) acc[k] = { passed: 0, failed: 0 };
-        if (test.passed) acc[k].passed++;
-        else acc[k].failed++;
-        return acc;
-      }, {} as Record<string, { passed: number; failed: number }>);
-
     const jsonOutput = {
       summary: {
         total: passed + failed,
         passed,
         failed,
         networkMode,
+        durationMinutes: Number(((Date.now() - startTime) / 60_000).toFixed(2)),
       },
       results: testResults,
       breakdowns: {
-        byFacilitator: breakdown(testResults, 'facilitator'),
-        byServer: breakdown(testResults, 'server'),
-        byClient: breakdown(testResults, 'client'),
-        byProtocolFamily: breakdown(testResults, 'protocolFamily'),
+        byFacilitator: buildBreakdown(testResults, 'facilitator'),
+        byServer: buildBreakdown(testResults, 'server'),
+        byClient: buildBreakdown(testResults, 'client'),
+        byScheme: buildBreakdown(testResults, 'scheme'),
+        byAssetTransferMethod: buildBreakdown(testResults, 'assetTransferMethod'),
+        byTransport: buildBreakdown(testResults, 'transport'),
+        byVersion: buildBreakdown(testResults, 'version'),
+        byPaymentFlow: buildBreakdown(testResults, 'paymentFlow'),
+        byProtocolFamily: buildBreakdown(testResults, 'protocolFamily'),
       },
     };
 
@@ -1606,12 +2135,13 @@ async function runTest() {
   }
 
   // Close logger
-  closeLogger();
-
-  if (failed > 0 || discoveryFailed) {
-    process.exit(1);
-  }
+  await closeLogger();
+  process.exit(failed > 0 || discoveryFailed ? 1 : 0);
 }
 
 // Run the test
-runTest().catch(error => errorLog(error));
+runTest().catch(async error => {
+  errorLog(String(error));
+  await closeLogger();
+  process.exit(1);
+});

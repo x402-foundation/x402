@@ -5,6 +5,7 @@ import json
 from x402.mcp.types import MCPToolResult
 from x402.mcp.utils import (
     attach_payment_to_meta,
+    build_tool_resource_info,
     create_tool_resource_url,
     extract_payment_from_meta,
     extract_payment_required_from_result,
@@ -69,6 +70,24 @@ def test_attach_payment_to_meta():
     result = attach_payment_to_meta(params, payload)
     assert "_meta" in result
     assert "x402/payment" in result["_meta"]
+
+    # Regression: the attached payment must be serialized with exclude_none (matching the HTTP
+    # encoder). Optional fields left as explicit nulls — e.g. ``resource``/``extensions`` here, or
+    # ``resource.mimeType`` on real payloads — are rejected as "paymentPayload is invalid" by
+    # strict facilitators and proxies that re-marshal _meta into a PAYMENT-SIGNATURE header.
+    attached = result["_meta"]["x402/payment"]
+
+    def _assert_no_nulls(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                assert v is not None, f"null leaked into payment meta at key {k!r}"
+                _assert_no_nulls(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _assert_no_nulls(v)
+
+    _assert_no_nulls(attached)
+    assert "resource" not in attached  # was None on this payload -> must be dropped
 
 
 def test_extract_payment_required_from_result_structured():
@@ -224,6 +243,29 @@ def test_create_tool_resource_url():
         create_tool_resource_url("get_weather", "https://api.example.com/weather")
         == "https://api.example.com/weather"
     )
+
+
+def test_build_tool_resource_info_includes_service_metadata() -> None:
+    """MCP wrapper should forward bazaar service metadata into ResourceInfo."""
+    from x402.mcp.types import ResourceInfo
+
+    config_resource = ResourceInfo(
+        url="mcp://tool/get_weather",
+        description="Weather tool",
+        mime_type="application/json",
+        service_name="Weather API",
+        tags=["weather", "api"],
+        icon_url="https://example.com/icon.png",
+    )
+
+    resource_info = build_tool_resource_info("get_weather", config_resource)
+
+    assert resource_info.url == "mcp://tool/get_weather"
+    assert resource_info.description == "Weather tool"
+    assert resource_info.mime_type == "application/json"
+    assert resource_info.service_name == "Weather API"
+    assert resource_info.tags == ["weather", "api"]
+    assert resource_info.icon_url == "https://example.com/icon.png"
 
 
 def test_extract_payment_response_from_meta_no_meta():

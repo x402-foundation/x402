@@ -20,28 +20,26 @@ export class FacilitatorManager {
   private readyPromise: Promise<string | null>;
   private url: string | null = null;
 
-  constructor(facilitator: Facilitator, port: number, networks: NetworkSet) {
+  constructor(
+    facilitator: Facilitator,
+    port: number,
+    networks: NetworkSet,
+    options?: { voucherStore?: boolean },
+  ) {
     this.facilitator = facilitator;
     this.port = port;
 
     // Start facilitator and health checks asynchronously
-    this.readyPromise = this.startAndWaitForHealth(networks);
+    this.readyPromise = this.startAndWaitForHealth(networks, options?.voucherStore ?? false);
   }
 
-  private async startAndWaitForHealth(networks: NetworkSet): Promise<string | null> {
+  private async startAndWaitForHealth(networks: NetworkSet, voucherStore: boolean): Promise<string | null> {
     verboseLog(`  🏛️ Starting facilitator on port ${this.port}...`);
 
     await this.facilitator.start({
       port: this.port,
-      evmPrivateKey: process.env.FACILITATOR_EVM_PRIVATE_KEY,
-      svmPrivateKey: process.env.FACILITATOR_SVM_PRIVATE_KEY,
-      avmPrivateKey: process.env.FACILITATOR_AVM_PRIVATE_KEY,
-      aptosPrivateKey: process.env.FACILITATOR_APTOS_PRIVATE_KEY,
-      hederaAccountId: process.env.FACILITATOR_HEDERA_ACCOUNT_ID,
-      hederaPrivateKey: process.env.FACILITATOR_HEDERA_PRIVATE_KEY,
-      stellarPrivateKey: process.env.FACILITATOR_STELLAR_PRIVATE_KEY,
-      tvmPrivateKey: process.env.FACILITATOR_TVM_PRIVATE_KEY,
       networks,
+      voucherStore,
     });
 
     const healthy = await waitForHealth(

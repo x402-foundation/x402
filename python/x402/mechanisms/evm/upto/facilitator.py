@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+from ....pending_settlement_store import InMemoryPendingSettlementStore, PendingSettlementStore
 from ....schemas import (
     Network,
     PaymentPayload,
@@ -11,9 +12,13 @@ from ....schemas import (
     SettleResponse,
     VerifyResponse,
 )
-from ..constants import SCHEME_UPTO
+from ..constants import ERR_UPTO_INVALID_PAYLOAD, SCHEME_UPTO
 from ..signer import FacilitatorEvmSigner
-from ..types import is_upto_permit2_payload
+from ..types import (
+    get_upto_payload_payer,
+    is_upto_permit2_payload,
+    validate_upto_permit2_payload,
+)
 from .permit2_utils import settle_upto_permit2, verify_upto_permit2
 
 
@@ -39,9 +44,13 @@ class UptoEvmScheme:
         self,
         signer: FacilitatorEvmSigner,
         config: UptoEvmSchemeConfig | None = None,
+        pending_store: PendingSettlementStore | None = None,
     ):
         self._signer = signer
         self._config = config or UptoEvmSchemeConfig()
+        self._pending_store: PendingSettlementStore = (
+            pending_store or InMemoryPendingSettlementStore()
+        )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
         """Return facilitatorAddress so clients can bind the witness to this facilitator."""
@@ -61,7 +70,18 @@ class UptoEvmScheme:
     ) -> VerifyResponse:
         if not is_upto_permit2_payload(payload.payload):
             return VerifyResponse(
-                is_valid=False, invalid_reason="unsupported_payload_type", payer=""
+                is_valid=False,
+                invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+                invalid_message="unsupported payload type: expected upto permit2 payload",
+                payer="",
+            )
+        payload_error = validate_upto_permit2_payload(payload.payload)
+        if payload_error:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+                invalid_message=payload_error,
+                payer=get_upto_payload_payer(payload.payload) or "",
             )
         return verify_upto_permit2(self._signer, payload, requirements, context, simulate=True)
 
@@ -74,9 +94,20 @@ class UptoEvmScheme:
         if not is_upto_permit2_payload(payload.payload):
             return SettleResponse(
                 success=False,
-                error_reason="unsupported_payload_type",
+                error_reason=ERR_UPTO_INVALID_PAYLOAD,
+                error_message="unsupported payload type: expected upto permit2 payload",
                 network=str(payload.accepted.network),
                 payer="",
+                transaction="",
+            )
+        payload_error = validate_upto_permit2_payload(payload.payload)
+        if payload_error:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_UPTO_INVALID_PAYLOAD,
+                error_message=payload_error,
+                network=str(payload.accepted.network),
+                payer=get_upto_payload_payer(payload.payload) or "",
                 transaction="",
             )
         return settle_upto_permit2(
@@ -85,4 +116,5 @@ class UptoEvmScheme:
             requirements,
             context,
             simulate_in_settle=self._config.simulate_in_settle,
+            pending_store=self._pending_store,
         )

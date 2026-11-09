@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import { runHooksExample } from "./hooks";
 import { runPreferredNetworkExample } from "./preferred-network";
 import { runBuilderPatternExample } from "./builder-pattern";
+import { runSpendControlsExample } from "./spend-controls";
 
 config();
 
@@ -20,6 +21,7 @@ const url = `${baseURL}${endpointPath}`;
  * - builder-pattern: Fine-grained control over network registration
  * - hooks: Payment lifecycle hooks for custom logic at different stages
  * - preferred-network: Client-side payment network preferences
+ * - spend-controls: Default $1 USD cap, allowedAssets, and per-asset caps
  *
  * To run this example, you need to set the following environment variables:
  * - EVM_PRIVATE_KEY: The private key of the EVM signer
@@ -30,6 +32,7 @@ const url = `${baseURL}${endpointPath}`;
  *   pnpm start builder-pattern
  *   pnpm start hooks
  *   pnpm start preferred-network
+ *   pnpm start spend-controls
  */
 async function main(): Promise<void> {
   const pattern = process.argv[2] || "builder-pattern";
@@ -66,9 +69,15 @@ async function main(): Promise<void> {
       await runPreferredNetworkExample(evmPrivateKey, svmPrivateKey, url);
       break;
 
+    case "spend-controls":
+      await runSpendControlsExample(evmPrivateKey, url);
+      break;
+
     default:
       console.error(`Unknown pattern: ${pattern}`);
-      console.error("Available patterns: all-networks, builder-pattern, hooks, preferred-network");
+      console.error(
+        "Available patterns: all-networks, builder-pattern, hooks, preferred-network, spend-controls",
+      );
       process.exit(1);
   }
 }

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func TestBuildErc3009DepositNonce_Deterministic(t *testing.T) {
@@ -205,4 +208,84 @@ func TestBuildEip2612PermitData_InvalidValue(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected error for non-numeric value")
 	}
+}
+
+func TestBuildErc3009CollectorData_UnwrapsERC6492Signature(t *testing.T) {
+	innerSig := common.FromHex("0x" + strings.Repeat("ab", 65))
+	wrapped := wrapERC6492Signature(t, innerSig)
+
+	collectorData, err := BuildErc3009CollectorData("0", "9999999999", "0x01", "0x"+common.Bytes2Hex(wrapped))
+	if err != nil {
+		t.Fatalf("BuildErc3009CollectorData: %v", err)
+	}
+
+	signature, err := decodeErc3009CollectorSignature(collectorData)
+	if err != nil {
+		t.Fatalf("decode collector data: %v", err)
+	}
+	if string(signature) != string(innerSig) {
+		t.Fatalf("expected inner signature, got %x", signature)
+	}
+}
+
+func TestBuildPermit2CollectorData_UnwrapsERC6492Signature(t *testing.T) {
+	innerSig := common.FromHex("0x" + strings.Repeat("ab", 65))
+	wrapped := wrapERC6492Signature(t, innerSig)
+
+	collectorData, err := BuildPermit2CollectorData("123", "9999999999", "0x"+common.Bytes2Hex(wrapped), nil)
+	if err != nil {
+		t.Fatalf("BuildPermit2CollectorData: %v", err)
+	}
+
+	signature, err := decodePermit2CollectorSignature(collectorData)
+	if err != nil {
+		t.Fatalf("decode collector data: %v", err)
+	}
+	if string(signature) != string(innerSig) {
+		t.Fatalf("expected inner signature, got %x", signature)
+	}
+}
+
+func wrapERC6492Signature(t *testing.T, innerSig []byte) []byte {
+	t.Helper()
+	addressTy, err := abi.NewType("address", "", nil)
+	if err != nil {
+		t.Fatalf("address type: %v", err)
+	}
+	bytesTy, err := abi.NewType("bytes", "", nil)
+	if err != nil {
+		t.Fatalf("bytes type: %v", err)
+	}
+	arguments := abi.Arguments{{Type: addressTy}, {Type: bytesTy}, {Type: bytesTy}}
+	packed, err := arguments.Pack(
+		common.HexToAddress("0xca11bde05977b3631167028862be2a173976ca11"),
+		[]byte{0xde, 0xad, 0xbe, 0xef},
+		innerSig,
+	)
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	return append(packed, common.Hex2Bytes("6492649264926492649264926492649264926492649264926492649264926492")...)
+}
+
+func decodeErc3009CollectorSignature(collectorData []byte) ([]byte, error) {
+	uint256Ty, _ := abi.NewType("uint256", "", nil)
+	bytesTy, _ := abi.NewType("bytes", "", nil)
+	args := abi.Arguments{{Type: uint256Ty}, {Type: uint256Ty}, {Type: uint256Ty}, {Type: bytesTy}}
+	unpacked, err := args.Unpack(collectorData)
+	if err != nil {
+		return nil, err
+	}
+	return unpacked[3].([]byte), nil
+}
+
+func decodePermit2CollectorSignature(collectorData []byte) ([]byte, error) {
+	uint256Ty, _ := abi.NewType("uint256", "", nil)
+	bytesTy, _ := abi.NewType("bytes", "", nil)
+	args := abi.Arguments{{Type: uint256Ty}, {Type: uint256Ty}, {Type: bytesTy}, {Type: bytesTy}}
+	unpacked, err := args.Unpack(collectorData)
+	if err != nil {
+		return nil, err
+	}
+	return unpacked[2].([]byte), nil
 }

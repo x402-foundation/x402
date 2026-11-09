@@ -79,3 +79,32 @@ class PaymentAbortedError(PaymentError):
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(f"Payment aborted: {reason}")
+
+
+class AfterSettleAbortError(PaymentError):
+    """Raised by an after-settle hook to fail a successful settle closed.
+
+    Onchain funds moved but the resource server could not persist the result
+    (e.g. a batch-settlement deposit). The settle response keeps its
+    transaction, amount, payer and extra with success=False.
+
+    Attributes:
+        reason: Machine-readable reason for the abort.
+        message: Optional human-readable message.
+    """
+
+    def __init__(self, reason: str, message: str | None = None):
+        self.reason = reason
+        self.message = message
+        super().__init__(message or reason)
+
+
+class FacilitatorCapabilityError(Exception):
+    """Raised when a registered scheme's configuration is incompatible with
+    the capabilities the facilitator advertised for that scheme and network.
+    """
+
+    def __init__(self, problems: list[str]) -> None:
+        details = "\n".join(f"  - {p}" for p in problems)
+        super().__init__(f"x402 facilitator capability errors:\n{details}")
+        self.problems = problems

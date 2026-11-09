@@ -12,7 +12,7 @@ This is implemented via one of three asset transfer methods, depending on the to
 | **2. Permit2**      | Tokens without EIP-3009. Uses a Proxy + Permit2.             | **Universal Fallback** (Works for any ERC-20). | One-time use                        |
 | **3. ERC-7710**      | Smart accounts with delegation support.                              | **Smart Account Option** (Paid from ERC-7710 compatible account). | One-time use and multi-use |
 
-If no `assetTransferMethod` is specified in the payload, the implementation should prioritize `eip3009` (if compatible) and then `permit2`.
+If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients should default to `"eip3009"`. Payment payloads that use a non-default transfer method should echo the selected `assetTransferMethod` in `accepted.extra`.
 
 In all cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
 
@@ -68,7 +68,7 @@ The `payload` field must contain:
 
 **`extra` field definitions specific to `eip3009`:**
 
-- `extra.assetTransferMethod` (required): MUST be `"eip3009"`.
+- `extra.assetTransferMethod` (optional in `PaymentRequired`, default `"eip3009"`): if present, MUST be `"eip3009"`.
 - `extra.name` (required): The EIP-712 domain name of the token contract. Used for `transferWithAuthorization` signature construction.
 - `extra.version` (required): The EIP-712 domain version of the token contract. Used for `transferWithAuthorization` signature construction.
 
@@ -83,6 +83,8 @@ The `payload` field must contain:
 ### Phase 3: Settlement Logic
 
 Settlement is performed via the facilitator calling the `transferWithAuthorization` function on the `EIP-3009` compliant contract with the `payload.signature` and `payload.authorization` parameters from the `PAYMENT-SIGNATURE` header.
+
+If the transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
 ---
 
@@ -210,6 +212,8 @@ Settlement is performed by calling the `x402ExactPermit2Proxy`.
 
 3.  **With EIP-2612 Permit (Extension):**
     If `eip2612GasSponsoring` is used, call `x402ExactPermit2Proxy.settleWithPermit`.
+
+If the settlement transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
 ---
 

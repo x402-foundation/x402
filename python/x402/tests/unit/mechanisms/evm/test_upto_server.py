@@ -1,10 +1,13 @@
 """Tests for UptoEvmScheme server."""
 
+from decimal import Decimal
+
 import pytest
 
-from x402.mechanisms.evm import get_network_config
+from x402.mechanisms.evm import get_default_asset
 from x402.mechanisms.evm.upto import UptoEvmServerScheme
 from x402.schemas import AssetAmount, PaymentRequirements, SupportedKind
+from x402.schemas.helpers import convert_to_token_amount
 
 FACILITATOR = "0x1111111111111111111111111111111111111111"
 
@@ -16,7 +19,7 @@ class TestParsePrice:
             network = "eip155:8453"
             result = server.parse_price("$0.10", network)
             assert result.amount == "100000"
-            assert result.asset == get_network_config(network)["default_asset"]["address"]
+            assert result.asset == get_default_asset(network)["asset"]
 
         def test_should_parse_number_prices(self):
             server = UptoEvmServerScheme()
@@ -55,7 +58,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="upto",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -84,7 +87,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="upto",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="1.5",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -124,8 +127,7 @@ class TestEnhancePaymentRequirements:
 
         result = server.enhance_payment_requirements(requirements, supported_kind, [])
 
-        config = get_network_config(network)
-        assert result.asset == config["default_asset"]["address"]
+        assert result.asset == get_default_asset(network)["asset"]
 
     def test_should_copy_extension_keys_from_supported_kind_extra(self):
         server = UptoEvmServerScheme()
@@ -133,7 +135,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="upto",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -161,7 +163,7 @@ class TestEnhancePaymentRequirements:
         requirements = PaymentRequirements(
             scheme="upto",
             network=network,
-            asset=get_network_config(network)["default_asset"]["address"],
+            asset=get_default_asset(network)["asset"],
             amount="100000",
             pay_to="0x1234567890123456789012345678901234567890",
             max_timeout_seconds=3600,
@@ -183,10 +185,10 @@ class TestRegisterMoneyParser:
         server = UptoEvmServerScheme()
         network = "eip155:8453"
 
-        def custom_parser(amount: float, network: str) -> AssetAmount | None:
-            if amount > 100:
+        def custom_parser(amount: str | int | float, network: str) -> AssetAmount | None:
+            if Decimal(str(amount)) > 100:
                 return AssetAmount(
-                    amount=str(int(amount * 1e9)),
+                    amount=convert_to_token_amount(str(amount), 9),
                     asset="0xCustomToken123456789012345678901234567890",
                     extra={"token": "CUSTOM"},
                 )
@@ -198,7 +200,7 @@ class TestRegisterMoneyParser:
         assert result.asset == "0xCustomToken123456789012345678901234567890"
 
         result2 = server.parse_price(50, network)
-        assert result2.asset == get_network_config(network)["default_asset"]["address"]
+        assert result2.asset == get_default_asset(network)["asset"]
 
     def test_should_return_self_for_chaining(self):
         server = UptoEvmServerScheme()

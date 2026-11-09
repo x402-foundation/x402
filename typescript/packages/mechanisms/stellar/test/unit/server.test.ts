@@ -10,6 +10,15 @@ import { ExactStellarScheme } from "../../src/exact/server/scheme";
 describe("ExactStellarScheme", () => {
   const server = new ExactStellarScheme();
 
+  describe("paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      expect(server.defaultAssetTransferMethod).toBe("default");
+      expect(server.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
+
   describe("parsePrice", () => {
     describe("Stellar Pubnet network", () => {
       const network = STELLAR_PUBNET_CAIP2;
@@ -91,6 +100,12 @@ describe("ExactStellarScheme", () => {
       it("should throw for invalid amounts", async () => {
         await expect(
           async () => await server.parsePrice("abc", STELLAR_PUBNET_CAIP2),
+        ).rejects.toThrow("Invalid money format");
+      });
+
+      it("should reject partially numeric money strings", async () => {
+        await expect(
+          async () => await server.parsePrice("1abc", STELLAR_PUBNET_CAIP2),
         ).rejects.toThrow("Invalid money format");
       });
     });

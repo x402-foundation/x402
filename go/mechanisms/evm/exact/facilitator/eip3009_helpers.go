@@ -8,8 +8,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // ParsedEIP3009Authorization contains the parsed transfer arguments used by verify and settle.
@@ -28,6 +29,54 @@ type EIP3009SignatureClassification struct {
 	IsSmartWallet bool
 	IsUndeployed  bool
 	SigData       *evm.ERC6492SignatureData
+}
+
+type expectedTransferEvent struct {
+	From  common.Address
+	To    common.Address
+	Value *big.Int
+}
+
+// verifyEIP3009TransferEvent checks for a matching ERC-20 Transfer event in receipt logs.
+func verifyEIP3009TransferEvent(
+	logs []*goethtypes.Log,
+	tokenAddress common.Address,
+	expected expectedTransferEvent,
+) (bool, error) {
+	contractABI, err := abi.JSON(strings.NewReader(string(evm.ERC20TransferEventABI)))
+	if err != nil {
+		return false, fmt.Errorf("parse transfer event ABI: %w", err)
+	}
+
+	transferEvent := contractABI.Events["Transfer"]
+	for _, receiptLog := range logs {
+		if receiptLog == nil ||
+			receiptLog.Address != tokenAddress ||
+			len(receiptLog.Topics) != 3 ||
+			receiptLog.Topics[0] != transferEvent.ID {
+			continue
+		}
+
+		values, err := contractABI.Unpack("Transfer", receiptLog.Data)
+		if err != nil {
+			continue
+		}
+		if len(values) != 1 {
+			continue
+		}
+		value, ok := values[0].(*big.Int)
+		if !ok {
+			continue
+		}
+
+		from := common.BytesToAddress(receiptLog.Topics[1].Bytes())
+		to := common.BytesToAddress(receiptLog.Topics[2].Bytes())
+		if from == expected.From && to == expected.To && value.Cmp(expected.Value) == 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // ParseEIP3009Authorization parses authorization fields into contract-call arguments.
@@ -82,6 +131,27 @@ func ClassifyEIP3009Signature(
 	tokenName string,
 	tokenVersion string,
 ) (*EIP3009SignatureClassification, error) {
+	code, err := signer.GetCode(ctx, authorization.From)
+	if err != nil {
+		return nil, err
+	}
+	return ClassifyEIP3009SignatureWithCode(
+		ctx, signer, authorization, signature, chainID, tokenAddress, tokenName, tokenVersion, code,
+	)
+}
+
+// ClassifyEIP3009SignatureWithCode classifies a signature using bytecode the caller already fetched.
+func ClassifyEIP3009SignatureWithCode(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	authorization evm.ExactEIP3009Authorization,
+	signature []byte,
+	chainID *big.Int,
+	tokenAddress string,
+	tokenName string,
+	tokenVersion string,
+	payerCode []byte,
+) (*EIP3009SignatureClassification, error) {
 	hash, err := evm.HashEIP3009Authorization(
 		authorization,
 		chainID,
@@ -96,13 +166,14 @@ func ClassifyEIP3009Signature(
 	var hash32 [32]byte
 	copy(hash32[:], hash)
 
-	valid, sigData, err := evm.VerifyUniversalSignature(
+	valid, sigData, err := evm.VerifyUniversalSignatureWithCode(
 		ctx,
 		signer,
 		authorization.From,
 		hash32,
 		signature,
 		true,
+		payerCode,
 	)
 	if err != nil {
 		return nil, err
@@ -123,11 +194,7 @@ func ClassifyEIP3009Signature(
 		return classification, nil
 	}
 
-	code, err := signer.GetCode(ctx, authorization.From)
-	if err != nil {
-		return nil, err
-	}
-	if len(code) > 0 {
+	if sigData.CodeDeployed {
 		classification.IsSmartWallet = true
 		return classification, nil
 	}
@@ -306,6 +373,7 @@ func ExecuteTransferWithAuthorization(
 	tokenAddress string,
 	parsed *ParsedEIP3009Authorization,
 	sigData *evm.ERC6492SignatureData,
+	dataSuffix []byte,
 ) (string, error) {
 	if sigData == nil {
 		return "", fmt.Errorf("missing signature data")
@@ -318,6 +386,7 @@ func ExecuteTransferWithAuthorization(
 			tokenAddress,
 			evm.TransferWithAuthorizationVRSABI,
 			evm.FunctionTransferWithAuthorization,
+			dataSuffix,
 			parsed.From,
 			parsed.To,
 			parsed.Value,
@@ -335,6 +404,7 @@ func ExecuteTransferWithAuthorization(
 		tokenAddress,
 		evm.TransferWithAuthorizationBytesABI,
 		evm.FunctionTransferWithAuthorization,
+		dataSuffix,
 		parsed.From,
 		parsed.To,
 		parsed.Value,
@@ -345,8 +415,9 @@ func ExecuteTransferWithAuthorization(
 	)
 }
 
-// DeploySmartWallet sends the ERC-6492 factory deployment transaction when enabled.
-func DeploySmartWallet(
+// SendDeployTransaction submits the ERC-6492 factory deployment transaction and waits
+// for the receipt, returning an error if the deployment transaction reverted.
+func SendDeployTransaction(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
 	sigData *evm.ERC6492SignatureData,
@@ -366,7 +437,7 @@ func DeploySmartWallet(
 
 	receipt, err := signer.WaitForTransactionReceipt(ctx, txHash)
 	if err != nil {
-		return fmt.Errorf("failed to wait for deployment: %w", err)
+		return fmt.Errorf("failed to wait for deployment receipt: %w", err)
 	}
 	if receipt.Status != evm.TxStatusSuccess {
 		return fmt.Errorf("deployment transaction reverted")

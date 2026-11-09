@@ -16,6 +16,38 @@ import { getUsdcChainConfigForChain } from "./evm";
 import { getNetworkId } from "./network";
 
 /**
+ * Converts a route path pattern to a regex source.
+ *
+ * @param path - Route path pattern using "*" and "[param]" syntax
+ * @returns Escaped regex source for the route path
+ */
+function routePathToRegexSource(path: string): string {
+  let source = "";
+
+  for (let i = 0; i < path.length; i++) {
+    const char = path[i];
+
+    if (char === "*") {
+      source += ".*?";
+      continue;
+    }
+
+    if (char === "[") {
+      const end = path.indexOf("]", i + 1);
+      if (end > i + 1) {
+        source += "[^/]+";
+        i = end;
+        continue;
+      }
+    }
+
+    source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  return source;
+}
+
+/**
  * Computes the route patterns for the given routes config
  *
  * @param routes - The routes config to compute the patterns for
@@ -39,18 +71,7 @@ export function computeRoutePatterns(routes: RoutesConfig): RoutePattern[] {
     }
     return {
       verb: verb.toUpperCase(),
-      pattern: new RegExp(
-        `^${
-          path
-            // First escape all special regex characters except * and []
-            .replace(/[$()+.?^{|}]/g, "\\$&")
-            // Then handle our special pattern characters
-            .replace(/\*/g, ".*?") // Make wildcard non-greedy and optional
-            .replace(/\[([^\]]+)\]/g, "[^/]+") // Convert [param] to regex capture
-            .replace(/\//g, "\\/") // Escape slashes
-        }$`,
-        "i",
-      ),
+      pattern: new RegExp(`^${routePathToRegexSource(path)}$`, "i"),
       config: routeConfig,
     };
   });
@@ -89,15 +110,19 @@ export function findMatchingRoute(
     .replace(/\/+/g, "/") // collapse slashes
     .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
 
-  // Find matching route pattern
-  const matchingRoutes = routePatterns.filter(({ pattern, verb }) => {
-    const matchesPath = pattern.test(normalizedPath);
-    const upperMethod = method.toUpperCase();
-    const matchesVerb = verb === "*" || upperMethod === verb;
+  const upperMethod = method.toUpperCase();
+  const findMatchingRoutes = (candidateMethod: string): RoutePattern[] =>
+    routePatterns.filter(
+      ({ pattern, verb }) =>
+        pattern.test(normalizedPath) && (verb === "*" || candidateMethod === verb),
+    );
 
-    const result = matchesPath && matchesVerb;
-    return result;
-  });
+  // HTTP routers commonly dispatch HEAD through GET. Preserve an explicit
+  // HEAD or wildcard route, and only use GET when neither directly matched.
+  let matchingRoutes = findMatchingRoutes(upperMethod);
+  if (matchingRoutes.length === 0 && upperMethod === "HEAD") {
+    matchingRoutes = findMatchingRoutes("GET");
+  }
 
   if (matchingRoutes.length === 0) {
     return undefined;
@@ -155,7 +180,7 @@ export function processPriceToAtomicAmount(
     const parsedAmount = moneySchema.safeParse(price);
     if (!parsedAmount.success) {
       return {
-        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error}`,
+        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error.issues.map(issue => issue.message).join("; ")}`,
       };
     }
     const parsedUsdAmount = parsedAmount.data;

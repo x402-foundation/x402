@@ -110,7 +110,11 @@ const facilitator = new x402Facilitator()
 
 facilitator.register(
   EVM_NETWORK,
-  new ExactEvmScheme(evmSigner, { deployERC4337WithEIP6492: true }),
+  new ExactEvmScheme(evmSigner, {
+    // Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+    // A non-empty array enables smart wallet deployment; an empty array denies all factory calls.
+    eip6492AllowedFactories: [],
+  }),
 );
 facilitator.register(EVM_NETWORK, new UptoEvmScheme(evmSigner));
 
@@ -197,17 +201,6 @@ app.post("/settle", async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error("Settle error:", error);
-
-    if (
-      error instanceof Error &&
-      error.message.includes("Settlement aborted:")
-    ) {
-      return res.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        network: req.body?.paymentPayload?.network || "unknown",
-      } as SettleResponse);
-    }
 
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",

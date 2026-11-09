@@ -8,6 +8,7 @@ import { createPaywall } from "@x402/paywall";
 import { evmPaywall } from "@x402/paywall/evm";
 import { svmPaywall } from "@x402/paywall/svm";
 import { avmPaywall } from "@x402/paywall/avm";
+import { SYNC_FACILITATOR_ON_START } from "@/lib/testnetProtectedResources";
 
 const evmPayeeAddress = process.env.RESOURCE_EVM_ADDRESS as `0x${string}`;
 const svmPayeeAddress = process.env.RESOURCE_SVM_ADDRESS as string;
@@ -16,7 +17,7 @@ const facilitatorUrl = process.env.FACILITATOR_URL as string;
 
 const EVM_NETWORK = "eip155:84532" as const; // Base Sepolia
 const SVM_NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as const; // Solana Devnet
-const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=" as const; // Algorand Testnet
+const AVM_NETWORK = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe" as const; // Algorand Testnet
 
 // List of blocked countries and regions
 const BLOCKED_COUNTRIES = [
@@ -89,6 +90,7 @@ const x402PaymentProxy = paymentProxyFromConfig(
   ],
   undefined, // paywallConfig
   paywall, // paywall provider
+  SYNC_FACILITATOR_ON_START,
 );
 
 const geolocationProxy = async (req: NextRequest) => {
@@ -160,13 +162,6 @@ Add one line of code to require payment for each incoming request. If a request 
 ## x402 is HTTP-native
 
 x402 uses the HTTP 402 status code — a status code reserved since the beginning of HTTP for exactly this purpose. No proprietary protocols, no walled gardens — just the web, working as intended.
-
-## Links
-
-- [Ecosystem](https://x402.org/ecosystem) — Explore the x402 ecosystem of partners and integrations
-- [GitHub](https://github.com/coinbase/x402) — Open source repository
-- [Writing](https://x402.org/writing) — Protocol articles and updates
-- [Whitepaper](https://x402.org/x402-whitepaper.pdf) — Technical specification
 `;
 
 export const proxy = async (req: NextRequest) => {

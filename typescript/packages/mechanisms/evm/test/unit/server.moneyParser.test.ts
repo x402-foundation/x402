@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ExactEvmScheme } from "../../src/exact/server/scheme";
 import { MoneyParser } from "@x402/core/types";
+import { convertToTokenAmount } from "@x402/core/utils";
 
 // Base mainnet USDC address
 const BASE_MAINNET_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -14,9 +15,9 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
 
       const customParser: MoneyParser = async (amount, _network) => {
         // Custom logic: use DAI for large amounts
-        if (amount > 100) {
+        if (Number(amount) > 100) {
           return {
-            amount: (amount * 1e18).toString(),
+            amount: convertToTokenAmount(String(amount), 18),
             asset: "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
             extra: { token: "DAI", tier: "large" },
           };
@@ -38,9 +39,9 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result2.amount).toBe("50000000"); // 50 * 1e6
     });
 
-    it("should receive decimal number, not raw string", async () => {
+    it("should receive a decimal string, not the raw money input", async () => {
       const server = new ExactEvmScheme();
-      let receivedAmount: number | null = null;
+      let receivedAmount: string | number | null = null;
       let receivedNetwork: string | null = null;
 
       server.registerMoneyParser(async (amount, network) => {
@@ -50,19 +51,19 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       });
 
       await server.parsePrice("$1.50", "eip155:8453");
-      expect(receivedAmount).toBe(1.5);
+      expect(receivedAmount).toBe("1.50");
       expect(receivedNetwork).toBe("eip155:8453");
 
       await server.parsePrice("5.25", "eip155:8453");
-      expect(receivedAmount).toBe(5.25);
+      expect(receivedAmount).toBe("5.25");
 
       await server.parsePrice(10.99, "eip155:8453");
-      expect(receivedAmount).toBe(10.99);
+      expect(receivedAmount).toBe("10.99");
     });
 
     it("should handle $ prefix removal before parsing", async () => {
       const server = new ExactEvmScheme();
-      let receivedAmount: number | null = null;
+      let receivedAmount: string | number | null = null;
 
       server.registerMoneyParser(async amount => {
         receivedAmount = amount;
@@ -70,7 +71,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       });
 
       await server.parsePrice("$25.50", "eip155:8453");
-      expect(receivedAmount).toBe(25.5); // $ removed
+      expect(receivedAmount).toBe("25.50"); // $ removed
     });
 
     it("should not call parser for AssetAmount (pass-through)", async () => {
@@ -102,7 +103,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         await new Promise(resolve => setTimeout(resolve, 5));
 
         return {
-          amount: (amount * 1e6).toString(),
+          amount: convertToTokenAmount(String(amount), 6),
           asset: BASE_MAINNET_USDC,
           extra: { async: true, timestamp: Date.now() },
         };
@@ -151,12 +152,26 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result.asset).toBe("0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7");
     });
 
-    it("should throw when price is too small to represent in the token's precision", async () => {
+    it("keeps 18-decimal MegaUSD exact for a high-precision string price", async () => {
       const server = new ExactEvmScheme();
-      // USDC has 6 decimals: $0.00000001 = 1e-8 * 1e6 = 0.01 → rounds to 0 → must throw
-      await expect(server.parsePrice("$0.00000001", "eip155:8453")).rejects.toThrow("too small");
-      // Also throws when passed as a number
-      await expect(server.parsePrice(0.00000001, "eip155:8453")).rejects.toThrow("too small");
+      const result = await server.parsePrice("8975.978289462729", "eip155:4326");
+      expect(result.amount).toBe("8975978289462729000000");
+    });
+
+    it("truncates extra fractional digits on 6-decimal Base USDC", async () => {
+      const server = new ExactEvmScheme();
+      const result = await server.parsePrice("8975.978289462729", "eip155:8453");
+      expect(result.amount).toBe("8975978289");
+    });
+
+    it("truncates a price smaller than one atomic unit to 0", async () => {
+      const server = new ExactEvmScheme();
+      await expect(server.parsePrice("$0.00000001", "eip155:8453")).resolves.toMatchObject({
+        amount: "0",
+      });
+      await expect(server.parsePrice(0.00000001, "eip155:8453")).resolves.toMatchObject({
+        amount: "0",
+      });
     });
   });
 
@@ -168,12 +183,12 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       server
         .registerMoneyParser(async amount => {
           executionOrder.push(1);
-          if (amount > 1000) return { amount: "1", asset: "Parser1", extra: {} };
+          if (Number(amount) > 1000) return { amount: "1", asset: "Parser1", extra: {} };
           return null;
         })
         .registerMoneyParser(async amount => {
           executionOrder.push(2);
-          if (amount > 100) return { amount: "2", asset: "Parser2", extra: {} };
+          if (Number(amount) > 100) return { amount: "2", asset: "Parser2", extra: {} };
           return null;
         })
         .registerMoneyParser(async _amount => {
@@ -232,12 +247,12 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         .registerMoneyParser(async amount => {
           // Async parser
           await Promise.resolve();
-          if (amount > 1000) return { amount: "async", asset: "0xAsync", extra: {} };
+          if (Number(amount) > 1000) return { amount: "async", asset: "0xAsync", extra: {} };
           return null;
         })
         .registerMoneyParser(async amount => {
           // Also async (all parsers are Promise-based)
-          if (amount > 100) return { amount: "sync", asset: "0xSync", extra: {} };
+          if (Number(amount) > 100) return { amount: "sync", asset: "0xSync", extra: {} };
           return null;
         });
 
@@ -278,6 +293,23 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       );
     });
 
+    it("should reject negative amounts before custom parsers run", async () => {
+      const server = new ExactEvmScheme();
+      let parserCalled = false;
+      server.registerMoneyParser(async () => {
+        parserCalled = true;
+        return null;
+      });
+
+      await expect(server.parsePrice(-5, "eip155:8453")).rejects.toThrow(
+        "Invalid money format: -5",
+      );
+      await expect(server.parsePrice("-1.50", "eip155:8453")).rejects.toThrow(
+        "Invalid money format",
+      );
+      expect(parserCalled).toBe(false);
+    });
+
     it("should throw from second parser if first returns null", async () => {
       const server = new ExactEvmScheme();
 
@@ -296,14 +328,14 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       const server = new ExactEvmScheme();
 
       server.registerMoneyParser(async amount => {
-        if (amount < 0) {
-          throw new Error("Negative amounts not allowed");
+        if (Number(amount) > 100) {
+          throw new Error("Amount too large for custom parser");
         }
         return { amount: "1", asset: "0xTest", extra: {} };
       });
 
-      await expect(async () => await server.parsePrice(-5, "eip155:8453")).rejects.toThrow(
-        "Negative amounts not allowed",
+      await expect(async () => await server.parsePrice(150, "eip155:8453")).rejects.toThrow(
+        "Amount too large for custom parser",
       );
     });
   });
@@ -313,18 +345,18 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       const server = new ExactEvmScheme();
 
       server.registerMoneyParser(async (amount, _network) => {
-        if (amount > 10000) {
+        if (Number(amount) > 10000) {
           // VIP tier: use DAI (18 decimals)
           return {
-            amount: (amount * 1e18).toString(),
+            amount: convertToTokenAmount(String(amount), 18),
             asset: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             extra: { tier: "vip", token: "DAI" },
           };
         }
-        if (amount > 1000) {
+        if (Number(amount) > 1000) {
           // Premium tier: use custom token
           return {
-            amount: (amount * 1e6).toString(),
+            amount: convertToTokenAmount(String(amount), 6),
             asset: "0xPremiumToken",
             extra: { tier: "premium", token: "PREMIUM" },
           };
@@ -353,7 +385,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       const mockExchangeRate = 1.02; // 1 USD = 1.02 USDC
 
       server.registerMoneyParser(async (amount, _network) => {
-        const usdcAmount = amount * mockExchangeRate;
+        const usdcAmount = Number(amount) * mockExchangeRate;
         return {
           amount: Math.floor(usdcAmount * 1e6).toString(),
           asset: BASE_MAINNET_USDC,
@@ -370,7 +402,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       // 100 USD * 1.02 = 102 USDC
       expect(result.amount).toBe("102000000"); // 102 * 1e6
       expect(result.extra?.exchangeRate).toBe(1.02);
-      expect(result.extra?.originalAmount).toBe(100);
+      expect(result.extra?.originalAmount).toBe("100");
       expect(result.extra?.convertedAmount).toBe(102);
     });
 
@@ -379,17 +411,17 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
 
       server.registerMoneyParser(async (amount, _network) => {
         // Micro-payments: use WETH
-        if (amount > 0.001 && amount < 1) {
+        if (Number(amount) > 0.001 && Number(amount) < 1) {
           return {
-            amount: (amount * 1e18).toString(),
+            amount: convertToTokenAmount(String(amount), 18),
             asset: "0x4200000000000000000000000000000000000006", // WETH on Base
             extra: { token: "WETH", category: "micro" },
           };
         }
         // Everything else: use USDC
-        if (amount >= 1) {
+        if (Number(amount) >= 1) {
           return {
-            amount: (amount * 1e6).toString(),
+            amount: convertToTokenAmount(String(amount), 6),
             asset: BASE_MAINNET_USDC,
             extra: { token: "USDC", category: "standard" },
           };
@@ -414,7 +446,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         if (network === "eip155:84532") {
           // Base Sepolia: use testnet USDC
           return {
-            amount: (amount * 1e6).toString(),
+            amount: convertToTokenAmount(String(amount), 6),
             asset: BASE_SEPOLIA_USDC,
             extra: { network: "base-sepolia", token: "USDC-TEST" },
           };
@@ -423,7 +455,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         // Base mainnet: use mainnet USDC
         if (network === "eip155:8453") {
           return {
-            amount: (amount * 1e6).toString(),
+            amount: convertToTokenAmount(String(amount), 6),
             asset: BASE_MAINNET_USDC,
             extra: { network: "base", token: "USDC" },
           };
@@ -450,12 +482,12 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       server
         .registerMoneyParser(async amount => {
           executionOrder.push(1);
-          if (amount > 1000) return { amount: "1", asset: "0xParser1", extra: {} };
+          if (Number(amount) > 1000) return { amount: "1", asset: "0xParser1", extra: {} };
           return null;
         })
         .registerMoneyParser(async amount => {
           executionOrder.push(2);
-          if (amount > 100) return { amount: "2", asset: "0xParser2", extra: {} };
+          if (Number(amount) > 100) return { amount: "2", asset: "0xParser2", extra: {} };
           return null;
         })
         .registerMoneyParser(async _amount => {
@@ -513,9 +545,9 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       server
         // Tier 1: Very large amounts (>$10k) → DAI
         .registerMoneyParser(async amount => {
-          if (amount > 10000) {
+          if (Number(amount) > 10000) {
             return {
-              amount: (amount * 1e18).toString(),
+              amount: convertToTokenAmount(String(amount), 18),
               asset: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
               extra: { tier: 1, token: "DAI" },
             };
@@ -524,9 +556,9 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         // Tier 2: Large amounts ($1k-$10k) → USDT
         .registerMoneyParser(async amount => {
-          if (amount >= 1000 && amount <= 10000) {
+          if (Number(amount) >= 1000 && Number(amount) <= 10000) {
             return {
-              amount: (amount * 1e6).toString(),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
               extra: { tier: 2, token: "USDT" },
             };
@@ -535,9 +567,9 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         // Tier 3: Medium amounts ($100-$1k) → USDC
         .registerMoneyParser(async amount => {
-          if (amount >= 100 && amount < 1000) {
+          if (Number(amount) >= 100 && Number(amount) < 1000) {
             return {
-              amount: (amount * 1e6).toString(),
+              amount: convertToTokenAmount(String(amount), 6),
               asset: BASE_MAINNET_USDC,
               extra: { tier: 3, token: "USDC" },
             };
@@ -609,7 +641,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
 
     it("should work with all Money formats", async () => {
       const server = new ExactEvmScheme();
-      const callLog: Array<{ amount: number; format: string }> = [];
+      const callLog: Array<{ amount: string | number; format: string }> = [];
 
       server.registerMoneyParser(async amount => {
         callLog.push({ amount, format: typeof amount });
@@ -621,18 +653,18 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       await server.parsePrice(42.25, "eip155:8453");
 
       expect(callLog).toHaveLength(3);
-      expect(callLog[0].amount).toBe(10.5);
-      expect(callLog[1].amount).toBe(25.75);
-      expect(callLog[2].amount).toBe(42.25);
+      expect(callLog[0].amount).toBe("10.50");
+      expect(callLog[1].amount).toBe("25.75");
+      expect(callLog[2].amount).toBe("42.25");
       // All should be numbers
-      callLog.forEach(log => expect(log.format).toBe("number"));
+      callLog.forEach(log => expect(log.format).toBe("string"));
     });
   });
 
   describe("Edge cases", () => {
     it("should handle zero amounts", async () => {
       const server = new ExactEvmScheme();
-      let receivedAmount: number | null = null;
+      let receivedAmount: string | number | null = null;
 
       server.registerMoneyParser(async amount => {
         receivedAmount = amount;
@@ -640,12 +672,12 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       });
 
       await server.parsePrice(0, "eip155:8453");
-      expect(receivedAmount).toBe(0);
+      expect(receivedAmount).toBe("0");
     });
 
     it("should handle very small decimal amounts", async () => {
       const server = new ExactEvmScheme();
-      let receivedAmount: number | null = null;
+      let receivedAmount: string | number | null = null;
 
       server.registerMoneyParser(async amount => {
         receivedAmount = amount;
@@ -653,12 +685,12 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       });
 
       await server.parsePrice(0.000001, "eip155:8453");
-      expect(receivedAmount).toBe(0.000001);
+      expect(receivedAmount).toBe("0.000001");
     });
 
     it("should handle very large amounts", async () => {
       const server = new ExactEvmScheme();
-      let receivedAmount: number | null = null;
+      let receivedAmount: string | number | null = null;
 
       server.registerMoneyParser(async amount => {
         receivedAmount = amount;
@@ -666,7 +698,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       });
 
       await server.parsePrice(999999999.99, "eip155:8453");
-      expect(receivedAmount).toBe(999999999.99);
+      expect(receivedAmount).toBe("999999999.99");
     });
 
     it("should handle decimal precision correctly", async () => {
@@ -675,14 +707,14 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       server.registerMoneyParser(async amount => {
         // Return amount with high precision
         return {
-          amount: Math.floor(amount * 1e6).toString(),
+          amount: convertToTokenAmount(String(amount), 6),
           asset: "0xTest",
           extra: { originalDecimal: amount },
         };
       });
 
       const result = await server.parsePrice(1.123456789, "eip155:8453");
-      expect(result.extra?.originalDecimal).toBe(1.123456789);
+      expect(result.extra?.originalDecimal).toBe("1.123456789");
       expect(result.amount).toBe("1123456"); // Floored to 6 decimals
     });
   });

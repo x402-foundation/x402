@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // MCPCaller is the interface for making MCP tool calls.
@@ -27,7 +28,9 @@ type X402MCPClient struct {
 	onAfterPay    AfterPaymentHook
 }
 
-// NewX402MCPClient creates an x402-aware MCP client.
+// NewX402MCPClient creates an x402-aware MCP client wrapping an existing payment client.
+// Configure spend controls on paymentClient (SetSpendControls / DisableSpendControls)
+// before wrapping; this constructor does not change them.
 func NewX402MCPClient(caller MCPCaller, paymentClient *x402.X402Client, options Options) *X402MCPClient {
 	return &X402MCPClient{
 		caller:        caller,
@@ -37,6 +40,8 @@ func NewX402MCPClient(caller MCPCaller, paymentClient *x402.X402Client, options 
 }
 
 // NewX402MCPClientFromConfig creates an x402-aware MCP client from scheme registrations.
+// The constructed payment client uses the default $1 cap and default-asset allowlist.
+// For custom spend controls, configure an *x402.X402Client and pass it to NewX402MCPClient.
 func NewX402MCPClientFromConfig(caller MCPCaller, schemes []SchemeRegistration, options Options) *X402MCPClient {
 	paymentClient := x402.Newx402Client()
 	for _, reg := range schemes {
@@ -85,7 +90,10 @@ func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[stri
 		Arguments: args,
 	}
 
-	result, err := c.caller.CallTool(ctx, params)
+	probeCtx, probeCancel := withTimeoutIfNone(ctx, c.probeTimeout())
+	defer probeCancel()
+
+	result, err := c.caller.CallTool(probeCtx, params)
 	if err != nil {
 		return nil, fmt.Errorf("tool call failed: %w", err)
 	}
@@ -96,6 +104,10 @@ func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[stri
 
 	paymentRequired := extractPaymentRequired(result)
 	if paymentRequired == nil || len(paymentRequired.Accepts) == 0 {
+		// No v2 requirement — try v1 (e.g. a Bazaar proxy bridging a legacy v1 service).
+		if prV1 := extractPaymentRequiredV1(result); prV1 != nil && len(prV1.Accepts) > 0 {
+			return c.callToolWithV1Payment(ctx, name, args, prV1)
+		}
 		return buildMCPToolCallResultFromSDK(result, false), nil
 	}
 
@@ -161,9 +173,15 @@ func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[stri
 		}
 	}
 
+	// Select a supported requirement via the policy-aware selector
+	selected, err := c.paymentClient.SelectPaymentRequirements(paymentRequired.Accepts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select payment requirements: %w", err)
+	}
+
 	payload, err := c.paymentClient.CreatePaymentPayload(
-		ctx,
-		paymentRequired.Accepts[0],
+		x402.WithPaymentRequired(ctx, *paymentRequired),
+		selected,
 		paymentRequired.Resource,
 		paymentRequired.Extensions,
 	)
@@ -186,7 +204,11 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 		Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: payload},
 	}
 
-	result, err := c.caller.CallTool(ctx, params)
+	timeoutSeconds := payload.Accepted.MaxTimeoutSeconds
+	paidCtx, paidCancel := withTimeoutIfNone(ctx, c.paidTimeout(timeoutSeconds))
+	defer paidCancel()
+
+	result, err := c.caller.CallTool(paidCtx, params)
 	if err != nil {
 		return nil, fmt.Errorf("paid tool call failed: %w", err)
 	}
@@ -199,6 +221,192 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 		_ = c.onAfterPay(AfterPaymentContext{
 			ToolName:       name,
 			PaymentPayload: payload,
+			Result:         mcpResult,
+			SettleResponse: paymentResponse,
+		})
+	}
+
+	var paymentRequired *types.PaymentRequired
+	if paymentResponse == nil && result.IsError {
+		paymentRequired = extractPaymentRequired(result)
+	}
+
+	recovered, err := c.handlePaidToolPaymentResponse(ctx, payload, paymentResponse, paymentRequired)
+	if err != nil {
+		return nil, err
+	}
+
+	if recovered && paymentRequired != nil {
+		freshPayload, err := c.paymentClient.CreatePaymentPayload(
+			x402.WithPaymentRequired(ctx, *paymentRequired),
+			payload.Accepted,
+			paymentRequired.Resource,
+			paymentRequired.Extensions,
+		)
+		if err != nil {
+			return buildMCPToolCallResultFromSDK(result, true), nil
+		}
+
+		retryParams := &mcp.CallToolParams{
+			Name:      name,
+			Arguments: args,
+			Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: freshPayload},
+		}
+		retryTimeout := freshPayload.Accepted.MaxTimeoutSeconds
+		retryCtx, retryCancel := withTimeoutIfNone(ctx, c.paidTimeout(retryTimeout))
+		defer retryCancel()
+
+		retryResult, err := c.caller.CallTool(retryCtx, retryParams)
+		if err != nil {
+			return nil, fmt.Errorf("paid tool call failed: %w", err)
+		}
+
+		retryPaymentResponse := extractPaymentResponseFromSDK(retryResult)
+		if c.onAfterPay != nil && retryPaymentResponse != nil {
+			mcpResult := callToolResultToMCPToolResult(retryResult)
+			_ = c.onAfterPay(AfterPaymentContext{
+				ToolName:       name,
+				PaymentPayload: freshPayload,
+				Result:         mcpResult,
+				SettleResponse: retryPaymentResponse,
+			})
+		}
+
+		var retryPaymentRequired *types.PaymentRequired
+		if retryPaymentResponse == nil && retryResult.IsError {
+			retryPaymentRequired = extractPaymentRequired(retryResult)
+		}
+		if _, err := c.handlePaidToolPaymentResponse(ctx, freshPayload, retryPaymentResponse, retryPaymentRequired); err != nil {
+			return nil, err
+		}
+
+		return buildMCPToolCallResultFromSDK(retryResult, true), nil
+	}
+
+	return buildMCPToolCallResultFromSDK(result, true), nil
+}
+
+func (c *X402MCPClient) handlePaidToolPaymentResponse(
+	ctx context.Context,
+	payload types.PaymentPayload,
+	settleResponse *x402.SettleResponse,
+	paymentRequired *types.PaymentRequired,
+) (bool, error) {
+	if settleResponse == nil && paymentRequired == nil {
+		return false, nil
+	}
+
+	prCtx := x402.PaymentResponseContext{
+		PaymentPayload:  payload,
+		Requirements:    payload.Accepted,
+		SettleResponse:  settleResponse,
+		PaymentRequired: paymentRequired,
+	}
+	result, err := c.paymentClient.HandlePaymentResponse(ctx, prCtx)
+	if err != nil {
+		return false, err
+	}
+	return result.Recovered, nil
+}
+
+// callToolWithV1Payment handles the x402 v1 payment flow (legacy). v1 PaymentRequired
+// has no `accepted` wrapper and uses maxAmountRequired / legacy network names; the v1
+// scheme registered via RegisterV1 signs it. Hooks receive a v2-shaped view for approval.
+func (c *X402MCPClient) callToolWithV1Payment(
+	ctx context.Context,
+	name string,
+	args map[string]interface{},
+	paymentRequired *types.PaymentRequiredV1,
+) (*MCPToolCallResult, error) {
+	view := paymentRequiredV1ToView(paymentRequired)
+	prCtx := PaymentRequiredContext{
+		ToolName:        name,
+		Arguments:       args,
+		PaymentRequired: view,
+	}
+	paymentErr := func(msg string) *PaymentRequiredError {
+		return &PaymentRequiredError{Code: MCP_PAYMENT_REQUIRED_CODE, Message: msg, PaymentRequired: &view}
+	}
+
+	autoPayment := true
+	if c.options.AutoPayment != nil {
+		autoPayment = *c.options.AutoPayment
+	}
+
+	// OnPaymentRequired hook - can abort (a v2 payment override can't satisfy v1, so it's ignored).
+	if c.onPaymentReq != nil {
+		hookResult, err := c.onPaymentReq(prCtx)
+		if err != nil {
+			return nil, fmt.Errorf("payment required hook error: %w", err)
+		}
+		if hookResult != nil && hookResult.Abort {
+			return nil, paymentErr("Payment required")
+		}
+	}
+
+	if !autoPayment {
+		return nil, paymentErr("Payment required")
+	}
+
+	// OnPaymentRequested - can approve/deny
+	if c.options.OnPaymentRequested != nil {
+		ok, err := c.options.OnPaymentRequested(prCtx)
+		if err != nil {
+			return nil, fmt.Errorf("payment requested hook error: %w", err)
+		}
+		if !ok {
+			return nil, paymentErr("Payment denied by user")
+		}
+	}
+
+	// OnBeforePayment hook
+	if c.onBeforePay != nil {
+		if err := c.onBeforePay(prCtx); err != nil {
+			return nil, fmt.Errorf("before payment hook error: %w", err)
+		}
+	}
+
+	selected, err := c.paymentClient.SelectPaymentRequirementsV1(paymentRequired.Accepts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select v1 payment requirements: %w", err)
+	}
+
+	payload, err := c.paymentClient.CreatePaymentPayloadV1(ctx, selected)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create v1 payment: %w", err)
+	}
+
+	paidCtx, paidCancel := withTimeoutIfNone(ctx, c.paidTimeout(selected.MaxTimeoutSeconds))
+	defer paidCancel()
+
+	return c.callToolWithPayloadV1(paidCtx, name, args, payload)
+}
+
+// callToolWithPayloadV1 retries a tool call with a v1 payment attached in _meta.
+func (c *X402MCPClient) callToolWithPayloadV1(ctx context.Context, name string, args map[string]interface{}, payload types.PaymentPayloadV1) (*MCPToolCallResult, error) {
+	params := &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+		Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: payload},
+	}
+
+	result, err := c.caller.CallTool(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("paid tool call failed: %w", err)
+	}
+
+	paymentResponse := extractPaymentResponseFromSDK(result)
+
+	// OnAfterPayment hook (v2-typed; project the v1 payload into a v2-shaped view).
+	if c.onAfterPay != nil && paymentResponse != nil {
+		mcpResult := callToolResultToMCPToolResult(result)
+		_ = c.onAfterPay(AfterPaymentContext{
+			ToolName: name,
+			PaymentPayload: types.PaymentPayload{
+				X402Version: 1,
+				Payload:     payload.Payload,
+				Accepted:    types.PaymentRequirements{Scheme: payload.Scheme, Network: payload.Network},
+			},
 			Result:         mcpResult,
 			SettleResponse: paymentResponse,
 		})
@@ -345,20 +553,41 @@ func CallPaidTool(
 		return buildResult(result, false), nil
 	}
 
-	// Try to extract payment required from error content
+	// Try to extract payment required from error content (v2 first, then v1).
 	paymentRequired := extractPaymentRequired(result)
-	if paymentRequired == nil {
-		return buildResult(result, false), nil
+	if paymentRequired == nil || len(paymentRequired.Accepts) == 0 {
+		// v1 fallback (e.g. a Bazaar proxy bridging a legacy v1 service).
+		prV1 := extractPaymentRequiredV1(result)
+		if prV1 == nil || len(prV1.Accepts) == 0 {
+			return buildResult(result, false), nil
+		}
+
+		selected, err := x402Client.SelectPaymentRequirementsV1(prV1.Accepts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to select v1 payment requirements: %w", err)
+		}
+		payloadV1, err := x402Client.CreatePaymentPayloadV1(ctx, selected)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create v1 payment: %w", err)
+		}
+
+		params.Meta = mcp.Meta{PaymentMetaKey: payloadV1}
+		result, err = mcpClient.CallTool(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("paid tool call failed: %w", err)
+		}
+		return buildResult(result, true), nil
 	}
 
-	if len(paymentRequired.Accepts) == 0 {
-		return buildResult(result, false), nil
+	// Select a supported requirement via the policy-aware selector
+	selected, err := x402Client.SelectPaymentRequirements(paymentRequired.Accepts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select payment requirements: %w", err)
 	}
 
-	// Create payment payload using the first requirement
 	paymentPayload, err := x402Client.CreatePaymentPayload(
-		ctx,
-		paymentRequired.Accepts[0],
+		x402.WithPaymentRequired(ctx, *paymentRequired),
+		selected,
 		paymentRequired.Resource,
 		paymentRequired.Extensions,
 	)
@@ -404,69 +633,77 @@ func buildResult(result *mcp.CallToolResult, paymentMade bool) *ToolCallResult {
 	}
 }
 
-// extractPaymentRequired extracts PaymentRequired from an error result.
-// Prefers structuredContent (per spec), falls back to parsing content[0].text.
+// extractPaymentRequired extracts a v2 PaymentRequired from an error result.
+// Returns nil for v1 responses (use extractPaymentRequiredV1) or non-payment results.
 func extractPaymentRequired(result *mcp.CallToolResult) *types.PaymentRequired {
-	// Preferred path: check structuredContent first (per MCP x402 spec)
+	obj := paymentRequiredObject(result)
+	if obj == nil || paymentRequiredVersion(obj) != 2 {
+		return nil
+	}
+	return unmarshalPaymentRequired(obj)
+}
+
+// extractPaymentRequiredV1 extracts a v1 PaymentRequired from an error result.
+// Returns nil for v2 responses or non-payment results. v1 is what a Bazaar proxy
+// surfaces when it bridges a legacy v1 HTTP service into an MCP proxy tool call.
+func extractPaymentRequiredV1(result *mcp.CallToolResult) *types.PaymentRequiredV1 {
+	obj := paymentRequiredObject(result)
+	if obj == nil || paymentRequiredVersion(obj) != 1 {
+		return nil
+	}
+	return unmarshalPaymentRequiredV1(obj)
+}
+
+// paymentRequiredObject returns the payment-required JSON object from a result,
+// preferring structuredContent (per spec), then content[0].text. It requires an
+// "accepts" array and an "x402Version" field; returns nil otherwise.
+func paymentRequiredObject(result *mcp.CallToolResult) map[string]any {
 	if result.StructuredContent != nil {
-		if sc, ok := result.StructuredContent.(map[string]any); ok {
-			if _, hasAccepts := sc["accepts"]; hasAccepts {
-				if version, hasVersion := sc["x402Version"]; hasVersion {
-					// Validate x402Version is present and numeric
-					switch v := version.(type) {
-					case float64:
-						if v >= 1 {
-							return unmarshalPaymentRequired(sc)
-						}
-					case int:
-						if v >= 1 {
-							return unmarshalPaymentRequired(sc)
-						}
-					}
-				}
-			}
+		if sc, ok := result.StructuredContent.(map[string]any); ok && isPaymentRequiredObject(sc) {
+			return sc
 		}
 	}
-
-	// Fallback: parse content[].text as JSON
 	for _, content := range result.Content {
 		textContent, ok := content.(*mcp.TextContent)
 		if !ok {
 			continue
 		}
-
-		pr := tryParsePaymentRequired(textContent.Text)
-		if pr != nil {
-			return pr
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(textContent.Text), &parsed); err != nil {
+			continue
+		}
+		if isPaymentRequiredObject(parsed) {
+			return parsed
 		}
 	}
 	return nil
 }
 
-// tryParsePaymentRequired attempts to parse text as a PaymentRequired response.
-// Validates that x402Version and accepts are present.
-func tryParsePaymentRequired(text string) *types.PaymentRequired {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return nil
+// isPaymentRequiredObject reports whether obj looks like an x402 payment-required
+// (has both "accepts" and "x402Version").
+func isPaymentRequiredObject(obj map[string]any) bool {
+	if _, hasAccepts := obj["accepts"]; !hasAccepts {
+		return false
 	}
-
-	// Require both "accepts" and "x402Version"
-	if _, hasAccepts := parsed["accepts"]; !hasAccepts {
-		return nil
-	}
-	if _, hasVersion := parsed["x402Version"]; !hasVersion {
-		return nil
-	}
-
-	var pr types.PaymentRequired
-	if err := json.Unmarshal([]byte(text), &pr); err != nil {
-		return nil
-	}
-	return &pr
+	_, hasVersion := obj["x402Version"]
+	return hasVersion
 }
 
-// unmarshalPaymentRequired converts a map to PaymentRequired via JSON roundtrip.
+// paymentRequiredVersion reads the numeric x402Version (0 if unparseable).
+func paymentRequiredVersion(obj map[string]any) int {
+	switch v := obj["x402Version"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	}
+	return 0
+}
+
+// unmarshalPaymentRequired converts a map to a v2 PaymentRequired via JSON roundtrip.
 func unmarshalPaymentRequired(data map[string]any) *types.PaymentRequired {
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -477,4 +714,97 @@ func unmarshalPaymentRequired(data map[string]any) *types.PaymentRequired {
 		return nil
 	}
 	return &pr
+}
+
+// unmarshalPaymentRequiredV1 converts a map to a v1 PaymentRequired via JSON roundtrip.
+func unmarshalPaymentRequiredV1(data map[string]any) *types.PaymentRequiredV1 {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	var pr types.PaymentRequiredV1
+	if err := json.Unmarshal(bytes, &pr); err != nil {
+		return nil
+	}
+	return &pr
+}
+
+// paymentRequiredV1ToView projects a v1 PaymentRequired into the v2-shaped
+// types.PaymentRequired used by the (v2-typed) hook contexts. This is informational
+// only — signing always uses the original v1 requirement via CreatePaymentPayloadV1.
+func paymentRequiredV1ToView(pr *types.PaymentRequiredV1) types.PaymentRequired {
+	accepts := make([]types.PaymentRequirements, 0, len(pr.Accepts))
+	for _, r := range pr.Accepts {
+		accepts = append(accepts, types.PaymentRequirements{
+			Scheme:            r.Scheme,
+			Network:           r.Network,
+			Asset:             r.Asset,
+			Amount:            r.MaxAmountRequired,
+			PayTo:             r.PayTo,
+			MaxTimeoutSeconds: r.MaxTimeoutSeconds,
+			Extra:             r.GetExtra(),
+		})
+	}
+	return types.PaymentRequired{X402Version: 1, Error: pr.Error, Accepts: accepts}
+}
+
+// withTimeoutIfNone adds a deadline only when ctx has none.
+func withTimeoutIfNone(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+const (
+	defaultProbeTimeoutSeconds  = 300
+	defaultAcceptTimeoutSeconds = 300
+	defaultMaxRequestTimeout    = 10 * time.Minute
+	maxTimerSafeDuration        = time.Duration(1<<31-1) * time.Millisecond
+)
+
+func (c *X402MCPClient) maxRequestTimeout() time.Duration {
+	if c.options.MaxRequestTimeout <= 0 {
+		return defaultMaxRequestTimeout
+	}
+	return c.options.MaxRequestTimeout
+}
+
+func (c *X402MCPClient) capSeconds() int {
+	sec := int(c.maxRequestTimeout() / time.Second)
+	if sec <= 0 {
+		sec = int(defaultMaxRequestTimeout / time.Second)
+	}
+	return sec
+}
+
+func clampTimerSafeDuration(d time.Duration) time.Duration {
+	if d > maxTimerSafeDuration {
+		return maxTimerSafeDuration
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+func (c *X402MCPClient) probeTimeout() time.Duration {
+	capSec := c.capSeconds()
+	probeSec := defaultProbeTimeoutSeconds
+	if probeSec > capSec {
+		probeSec = capSec
+	}
+	return clampTimerSafeDuration(time.Duration(probeSec) * time.Second)
+}
+
+func (c *X402MCPClient) paidTimeout(maxTimeoutSeconds int) time.Duration {
+	acceptSec := defaultAcceptTimeoutSeconds
+	if maxTimeoutSeconds > 0 {
+		acceptSec = maxTimeoutSeconds
+	}
+	capSec := c.capSeconds()
+	if acceptSec > capSec {
+		acceptSec = capSec
+	}
+	return clampTimerSafeDuration(time.Duration(acceptSec) * time.Second)
 }

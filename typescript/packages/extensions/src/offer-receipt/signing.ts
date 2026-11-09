@@ -41,36 +41,59 @@ import { extractPublicKeyFromKid } from "./did";
 /**
  * Canonicalize a JSON object using JCS (RFC 8785)
  *
- * Rules:
- * 1. Object keys are sorted lexicographically by UTF-16 code units
+ * Produces the same text as ECMAScript `JSON.stringify` with object keys
+ * sorted, which is what RFC 8785 specifies:
+ * 1. Object keys are sorted by UTF-16 code units
  * 2. No whitespace between tokens
- * 3. Numbers use shortest representation (no trailing zeros)
- * 4. Strings use minimal escaping
+ * 3. Numbers use ECMAScript Number-to-String (e.g. `1e+21`, `-0` → `0`); NaN/Infinity are rejected
+ * 4. Strings use `JSON.stringify` escaping (`\b \t \n \f \r \" \\`, other controls as `\u00xx`);
+ *    lone surrogates are rejected
  * 5. null, true, false are lowercase literals
+ *
+ * Like `JSON.stringify`, `toJSON` is honored, boxed primitives are unwrapped,
+ * undefined object members are omitted, and undefined or missing array
+ * elements become `null`. Values with no JSON representation (top-level
+ * undefined, functions, symbols, BigInt) are rejected.
  *
  * @param value - The object to canonicalize
  * @returns The canonicalized JSON string
  */
 export function canonicalize(value: unknown): string {
-  return serializeValue(value);
+  const result = serializeValue(value, "");
+  if (result === undefined) throw new Error("Cannot canonicalize undefined");
+  return result;
 }
 
 /**
  * Serialize a value to canonical JSON
  *
  * @param value - The value to serialize
- * @returns The serialized string
+ * @param key - The property key or array index holding the value (passed to `toJSON`)
+ * @returns The serialized string, or undefined when the value is undefined
  */
-function serializeValue(value: unknown): string {
+function serializeValue(value: unknown, key: string): string | undefined {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { toJSON?: unknown }).toJSON === "function"
+  ) {
+    value = (value as { toJSON: (key: string) => unknown }).toJSON(key);
+  }
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+    value = value.valueOf();
+  }
+
+  if (value === undefined) return undefined;
   if (value === null) return "null";
-  if (value === undefined) return "null";
 
   const type = typeof value;
   if (type === "boolean") return value ? "true" : "false";
   if (type === "number") return serializeNumber(value as number);
   if (type === "string") return serializeString(value as string);
   if (Array.isArray(value)) return serializeArray(value);
-  if (type === "object") return serializeObject(value as Record<string, unknown>);
+  if (type === "object" && !(value instanceof BigInt)) {
+    return serializeObject(value as Record<string, unknown>);
+  }
 
   throw new Error(`Cannot canonicalize value of type ${type}`);
 }
@@ -94,21 +117,21 @@ function serializeNumber(num: number): string {
  * @returns The serialized string with proper escaping
  */
 function serializeString(str: string): string {
-  let result = '"';
   for (let i = 0; i < str.length; i++) {
-    const char = str[i];
     const code = str.charCodeAt(i);
-    if (code < 0x20) {
-      result += "\\u" + code.toString(16).padStart(4, "0");
-    } else if (char === '"') {
-      result += '\\"';
-    } else if (char === "\\") {
-      result += "\\\\";
-    } else {
-      result += char;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      throw new Error(`Cannot canonicalize lone surrogate at index ${i}`);
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new Error(`Cannot canonicalize lone surrogate at index ${i}`);
     }
   }
-  return result + '"';
+  return JSON.stringify(str);
 }
 
 /**
@@ -118,7 +141,11 @@ function serializeString(str: string): string {
  * @returns The serialized string
  */
 function serializeArray(arr: unknown[]): string {
-  return "[" + arr.map(serializeValue).join(",") + "]";
+  const items: string[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    items.push(serializeValue(arr[i], String(i)) ?? "null");
+  }
+  return "[" + items.join(",") + "]";
 }
 
 /**
@@ -131,9 +158,9 @@ function serializeObject(obj: Record<string, unknown>): string {
   const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const pairs: string[] = [];
   for (const key of keys) {
-    const value = obj[key];
+    const value = serializeValue(obj[key], key);
     if (value !== undefined) {
-      pairs.push(serializeString(key) + ":" + serializeValue(value));
+      pairs.push(serializeString(key) + ":" + value);
     }
   }
   return "{" + pairs.join(",") + "}";

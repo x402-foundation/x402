@@ -19,8 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	svmmech "github.com/x402-foundation/x402/go/mechanisms/svm"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 const (
@@ -202,10 +202,12 @@ func (s *facilitatorEvmSigner) ReadContract(
 		return nil, fmt.Errorf("failed to pack method call: %w", err)
 	}
 
-	// Make the call
+	// Make the call. Set From to the facilitator address — required by the upto/exact
+	// proxies which enforce msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
 
 	msg := ethereum.CallMsg{
+		From: s.address,
 		To:   &to,
 		Data: data,
 	}
@@ -237,6 +239,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	contractAddress string,
 	abiJSON []byte,
 	method string,
+	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
 	// Parse ABI
@@ -250,6 +253,7 @@ func (s *facilitatorEvmSigner) WriteContract(
 	if err != nil {
 		return "", fmt.Errorf("failed to pack method call: %w", err)
 	}
+	data = evmmech.AppendDataSuffix(data, dataSuffix)
 
 	// Get nonce
 	nonce, err := s.client.PendingNonceAt(ctx, s.address)
@@ -470,19 +474,13 @@ func (s *facilitatorSvmSigner) SignTransaction(ctx context.Context, tx *solana.T
 	return nil
 }
 
-func (s *facilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string) error {
+func (s *facilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string, opts *svmmech.FacilitatorSimulateTransactionOptions) error {
 	rpcClient, err := s.getRPC(ctx, network)
 	if err != nil {
 		return err
 	}
 
-	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              true,
-		ReplaceRecentBlockhash: false,
-		Commitment:             svmmech.DefaultCommitment,
-	}
-
-	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, &opts)
+	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, svmmech.SimulationRPCOpts(opts))
 	if err != nil {
 		return fmt.Errorf("simulation failed: %w", err)
 	}
@@ -556,10 +554,46 @@ func (s *facilitatorSvmSigner) ConfirmTransaction(ctx context.Context, signature
 		}
 
 		// Wait before retrying
-		time.Sleep(svmmech.ConfirmRetryDelay)
+		delay := svmmech.ConfirmRetryDelay
+		if attempt < svmmech.ConfirmInitialAttempts {
+			delay = svmmech.ConfirmInitialRetryDelay
+		}
+		time.Sleep(delay)
 	}
 
 	return fmt.Errorf("transaction confirmation timed out after %d attempts", svmmech.MaxConfirmAttempts)
+}
+
+func (s *facilitatorSvmSigner) SimulateTransactionWithInnerInstructions(ctx context.Context, tx *solana.Transaction, network string) ([]rpc.InnerInstruction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.SimulateWithInnerInstructions(ctx, rpcClient, tx)
+}
+
+func (s *facilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx context.Context, signature solana.Signature, network string) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	return svmmech.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
+}
+
+func (s *facilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return 0, false, err
+	}
+	return svmmech.TokenAccountBalance(ctx, rpcClient, tokenAccount)
+}
+
+func (s *facilitatorSvmSigner) FetchAddressLookupTables(ctx context.Context, tables []solana.PublicKey, network string) (map[solana.PublicKey]solana.PublicKeySlice, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.AddressLookupTables(ctx, rpcClient, tables)
 }
 
 func (s *facilitatorSvmSigner) GetAddresses(ctx context.Context, network string) []solana.PublicKey {

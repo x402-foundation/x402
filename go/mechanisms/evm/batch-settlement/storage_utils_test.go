@@ -129,3 +129,26 @@ func TestWriteJSONAtomic_MarshalError(t *testing.T) {
 		t.Fatal("expected marshal error")
 	}
 }
+
+func TestResolveWithinDir_NormalJoin(t *testing.T) {
+	dir := t.TempDir()
+	got, err := ResolveWithinDir(dir, "0xabc.json")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := filepath.Join(dir, "0xabc.json")
+	absWant, _ := filepath.Abs(want)
+	if got != absWant {
+		t.Fatalf("got %s want %s", got, absWant)
+	}
+}
+
+func TestResolveWithinDir_RejectsEscape(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ResolveWithinDir(dir, "../outside.json"); err == nil {
+		t.Fatal("expected escape rejection")
+	}
+	if _, err := ResolveWithinDir(dir, filepath.Join("..", "etc", "passwd")); err == nil {
+		t.Fatal("expected nested escape rejection")
+	}
+}

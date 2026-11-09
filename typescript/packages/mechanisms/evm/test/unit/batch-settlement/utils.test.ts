@@ -1,21 +1,54 @@
-import { describe, it, expect } from "vitest";
-import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import { describe, it, expect, vi } from "vitest";
+import { concat, decodeAbiParameters, getAddress, slice } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  channelIdBindingError,
+  computeChannelId as computeChannelIdForNetwork,
+  isCanonicalChannelId,
+  normalizeChannelId,
+  normalizeChannelSalt,
+  packRefundAuthorizerSalt,
+  unpackRefundAuthorizer,
+  validateChannelConfig,
+  isOnchainStateFresh,
+} from "../../../src/batch-settlement/utils";
+import {
+  buildEip2612PermitData,
+  buildErc3009CollectorData,
+  buildErc3009DepositNonce,
+  buildPermit2CollectorData,
+} from "../../../src/batch-settlement/encoding";
 import {
   channelIdsEqual,
-  validateChannelConfig,
   erc3009AuthorizationTimeInvalidReason,
+  verifyBatchSettlementVoucherTypedData,
 } from "../../../src/batch-settlement/facilitator/utils";
+import type { FacilitatorEvmSigner } from "../../../src/signer";
 import {
   ErrChannelIdMismatch,
+  ErrInvalidChannelId,
   ErrReceiverMismatch,
   ErrReceiverAuthorizerMismatch,
+  ErrRefundPayload,
   ErrTokenMismatch,
   ErrWithdrawDelayMismatch,
   ErrWithdrawDelayOutOfRange,
   ErrValidAfterInFuture,
   ErrValidBeforeExpired,
 } from "../../../src/batch-settlement/errors";
-import { MIN_WITHDRAW_DELAY, MAX_WITHDRAW_DELAY } from "../../../src/batch-settlement/constants";
+import {
+  parseRefundSettlementSnapshot,
+  readChannelStateExtra,
+  readExtraNumber,
+  readExtraString,
+  readExtraUintString,
+} from "../../../src/batch-settlement/server/utils";
+import {
+  BATCH_SETTLEMENT_ADDRESS,
+  MIN_WITHDRAW_DELAY,
+  MAX_WITHDRAW_DELAY,
+} from "../../../src/batch-settlement/constants";
+import { getEvmChainId } from "../../../src/utils";
 import type { ChannelConfig } from "../../../src/batch-settlement/types";
 import type { PaymentRequirements } from "@x402/core/types";
 
@@ -48,6 +81,60 @@ function computeChannelId(
 ): `0x${string}` {
   return computeChannelIdForNetwork(config, network);
 }
+
+describe("getEvmChainId", () => {
+  it("parses eip155 chain ids and rejects other network formats", () => {
+    expect(getEvmChainId("eip155:84532")).toBe(84532);
+    expect(() => getEvmChainId("solana:mainnet")).toThrow(/Unsupported network format/);
+    expect(() => getEvmChainId("eip155:not-a-number")).toThrow(/Invalid CAIP-2 chain ID/);
+  });
+});
+
+describe("normalizeChannelSalt", () => {
+  const bytes32One = "0x0000000000000000000000000000000000000000000000000000000000000001" as const;
+
+  it("left-pads number, bigint, and short hex to the same bytes32", () => {
+    expect(normalizeChannelSalt(1)).toBe(bytes32One);
+    expect(normalizeChannelSalt(1n)).toBe(bytes32One);
+    expect(normalizeChannelSalt("0x1")).toBe(bytes32One);
+    expect(normalizeChannelSalt(bytes32One)).toBe(bytes32One);
+  });
+
+  it("rejects negative, non-integer, and oversized values", () => {
+    expect(() => normalizeChannelSalt(-1)).toThrow(/non-negative safe integer/);
+    expect(() => normalizeChannelSalt(1.5)).toThrow(/non-negative safe integer/);
+    expect(() => normalizeChannelSalt(-1n)).toThrow(/fits in 32 bytes/);
+    expect(() => normalizeChannelSalt((1n << 256n) as bigint)).toThrow(/fits in 32 bytes/);
+    expect(() => normalizeChannelSalt("0xzz")).toThrow(/0x-prefixed hex/);
+  });
+});
+
+describe("packRefundAuthorizerSalt", () => {
+  const refundAuthorizer = "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd" as `0x${string}`;
+
+  it("packs increment-style salts from the low 96 bits", () => {
+    const a = packRefundAuthorizerSalt(
+      "0x0000000000000000000000000000000000000000000000000000000000000011",
+      refundAuthorizer,
+    );
+    const b = packRefundAuthorizerSalt(
+      "0x0000000000000000000000000000000000000000000000000000000000000012",
+      refundAuthorizer,
+    );
+    expect(a).not.toBe(b);
+    expect(a).toBe(packRefundAuthorizerSalt("0x11", refundAuthorizer));
+    expect(unpackRefundAuthorizer(a)).toBe(getAddress(refundAuthorizer));
+    expect(unpackRefundAuthorizer(b)).toBe(getAddress(refundAuthorizer));
+  });
+
+  it("keeps the first 12 bytes when the high 12 are nonzero", () => {
+    const salt =
+      "0xabc1230000000000000000000000000000000000000000000000000000000099" as `0x${string}`;
+    expect(packRefundAuthorizerSalt(salt, refundAuthorizer)).toBe(
+      concat([slice(salt, 0, 12), getAddress(refundAuthorizer)]),
+    );
+  });
+});
 
 describe("computeChannelId", () => {
   it("is deterministic for identical configs", () => {
@@ -88,6 +175,96 @@ describe("computeChannelId", () => {
     const base = computeChannelId(BASE_CONFIG);
     const changed = computeChannelId({ ...BASE_CONFIG, ...override });
     expect(changed).not.toBe(base);
+  });
+});
+
+describe("isCanonicalChannelId", () => {
+  const valid = "0xABCdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789";
+
+  it("accepts a mixed-case 32-byte hex string", () => {
+    expect(isCanonicalChannelId(valid)).toBe(true);
+    expect(isCanonicalChannelId(valid.toLowerCase())).toBe(true);
+  });
+
+  it.each([
+    ["missing 0x prefix", valid.slice(2)],
+    ["too short", "0x1234"],
+    ["too long", `${valid}00`],
+    ["non-hex character", "0xZZZdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789"],
+    ["path traversal", "../../../etc/passwd"],
+    ["absolute path", "/etc/passwd"],
+    ["forward slash separator", `0x${"a".repeat(30)}/${"b".repeat(32)}`],
+    ["backslash separator", `0x${"a".repeat(30)}\\${"b".repeat(32)}`],
+    ["empty string", ""],
+  ])("rejects %s", (_label, value) => {
+    expect(isCanonicalChannelId(value)).toBe(false);
+  });
+
+  it("rejects non-string input", () => {
+    expect(isCanonicalChannelId(123)).toBe(false);
+    expect(isCanonicalChannelId(null)).toBe(false);
+    expect(isCanonicalChannelId(undefined)).toBe(false);
+    expect(isCanonicalChannelId({})).toBe(false);
+  });
+});
+
+describe("normalizeChannelId", () => {
+  it("lowercases a valid mixed-case id (round-trips valid ids unchanged in bytes)", () => {
+    const valid = "0xABCdef0123456789ABCDEF0123456789abcdef0123456789ABCdef0123456789";
+    expect(normalizeChannelId(valid)).toBe(valid.toLowerCase());
+    expect(normalizeChannelId(valid.toLowerCase())).toBe(valid.toLowerCase());
+  });
+
+  it.each([
+    ["../../../etc/passwd"],
+    ["/etc/passwd"],
+    ["0x1234"],
+    [""],
+    [`0x${"a".repeat(30)}/${"b".repeat(32)}`],
+    [`0x${"a".repeat(30)}\\${"b".repeat(32)}`],
+  ])("throws ErrInvalidChannelId for %s", value => {
+    expect(() => normalizeChannelId(value)).toThrow(ErrInvalidChannelId);
+  });
+});
+
+describe("isOnchainStateFresh", () => {
+  const now = 1_000_000;
+
+  it("is false when ttlMs is 0 even if the row was just synced", () => {
+    expect(isOnchainStateFresh({ onchainSyncedAt: now }, 0, now)).toBe(false);
+  });
+
+  it("is true when the sync is still inside a positive ttl", () => {
+    expect(isOnchainStateFresh({ onchainSyncedAt: now - 1_000 }, 5_000, now)).toBe(true);
+  });
+});
+
+describe("channelIdBindingError", () => {
+  it("returns undefined when the claimed id matches the config", () => {
+    const channelId = computeChannelId(BASE_CONFIG);
+    expect(
+      channelIdBindingError(BASE_CONFIG, channelId, BASE_REQUIREMENTS.network),
+    ).toBeUndefined();
+  });
+
+  it("accepts a mixed-case claimed id that matches the config", () => {
+    const channelId = computeChannelId(BASE_CONFIG);
+    const upper = channelId.toUpperCase().replace("0X", "0x");
+    expect(channelIdBindingError(BASE_CONFIG, upper, BASE_REQUIREMENTS.network)).toBeUndefined();
+  });
+
+  it("returns ErrInvalidChannelId for a malformed claimed id", () => {
+    expect(channelIdBindingError(BASE_CONFIG, "../../evil", BASE_REQUIREMENTS.network)).toBe(
+      ErrInvalidChannelId,
+    );
+  });
+
+  it("returns ErrChannelIdMismatch when the id does not match the config", () => {
+    const otherId =
+      "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`;
+    expect(channelIdBindingError(BASE_CONFIG, otherId, BASE_REQUIREMENTS.network)).toBe(
+      ErrChannelIdMismatch,
+    );
   });
 });
 
@@ -253,5 +430,305 @@ describe("erc3009AuthorizationTimeInvalidReason", () => {
     const va = now() - 60n;
     const vb = now() + 1n;
     expect(erc3009AuthorizationTimeInvalidReason(va, vb)).toBe(ErrValidBeforeExpired);
+  });
+});
+
+describe("batch-settlement encoding", () => {
+  const channelId =
+    "0x1111111111111111111111111111111111111111111111111111111111111111" as `0x${string}`;
+  const salt =
+    "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`;
+
+  it("binds ERC-3009 deposit nonce to channelId and salt", () => {
+    const a = buildErc3009DepositNonce(channelId, salt);
+    const b = buildErc3009DepositNonce(channelId, salt);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(
+      buildErc3009DepositNonce(
+        channelId,
+        "0x0000000000000000000000000000000000000000000000000000000000000003",
+      ),
+    ).not.toBe(a);
+  });
+
+  it("round-trips ERC-3009 collector data", () => {
+    const encoded = buildErc3009CollectorData("0", "999", salt, "0xabcd");
+    const [validAfter, validBefore, encodedSalt, signature] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }, { type: "bytes" }],
+      encoded,
+    );
+    expect(validAfter).toBe(0n);
+    expect(validBefore).toBe(999n);
+    expect(encodedSalt).toBe(BigInt(salt));
+    expect(signature).toBe("0xabcd");
+  });
+
+  it("encodes EIP-2612 permit data and nests it in Permit2 collector data", () => {
+    const r = ("0x" + "11".repeat(32)) as `0x${string}`;
+    const s = ("0x" + "22".repeat(32)) as `0x${string}`;
+    const permit = buildEip2612PermitData({
+      value: "1000",
+      deadline: "9",
+      v: 27,
+      r,
+      s,
+    });
+    const [value, deadline, v, encR, encS] = decodeAbiParameters(
+      [
+        { type: "uint256" },
+        { type: "uint256" },
+        { type: "uint8" },
+        { type: "bytes32" },
+        { type: "bytes32" },
+      ],
+      permit,
+    );
+    expect(value).toBe(1000n);
+    expect(deadline).toBe(9n);
+    expect(v).toBe(27);
+    expect(encR).toBe(r);
+    expect(encS).toBe(s);
+
+    const collector = buildPermit2CollectorData("3", "8", "0xeeee", permit);
+    const [nonce, permitDeadline, sig, nested] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "bytes" }, { type: "bytes" }],
+      collector,
+    );
+    expect(nonce).toBe(3n);
+    expect(permitDeadline).toBe(8n);
+    expect(sig).toBe("0xeeee");
+    expect(nested).toBe(permit);
+  });
+
+  it("defaults the EIP-2612 segment to empty bytes", () => {
+    const collector = buildPermit2CollectorData("1", "2", "0xaa");
+    const [, , , nested] = decodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }, { type: "bytes" }, { type: "bytes" }],
+      collector,
+    );
+    expect(nested).toBe("0x");
+  });
+});
+
+describe("server extra parsers", () => {
+  it("reads nested channelState and coerces mixed extra types", () => {
+    expect(readChannelStateExtra(undefined)).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: "nope" })).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: null })).toBeUndefined();
+    expect(readChannelStateExtra({ channelState: { balance: "1" } })).toEqual({ balance: "1" });
+
+    expect(readExtraString({ balance: "9" }, "balance", "0")).toBe("9");
+    expect(readExtraString({ balance: 12 }, "balance", "0")).toBe("12");
+    expect(readExtraString({ balance: true }, "balance", "0")).toBe("0");
+    expect(readExtraString(undefined, "balance", "0")).toBe("0");
+
+    expect(readExtraNumber({ refundNonce: 3 }, "refundNonce", 0)).toBe(3);
+    expect(readExtraNumber({ refundNonce: "8" }, "refundNonce", 0)).toBe(8);
+    expect(readExtraNumber({ refundNonce: "0" }, "refundNonce", 0)).toBe(0);
+    expect(readExtraNumber({ refundNonce: "0" }, "refundNonce", 4)).toBe(0);
+    expect(readExtraNumber({ refundNonce: "nope" }, "refundNonce", 4)).toBe(4);
+    expect(readExtraNumber({ refundNonce: true }, "refundNonce", 1)).toBe(1);
+  });
+
+  it("parses a refund snapshot from string or numeric extra fields", () => {
+    expect(
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: 1000,
+          totalClaimed: "200",
+          withdrawRequestedAt: 0,
+          refundNonce: "3",
+        },
+      }),
+    ).toEqual({
+      balance: "1000",
+      totalClaimed: "200",
+      withdrawRequestedAt: 0,
+      refundNonce: 3,
+    });
+  });
+
+  it("rejects a refund snapshot that omits required uint fields", () => {
+    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toThrow(
+      ErrRefundPayload,
+    );
+    expect(() =>
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: "1",
+          totalClaimed: "2",
+          withdrawRequestedAt: -1,
+          refundNonce: 0,
+        },
+      }),
+    ).toThrow(ErrRefundPayload);
+    expect(() =>
+      parseRefundSettlementSnapshot({
+        channelState: {
+          balance: 1.5,
+          totalClaimed: "2",
+          withdrawRequestedAt: 0,
+          refundNonce: 0,
+        },
+      }),
+    ).toThrow(ErrRefundPayload);
+  });
+});
+
+describe("readExtraUintString", () => {
+  const read = (value: unknown) => readExtraUintString({ totalClaimed: value }, "totalClaimed");
+
+  it.each([
+    ["0", "0"],
+    ["500", "500"],
+    ["340282366920938463463374607431768211455", "340282366920938463463374607431768211455"],
+    [500, "500"],
+    [Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER)],
+  ])("accepts canonical value %j", (input, expected) => {
+    expect(read(input)).toBe(expected);
+  });
+
+  it.each([
+    "007",
+    "00",
+    "+5",
+    "-1",
+    "-0",
+    "",
+    " 5",
+    "5\n",
+    "1.5",
+    Number.MAX_SAFE_INTEGER + 1,
+    1e30,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    true,
+    null,
+    undefined,
+  ])("rejects non-canonical value %j", input => {
+    expect(read(input)).toBeUndefined();
+  });
+
+  it("returns undefined when the key is absent", () => {
+    expect(readExtraUintString(undefined, "totalClaimed")).toBeUndefined();
+    expect(readExtraUintString({}, "totalClaimed")).toBeUndefined();
+  });
+});
+
+describe("verifyBatchSettlementVoucherTypedData", () => {
+  const CHANNEL_ID = `0x${"11".repeat(32)}` as `0x${string}`;
+  const AUTHORIZER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+
+  it("returns false when ECDSA recovery fails on malformed signature bytes", async () => {
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [AUTHORIZER],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: AUTHORIZER,
+        payer: AUTHORIZER,
+        signature: "0x00",
+      },
+      84532,
+    );
+    expect(ok).toBe(false);
+  });
+
+  it("returns true when the voucher signature matches payerAuthorizer", async () => {
+    const account = privateKeyToAccount(
+      "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    );
+    const signature = await account.signTypedData({
+      domain: {
+        name: "x402 Batch Settlement",
+        version: "1",
+        chainId: 84532,
+        verifyingContract: getAddress(BATCH_SETTLEMENT_ADDRESS),
+      },
+      types: {
+        Voucher: [
+          { name: "channelId", type: "bytes32" },
+          { name: "maxClaimableAmount", type: "uint128" },
+        ],
+      },
+      primaryType: "Voucher",
+      message: { channelId: CHANNEL_ID, maxClaimableAmount: 1000n },
+    });
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [account.address],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: account.address,
+        payer: account.address,
+        signature,
+      },
+      84532,
+    );
+    expect(ok).toBe(true);
+  });
+
+  it("returns false when the recovered signer does not match payerAuthorizer", async () => {
+    const account = privateKeyToAccount(
+      "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    );
+    const signature = await account.signTypedData({
+      domain: {
+        name: "x402 Batch Settlement",
+        version: "1",
+        chainId: 84532,
+        verifyingContract: getAddress(BATCH_SETTLEMENT_ADDRESS),
+      },
+      types: {
+        Voucher: [
+          { name: "channelId", type: "bytes32" },
+          { name: "maxClaimableAmount", type: "uint128" },
+        ],
+      },
+      primaryType: "Voucher",
+      message: { channelId: CHANNEL_ID, maxClaimableAmount: 1000n },
+    });
+    const signer: FacilitatorEvmSigner = {
+      getAddresses: () => [account.address],
+      readContract: vi.fn(),
+      verifyTypedData: vi.fn(),
+      writeContract: vi.fn(),
+      sendTransaction: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      getCode: vi.fn(),
+    };
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      signer,
+      {
+        channelId: CHANNEL_ID,
+        maxClaimableAmount: "1000",
+        payerAuthorizer: "0x0000000000000000000000000000000000000001",
+        payer: account.address,
+        signature,
+      },
+      84532,
+    );
+    expect(ok).toBe(false);
   });
 });

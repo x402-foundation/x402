@@ -12,6 +12,7 @@ import { x402Client, type PaymentResponseContext } from "../client/x402Client";
  */
 export interface PaymentRequiredContext {
   paymentRequired: PaymentRequired;
+  requestUrl: string;
 }
 
 /**
@@ -67,13 +68,15 @@ export class x402HTTPClient {
    * Run hooks and return headers if any hook provides them.
    *
    * @param paymentRequired - The payment required response from the server
+   * @param requestUrl - The URL of the request that received the payment required response
    * @returns Headers to use for retry, or null to proceed to payment
    */
   async handlePaymentRequired(
     paymentRequired: PaymentRequired,
+    requestUrl: string,
   ): Promise<Record<string, string> | null> {
     for (const hook of this.getPaymentRequiredHooks(paymentRequired)) {
-      const result = await hook({ paymentRequired });
+      const result = await hook({ paymentRequired, requestUrl });
       if (result?.headers) {
         return result.headers;
       }
@@ -220,48 +223,63 @@ export class x402HTTPClient {
   }
 
   /**
-   * Parses a fetch Response into a discriminated `x402PaymentResult` for app-level convenience.
+   * Parses HTTP status, headers, and body into an `HTTPResourceResponse`.
    *
-   * @param response - The fetch Response to process
-   * @returns A discriminated union describing the payment outcome
+   * Decodes the x402 payment header into `header`: the `PAYMENT-RESPONSE`
+   * settlement if present, otherwise the `PAYMENT-REQUIRED` declaration on
+   * 402 responses (whose `error` field carries the server's failure reason).
+   *
+   * @param args - Normalized response inputs from any HTTP transport
+   * @param args.status - HTTP response status code
+   * @param args.getHeader - Callback to read response headers by name
+   * @param args.body - Response body payload
+   * @returns The parsed status, body, and decoded payment header
    */
-  async processResponse(response: Response): Promise<x402PaymentResult> {
-    const getHeader = (name: string) => response.headers.get(name);
+  parsePaymentResult(args: {
+    status: number;
+    getHeader: (name: string) => string | null | undefined;
+    body: unknown;
+  }): HTTPResourceResponse {
+    const { status, getHeader, body } = args;
 
-    let settleResponse: SettleResponse | undefined;
+    let header: SettleResponse | PaymentRequired | undefined;
     try {
-      settleResponse = this.getPaymentSettleResponse(getHeader);
+      header = this.getPaymentSettleResponse(getHeader);
     } catch {
-      /* no header */
+      if (status === 402) {
+        try {
+          header = this.getPaymentRequiredResponse(getHeader, body);
+        } catch {
+          /* no payment header */
+        }
+      }
     }
 
+    let paymentStatus: HTTPPaymentStatus = "none";
+    if (header && !("success" in header)) {
+      paymentStatus = "payment_required";
+    }
+    if (header && "success" in header) {
+      paymentStatus = header.success ? "settled" : "settle_failed";
+    }
+
+    return { status, paymentStatus, body, header };
+  }
+
+  /**
+   * Parses a fetch Response into an `HTTPResourceResponse` for app-level convenience.
+   *
+   * @param response - The fetch Response to process
+   * @returns The parsed status, body, and decoded payment header
+   */
+  async processResponse(response: Response): Promise<HTTPResourceResponse> {
+    const getHeader = (name: string) => response.headers.get(name);
     const contentType = response.headers.get("content-type") ?? "";
     const body = contentType.includes("application/json")
       ? await response.json()
       : await response.text();
 
-    if (settleResponse && settleResponse.success) {
-      return { kind: "success", response, body, settleResponse };
-    }
-
-    if (settleResponse && !settleResponse.success) {
-      return { kind: "settle_failed", response, body, settleResponse };
-    }
-
-    if (response.status === 402) {
-      try {
-        const paymentRequired = this.getPaymentRequiredResponse(getHeader, body);
-        return { kind: "payment_required", response, paymentRequired };
-      } catch {
-        /* no payment-required header */
-      }
-    }
-
-    if (response.ok) {
-      return { kind: "passthrough", response, body };
-    }
-
-    return { kind: "error", response, status: response.status, body };
+    return this.parsePaymentResult({ status: response.status, getHeader, body });
   }
 
   /**
@@ -288,11 +306,21 @@ export class x402HTTPClient {
 }
 
 /**
- * Discriminated union describing the outcome of a payment-enabled request.
+ * Parsed result of an HTTP request to an x402 resource.
  */
-export type x402PaymentResult =
-  | { kind: "success"; response: Response; body: unknown; settleResponse: SettleResponse }
-  | { kind: "settle_failed"; response: Response; body: unknown; settleResponse: SettleResponse }
-  | { kind: "payment_required"; response: Response; paymentRequired: PaymentRequired }
-  | { kind: "error"; response: Response; status: number; body: unknown }
-  | { kind: "passthrough"; response: Response; body: unknown };
+export type HTTPResourceResponse = {
+  /** HTTP status code. */
+  status: number;
+  /** x402 payment outcome. */
+  paymentStatus: HTTPPaymentStatus;
+  /** Parsed response body. */
+  body: unknown;
+  /**
+   * Decoded x402 payment header, if present:
+   * - SettleResponse  (from PAYMENT-RESPONSE / X-PAYMENT-RESPONSE)
+   * - PaymentRequired (from PAYMENT-REQUIRED; its `error` carries the server reason)
+   */
+  header?: SettleResponse | PaymentRequired;
+};
+
+export type HTTPPaymentStatus = "settled" | "settle_failed" | "payment_required" | "none";

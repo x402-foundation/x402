@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // validConfig returns a ChannelConfig whose computed channel id is deterministic.

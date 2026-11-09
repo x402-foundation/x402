@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
 /**
@@ -58,7 +59,9 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	// Register EVM scheme if signer is available (only explicitly specified networks)
 	if evmSigner != nil {
 		evmConfig := &evm.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
+			// Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+			// A non-empty slice enables smart wallet deployment; an empty slice denies all factory calls.
+			EIP6492AllowedFactories: []string{},
 		}
 		facilitator.Register([]x402.Network{evmNetwork}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 		facilitator.Register([]x402.Network{evmNetwork}, uptoevm.NewUptoEvmScheme(evmSigner, nil))
@@ -113,6 +116,16 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 
 		result, err := facilitator.Verify(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

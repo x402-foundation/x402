@@ -10,11 +10,22 @@ import {
   decodeSignedTransaction as decodeSignedTxn,
 } from "@algorandfoundation/algokit-utils/transact";
 import { isValidAddress } from "@algorandfoundation/algokit-utils/common";
-import {
-  ALGORAND_MAINNET_GENESIS_HASH,
-  ALGORAND_TESTNET_GENESIS_HASH,
-  ALGORAND_TESTNET_CAIP2,
-} from "./constants";
+import type { Network } from "@x402/core/types";
+import { ALGORAND_MAINNET_CAIP2, ALGORAND_TESTNET_CAIP2 } from "./constants";
+
+/**
+ * Validates and returns a supported Algorand CAIP-2 network identifier.
+ *
+ * @param network - CAIP-2 network identifier
+ * @returns The validated CAIP-2 network identifier
+ */
+export function normalizeAlgorandNetwork(network: string): Network {
+  if (network === ALGORAND_MAINNET_CAIP2 || network === ALGORAND_TESTNET_CAIP2) {
+    return network as Network;
+  }
+
+  throw new Error(`Unsupported Algorand network: ${network}`);
+}
 
 /**
  * Encodes transaction bytes to base64 string
@@ -123,13 +134,16 @@ export function getNetworkFromCaip2(caip2: string): "mainnet" | "testnet" | null
     return null;
   }
 
-  const genesisHash = caip2.slice("algorand:".length);
-
-  if (genesisHash === ALGORAND_MAINNET_GENESIS_HASH) {
-    return "mainnet";
-  }
-  if (genesisHash === ALGORAND_TESTNET_GENESIS_HASH) {
-    return "testnet";
+  try {
+    const normalized = normalizeAlgorandNetwork(caip2);
+    if (normalized === ALGORAND_MAINNET_CAIP2) {
+      return "mainnet";
+    }
+    if (normalized === ALGORAND_TESTNET_CAIP2) {
+      return "testnet";
+    }
+  } catch {
+    return null;
   }
 
   return null;
@@ -142,7 +156,7 @@ export function getNetworkFromCaip2(caip2: string): "mainnet" | "testnet" | null
  * @returns True if the network is an Algorand network
  */
 export function isAlgorandNetwork(network: string): boolean {
-  return network.startsWith("algorand:");
+  return network === ALGORAND_MAINNET_CAIP2 || network === ALGORAND_TESTNET_CAIP2;
 }
 
 /**
@@ -152,7 +166,15 @@ export function isAlgorandNetwork(network: string): boolean {
  * @returns True if the network is a testnet
  */
 export function isTestnetNetwork(network: string): boolean {
-  return network === ALGORAND_TESTNET_CAIP2;
+  if (!network.startsWith("algorand:")) {
+    return false;
+  }
+
+  try {
+    return normalizeAlgorandNetwork(network) === ALGORAND_TESTNET_CAIP2;
+  } catch {
+    return false;
+  }
 }
 
 /**

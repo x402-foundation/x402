@@ -102,6 +102,47 @@ _ALL_DIGITS_RE = re.compile(r"^\d+$")
 # of bypasses as the decimal form above.
 _HEX_LITERAL_RE = re.compile(r"^0x[0-9a-f]+$", re.IGNORECASE)
 
+# Maximum number of successive unquote passes applied while canonicalizing a
+# routeTemplate before giving up and rejecting it.
+#
+# A legitimate single-encoded value reaches a fixed point (further decoding
+# changes nothing) after one pass. This allows a few extra passes so
+# multiply-encoded traversal/injection payloads (not just doubly-encoded
+# ones) are still caught, while bounding the work done on adversarial input.
+_MAX_ROUTE_TEMPLATE_DECODE_PASSES = 5
+
+
+def _fully_decode_route_template(value: str) -> str | None:
+    """Repeatedly percent-decode value until a fixed point is reached.
+
+    Further decoding produces no change, or ``_MAX_ROUTE_TEMPLATE_DECODE_PASSES``
+    is exhausted. Returns the fully-canonicalized string.
+
+    A single decode pass only catches a payload encoded exactly once (e.g.
+    ``%2e%2e``); a double- or triple-encoded payload (``%252e%252e``,
+    ``%25252e%25252e``, ...) would still contain literal ``%`` sequences after
+    one pass and slip past a traversal/injection substring check performed on
+    that partially-decoded result. Decoding to a fixed point closes that gap
+    for any encoding depth, not just the double-encoded case.
+
+    Args:
+        value: The string to canonicalize.
+
+    Returns:
+        The fully-decoded string, or None if the pass budget is exhausted
+        without reaching a fixed point.
+    """
+    decoded = value
+    for _ in range(_MAX_ROUTE_TEMPLATE_DECODE_PASSES):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            return decoded
+        decoded = next_decoded
+    # Still changing after the pass budget: either pathologically deep
+    # encoding or a `%` that never resolves to a fixed point. Either way,
+    # there's no safe canonical form to validate against. Reject.
+    return None
+
 
 def _is_valid_route_template(value: str | None) -> bool:
     """Check whether a routeTemplate value is structurally valid.
@@ -116,8 +157,8 @@ def _is_valid_route_template(value: str | None) -> bool:
     Enforces:
     - Must be a non-empty string starting with "/"
     - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
-    - Must not contain ".." (path traversal)
-    - Must not contain "://" (URL injection)
+    - Must not contain ".." (path traversal), at any percent-encoding depth
+    - Must not contain "://" (URL injection), at any percent-encoding depth
 
     Args:
         value: The raw routeTemplate string from the client payload.
@@ -129,8 +170,12 @@ def _is_valid_route_template(value: str | None) -> bool:
         return False
     if not _ROUTE_TEMPLATE_RE.match(value):
         return False
-    # Decode percent-encoding before traversal checks so that %2e%2e is caught.
-    decoded = unquote(value)
+    # Decode to a fixed point before traversal checks, so that %2e%2e,
+    # %252e%252e, and deeper encodings are all caught rather than just the
+    # single-encoded case.
+    decoded = _fully_decode_route_template(value)
+    if decoded is None:
+        return False
     if ".." in decoded:
         return False
     if "://" in decoded:
@@ -319,6 +364,30 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _has_external_schema_reference(node: Any) -> bool:
+    """Recursively scan a decoded JSON Schema document for "$ref"/"$id" values that are
+    not same-document fragments (i.e. do not start with "#").
+
+    ``jsonschema``'s default resolver dereferences any other form -- absolute http(s)://
+    URLs, file:// URIs, or relative paths -- via an outbound HTTP request or filesystem
+    read during schema compilation, before the instance is ever validated. Since schema
+    is client-controlled (it arrives in the payment payload), any such value is treated
+    as unsafe (CWE-918 SSRF / local file disclosure).
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("$ref", "$id"):
+                if not isinstance(value, str) or not value.startswith("#"):
+                    return True
+            if _has_external_schema_reference(value):
+                return True
+    elif isinstance(node, list):
+        for item in node:
+            if _has_external_schema_reference(item):
+                return True
+    return False
+
+
 @dataclass
 class DiscoveredResource:
     """A discovered x402 resource with its metadata."""
@@ -335,6 +404,7 @@ class DiscoveredResource:
     service_name: str | None = None
     tags: list[str] | None = None
     icon_url: str | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -375,6 +445,18 @@ def validate_discovery_extension(extension: DiscoveryExtension) -> ValidationRes
             schema = extension.schema_ if hasattr(extension, "schema_") else {}
             info = extension.info
 
+        # The schema is attacker-controlled (it arrives in the client's payment payload).
+        # jsonschema's default resolver dereferences "$ref"/"$id" values via an outbound
+        # HTTP request or filesystem read during compilation, before the instance is ever
+        # checked (CWE-918 SSRF / local file read). Only same-document fragment references
+        # (e.g. "#/definitions/foo") are safe, since they resolve against the in-memory
+        # document instead of fetching anything.
+        if _has_external_schema_reference(schema):
+            return ValidationResult(
+                valid=False,
+                errors=["schema must not contain external $ref/$id references"],
+            )
+
         # Convert info to dict if it's a Pydantic model
         if hasattr(info, "model_dump"):
             info_dict = info.model_dump(by_alias=True, exclude_none=True)
@@ -391,6 +473,128 @@ def validate_discovery_extension(extension: DiscoveryExtension) -> ValidationRes
 
     except Exception as e:
         return ValidationResult(valid=False, errors=[f"Schema validation failed: {e!s}"])
+
+
+_VALID_QUERY_METHODS = frozenset({"GET", "HEAD", "DELETE"})
+_VALID_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+_VALID_METHODS = _VALID_QUERY_METHODS | _VALID_BODY_METHODS
+_VALID_BODY_TYPES = frozenset({"json", "form-data", "text"})
+_VALID_MCP_TRANSPORTS = frozenset({"streamable-http", "sse"})
+
+
+def validate_discovery_extension_spec(extension: dict[str, Any] | object) -> ValidationResult:
+    """Validate a discovery extension against the Bazaar protocol specification.
+
+    Unlike ``validate_discovery_extension`` which checks internal consistency
+    (info vs schema), this function enforces protocol-level invariants:
+
+    - ``info.input.type`` must be ``"http"`` or ``"mcp"``
+    - HTTP: if ``method`` is present it must be GET/POST/PUT/PATCH/DELETE/HEAD
+    - HTTP body methods: ``bodyType`` must be ``"json"`` | ``"form-data"`` | ``"text"``
+    - MCP: ``toolName`` (string) and ``inputSchema`` (object) are required
+    - MCP: if ``transport`` is present it must be ``"streamable-http"`` | ``"sse"``
+
+    Safe for pre-enrichment HTTP extensions where ``method`` may be absent.
+
+    Args:
+        extension: The discovery extension to validate (dict or object).
+
+    Returns:
+        ValidationResult with spec-level errors.
+    """
+    errors: list[str] = []
+
+    if isinstance(extension, dict):
+        info = extension.get("info")
+    elif hasattr(extension, "info"):
+        info = extension.info  # type: ignore[union-attr]
+    else:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info' field"])
+
+    if not info or not isinstance(info, dict | object):
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info' field"])
+
+    if isinstance(info, dict):
+        input_data = info.get("input")
+    elif hasattr(info, "input"):
+        input_data = info.input  # type: ignore[union-attr]
+    else:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info.input' field"])
+
+    if not input_data:
+        return ValidationResult(valid=False, errors=["Missing or invalid 'info.input' field"])
+
+    if isinstance(input_data, dict):
+        input_type = input_data.get("type")
+    elif hasattr(input_data, "type"):
+        input_type = input_data.type  # type: ignore[union-attr]
+    else:
+        input_type = None
+
+    if input_type not in ("http", "mcp"):
+        errors.append(f'info.input.type must be "http" or "mcp", got "{input_type}"')
+        return ValidationResult(valid=False, errors=errors)
+
+    if input_type == "http":
+        method = (
+            input_data.get("method")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "method", None)
+        )
+        if method is not None and method not in _VALID_METHODS:
+            errors.append(
+                f'info.input.method must be one of {", ".join(sorted(_VALID_METHODS))}, got "{method}"'
+            )
+
+        body_type = (
+            input_data.get("bodyType")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "body_type", None)
+        )
+        if body_type is not None:
+            if body_type not in _VALID_BODY_TYPES:
+                errors.append(
+                    f'info.input.bodyType must be one of {", ".join(sorted(_VALID_BODY_TYPES))}, got "{body_type}"'
+                )
+            if method is not None and method not in _VALID_BODY_METHODS:
+                errors.append(
+                    f'info.input.bodyType is set but method "{method}" is not a body method (POST, PUT, PATCH)'
+                )
+
+    if input_type == "mcp":
+        tool_name = (
+            input_data.get("toolName")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "tool_name", None)
+        )
+        if not isinstance(tool_name, str) or len(tool_name) == 0:
+            errors.append(
+                "info.input.toolName is required and must be a non-empty string for MCP extensions"
+            )
+
+        input_schema = (
+            input_data.get("inputSchema")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "input_schema", None)
+        )
+        if not input_schema or not isinstance(input_schema, dict):
+            errors.append(
+                "info.input.inputSchema is required and must be an object for MCP extensions"
+            )
+
+        transport = (
+            input_data.get("transport")
+            if isinstance(input_data, dict)
+            else getattr(input_data, "transport", None)
+        )
+        if transport is not None and transport not in _VALID_MCP_TRANSPORTS:
+            errors.append(
+                f'info.input.transport must be one of {", ".join(sorted(_VALID_MCP_TRANSPORTS))}, got "{transport}"'
+            )
+
+    return (
+        ValidationResult(valid=True) if not errors else ValidationResult(valid=False, errors=errors)
+    )
 
 
 def _get_method_from_info(info: DiscoveryInfo | dict[str, Any]) -> str:
@@ -492,7 +696,7 @@ def extract_discovery_info(
 
     elif version == 1:
         # V1: Extract from requirements.output_schema
-        from .v1 import extract_discovery_info_v1
+        from .v1 import build_v1_catalog_extensions, extract_discovery_info_v1
 
         resource_url = requirements_dict.get("resource", "")
         discovery_info = extract_discovery_info_v1(requirements_dict)
@@ -537,6 +741,16 @@ def extract_discovery_info(
         description = requirements_dict.get("description") or None
         mime_type = requirements_dict.get("mimeType") or requirements_dict.get("mime_type") or None
 
+    extensions: dict[str, Any] | None = None
+    if version == 2:
+        raw_extensions = payload_dict.get("extensions")
+        if isinstance(raw_extensions, dict):
+            extensions = raw_extensions
+    elif discovery_info is not None:
+        payload_extensions = payload_dict.get("extensions")
+        existing_extensions = payload_extensions if isinstance(payload_extensions, dict) else None
+        extensions = build_v1_catalog_extensions(existing_extensions, discovery_info)
+
     return DiscoveredResource(
         resource_url=normalized_url,
         x402_version=version,
@@ -549,6 +763,7 @@ def extract_discovery_info(
         service_name=service_metadata.service_name,
         tags=service_metadata.tags,
         icon_url=service_metadata.icon_url,
+        extensions=extensions,
     )
 
 

@@ -1,0 +1,293 @@
+package server
+
+import (
+	"fmt"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	authcaptureserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/server"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	batchedserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/server"
+	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
+	batchsvmserver "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/server"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
+	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/server"
+	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
+	"os"
+	"strings"
+)
+
+// Config holds shared env for Go e2e resource servers (gin/nethttp/echo).
+type Config struct {
+	Port            string
+	FacilitatorURL  string
+	Payees          map[string]string // network id → SERVER_${ID}_ADDRESS
+	EVMPermit2Asset string
+}
+
+// Payee returns the payee address for a catalog network id, if configured.
+func (c Config) Payee(networkID string) string {
+	return c.Payees[networkID]
+}
+
+// LoadConfig reads and validates role-prefixed server env vars.
+func LoadConfig() Config {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "4021"
+	}
+
+	facilitatorURL := os.Getenv("FACILITATOR_URL")
+	if facilitatorURL == "" {
+		fmt.Println("❌ FACILITATOR_URL environment variable is required")
+		os.Exit(1)
+	}
+
+	payees := map[string]string{}
+	for _, networkID := range CatalogNetworkIDs() {
+		addr := os.Getenv(ServerAddressEnvKey(networkID))
+		if addr == "" {
+			continue
+		}
+		payees[networkID] = addr
+		fmt.Printf("%s Payee address: %s\n", strings.ToUpper(networkID), addr)
+	}
+	if len(payees) == 0 {
+		fmt.Println("❌ At least one SERVER_*_ADDRESS for a Go catalog network is required")
+		os.Exit(1)
+	}
+
+	evmPermit2Asset := os.Getenv("EVM_PERMIT2_ASSET")
+	if evmPermit2Asset == "" {
+		evmPermit2Asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	}
+
+	fmt.Printf("Using remote facilitator at: %s\n", facilitatorURL)
+
+	return Config{
+		Port:            port,
+		FacilitatorURL:  facilitatorURL,
+		Payees:          payees,
+		EVMPermit2Asset: evmPermit2Asset,
+	}
+}
+
+// NewFacilitatorClient builds an HTTP facilitator client from config.
+func NewFacilitatorClient(cfg Config) *x402http.HTTPFacilitatorClient {
+	return x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: cfg.FacilitatorURL,
+	})
+}
+
+// NewFacilitatorClients returns the real facilitator first, then the mock
+// fallback when MOCK_FACILITATOR_URL is set. The mock only fills /supported
+// gaps so startup validation can succeed for routes the real facilitator does
+// not implement. Verify and settle stay on the real facilitator.
+func NewFacilitatorClients(cfg Config) []x402.FacilitatorClient {
+	clients := []x402.FacilitatorClient{NewFacilitatorClient(cfg)}
+	if mockURL := strings.TrimSpace(os.Getenv("MOCK_FACILITATOR_URL")); mockURL != "" {
+		clients = append(clients, x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+			URL: mockURL,
+		}))
+	}
+	return clients
+}
+
+// SchemeBatched is re-exported for route builders that need the scheme name.
+const SchemeBatched = batchsettlement.SchemeBatched
+
+// networkFor converts a CAIP-2 identifier from the catalog to an SDK network.
+func networkFor(caip2 string) x402.Network {
+	return x402.Network(caip2)
+}
+
+// SchemeBinding pairs a network with the scheme server that handles it. Each
+// framework maps these to its own middleware SchemeConfig type.
+type SchemeBinding struct {
+	Network x402.Network
+	Server  x402.SchemeNetworkServer
+}
+
+// SchemeBindings derives the scheme registrations from the resolved route set,
+// so a server exposing a narrower set of routes registers fewer schemes without
+// any per-framework bookkeeping.
+//
+// Go's x402ResourceServer.BuildPaymentRequirements looks up schemes by exact
+// CAIP-2 (not wildcard), so we register the catalog-resolved exact network id
+// here. Clients still register catalog-derived wildcards via NetworkCaip2Pattern.
+func SchemeBindings(cfg Config) []SchemeBinding {
+	var (
+		exactEVM *exactevm.ExactEvmScheme
+		uptoEVM  *uptoevm.UptoEvmScheme
+		batched  *batchedserver.BatchSettlementEvmScheme
+		authCap  *authcaptureserver.AuthCaptureEvmScheme
+		exactSVM *svm.ExactSvmScheme
+		uptoSVM  *uptosvm.UptoSvmScheme
+		batchSVM *batchsvmserver.BatchSvmScheme
+	)
+
+	schemeFor := func(networkID, scheme string) x402.SchemeNetworkServer {
+		switch networkID {
+		case "evm":
+			switch scheme {
+			case "exact":
+				if exactEVM == nil {
+					exactEVM = exactevm.NewExactEvmScheme()
+				}
+				return exactEVM
+			case "upto":
+				if uptoEVM == nil {
+					uptoEVM = uptoevm.NewUptoEvmScheme()
+				}
+				return uptoEVM
+			case SchemeBatched:
+				if batched == nil {
+					batchedCfg := &batchedserver.BatchSettlementEvmSchemeServerConfig{}
+					voucherStoreMode := strings.TrimSpace(strings.ToLower(os.Getenv("EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE")))
+					if voucherStoreMode == "" {
+						// Fall back to the harness-assigned server role.
+						if strings.TrimSpace(strings.ToLower(os.Getenv("E2E_BATCH_SERVER_ROLE"))) == "managed-batch" {
+							voucherStoreMode = "facilitator"
+						} else {
+							voucherStoreMode = "self"
+						}
+					}
+					if voucherStoreMode == "facilitator" {
+						if authKey := strings.TrimSpace(os.Getenv("SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")); authKey != "" {
+							fmt.Println("EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=facilitator cannot be combined with SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+							os.Exit(1)
+						}
+						batchedCfg.VoucherStoreMode = batchedserver.VoucherStoreModeFacilitator
+						if refundKey := strings.TrimSpace(os.Getenv("SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY")); refundKey != "" {
+							refundAuth, err := NewBatchedAuthorizerSigner(refundKey)
+							if err != nil {
+								fmt.Printf("Failed to parse SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+								os.Exit(1)
+							}
+							batchedCfg.RefundAuthorizerSigner = refundAuth
+							fmt.Printf("Batch-settlement refund authorizer (facilitator-managed): %s\n", refundAuth.Address())
+						} else {
+							fmt.Println("Batch-settlement refund authorizer: facilitator delegatedRefund (no local signer, 402 omits refundAuthorizer)")
+						}
+						fmt.Println("Batch-settlement voucher custody: facilitator-managed (pass-through verify/settle)")
+					} else {
+						if authKey := os.Getenv("SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); authKey != "" {
+							auth, err := NewBatchedAuthorizerSigner(authKey)
+							if err != nil {
+								fmt.Printf("Failed to parse SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+								os.Exit(1)
+							}
+							batchedCfg.ReceiverAuthorizerSigner = auth
+							fmt.Printf("Batch-settlement receiver authorizer (self-managed): %s\n", auth.Address())
+						} else {
+							fmt.Println("Batch-settlement receiver authorizer: facilitator-delegated")
+						}
+					}
+					batched = batchedserver.NewBatchSettlementEvmScheme(cfg.Payee("evm"), batchedCfg)
+				}
+				return batched
+			case "auth-capture":
+				if authCap == nil {
+					authCfg := &authcaptureserver.Config{}
+					if authorizer, err := authCaptureAuthorizerSigner(); err != nil {
+						fmt.Printf("Failed to create auth-capture receiver authorizer: %v\n", err)
+						os.Exit(1)
+					} else if authorizer != nil {
+						authCfg.ReceiverAuthorizerSigner = authorizer
+						fmt.Printf("Auth-capture receiver authorizer (self-managed): %s\n", authorizer.Address())
+					} else {
+						authCfg.CollectOnlyRoutes = true
+						fmt.Println("Auth-capture receiver authorizer: facilitator-delegated (collect-only routes enabled)")
+					}
+					authCap = authcaptureserver.NewAuthCaptureEvmScheme(authCfg)
+					setAuthCaptureEvmScheme(authCap)
+				}
+				return authCap
+			}
+		case "svm":
+			switch scheme {
+			case "exact":
+				if exactSVM == nil {
+					exactSVM = svm.NewExactSvmScheme()
+				}
+				return exactSVM
+			case "upto":
+				if uptoSVM == nil {
+					authorizerKey := os.Getenv("SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+					if authorizerKey == "" {
+						return nil
+					}
+					authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
+					if err != nil {
+						fmt.Printf("Failed to parse SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+						os.Exit(1)
+					}
+					fmt.Printf("SVM receiver authorizer: %s\n", authorizer.Address())
+					uptoSVM = uptosvm.NewUptoSvmScheme(&uptosvm.Config{
+						ReceiverAuthorizerSigner: authorizer,
+						RPCURL:                   os.Getenv("SVM_RPC_URL"),
+					})
+				}
+				return uptoSVM
+			case SchemeBatched:
+				if batchSVM == nil {
+					authorizerKey := os.Getenv("SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+					if authorizerKey == "" {
+						return nil
+					}
+					authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
+					if err != nil {
+						fmt.Printf("Failed to parse SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+						os.Exit(1)
+					}
+					fmt.Printf("SVM receiver authorizer: %s\n", authorizer.Address())
+					batchCfg := &batchsvmserver.Config{
+						ReceiverAuthorizer: authorizer,
+						Store:              batchsvmserver.NewMemoryChannelStore(),
+					}
+					operatorKey := os.Getenv("SERVER_SVM_OPERATOR_PRIVATE_KEY")
+					if operatorKey != "" {
+						operator, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(operatorKey)
+						if err != nil {
+							fmt.Printf("Failed to parse SERVER_SVM_OPERATOR_PRIVATE_KEY: %v\n", err)
+							os.Exit(1)
+						}
+						fmt.Printf("SVM batch-settlement operator: %s\n", operator.Address())
+						batchCfg.Operator = operator
+					}
+					batchSVM = batchsvmserver.NewBatchSvmScheme(batchCfg)
+				}
+				return batchSVM
+			}
+		}
+		return nil
+	}
+
+	bindings := []SchemeBinding{}
+	seen := map[string]bool{}
+	for _, route := range ResolvedRoutes() {
+		caip2 := NetworkCaip2(route.NetworkID)
+		key := caip2 + "|" + route.Scheme
+		if seen[key] {
+			continue
+		}
+		server := schemeFor(route.NetworkID, route.Scheme)
+		if server == nil {
+			fmt.Printf("❌ No Go scheme server registered for %s on %s\n", route.Scheme, route.NetworkID)
+			os.Exit(1)
+		}
+		seen[key] = true
+		bindings = append(bindings, SchemeBinding{Network: x402.Network(caip2), Server: server})
+	}
+
+	return bindings
+}
+
+// authCaptureAuthorizerSigner returns the signer for auth-capture Capture and Void messages when
+// SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is set; otherwise nil for facilitator-delegated mode.
+func authCaptureAuthorizerSigner() (*BatchedAuthorizerSigner, error) {
+	if key := os.Getenv("SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"); key != "" {
+		return NewBatchedAuthorizerSigner(key)
+	}
+	return nil, nil
+}

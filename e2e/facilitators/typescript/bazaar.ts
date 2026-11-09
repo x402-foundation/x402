@@ -1,45 +1,20 @@
-import type { DiscoveryInfo } from "@x402/extensions/bazaar";
 import type { PaymentRequirements } from "@x402/core/types";
-
-export interface DiscoveredResource {
-  resource: string;
-  type: "http" | "mcp";
-  x402Version: number;
-  accepts: PaymentRequirements[];
-  discoveryInfo?: DiscoveryInfo;
-  routeTemplate?: string;
-  lastUpdated: string;
-  extensions?: Record<string, unknown>;
-}
+import type { DiscoveryResource } from "@x402/extensions/bazaar";
 
 export class BazaarCatalog {
-  private discoveredResources = new Map<string, DiscoveredResource>();
+  private discoveredResources = new Map<string, DiscoveryResource>();
 
-  catalogResource(
-    resourceUrl: string,
-    method: string,
-    x402Version: number,
-    discoveryInfo: DiscoveryInfo,
-    paymentRequirements: PaymentRequirements,
-    routeTemplate?: string,
-  ): void {
-    console.log(`📝 Discovered resource: ${resourceUrl}`);
-    console.log(`   Method: ${method}`);
-    console.log(`   x402 Version: ${x402Version}`);
-    if (routeTemplate) {
-      console.log(`   Route template: ${routeTemplate}`);
+  add(resource: DiscoveryResource): void {
+    console.log(`📝 Discovered resource: ${resource.resource}`);
+    console.log(`   x402 Version: ${resource.x402Version}`);
+    if (resource.serviceName) {
+      console.log(`   Service: ${resource.serviceName}`);
+    }
+    if (resource.tags?.length) {
+      console.log(`   Tags: ${resource.tags.join(", ")}`);
     }
 
-    this.discoveredResources.set(resourceUrl, {
-      resource: resourceUrl,
-      type: discoveryInfo.input.type,
-      x402Version,
-      accepts: [paymentRequirements],
-      discoveryInfo,
-      routeTemplate,
-      lastUpdated: new Date().toISOString(),
-      extensions: {},
-    });
+    this.discoveredResources.set(resource.resource, resource);
   }
 
   getResources(limit: number = 100, offset: number = 0) {
@@ -60,7 +35,7 @@ export class BazaarCatalog {
 
   /**
    * Search resources using case-insensitive keyword matching against resource URL,
-   * type, and extension values.
+   * type, description, service metadata, and extension values.
    */
   searchResources(query: string, type?: string, limit?: number) {
     const needle = query.toLowerCase();
@@ -68,6 +43,9 @@ export class BazaarCatalog {
       const haystack = [
         r.resource,
         r.type,
+        r.description ?? "",
+        r.serviceName ?? "",
+        ...(r.tags ?? []),
         ...Object.values(r.extensions ?? {}),
       ]
         .join(" ")

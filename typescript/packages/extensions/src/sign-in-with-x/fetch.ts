@@ -90,11 +90,14 @@ export function wrapFetchWithSIWx(fetch: typeof globalThis.fetch, signer: SIWxSi
       type: matchingChain.type,
     };
 
-    // Create and send SIWX proof
-    const payload = await createSIWxPayload(completeInfo, signer);
-    const siwxHeader = encodeSIWxHeader(payload);
-
-    clonedRequest.headers.set(SIGN_IN_WITH_X, siwxHeader);
+    // Create and send SIWX proof (refuse to sign when challenge is not bound to this origin)
+    try {
+      const payload = await createSIWxPayload(completeInfo, signer, response.url || request.url);
+      const siwxHeader = encodeSIWxHeader(payload);
+      clonedRequest.headers.set(SIGN_IN_WITH_X, siwxHeader);
+    } catch {
+      return response;
+    }
 
     return fetch(clonedRequest);
   };

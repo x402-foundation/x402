@@ -18,6 +18,13 @@ export function encodePaymentSignatureHeader(paymentPayload: PaymentPayload): st
   return safeBase64Encode(JSON.stringify(paymentPayload));
 }
 
+const requireDecodedJsonObject = (value: unknown, headerLabel: string): Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${headerLabel} must decode to a JSON object`);
+  }
+  return value as Record<string, unknown>;
+};
+
 /**
  * Decodes a base64 payment signature header into a payment payload.
  *
@@ -28,7 +35,10 @@ export function decodePaymentSignatureHeader(paymentSignatureHeader: string): Pa
   if (!Base64EncodedRegex.test(paymentSignatureHeader)) {
     throw new Error("Invalid payment signature header");
   }
-  return JSON.parse(safeBase64Decode(paymentSignatureHeader)) as PaymentPayload;
+  return requireDecodedJsonObject(
+    JSON.parse(safeBase64Decode(paymentSignatureHeader)),
+    "Payment signature header",
+  ) as PaymentPayload;
 }
 
 /**
@@ -51,7 +61,10 @@ export function decodePaymentRequiredHeader(paymentRequiredHeader: string): Paym
   if (!Base64EncodedRegex.test(paymentRequiredHeader)) {
     throw new Error("Invalid payment required header");
   }
-  return JSON.parse(safeBase64Decode(paymentRequiredHeader)) as PaymentRequired;
+  return requireDecodedJsonObject(
+    JSON.parse(safeBase64Decode(paymentRequiredHeader)),
+    "Payment required header",
+  ) as PaymentRequired;
 }
 
 /**
@@ -61,7 +74,10 @@ export function decodePaymentRequiredHeader(paymentRequiredHeader: string): Paym
  * @returns Base64 encoded string representation of the payment response
  */
 export function encodePaymentResponseHeader(paymentResponse: SettleResponse): string {
-  return safeBase64Encode(JSON.stringify(paymentResponse));
+  // Strip server-internal facilitator sidechannel; never forward to buyers.
+  const buyerFacing = { ...paymentResponse };
+  delete buyerFacing.extensionResponses;
+  return safeBase64Encode(JSON.stringify(buyerFacing));
 }
 
 /**
@@ -74,10 +90,12 @@ export function decodePaymentResponseHeader(paymentResponseHeader: string): Sett
   if (!Base64EncodedRegex.test(paymentResponseHeader)) {
     throw new Error("Invalid payment response header");
   }
-  return JSON.parse(safeBase64Decode(paymentResponseHeader)) as SettleResponse;
+  return requireDecodedJsonObject(
+    JSON.parse(safeBase64Decode(paymentResponseHeader)),
+    "Payment response header",
+  ) as SettleResponse;
 }
 
-// Export HTTP service and types
 export {
   x402HTTPResourceServer,
   HTTPAdapter,
@@ -104,16 +122,32 @@ export {
   ProtectedRequestHook,
   HTTPResourceServerExtensionHooks,
   ResourceServerTransportExtensionHooks,
+  SETTLEMENT_OVERRIDES_HEADER,
+  PAYMENT_REQUIRED_CACHE_CONTROL,
+  withPrivateCacheControl,
 } from "./x402HTTPResourceServer";
 export {
   HTTPFacilitatorClient,
   FacilitatorClient,
   FacilitatorConfig,
 } from "./httpFacilitatorClient";
-export { FacilitatorResponseError, getFacilitatorResponseError } from "../types";
+export {
+  FacilitatorResponseError,
+  FacilitatorTimeoutError,
+  FacilitatorCapabilityError,
+  getFacilitatorResponseError,
+} from "../types";
+export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
+export {
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  ResponseBodyTooLargeError,
+  readLimitedText,
+} from "./responseBody";
 export {
   x402HTTPClient,
   PaymentRequiredContext,
   PaymentRequiredHook,
   HTTPClientExtensionHooks,
+  HTTPResourceResponse,
+  HTTPPaymentStatus,
 } from "./x402HTTPClient";

@@ -304,11 +304,12 @@ class TestAsyncClientHooks:
         client = (
             x402Client()
             .register("x402:cash", CashSchemeNetworkClient("HookTest"))
+            .set_spend_controls(False)
             .on_after_payment_creation(async_after_hook)
         )
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         await client.create_payment_payload(payment_required)
 
@@ -327,11 +328,12 @@ class TestAsyncClientHooks:
         client = (
             x402Client()
             .register("x402:cash", CashSchemeNetworkClient("SyncHook"))
+            .set_spend_controls(False)
             .on_after_payment_creation(sync_hook)
         )
 
         accepts = [build_cash_payment_requirements("Test", "USD", "1")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         await client.create_payment_payload(payment_required)
 
@@ -348,9 +350,13 @@ class TestAsyncPaymentFlow:
 
     def setup_method(self) -> None:
         """Set up async test fixtures."""
-        self.client = x402Client().register(
-            "x402:cash",
-            CashSchemeNetworkClient("John"),
+        self.client = (
+            x402Client()
+            .register(
+                "x402:cash",
+                CashSchemeNetworkClient("John"),
+            )
+            .set_spend_controls(False)
         )
 
         self.facilitator = x402Facilitator().register(
@@ -373,7 +379,7 @@ class TestAsyncPaymentFlow:
             description="Async resource",
             mime_type="application/json",
         )
-        payment_required = self.server.create_payment_required_response(accepts, resource)
+        payment_required = await self.server.create_payment_required_response(accepts, resource)
 
         # Native async calls
         payment_payload = await self.client.create_payment_payload(payment_required)
@@ -390,7 +396,7 @@ class TestAsyncPaymentFlow:
     async def test_async_facilitator_direct_calls(self) -> None:
         """Test async facilitator verify and settle directly."""
         requirements = build_cash_payment_requirements("Direct", "EUR", "10")
-        payment_required = self.server.create_payment_required_response([requirements])
+        payment_required = await self.server.create_payment_required_response([requirements])
 
         payload = await self.client.create_payment_payload(payment_required)
 
@@ -403,14 +409,18 @@ class TestAsyncPaymentFlow:
     @pytest.mark.asyncio
     async def test_async_http_client_flow(self) -> None:
         """Test async HTTP client creates payment correctly."""
-        payment_client = x402Client().register(
-            "x402:cash",
-            CashSchemeNetworkClient("HTTPUser"),
+        payment_client = (
+            x402Client()
+            .register(
+                "x402:cash",
+                CashSchemeNetworkClient("HTTPUser"),
+            )
+            .set_spend_controls(False)
         )
         http_client = x402HTTPClient(payment_client)
 
         accepts = [build_cash_payment_requirements("HTTP Merchant", "USD", "2")]
-        payment_required = self.server.create_payment_required_response(accepts)
+        payment_required = await self.server.create_payment_required_response(accepts)
 
         # Async create payment payload through HTTP client
         payload = await http_client.create_payment_payload(payment_required)

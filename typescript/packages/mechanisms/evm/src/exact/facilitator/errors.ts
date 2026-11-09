@@ -5,16 +5,25 @@
  * go/mechanisms/evm/exact/facilitator/errors.go to maintain cross-SDK parity.
  */
 
+export const ErrAssetNotDeployedContract = "asset_not_deployed_contract";
+
+export const ErrInvalidPayload = "invalid_exact_evm_payload";
 export const ErrInvalidScheme = "invalid_exact_evm_scheme";
 export const ErrNetworkMismatch = "invalid_exact_evm_network_mismatch";
 export const ErrMissingEip712Domain = "invalid_exact_evm_missing_eip712_domain";
 export const ErrRecipientMismatch = "invalid_exact_evm_recipient_mismatch";
 export const ErrInvalidSignature = "invalid_exact_evm_signature";
+export const ErrInvalidSignatureS = "invalid_exact_evm_non_canonical_signature";
+/** Payer code lookup or signature RPC failed. Matches Go/Python `invalid_exact_evm_failed_to_verify_signature`. */
+export const ErrFailedToVerifySignature = "invalid_exact_evm_failed_to_verify_signature";
 export const ErrValidBeforeExpired = "invalid_exact_evm_payload_authorization_valid_before";
 export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_valid_after";
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
+export const ErrAuthorizationValueMismatch =
+  "invalid_exact_evm_payload_authorization_value_mismatch";
 export const ErrUndeployedSmartWallet = "invalid_exact_evm_payload_undeployed_smart_wallet";
 export const ErrTransactionFailed = "invalid_exact_evm_transaction_failed";
+export const ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch";
 
 // EIP-3009 verify errors
 export const ErrEip3009TokenNameMismatch = "invalid_exact_evm_token_name_mismatch";
@@ -58,6 +67,7 @@ export const ErrErc20ApprovalTxSignerMismatch = "erc20_approval_tx_signer_mismat
 export const ErrErc20ApprovalTxInvalidSignature = "erc20_approval_tx_invalid_signature";
 export const ErrErc20ApprovalTxParseFailed = "erc20_approval_tx_parse_failed";
 export const ErrErc20ApprovalTxFailed = "erc20_approval_tx_failed";
+export const ErrErc20ApprovalBroadcastFailed = "erc20_approval_broadcast_failed";
 
 // EIP-2612 gas sponsoring verify errors
 export const ErrInvalidEip2612ExtensionFormat = "invalid_eip2612_extension_format";
@@ -67,5 +77,10 @@ export const ErrEip2612SpenderNotPermit2 = "eip2612_spender_not_permit2";
 export const ErrEip2612DeadlineExpired = "eip2612_deadline_expired";
 
 // Shared settle errors
+export const ErrFailedToParseSignature = "invalid_exact_evm_failed_to_parse_signature";
 export const ErrUnsupportedPayloadType = "unsupported_payload_type";
 export const ErrInvalidTransactionState = "invalid_transaction_state";
+export const ErrFactoryNotAllowed = "eip6492_factory_not_allowed";
+export const ErrSmartWalletDeploymentFailed = "smart_wallet_deployment_failed";
+/** Broadcast succeeded; receipt wait failed (RPC/timeout). Non-terminal — return with tx hash. */
+export const ErrSettlementPending = "settlement_pending";

@@ -34,7 +34,7 @@ The protocol flow for `exact` on Stellar is client-driven with facilitator-spons
 10. **Resource Server**, upon successful verification, forwards the payload to the facilitator's `/settle` endpoint.
     - NOTE: `/settle` MUST perform full verification independently and MUST NOT assume prior verification.
 11. **Facilitator** rebuilds the transaction with its own account as the source, preserving all operations and auth entries.
-12. **Facilitator** simulates the transaction to verify it succeeds and emits the expected transfer events.
+12. **Facilitator** simulates the transaction to verify it succeeds, emits the expected transfer events, and derives the settlement fee and fresh Soroban resource data (footprint and resource fee cap) from that simulation.
 13. **Facilitator** signs the rebuilt transaction with its own key and submits it to the Stellar network via RPC `sendTransaction`.
 14. **Facilitator** polls for transaction confirmation and responds with a `SettlementResponse` to the **Resource Server**.
 15. **Resource Server** grants the **Client** access to the resource in its response upon successful settlement.
@@ -123,7 +123,9 @@ A facilitator verifying an `exact` scheme on Stellar MUST enforce all of the fol
 ### 3. Authorization Entries
 
 - The transaction MUST contain signed authorization entries for the `from` address.
-- Auth entries MUST use credential type `sorobanCredentialsAddress` only.
+- Auth entries MUST use an address-based credential type: either `sorobanCredentialsAddress` (legacy) or `sorobanCredentialsAddressV2` ([CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md)). Both carry the same `SorobanAddressCredentials` fields and differ only in the preimage the signer commits to: `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION` for the legacy arm and the address-bound `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS` for V2.
+  - NOTE: Protocol 28 activates the V2 arm on the network, so clients may submit V2-signed entries from that point on. Recording-mode simulation still returns the legacy arm as of Protocol 28, but facilitators MUST accept both so they keep working when a client opts into V2 or the simulation default changes.
+- Auth entries MUST NOT use `sorobanCredentialsSourceAccount` or `sorobanCredentialsAddressWithDelegates` credentials.
 - The `rootInvocation` MUST NOT contain `subInvocations` that authorize additional operations beyond the transfer.
 - The facilitator MUST verify that all required signers have signed their auth entries.
 - The auth entry expiration ledger MUST NOT exceed `currentLedger + ceil(maxTimeoutSeconds / estimatedLedgerSeconds)`.
@@ -145,6 +147,20 @@ These checks prevent the fee payer from being tricked into transferring their ow
 - The simulation MUST succeed without errors.
 - The simulation MUST emit events confirming the exact balance change specified in `requirements.amount`.
 
+## Transaction Fees
+
+In the sponsored flow (`areFeesSponsored: true`), the facilitator fully controls settlement fees. The facilitator MUST NOT use the client's fee bid when rebuilding the transaction.
+
+### Facilitator (MUST)
+
+- Derive the settlement fee from a fresh simulation at settle time: `simulationResourceFee + inclusionBuffer`, where the inclusion buffer MUST be at least **100 stroops**.
+- Refresh the Soroban resource data (footprint and `resourceFee` cap) from that same simulation before submitting.
+- Fully override the client's fee when rebuilding the transaction for submission.
+
+### Safety ceiling: `maxTransactionFeeStroops`
+
+Facilitator implementations MAY expose a `maxTransactionFeeStroops` configuration as a safety ceiling / circuit breaker (default: **50,000 stroops**, operator-overridable). If the simulation-derived settlement fee exceeds this ceiling, the facilitator MUST reject verification with `invalid_exact_stellar_payload_fee_exceeds_maximum`. This is not a per-transaction budget knob; normal transfers should fall well below the default ceiling.
+
 ## Settlement Logic
 
 Settlement is performed via the facilitator rebuilding and signing the transaction:
@@ -153,10 +169,13 @@ Settlement is performed via the facilitator rebuilding and signing the transacti
 
 1. Parse the client's signed transaction XDR.
 2. Extract all operations and authorization entries.
-3. Rebuild a new transaction with:
+3. Re-simulate the transaction and derive the settlement fee and fresh Soroban resource data from the simulation result.
+4. Rebuild a new transaction with:
    - **Source Account**: Facilitator's Stellar address (spends [sequence number] and pays fees)
    - **Operations**: Copied from the client's transaction
    - **Auth Entries**: Copied from the client's transaction
+   - **Fee**: Simulation-derived (`simulationResourceFee + inclusionBuffer`, buffer >= 100 stroops); MUST NOT use the client's fee
+   - **Soroban Data**: Refreshed from the settle-time simulation (footprint and `resourceFee` cap)
 
 ### Phase 2: Transaction Submission
 

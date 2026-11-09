@@ -18,17 +18,12 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: ./setup.sh [options]"
       echo ""
-      echo "Runs install.sh and build.sh for all e2e components"
+      echo "Runs install/build for all e2e components (local scripts or language defaults)"
       echo ""
       echo "Options:"
       echo "  --legacy         Include legacy (v1) implementations"
       echo "  -v, --verbose    Show detailed output"
       echo "  -h, --help       Show this help message"
-      echo ""
-      echo "Examples:"
-      echo "  ./setup.sh                  # Setup v2 implementations only"
-      echo "  ./setup.sh --legacy         # Setup v2 and legacy"
-      echo "  ./setup.sh --legacy -v      # Setup with verbose output"
       exit 0
       ;;
   esac
@@ -43,97 +38,194 @@ if [ "$INCLUDE_LEGACY" = true ]; then
   echo ""
 fi
 
-# Track results
 TOTAL=0
 SUCCESS=0
 FAILED=0
 FAILED_COMPONENTS=()
 
-# Function to setup a component
+SKIP_NAMES="shared node_modules .venv __pycache__ .next"
+
+is_skipped() {
+  local name=$1
+  for skip in $SKIP_NAMES; do
+    if [ "$name" = "$skip" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_step() {
+  local label=$1
+  local dir=$2
+  shift 2
+  local cmd=("$@")
+
+  if [ "$VERBOSE" = true ]; then
+    if (cd "$dir" && "${cmd[@]}"); then
+      echo "   ✅ $label completed"
+      return 0
+    fi
+    echo "   ❌ $label failed"
+    return 1
+  fi
+
+  if (cd "$dir" && "${cmd[@]}") > /dev/null 2>&1; then
+    echo "   ✅ $label completed"
+    return 0
+  fi
+  echo "   ❌ $label failed"
+  echo "   💡 Run with -v for detailed output"
+  return 1
+}
+
+default_install() {
+  local dir=$1
+  if [ -f "$dir/go.mod" ]; then
+    run_step "Install" "$dir" go mod tidy
+    return $?
+  fi
+  if [ -f "$dir/pyproject.toml" ]; then
+    run_step "Install" "$dir" uv sync
+    return $?
+  fi
+  return 0
+}
+
+default_build() {
+  local dir=$1
+  local name
+  name=$(basename "$dir")
+
+  if [ -f "$dir/go.mod" ]; then
+    run_step "Build" "$dir" go build -o "$name" .
+    return $?
+  fi
+  if [ -f "$dir/pyproject.toml" ]; then
+    run_step "Build" "$dir" uv sync --reinstall-package x402
+    return $?
+  fi
+  return 0
+}
+
+has_setup_work() {
+  local dir=$1
+  [ -f "$dir/install.sh" ] || [ -f "$dir/build.sh" ] || [ -f "$dir/go.mod" ] || [ -f "$dir/pyproject.toml" ]
+}
+
 setup_component() {
   local dir=$1
-  local name=$(basename "$dir")
-  local type=$2
-  
+  local label=$2
+
   TOTAL=$((TOTAL + 1))
-  
   echo ""
-  echo "📦 $type: $name"
-  
+  echo "📦 $label"
+
   local component_success=true
-  
-  # Run install.sh if it exists
+
   if [ -f "$dir/install.sh" ]; then
-    if [ "$VERBOSE" = true ]; then
-      if (cd "$dir" && bash install.sh); then
-        echo "   ✅ Install completed"
-      else
-        echo "   ❌ Install failed"
-        component_success=false
-      fi
-    else
-      if (cd "$dir" && bash install.sh) > /dev/null 2>&1; then
-        echo "   ✅ Install completed"
-      else
-        echo "   ❌ Install failed"
-        echo "   💡 Run with -v for detailed output"
-        component_success=false
-      fi
+    if ! run_step "Install" "$dir" bash install.sh; then
+      component_success=false
+    fi
+  else
+    if ! default_install "$dir"; then
+      component_success=false
     fi
   fi
-  
-  # Run build.sh if it exists
+
   if [ -f "$dir/build.sh" ]; then
-    if [ "$VERBOSE" = true ]; then
-      if (cd "$dir" && bash build.sh); then
-        echo "   ✅ Build completed"
-      else
-        echo "   ❌ Build failed"
-        component_success=false
-      fi
-    else
-      if (cd "$dir" && bash build.sh) > /dev/null 2>&1; then
-        echo "   ✅ Build completed"
-      else
-        echo "   ❌ Build failed"
-        echo "   💡 Run with -v for detailed output"
-        component_success=false
-      fi
+    if ! run_step "Build" "$dir" bash build.sh; then
+      component_success=false
+    fi
+  else
+    if ! default_build "$dir"; then
+      component_success=false
     fi
   fi
-  
+
   if [ "$component_success" = true ]; then
     SUCCESS=$((SUCCESS + 1))
   else
     FAILED=$((FAILED + 1))
-    FAILED_COMPONENTS+=("$type/$name")
+    FAILED_COMPONENTS+=("$label")
   fi
 }
 
-# Function to process directory (with optional recursion for nested structures)
-process_directory() {
+# Walk role/language/transport/component (v2 layout)
+process_role_v2() {
+  local role_dir=$1
+  local role_type=$2
+
+  if [ ! -d "$role_dir" ]; then
+    return
+  fi
+
+  for language_dir in "$role_dir"/*; do
+    [ -d "$language_dir" ] || continue
+    local language
+    language=$(basename "$language_dir")
+    case "$language" in
+      typescript|go|python) ;;
+      *) continue ;;
+    esac
+
+    for transport_dir in "$language_dir"/*; do
+      [ -d "$transport_dir" ] || continue
+      local transport
+      transport=$(basename "$transport_dir")
+      case "$transport" in
+        http|mcp) ;;
+        *) continue ;;
+      esac
+
+      if [ "$transport" = "mcp" ]; then
+        if has_setup_work "$transport_dir"; then
+          setup_component "$transport_dir" "$role_type/$language/mcp"
+        fi
+        continue
+      fi
+
+      for component_dir in "$transport_dir"/*; do
+        [ -d "$component_dir" ] || continue
+        local component
+        component=$(basename "$component_dir")
+        if is_skipped "$component"; then
+          continue
+        fi
+        if has_setup_work "$component_dir"; then
+          setup_component "$component_dir" "$role_type/$language/http/$component"
+        fi
+      done
+    done
+  done
+}
+
+# Flat legacy layout
+process_directory_flat() {
   local base_dir=$1
   local type=$2
   local recurse_into=${3:-""}
-  
+
   if [ ! -d "$base_dir" ]; then
     return
   fi
-  
+
   for dir in "$base_dir"/*; do
-    if [ -d "$dir" ] && [ ! "$(basename "$dir")" = "node_modules" ]; then
-      local basename=$(basename "$dir")
-      
-      # Handle special nested directories (external-proxies, local)
-      if [ "$basename" = "$recurse_into" ] || [ "$basename" = "local" ]; then
-        # Recurse into nested directory
-        process_directory "$dir" "$type" ""
+    if [ -d "$dir" ]; then
+      local basename
+      basename=$(basename "$dir")
+
+      if is_skipped "$basename"; then
         continue
       fi
-      
-      # Check if component has install.sh or build.sh
-      if [ -f "$dir/install.sh" ] || [ -f "$dir/build.sh" ]; then
-        setup_component "$dir" "$type"
+
+      if [ "$basename" = "$recurse_into" ] || [ "$basename" = "local" ]; then
+        process_directory_flat "$dir" "$type" ""
+        continue
+      fi
+
+      if has_setup_work "$dir"; then
+        setup_component "$dir" "$type/$basename"
       fi
     fi
   done
@@ -143,23 +235,16 @@ echo "======================================================="
 echo "Starting Setup Process"
 echo "======================================================="
 
-# Setup servers
-process_directory "servers" "server"
+process_role_v2 "servers" "server"
+process_role_v2 "clients" "client"
+process_directory_flat "facilitators" "facilitator" "external-proxies"
 
-# Setup clients
-process_directory "clients" "client"
-
-# Setup facilitators (including external-proxies and local subdirectories)
-process_directory "facilitators" "facilitator" "external-proxies"
-
-# Setup legacy if requested
 if [ "$INCLUDE_LEGACY" = true ]; then
-  process_directory "legacy/servers" "server"
-  process_directory "legacy/clients" "client"
-  process_directory "legacy/facilitators" "facilitator"
+  process_role_v2 "legacy/servers" "legacy-server"
+  process_role_v2 "legacy/clients" "legacy-client"
+  process_directory_flat "legacy/facilitators" "legacy-facilitator"
 fi
 
-# Print summary
 echo ""
 echo ""
 echo "═══════════════════════════════════════════════════════"
@@ -176,21 +261,10 @@ if [ $FAILED -gt 0 ]; then
     echo "   • $component"
   done
   echo ""
-  echo "═══════════════════════════════════════════════════════"
-  echo "❌ Setup completed with errors"
-  echo "═══════════════════════════════════════════════════════"
-  echo ""
   exit 1
 else
   echo ""
-  echo "═══════════════════════════════════════════════════════"
   echo "✅ All setup tasks completed successfully!"
-  echo "═══════════════════════════════════════════════════════"
-  echo ""
   echo "💡 You can now run: pnpm test"
-  if [ "$INCLUDE_LEGACY" = false ]; then
-    echo "   Or with legacy: pnpm test --legacy"
-  fi
   echo ""
 fi
-

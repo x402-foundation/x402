@@ -5,7 +5,6 @@ from .common import (
     get_network_global_id,
     normalize_address,
     parse_amount,
-    parse_money_to_decimal,
 )
 from .highload_v3 import (
     MAX_BIT_NUMBER,
@@ -55,7 +54,6 @@ __all__ = [
     "parse_active_w5_account_state",
     "parse_amount",
     "parse_jetton_transfer",
-    "parse_money_to_decimal",
     "parse_out_list",
     "parse_w5_init_data",
     "query_id_is_processed",

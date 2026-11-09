@@ -234,10 +234,18 @@ For the optional `validUntil` field, implementations MUST set unused fields to `
 
 **4.5.1 Signer Authorization**
 
+Verifiers MUST distinguish between signature validity and signer authorization. A valid signature proves that a specific key signed the artifact. It does not prove that the key was authorized to sign on behalf of the service identified by `resourceUrl`.
+
+Without authorization verification, an attacker can generate a valid key pair, sign an offer or receipt for any `resourceUrl`, and present it as legitimate — the signature will verify, but the key has no relationship to the service.
+
 Verifiers MUST confirm that the signing key is authorized to act on behalf of the service identified by `resourceUrl`. This specification does not mandate a specific authorization mechanism. Common approaches include:
 
-- **`payTo` address signing**: The simplest approach — the service signs with the private key corresponding to the `payTo` address. Verifiers accept the signature if the recovered signer matches `payTo`.
-- **External key registry**: An external system (e.g., DID documents, on-chain attestations, or other key binding mechanisms) maps the signing key or `kid` to the service identity.
+- **`payTo` address signing**: The simplest approach — the service signs with the private key corresponding to the `payTo` address. Verifiers accept the signature if the recovered signer matches `payTo`. Note: coupling payment receipt and signing into a single key increases risk if the key is compromised. Production deployments SHOULD use a dedicated signing key separate from the `payTo` address.
+- **DID document (`did:web`)**: The service publishes the signing key in a [DID document](https://www.w3.org/TR/did-core/) at `/.well-known/did.json` associated with the `resourceUrl` domain. Verifiers resolve the DID URL in `kid` and confirm the key is listed in `verificationMethod`. See the [W3C DID Core specification](https://www.w3.org/TR/did-core/) and the [did:web method specification](https://w3c-ccg.github.io/did-method-web/).
+- **DNS TXT records**: The service publishes a TXT record at `_controllers.<domain>` binding the signing key to the service domain. The TXT value begins with a version prefix followed by one or more controller identifiers in DID format, separated by semicolons: `v=1;controller=did:pkh:eip155:1:<address>;controller=did:jwk:<base64url-encoded-public-jwk>`. Multiple `controller` values indicate co-controllers. The domain holder SHOULD enable DNSSEC, and verifiers SHOULD validate DNSSEC when available.
+- **External key registry**: An external system (e.g., on-chain attestations, transparency logs, or other key binding mechanisms) maps the signing key or `kid` to the service identity. See the [x402 Offer & Receipt documentation](https://x402.org/extensions/offer-receipt#signer-authorization-approaches) for a comparison of approaches.
+
+Mutable authorization sources (DID documents, DNS records) reflect current state only. Applications that verify offers or receipts after key rotation SHOULD preserve or reference temporally immutable authorization evidence (e.g., on-chain attestations, transparency logs) to confirm the key was authorized at issuance time.
 
 **4.6 Offer Expiration**
 
@@ -375,6 +383,8 @@ For the optional `transaction` field, implementations MUST set unused fields to 
 6. Confirm the key is authorized to sign for the service identified by the payload's `resourceUrl` (see §4.5.1)
 7. Confirm `issuedAt` (from the payload) is within acceptable verifier policy
 8. If `transaction` is present, verifiers MAY check the blockchain to confirm the transaction exists
+
+When verifying a receipt outside the immediate x402 payment session (e.g., for reputation, auditing, or dispute resolution), verifiers SHOULD evaluate signer authorization as of the receipt's `issuedAt` time, not merely at the time of verification. Revocation or removal of a signing key from a mutable authorization source SHOULD be treated as prospective — it prevents future reliance on that key but does not by itself prove the key was unauthorized at `issuedAt`.
 
 
 **6. Protocol Integration Examples**

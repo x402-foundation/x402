@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 // UptoEvmChainConfig configures RPC behavior for one chain.

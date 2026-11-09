@@ -6,10 +6,11 @@ import (
 	"math/big"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // fakeFacilitatorSigner is a no-op FacilitatorEvmSigner used when routing should
@@ -22,9 +23,16 @@ type fakeFacilitatorSigner struct {
 	verifyTypedData func(address string) (bool, error)
 	readContract    func(functionName string, args ...interface{}) (interface{}, error)
 	writeContract   func(functionName string, args ...interface{}) (string, error)
+	getCode         func(address string) ([]byte, error)
+	getBalance      func(address string, token string) (*big.Int, error)
+	sendTransaction func(to string, data []byte) (string, error)
+	waitForReceipt  func(txHash string) (*evm.TransactionReceipt, error)
 	verifyCalls     int
 	verifyAddrs     []string
 	writeCalls      int
+	writeFns        []string
+	lastDataSuffix  []byte
+	sendCalls       int
 }
 
 func (f *fakeFacilitatorSigner) GetAddresses() []string { return f.addresses }
@@ -42,20 +50,32 @@ func (f *fakeFacilitatorSigner) VerifyTypedData(_ context.Context, address strin
 	}
 	return false, errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) WriteContract(_ context.Context, _ string, _ []byte, functionName string, args ...interface{}) (string, error) {
+func (f *fakeFacilitatorSigner) WriteContract(_ context.Context, _ string, _ []byte, functionName string, dataSuffix []byte, args ...interface{}) (string, error) {
 	f.writeCalls++
+	f.writeFns = append(f.writeFns, functionName)
+	f.lastDataSuffix = append([]byte(nil), dataSuffix...)
 	if f.writeContract != nil {
 		return f.writeContract(functionName, args...)
 	}
 	return "", errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) SendTransaction(_ context.Context, _ string, _ []byte) (string, error) {
+func (f *fakeFacilitatorSigner) SendTransaction(_ context.Context, to string, data []byte) (string, error) {
+	f.sendCalls++
+	if f.sendTransaction != nil {
+		return f.sendTransaction(to, data)
+	}
 	return "", errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) WaitForTransactionReceipt(_ context.Context, _ string) (*evm.TransactionReceipt, error) {
+func (f *fakeFacilitatorSigner) WaitForTransactionReceipt(_ context.Context, txHash string) (*evm.TransactionReceipt, error) {
+	if f.waitForReceipt != nil {
+		return f.waitForReceipt(txHash)
+	}
 	return nil, errors.New("no rpc")
 }
-func (f *fakeFacilitatorSigner) GetBalance(_ context.Context, _ string, _ string) (*big.Int, error) {
+func (f *fakeFacilitatorSigner) GetBalance(_ context.Context, address string, token string) (*big.Int, error) {
+	if f.getBalance != nil {
+		return f.getBalance(address, token)
+	}
 	return big.NewInt(0), nil
 }
 func (f *fakeFacilitatorSigner) GetChainID(_ context.Context) (*big.Int, error) {
@@ -64,8 +84,11 @@ func (f *fakeFacilitatorSigner) GetChainID(_ context.Context) (*big.Int, error) 
 	}
 	return big.NewInt(8453), nil
 }
-func (f *fakeFacilitatorSigner) GetCode(_ context.Context, _ string) ([]byte, error) {
-	return nil, nil
+func (f *fakeFacilitatorSigner) GetCode(_ context.Context, address string) ([]byte, error) {
+	if f.getCode != nil {
+		return f.getCode(address)
+	}
+	return nil, nil // default: EOA (no code)
 }
 
 // fakeAuthorizerSigner is a no-op AuthorizerSigner.
@@ -285,5 +308,98 @@ func TestSettle_MalformedRefundPayload(t *testing.T) {
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrInvalidRefundPayload {
 		t.Fatalf("got err = %v", err)
+	}
+}
+
+func selfManagedDepositPayload(channelId string) *batchsettlement.BatchSettlementDepositPayload {
+	return &batchsettlement.BatchSettlementDepositPayload{
+		Type:          "deposit",
+		ChannelConfig: batchsettlement.ChannelConfig{Payer: "0xpayer"},
+		Voucher:       batchsettlement.BatchSettlementVoucherFields{ChannelId: channelId},
+		Deposit:       batchsettlement.BatchSettlementDepositData{Amount: "1000"},
+	}
+}
+
+func selfManagedDepositRequirements() types.PaymentRequirements {
+	return types.PaymentRequirements{
+		Scheme:  batchsettlement.SchemeBatched,
+		Network: "eip155:84532",
+	}
+}
+
+func TestResolveDepositDelegatedCaller_SkipsWithoutResolver(t *testing.T) {
+	got, err := ResolveDepositDelegatedCaller(context.Background(), nil, nil,
+		types.PaymentPayload{}, selfManagedDepositPayload("0xchan"),
+		selfManagedDepositRequirements(), nil)
+	if err != nil || got != "" {
+		t.Fatalf("got (%q, %v)", got, err)
+	}
+}
+
+func TestResolveDepositDelegatedCaller_ResolutionFailureIsUnauthenticated(t *testing.T) {
+	resolve := func(DelegatedSettleContext) (string, error) { return "", errors.New("idp down") }
+	_, err := ResolveDepositDelegatedCaller(context.Background(), resolve, storage.NewInMemoryDelegatedAuthStore(),
+		types.PaymentPayload{}, selfManagedDepositPayload("0xchan"),
+		selfManagedDepositRequirements(), nil)
+	var se *x402.SettleError
+	if !errors.As(err, &se) || se.ErrorReason != ErrDelegatedSettleUnauthenticated {
+		t.Fatalf("got err = %v", err)
+	}
+}
+
+func TestResolveDepositDelegatedCaller_EmptyIdentityIsUnauthenticated(t *testing.T) {
+	resolve := func(DelegatedSettleContext) (string, error) { return "", nil }
+	_, err := ResolveDepositDelegatedCaller(context.Background(), resolve, storage.NewInMemoryDelegatedAuthStore(),
+		types.PaymentPayload{}, selfManagedDepositPayload("0xchan"),
+		selfManagedDepositRequirements(), nil)
+	var se *x402.SettleError
+	if !errors.As(err, &se) || se.ErrorReason != ErrDelegatedSettleUnauthenticated {
+		t.Fatalf("got err = %v", err)
+	}
+}
+
+func TestSettle_SelfManagedDepositBindingConflictFailsBeforeBroadcast(t *testing.T) {
+	auth := managedAuthorizer()
+	cfg := managedConfig(auth.addr, "09")
+	channelId := mustChannelId(t, cfg)
+	delegated := storage.NewInMemoryDelegatedAuthStore()
+	if _, err := delegated.Bind(context.Background(), storage.DelegatedAuthBinding{
+		ChannelId: channelId, Network: managedNetwork, CallerIdentity: "owner-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	signer := newManagedSigner(t, nil)
+	signer.getBalance = func(string, string) (*big.Int, error) { return big.NewInt(10000), nil }
+	scheme, err := NewBatchSettlementEvmSchemeWithConfig(signer, auth, &BatchSettlementEvmSchemeConfig{
+		ResolveCallerIdentity: func(DelegatedSettleContext) (string, error) { return "owner-b", nil },
+		DelegatedAuthStore:    delegated,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = scheme.Settle(context.Background(),
+		managedDepositEnvelope(cfg, channelId), types.PaymentRequirements{
+			Scheme:  batchsettlement.SchemeBatched,
+			Network: managedNetwork,
+			Amount:  "1000",
+			Asset:   managedToken,
+			PayTo:   managedReceiver,
+			Extra: map[string]interface{}{
+				"receiverAuthorizer": auth.addr,
+				"name":               "USDC",
+				"version":            "2",
+			},
+		}, nil)
+	var se *x402.SettleError
+	if !errors.As(err, &se) || se.ErrorReason != ErrDelegatedSettleUnauthenticated {
+		t.Fatalf("binding conflict must fail before broadcast, got err = %v", err)
+	}
+	if signer.writeCalls != 0 || signer.sendCalls != 0 {
+		t.Fatalf("conflict broadcast writes=%d sends=%d", signer.writeCalls, signer.sendCalls)
+	}
+	got, _ := delegated.Get(context.Background(), channelId, managedNetwork)
+	if got == nil || got.CallerIdentity != "owner-a" {
+		t.Fatalf("bind conflict must keep first writer, got %+v", got)
 	}
 }

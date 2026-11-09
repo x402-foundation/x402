@@ -31,6 +31,15 @@ export class SettlementCache {
   }
 
   /**
+   * Drop a pending key so a failed settle can retry before TTL expiry.
+   *
+   * @param key - Settlement cache key to remove
+   */
+  delete(key: string): void {
+    this.entries.delete(key);
+  }
+
+  /**
    * Remove entries older than the settlement TTL.
    */
   private prune(): void {

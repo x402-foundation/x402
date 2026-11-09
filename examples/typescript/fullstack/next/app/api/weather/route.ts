@@ -34,33 +34,35 @@ const handler = async (_: NextRequest) => {
 export const GET = withX402(
   handler,
   {
-    accepts: [
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "eip155:84532", // base-sepolia
-        payTo: evmAddress,
-      },
-      {
-        scheme: "exact",
-        price: "$0.001",
-        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // solana devnet
-        payTo: svmAddress,
-      },
-    ],
-    description: "Access to weather API",
-    mimeType: "application/json",
-    extensions: {
-      ...declareDiscoveryExtension({
-        output: {
-          example: {
-            report: {
-              weather: "sunny",
-              temperature: 72,
+    "/api/weather": {
+      accepts: [
+        {
+          scheme: "exact",
+          price: "$0.001",
+          network: "eip155:84532", // base-sepolia
+          payTo: evmAddress,
+        },
+        {
+          scheme: "exact",
+          price: "$0.001",
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // solana devnet
+          payTo: svmAddress,
+        },
+      ],
+      description: "Access to weather API",
+      mimeType: "application/json",
+      extensions: {
+        ...declareDiscoveryExtension({
+          output: {
+            example: {
+              report: {
+                weather: "sunny",
+                temperature: 72,
+              },
             },
           },
-        },
-      }),
+        }),
+      },
     },
   },
   server,

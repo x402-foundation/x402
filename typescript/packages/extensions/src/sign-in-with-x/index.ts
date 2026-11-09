@@ -24,8 +24,11 @@ export type {
   DeclareSIWxOptions,
   SignatureScheme,
   SignatureType,
+  SIWxValidationCode,
   SIWxValidationResult,
   SIWxValidationOptions,
+  SIWxVerifyCode,
+  SIWxErrorCode,
   SIWxVerifyResult,
   EVMMessageVerifier,
   SIWxVerifyOptions,
@@ -46,7 +49,7 @@ export { buildSIWxSchema } from "./schema";
 
 // Client
 export { createSIWxMessage } from "./message";
-export { createSIWxPayload } from "./client";
+export { assertSIWxChallengeBoundToOrigin, createSIWxPayload } from "./client";
 export { encodeSIWxHeader } from "./encode";
 export { wrapFetchWithSIWx } from "./fetch";
 export {
@@ -81,6 +84,8 @@ export {
   createSIWxRequestHook,
   createSIWxClientHook,
   createSIWxClientExtension,
+  type CreateSIWxSettleHookOptions,
+  type CreateSIWxRequestHookOptions,
   type CreateSIWxHookOptions,
   type CreateSIWxClientExtensionOptions,
   type SIWxHookEvent,

@@ -14,8 +14,8 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * Validate SIWX message fields.
  *
  * Performs validation per spec (CHANGELOG-v2.md lines 318-329):
- * - Domain binding: domain MUST match server's domain
- * - URI validation: uri must refer to base url of resource
+ * - Domain binding: domain MUST match configured origin host
+ * - URI validation: uri origin MUST exactly match configured origin
  * - Temporal validation:
  *   - issuedAt MUST be recent (< 5 minutes by default)
  *   - expirationTime MUST be in the future
@@ -23,7 +23,7 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * - Nonce: MUST be unique (via optional checkNonce callback)
  *
  * @param message - The SIWX payload to validate
- * @param expectedResourceUri - Expected resource URI (for domain/URI matching)
+ * @param expectedOrigin - Configured public origin for domain/URI matching
  * @param options - Validation options
  * @returns Validation result
  *
@@ -32,38 +32,48 @@ const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
  * const payload = parseSIWxHeader(header);
  * const result = await validateSIWxMessage(
  *   payload,
- *   'https://api.example.com/data',
+ *   new URL('https://api.example.com'),
  *   { checkNonce: (n) => !usedNonces.has(n) }
  * );
  *
- * if (!result.valid) {
- *   return { error: result.error };
+ * if (!result.isValid) {
+ *   return { error: result.invalidMessage };
  * }
  * ```
  */
 export async function validateSIWxMessage(
   message: SIWxPayload,
-  expectedResourceUri: string,
+  expectedOrigin: URL,
   options: SIWxValidationOptions = {},
 ): Promise<SIWxValidationResult> {
-  const expectedUrl = new URL(expectedResourceUri);
   const maxAge = options.maxAge ?? DEFAULT_MAX_AGE_MS;
 
   // 1. Domain binding (spec: "domain field MUST match server's domain")
-  // Use hostname (without port) per EIP-4361 convention
-  if (message.domain !== expectedUrl.hostname) {
+  if (message.domain !== expectedOrigin.host) {
     return {
-      valid: false,
-      error: `Domain mismatch: expected "${expectedUrl.hostname}", got "${message.domain}"`,
+      isValid: false,
+      invalidReason: "invalid_siwx_domain_mismatch",
+      invalidMessage: `Domain mismatch: expected "${expectedOrigin.host}", got "${message.domain}"`,
     };
   }
 
   // 2. URI validation (spec: "uri and resources must refer to base url of resource")
-  // Allow the message URI to be the origin or the full resource URL
-  if (!message.uri.startsWith(expectedUrl.origin)) {
+  let messageUri: URL;
+  try {
+    messageUri = new URL(message.uri);
+  } catch {
     return {
-      valid: false,
-      error: `URI mismatch: expected origin "${expectedUrl.origin}", got "${message.uri}"`,
+      isValid: false,
+      invalidReason: "invalid_siwx_uri_mismatch",
+      invalidMessage: `Invalid URI: "${message.uri}" is not a valid URL`,
+    };
+  }
+
+  if (messageUri.origin !== expectedOrigin.origin) {
+    return {
+      isValid: false,
+      invalidReason: "invalid_siwx_uri_mismatch",
+      invalidMessage: `URI mismatch: expected origin "${expectedOrigin.origin}", got "${messageUri.origin}"`,
     };
   }
 
@@ -71,22 +81,25 @@ export async function validateSIWxMessage(
   const issuedAt = new Date(message.issuedAt);
   if (isNaN(issuedAt.getTime())) {
     return {
-      valid: false,
-      error: "Invalid issuedAt timestamp",
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at",
+      invalidMessage: "Invalid issuedAt timestamp",
     };
   }
 
   const age = Date.now() - issuedAt.getTime();
   if (age > maxAge) {
     return {
-      valid: false,
-      error: `Message too old: ${Math.round(age / 1000)}s exceeds ${maxAge / 1000}s limit`,
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at_too_old",
+      invalidMessage: `Message too old: ${Math.round(age / 1000)}s exceeds ${maxAge / 1000}s limit`,
     };
   }
   if (age < 0) {
     return {
-      valid: false,
-      error: "issuedAt is in the future",
+      isValid: false,
+      invalidReason: "invalid_siwx_issued_at_in_future",
+      invalidMessage: "issuedAt is in the future",
     };
   }
 
@@ -95,14 +108,16 @@ export async function validateSIWxMessage(
     const expiration = new Date(message.expirationTime);
     if (isNaN(expiration.getTime())) {
       return {
-        valid: false,
-        error: "Invalid expirationTime timestamp",
+        isValid: false,
+        invalidReason: "invalid_siwx_expiration_time",
+        invalidMessage: "Invalid expirationTime timestamp",
       };
     }
     if (expiration < new Date()) {
       return {
-        valid: false,
-        error: "Message expired",
+        isValid: false,
+        invalidReason: "invalid_siwx_expired",
+        invalidMessage: "Message expired",
       };
     }
   }
@@ -112,14 +127,16 @@ export async function validateSIWxMessage(
     const notBefore = new Date(message.notBefore);
     if (isNaN(notBefore.getTime())) {
       return {
-        valid: false,
-        error: "Invalid notBefore timestamp",
+        isValid: false,
+        invalidReason: "invalid_siwx_not_before",
+        invalidMessage: "Invalid notBefore timestamp",
       };
     }
     if (new Date() < notBefore) {
       return {
-        valid: false,
-        error: "Message not yet valid (notBefore is in the future)",
+        isValid: false,
+        invalidReason: "invalid_siwx_not_yet_valid",
+        invalidMessage: "Message not yet valid (notBefore is in the future)",
       };
     }
   }
@@ -129,11 +146,12 @@ export async function validateSIWxMessage(
     const nonceValid = await options.checkNonce(message.nonce);
     if (!nonceValid) {
       return {
-        valid: false,
-        error: "Nonce validation failed (possible replay attack)",
+        isValid: false,
+        invalidReason: "invalid_siwx_nonce",
+        invalidMessage: "Nonce validation failed (possible replay attack)",
       };
     }
   }
 
-  return { valid: true };
+  return { isValid: true };
 }

@@ -2,7 +2,9 @@
 
 from typing import TYPE_CHECKING, TypeVar
 
+from ....schemas.helpers import matches_network_pattern
 from ..v1.constants import V1_NETWORKS
+from ..v1.utils import get_evm_chain_id
 
 if TYPE_CHECKING:
     from x402 import (
@@ -32,7 +34,7 @@ def register_exact_evm_client(
 
     Registers:
     - V2: eip155:* wildcard (or specific networks if provided)
-    - V1: All supported EVM networks
+    - V1: All supported EVM networks (or those matching networks if provided)
 
     Args:
         client: x402Client instance.
@@ -58,9 +60,19 @@ def register_exact_evm_client(
     else:
         client.register("eip155:*", scheme)
 
-    # Register V1 for all legacy networks
+    v1_networks = V1_NETWORKS
+    if networks:
+        v1_networks = [
+            name
+            for name in V1_NETWORKS
+            if any(
+                matches_network_pattern(f"eip155:{get_evm_chain_id(name)}", pattern)
+                for pattern in networks
+            )
+        ]
+
     v1_scheme = ExactEvmClientSchemeV1(signer)
-    for network in V1_NETWORKS:
+    for network in v1_networks:
         client.register_v1(network, v1_scheme)
 
     if policies:
@@ -104,7 +116,7 @@ def register_exact_evm_facilitator(
     facilitator: FacilitatorT,
     signer: "FacilitatorEvmSigner",
     networks: str | list[str],
-    deploy_erc4337_with_eip6492: bool = False,
+    eip6492_allowed_factories: list[str] | None = None,
     simulate_in_settle: bool = False,
 ) -> FacilitatorT:
     """Register EVM exact payment schemes to x402Facilitator.
@@ -117,7 +129,9 @@ def register_exact_evm_facilitator(
         facilitator: x402Facilitator instance.
         signer: EVM signer for verification/settlement.
         networks: Network(s) to register.
-        deploy_erc4337_with_eip6492: Enable smart wallet deployment.
+        eip6492_allowed_factories: Allowlist of factory addresses for ERC-6492 smart wallet
+            deployment. A non-empty list enables the feature; an empty list (default) denies all
+            factory deployment calls.
         simulate_in_settle: Rerun verify-time simulation inside settle.
 
     Returns:
@@ -129,7 +143,7 @@ def register_exact_evm_facilitator(
     from .v1.facilitator import ExactEvmSchemeV1Config
 
     config = ExactEvmSchemeConfig(
-        deploy_erc4337_with_eip6492=deploy_erc4337_with_eip6492,
+        eip6492_allowed_factories=eip6492_allowed_factories or [],
         simulate_in_settle=simulate_in_settle,
     )
     scheme = ExactEvmFacilitatorScheme(signer, config)
@@ -140,7 +154,7 @@ def register_exact_evm_facilitator(
 
     # Register V1
     v1_config = ExactEvmSchemeV1Config(
-        deploy_erc4337_with_eip6492=deploy_erc4337_with_eip6492,
+        eip6492_allowed_factories=eip6492_allowed_factories or [],
         simulate_in_settle=simulate_in_settle,
     )
     v1_scheme = ExactEvmFacilitatorSchemeV1(signer, v1_config)

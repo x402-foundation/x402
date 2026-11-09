@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // mockAuthorizerSigner records calls and returns canned bytes.
@@ -40,6 +41,13 @@ func TestNewBatchSettlementEvmScheme_NilConfigDefaults(t *testing.T) {
 	if s.GetStorage() == nil {
 		t.Fatal("expected default in-memory storage")
 	}
+	if s.GetEnforceMinDeposit() {
+		t.Fatal("enforceMinDeposit should default to false")
+	}
+	lock, ok := s.GetStorage().(ChannelLockStorage)
+	if !ok || s.GetLockStorage() != lock {
+		t.Fatal("expected default lock store to be the in-memory storage")
+	}
 	if s.Scheme() != batchsettlement.SchemeBatched {
 		t.Fatalf("scheme = %s", s.Scheme())
 	}
@@ -61,6 +69,42 @@ func TestNewBatchSettlementEvmScheme_OverridesApplied(t *testing.T) {
 	}
 	if s.GetStorage() != storage {
 		t.Fatalf("expected provided storage")
+	}
+	if s.GetLockStorage() != storage {
+		t.Fatal("expected lock store inferred from storage")
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_SeparateLockStoreWhenStorageHasNoLockMethods(t *testing.T) {
+	inner := NewInMemoryChannelStorage()
+	storage := storageOnly{inner: inner}
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{Storage: storage})
+	if s.GetStorage() != storage {
+		t.Fatal("expected wrapped storage")
+	}
+	if _, ok := s.GetLockStorage().(*InMemoryChannelStorage); !ok {
+		t.Fatalf("expected a separate in-memory lock store, got %T", s.GetLockStorage())
+	}
+}
+
+type storageOnly struct {
+	inner SessionStorage
+}
+
+func (s storageOnly) Get(ctx context.Context, channelId string) (*ChannelSession, error) {
+	return s.inner.Get(ctx, channelId)
+}
+func (s storageOnly) List(ctx context.Context) ([]*ChannelSession, error) {
+	return s.inner.List(ctx)
+}
+func (s storageOnly) UpdateChannel(ctx context.Context, channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
+	return s.inner.UpdateChannel(ctx, channelId, update)
+}
+
+func TestNewBatchSettlementEvmScheme_EnforceMinDepositEnabled(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{EnforceMinDeposit: true})
+	if !s.GetEnforceMinDeposit() {
+		t.Fatal("expected enforceMinDeposit true")
 	}
 }
 
@@ -130,7 +174,7 @@ func TestParsePrice_UnsupportedType(t *testing.T) {
 func TestRegisterMoneyParser_OverridesDefault(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	called := false
-	s.RegisterMoneyParser(func(_ float64, _ x402.Network) (*x402.AssetAmount, error) {
+	s.RegisterMoneyParser(func(_ string, _ x402.Network) (*x402.AssetAmount, error) {
 		called = true
 		return &x402.AssetAmount{Amount: "777", Asset: "0xcustom"}, nil
 	})
@@ -163,6 +207,9 @@ func TestEnhancePaymentRequirements_ExplicitAsset(t *testing.T) {
 	}
 	if out.Extra["withdrawDelay"] != 1800 {
 		t.Fatalf("withdrawDelay = %v", out.Extra["withdrawDelay"])
+	}
+	if out.Extra["minDeposit"] != "10000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
 	}
 }
 
@@ -234,6 +281,102 @@ func TestEnhancePaymentRequirements_PassesThroughAssetTransferMethod(t *testing.
 	}
 	if got, _ := out.Extra["assetTransferMethod"].(string); got != "permit2" {
 		t.Fatalf("expected assetTransferMethod=permit2 to pass through, got %q", got)
+	}
+}
+
+func TestEnhancePaymentRequirements_DefaultsMinDepositTo10xAmount(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x1234567890abcdef1234567890abcdef12345678",
+		Amount:  "2500",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "25000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_ConvertsRouteMinDepositMoneyOnDefaultAssets(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "1000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_UsesRequestAmountWhenItExceedsRouteMoney(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		Amount:  "2000000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "2000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_AcceptsAtomicMinDepositForAnyAsset(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x00000000000000000000000000000000000000aa",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "5000000",
+		},
+	}
+	out, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out.Extra["minDeposit"] != "5000000" {
+		t.Fatalf("minDeposit = %v", out.Extra["minDeposit"])
+	}
+}
+
+func TestEnhancePaymentRequirements_RejectsMinDepositMoneyForNonDefaultAssets(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	req := types.PaymentRequirements{
+		Network: "eip155:8453",
+		Asset:   "0x00000000000000000000000000000000000000aa",
+		Amount:  "1000",
+		Extra: map[string]interface{}{
+			"receiverAuthorizer": "0x4444444444444444444444444444444444444444",
+			"minDeposit":         "$1",
+		},
+	}
+	_, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "only supported for default assets") {
+		t.Fatalf("expected default-asset error, got %v", err)
 	}
 }
 
@@ -379,29 +522,30 @@ func TestSignClaimBatch_OK(t *testing.T) {
 
 func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	in := sampleSession("0xABCD", "10")
-	if err := s.UpdateSession("0xABCD", in); err != nil {
+	upper := "0x" + strings.ToUpper(strings.TrimPrefix(testChA, "0x"))
+	in := sampleSession(upper, "10")
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return in.Clone() }); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got, err := s.GetSession("0xabcd")
+	got, err := s.GetSession(testChA)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got == nil || got.ChannelId != "0xABCD" {
+	if got == nil || got.ChannelId != upper {
 		t.Fatalf("got %+v", got)
 	}
-	if err := s.DeleteSession("0XABCD"); err != nil {
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return nil }); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if got2, _ := s.GetSession("0xabcd"); got2 != nil {
+	if got2, _ := s.GetSession(testChA); got2 != nil {
 		t.Fatalf("expected nil after delete")
 	}
 }
 
-func TestGetAssetDecimals_DefaultsTo6(t *testing.T) {
+func TestGetAssetDecimals_UnknownAsset(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	if got := s.GetAssetDecimals("0xunknown", x402.Network("nope")); got != 6 {
-		t.Fatalf("got %d", got)
+	if _, ok := s.GetAssetDecimals("0xunknown", x402.Network("nope")); ok {
+		t.Fatal("expected ok=false for unknown asset")
 	}
 }
 
@@ -413,19 +557,19 @@ func TestCreateChannelManager_NotNil(t *testing.T) {
 	}
 }
 
-func TestParseMoneyToDecimal_AllNumericTypes(t *testing.T) {
+func TestParseMoney_AllNumericTypes(t *testing.T) {
 	cases := []struct {
 		in   x402.Price
-		want float64
+		want string
 	}{
-		{"1.5", 1.5},
-		{"$2.25", 2.25},
-		{float64(3.5), 3.5},
-		{int(4), 4.0},
-		{int64(5), 5.0},
+		{"1.5", "1.5"},
+		{"$2.25", "2.25"},
+		{float64(3.5), "3.5"},
+		{int(4), "4"},
+		{int64(5), "5"},
 	}
 	for _, c := range cases {
-		got, err := parseMoneyToDecimal(c.in)
+		got, _, err := x402.ParseMoney(c.in)
 		if err != nil {
 			t.Fatalf("err on %v: %v", c.in, err)
 		}
@@ -435,14 +579,14 @@ func TestParseMoneyToDecimal_AllNumericTypes(t *testing.T) {
 	}
 }
 
-func TestParseMoneyToDecimal_BadString(t *testing.T) {
-	if _, err := parseMoneyToDecimal("nope"); err == nil {
+func TestParseMoney_BadString(t *testing.T) {
+	if _, _, err := x402.ParseMoney("nope"); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestParseMoneyToDecimal_UnsupportedType(t *testing.T) {
-	if _, err := parseMoneyToDecimal(big.NewInt(1)); err == nil {
+func TestParseMoney_UnsupportedType(t *testing.T) {
+	if _, _, err := x402.ParseMoney(big.NewInt(1)); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -457,7 +601,8 @@ func makeBatchedPayload(channelId string) *types.PaymentPayload {
 	return &types.PaymentPayload{
 		X402Version: 2,
 		Payload: map[string]interface{}{
-			"type": "voucher",
+			"type":          "voucher",
+			"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
 			"voucher": map[string]interface{}{
 				"channelId":          channelId,
 				"maxClaimableAmount": "100",
@@ -485,8 +630,9 @@ func enrich(s *BatchSettlementEvmScheme, pp *types.PaymentPayload, errReason str
 
 func TestRememberAndTakeChannelSnapshot_RoundTrip(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	sess := sampleSession("0xabcd", "10")
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	sess := sampleSession(id, "10")
 
 	s.RememberChannelSnapshot(pp, sess)
 	got := s.TakeChannelSnapshot(pp)
@@ -501,8 +647,9 @@ func TestRememberAndTakeChannelSnapshot_RoundTrip(t *testing.T) {
 
 func TestRememberChannelSnapshot_NilInputsAreNoOp(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	s.RememberChannelSnapshot(nil, sampleSession("0xabcd", "10"))
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	s.RememberChannelSnapshot(nil, sampleSession(id, "10"))
 	s.RememberChannelSnapshot(pp, nil)
 	if got := s.TakeChannelSnapshot(pp); got != nil {
 		t.Fatalf("expected nil snapshot, got %+v", got)
@@ -514,8 +661,9 @@ func TestRememberChannelSnapshot_NilInputsAreNoOp(t *testing.T) {
 
 func TestEnrichPaymentRequiredResponse_WrongReasonNoOp(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "10"))
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	s.RememberChannelSnapshot(pp, sampleSession(id, "10"))
 	reqs := enrich(s, pp, "some_other_reason",
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})
 	if reqs[0].Extra != nil {
@@ -534,8 +682,9 @@ func TestEnrichPaymentRequiredResponse_NilPayloadNoOp(t *testing.T) {
 
 func TestEnrichPaymentRequiredResponse_FromSnapshot(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "42"))
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	s.RememberChannelSnapshot(pp, sampleSession(id, "42"))
 
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})
@@ -544,7 +693,7 @@ func TestEnrichPaymentRequiredResponse_FromSnapshot(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected channelState map, got %+v", reqs[0].Extra)
 	}
-	if channelState["channelId"] != "0xabcd" {
+	if channelState["channelId"] != id {
 		t.Fatalf("channelId = %v", channelState["channelId"])
 	}
 	if channelState["chargedCumulativeAmount"] != "42" {
@@ -571,8 +720,9 @@ func TestEnrichPaymentRequiredResponse_FromSnapshot(t *testing.T) {
 
 func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	_ = s.UpdateSession("0xabcd", sampleSession("0xabcd", "77"))
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	seedSession(t, s, id, sampleSession(id, "77"))
 
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})
@@ -588,7 +738,8 @@ func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
 
 func TestEnrichPaymentRequiredResponse_NoSessionNoOp(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})
 	if reqs[0].Extra != nil {
@@ -598,8 +749,9 @@ func TestEnrichPaymentRequiredResponse_NoSessionNoOp(t *testing.T) {
 
 func TestEnrichPaymentRequiredResponse_SkipsNonBatchedAndMismatchedNetwork(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	pp := makeBatchedPayload("0xabcd")
-	s.RememberChannelSnapshot(pp, sampleSession("0xabcd", "10"))
+	id := testChannelId(t)
+	pp := makeBatchedPayload(id)
+	s.RememberChannelSnapshot(pp, sampleSession(id, "10"))
 
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch, []types.PaymentRequirements{
 		{Scheme: "exact", Network: "eip155:8453"},
@@ -648,8 +800,8 @@ func TestExtractChannelIdFromPayload(t *testing.T) {
 		t.Fatalf("channelId non-string: got %q", got)
 	}
 	if got := extractChannelIdFromPayload(map[string]interface{}{
-		"voucher": map[string]interface{}{"channelId": "0xabcd"},
-	}); got != "0xabcd" {
+		"voucher": map[string]interface{}{"channelId": testChA},
+	}); got != testChA {
 		t.Fatalf("got %q", got)
 	}
 }

@@ -5,7 +5,6 @@ Provides HTTPAdapter and convenience functions for sync requests.Session.
 
 from __future__ import annotations
 
-import copy
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +15,8 @@ except ImportError as e:
     raise ImportError(
         "requests client requires the requests package. Install with: uv add x402[requests]"
     ) from e
+
+from ..utils import ResponseBodyTooLargeError, read_limited_body
 
 if TYPE_CHECKING:
     from ...client import x402ClientConfig, x402ClientSync
@@ -49,6 +50,7 @@ class x402HTTPAdapter(HTTPAdapter):
     """
 
     RETRY_HEADER = "Payment-Retry"
+    RECOVERY_HEADER = "Payment-Recovery"
 
     def __init__(
         self,
@@ -106,21 +108,53 @@ class x402HTTPAdapter(HTTPAdapter):
         """
         # Check if this is already a retry (per-request state via header)
         is_retry = request.headers.get(self.RETRY_HEADER) == "1"
+        is_recovery = request.headers.get(self.RECOVERY_HEADER) == "1"
 
-        # Make initial request
-        response = super().send(request, **kwargs)
+        caller_wants_stream = kwargs.pop("stream", False)
+        send_kwargs = {**kwargs, "stream": True}
+
+        def _finalize_response(resp: requests.Response) -> requests.Response:
+            if not caller_wants_stream:
+                _ = resp.content
+            return resp
+
+        def _read_capped_body(resp: requests.Response) -> bytes:
+            raw = resp.raw
+            stream = getattr(raw, "stream", None)
+            # urllib3 is opened with decode_content=False, so only stream() yields the decoded body.
+            if callable(stream):
+                return read_limited_body(stream(decode_content=True))
+            return read_limited_body(raw)
+
+        def _cap_returned_payment_required(resp: requests.Response) -> requests.Response:
+            if resp.status_code != 402:
+                return _finalize_response(resp)
+            try:
+                content = _read_capped_body(resp)
+            finally:
+                resp.close()
+            resp._content = content
+            resp._content_consumed = True
+            for name in ("content-encoding", "content-length"):
+                resp.headers.pop(name, None)
+            return resp
+
+        # Make initial request (always stream so 402 bodies can be capped before buffering)
+        response = super().send(request, **send_kwargs)
 
         # Not a 402, return as-is
         if response.status_code != 402:
-            return response
+            return _finalize_response(response)
 
-        # Already retried with payment, return the 402
-        if is_retry:
-            return response
+        # Already retried with payment, return the capped 402
+        if is_retry or is_recovery:
+            return _cap_returned_payment_required(response)
 
         try:
-            # Save content before parsing (avoid consuming stream)
-            content = copy.deepcopy(response.content)
+            try:
+                content = _read_capped_body(response)
+            finally:
+                response.close()
 
             # Parse PaymentRequired (try header first for V2, then body for V1)
             def get_header(name: str) -> str | None:
@@ -134,6 +168,20 @@ class x402HTTPAdapter(HTTPAdapter):
 
             payment_required = self._http_client.get_payment_required_response(get_header, body)
 
+            hook_headers = self._http_client.handle_payment_required(
+                payment_required, response.url or request.url
+            )
+            if hook_headers:
+                hook_request = request.copy()
+                hook_request.headers.update(hook_headers)
+                hook_response = super().send(hook_request, **send_kwargs)
+                if hook_response.status_code != 402:
+                    return _finalize_response(hook_response)
+                try:
+                    _read_capped_body(hook_response)
+                finally:
+                    hook_response.close()
+
             # Create payment payload (sync)
             payment_payload = self._client.create_payment_payload(payment_required)
 
@@ -141,19 +189,45 @@ class x402HTTPAdapter(HTTPAdapter):
             payment_headers = self._http_client.encode_payment_signature_header(payment_payload)
 
             # Create a copy of the request for retry (don't modify original)
-            retry_request = request.copy()
-            retry_request.headers.update(payment_headers)
-            retry_request.headers["Access-Control-Expose-Headers"] = (
-                "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE"
-            )
-            retry_request.headers[self.RETRY_HEADER] = "1"
+            paid_request = request.copy()
+            paid_request.headers.update(payment_headers)
+            paid_request.headers[self.RETRY_HEADER] = "1"
 
             # Retry request with payment
-            retry_response = super().send(retry_request, **kwargs)
+            paid_response = super().send(paid_request, **send_kwargs)
 
-            return retry_response
+            process_result = self._http_client.process_payment_result(
+                payment_payload,
+                paid_response.headers.get,
+                paid_response.status_code,
+            )
+
+            if process_result.recovered:
+                if paid_response.status_code == 402:
+                    try:
+                        _read_capped_body(paid_response)
+                    finally:
+                        paid_response.close()
+                # Retry once with a fresh payload after recovery
+                fresh_payload = self._client.create_payment_payload(payment_required)
+                fresh_headers = self._http_client.encode_payment_signature_header(fresh_payload)
+                recovery_request = request.copy()
+                recovery_request.headers.update(fresh_headers)
+                recovery_request.headers[self.RECOVERY_HEADER] = "1"
+                recovery_response = super().send(recovery_request, **send_kwargs)
+                # Fire hooks on retry response — no further recovery
+                self._http_client.process_payment_result(
+                    fresh_payload,
+                    recovery_response.headers.get,
+                    recovery_response.status_code,
+                )
+                return _cap_returned_payment_required(recovery_response)
+
+            return _cap_returned_payment_required(paid_response)
 
         except PaymentError:
+            raise
+        except ResponseBodyTooLargeError:
             raise
         except Exception as e:
             raise PaymentError(f"Failed to handle payment: {e}") from e

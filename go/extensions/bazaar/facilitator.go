@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/types"
-	v1 "github.com/x402-foundation/x402/go/extensions/v1"
-	x402types "github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/types"
+	v1 "github.com/x402-foundation/x402/go/v2/extensions/v1"
+	x402types "github.com/x402-foundation/x402/go/v2/types"
 	"github.com/xeipuuv/gojsonschema"
 	"golang.org/x/net/idna"
 )
@@ -21,6 +21,38 @@ import (
 type ValidationResult struct {
 	Valid  bool
 	Errors []string
+}
+
+// hasExternalSchemaReference recursively scans a decoded JSON Schema document for "$ref"/"$id"
+// values that are not same-document fragments (i.e. do not start with "#").
+//
+// gojsonschema's default loader resolves any other form -- absolute http(s):// URLs, file://
+// URIs, or relative paths -- via an outbound HTTP request or filesystem read during schema
+// compilation, before the instance is ever validated. Since schema is client-controlled (it
+// arrives in the payment payload), any such value is treated as unsafe (CWE-918 SSRF / local
+// file disclosure).
+func hasExternalSchemaReference(node any) bool {
+	switch v := node.(type) {
+	case map[string]any:
+		for key, value := range v {
+			if key == "$ref" || key == "$id" {
+				str, ok := value.(string)
+				if !ok || !strings.HasPrefix(str, "#") {
+					return true
+				}
+			}
+			if hasExternalSchemaReference(value) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if hasExternalSchemaReference(item) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ValidateDiscoveryExtension validates a discovery extension's info against its schema
@@ -42,6 +74,19 @@ type ValidationResult struct {
 //	    fmt.Println("Validation errors:", result.Errors)
 //	}
 func ValidateDiscoveryExtension(extension types.DiscoveryExtension) ValidationResult {
+	// The schema is attacker-controlled (it arrives in the client's payment payload).
+	// gojsonschema's default loader resolves "$ref"/"$id" values via an outbound HTTP
+	// request or filesystem read during compilation, before the instance is ever checked
+	// (CWE-918 SSRF / local file read). Only same-document fragment references (e.g.
+	// "#/definitions/foo") are safe, since they resolve against the in-memory document
+	// instead of fetching anything.
+	if hasExternalSchemaReference(map[string]any(extension.Schema)) {
+		return ValidationResult{
+			Valid:  false,
+			Errors: []string{"schema must not contain external $ref/$id references"},
+		}
+	}
+
 	// Convert schema to JSON
 	schemaJSON, err := json.Marshal(extension.Schema)
 	if err != nil {
@@ -91,6 +136,90 @@ func ValidateDiscoveryExtension(extension types.DiscoveryExtension) ValidationRe
 	}
 }
 
+// ValidateDiscoveryExtensionSpec validates a discovery extension against the Bazaar protocol
+// specification. Unlike ValidateDiscoveryExtension which checks internal consistency (info vs
+// schema), this function enforces protocol-level invariants:
+//   - info.input.type must be "http" or "mcp"
+//   - HTTP: if method is present it must be GET/POST/PUT/PATCH/DELETE/HEAD
+//   - HTTP body methods: bodyType must be "json", "form-data", or "text"
+//   - MCP: toolName (string) and inputSchema (object) are required
+//   - MCP: if transport is present it must be "streamable-http" or "sse"
+//
+// Safe for pre-enrichment HTTP extensions where method may be absent.
+func ValidateDiscoveryExtensionSpec(extension types.DiscoveryExtension) ValidationResult {
+	infoJSON, err := json.Marshal(extension.Info)
+	if err != nil {
+		return ValidationResult{Valid: false, Errors: []string{"Failed to marshal info"}}
+	}
+
+	var raw struct {
+		Input map[string]interface{} `json:"input"`
+	}
+	if err := json.Unmarshal(infoJSON, &raw); err != nil || raw.Input == nil {
+		return ValidationResult{Valid: false, Errors: []string{"Missing or invalid 'info.input' field"}}
+	}
+
+	inputType, _ := raw.Input["type"].(string)
+	if inputType != "http" && inputType != "mcp" {
+		return ValidationResult{
+			Valid:  false,
+			Errors: []string{fmt.Sprintf(`info.input.type must be "http" or "mcp", got %q`, inputType)},
+		}
+	}
+
+	var errors []string
+
+	if inputType == "http" {
+		if method, ok := raw.Input["method"]; ok {
+			methodStr, _ := method.(string)
+			// Empty string means pre-enrichment (method not yet set); skip validation.
+			if methodStr != "" && !types.IsQueryMethod(methodStr) && !types.IsBodyMethod(methodStr) {
+				errors = append(errors, fmt.Sprintf(
+					"info.input.method must be one of DELETE, GET, HEAD, PATCH, POST, PUT, got %q", methodStr))
+			}
+		}
+
+		if bt, ok := raw.Input["bodyType"]; ok {
+			btStr, _ := bt.(string)
+			if btStr != "json" && btStr != "form-data" && btStr != "text" {
+				errors = append(errors, fmt.Sprintf(
+					`info.input.bodyType must be one of json, form-data, text, got %q`, btStr))
+			}
+			if method, ok2 := raw.Input["method"]; ok2 {
+				methodStr, _ := method.(string)
+				if methodStr != "" && !types.IsBodyMethod(methodStr) {
+					errors = append(errors, fmt.Sprintf(
+						`info.input.bodyType is set but method %q is not a body method (POST, PUT, PATCH)`, methodStr))
+				}
+			}
+		}
+	}
+
+	if inputType == "mcp" {
+		toolName, _ := raw.Input["toolName"].(string)
+		if toolName == "" {
+			errors = append(errors, "info.input.toolName is required and must be a non-empty string for MCP extensions")
+		}
+		if is, ok := raw.Input["inputSchema"]; !ok || is == nil {
+			errors = append(errors, "info.input.inputSchema is required and must be an object for MCP extensions")
+		} else if _, isMap := is.(map[string]interface{}); !isMap {
+			errors = append(errors, "info.input.inputSchema is required and must be an object for MCP extensions")
+		}
+		if transport, ok := raw.Input["transport"]; ok {
+			tStr, _ := transport.(string)
+			if tStr != "streamable-http" && tStr != "sse" {
+				errors = append(errors, fmt.Sprintf(
+					`info.input.transport must be one of streamable-http, sse, got %q`, tStr))
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return ValidationResult{Valid: false, Errors: errors}
+	}
+	return ValidationResult{Valid: true}
+}
+
 type DiscoveredResource struct {
 	ResourceURL   string
 	Method        string
@@ -104,6 +233,24 @@ type DiscoveredResource struct {
 	ServiceName string
 	Tags        []string
 	IconUrl     string
+	Extensions  map[string]any
+}
+
+// InputType returns the protocol type from discovery info (e.g. "http", "mcp").
+func (d DiscoveredResource) InputType() string {
+	if d.DiscoveryInfo == nil {
+		return ""
+	}
+	switch input := d.DiscoveryInfo.Input.(type) {
+	case types.QueryInput:
+		return input.Type
+	case types.BodyInput:
+		return input.Type
+	case types.McpInput:
+		return input.Type
+	default:
+		return ""
+	}
 }
 
 // ExtractDiscoveredResourceFromPaymentPayload extracts a discovered resource from a client's payment payload and requirements.
@@ -156,6 +303,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 	var routeTemplate string
 	var rawInput map[string]interface{}
 	var serviceMetadata SanitizedResourceServiceMetadata
+	var extensions map[string]any
 	version := versionCheck.X402Version
 
 	switch version {
@@ -165,6 +313,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal v2 payload: %w", err)
 		}
+		extensions = payload.Extensions
 
 		// Extract resource URL
 		if payload.Resource != nil {
@@ -231,6 +380,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 			return nil, fmt.Errorf("v1 discovery extraction failed: %w", err)
 		}
 		discoveryInfo = infoV1
+		extensions = buildV1CatalogExtensionsFromPayload(payloadBytes, *discoveryInfo)
 	default:
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
@@ -262,6 +412,7 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 		ServiceName:   serviceMetadata.ServiceName,
 		Tags:          serviceMetadata.Tags,
 		IconUrl:       serviceMetadata.IconUrl,
+		Extensions:    extensions,
 	}, nil
 }
 
@@ -269,6 +420,48 @@ func ExtractDiscoveredResourceFromPaymentPayload(
 // must start with "/" and contain only safe URL path characters and :param identifiers.
 // Expected format: "/users/:userId", "/weather/:country/:city", "/api/v1/items".
 var routeTemplateRegex = regexp.MustCompile(`^/[a-zA-Z0-9_/:.\-~%]+$`)
+
+// Maximum number of successive PathUnescape passes applied while
+// canonicalizing a routeTemplate before giving up and rejecting it.
+//
+// A legitimate single-encoded value reaches a fixed point (further decoding
+// changes nothing) after one pass. This allows a few extra passes so
+// multiply-encoded traversal/injection payloads (not just doubly-encoded
+// ones) are still caught, while bounding the work done on adversarial input.
+const maxRouteTemplateDecodePasses = 5
+
+// fullyDecodeRouteTemplate repeatedly percent-decodes value until a fixed
+// point is reached (further decoding produces no change) or
+// maxRouteTemplateDecodePasses is exhausted, returning the fully-canonicalized
+// string.
+//
+// A single decode pass only catches a payload encoded exactly once (e.g.
+// %2e%2e); a double- or triple-encoded payload (%252e%252e,
+// %25252e%25252e, ...) would still contain literal % sequences after one
+// pass and slip past a traversal/injection substring check performed on that
+// partially-decoded result. Decoding to a fixed point closes that gap for any
+// encoding depth, not just the double-encoded case.
+//
+// Returns the fully-decoded string and true, or ("", false) if any pass fails
+// to parse (malformed percent-encoding) or the pass budget is exhausted
+// without reaching a fixed point.
+func fullyDecodeRouteTemplate(value string) (string, bool) {
+	decoded := value
+	for i := 0; i < maxRouteTemplateDecodePasses; i++ {
+		next, err := url.PathUnescape(decoded)
+		if err != nil {
+			return "", false
+		}
+		if next == decoded {
+			return decoded, true
+		}
+		decoded = next
+	}
+	// Still changing after the pass budget: either pathologically deep
+	// encoding or a % that never resolves to a fixed point. Either way,
+	// there's no safe canonical form to validate against. Reject.
+	return "", false
+}
 
 // isValidRouteTemplate checks whether a routeTemplate value is structurally valid.
 //
@@ -280,8 +473,8 @@ var routeTemplateRegex = regexp.MustCompile(`^/[a-zA-Z0-9_/:.\-~%]+$`)
 // payment under an arbitrary URL (catalog poisoning). This enforces minimal structural requirements:
 //   - Must be a non-empty string starting with "/"
 //   - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
-//   - Must not contain ".." (path traversal)
-//   - Must not contain "://" (URL injection)
+//   - Must not contain ".." (path traversal), at any percent-encoding depth
+//   - Must not contain "://" (URL injection), at any percent-encoding depth
 func isValidRouteTemplate(s string) bool {
 	if s == "" {
 		return false
@@ -289,9 +482,11 @@ func isValidRouteTemplate(s string) bool {
 	if !routeTemplateRegex.MatchString(s) {
 		return false
 	}
-	// Decode percent-encoding before traversal checks so that %2e%2e is caught.
-	decoded, err := url.PathUnescape(s)
-	if err != nil {
+	// Decode to a fixed point before traversal checks, so that %2e%2e,
+	// %252e%252e, and deeper encodings are all caught rather than just the
+	// single-encoded case.
+	decoded, ok := fullyDecodeRouteTemplate(s)
+	if !ok {
 		return false
 	}
 	if strings.Contains(decoded, "..") {
@@ -626,6 +821,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 	var routeTemplate string
 	var rawInput map[string]interface{}
 	var serviceMetadata SanitizedResourceServiceMetadata
+	var extensions map[string]any
 	version := versionCheck.X402Version
 
 	switch version {
@@ -635,6 +831,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		if err := json.Unmarshal(paymentRequiredBytes, &paymentRequired); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal v2 payment required: %w", err)
 		}
+		extensions = paymentRequired.Extensions
 
 		// Extract resource URL
 		if paymentRequired.Resource != nil {
@@ -707,6 +904,7 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 			return nil, fmt.Errorf("v1 discovery extraction failed: %w", err)
 		}
 		discoveryInfo = infoV1
+		extensions = v1.BuildV1CatalogExtensions(nil, *discoveryInfo)
 	default:
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
@@ -738,7 +936,22 @@ func ExtractDiscoveredResourceFromPaymentRequired(
 		ServiceName:   serviceMetadata.ServiceName,
 		Tags:          serviceMetadata.Tags,
 		IconUrl:       serviceMetadata.IconUrl,
+		Extensions:    extensions,
 	}, nil
+}
+
+func buildV1CatalogExtensionsFromPayload(
+	payloadBytes []byte,
+	discoveryInfo types.DiscoveryInfo,
+) map[string]any {
+	var payload struct {
+		Extensions map[string]any `json:"extensions"`
+	}
+	var existingExtensions map[string]any
+	if err := json.Unmarshal(payloadBytes, &payload); err == nil && len(payload.Extensions) > 0 {
+		existingExtensions = payload.Extensions
+	}
+	return v1.BuildV1CatalogExtensions(existingExtensions, discoveryInfo)
 }
 
 func extractMethodAndToolName(

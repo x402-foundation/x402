@@ -1,28 +1,25 @@
 "use client";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
+import { useState } from "react";
+import { WagmiProvider, createConfig, http } from "wagmi";
 import { baseSepolia } from "wagmi/chains";
-import { OnchainKitProvider } from "@coinbase/onchainkit";
+
+const wagmiConfig = createConfig({
+  chains: [baseSepolia],
+  connectors: [farcasterMiniApp()],
+  transports: {
+    [baseSepolia.id]: http(),
+  },
+});
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
+
   return (
-    <OnchainKitProvider
-      apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
-      chain={baseSepolia}
-      config={{
-        appearance: {
-          mode: 'auto', // 'light' | 'dark' | 'auto'
-        },
-        wallet: {
-          display: 'modal', // 'modal' | 'drawer'
-          preference: 'all', // 'all' | 'smartWalletOnly' | 'eoaOnly'
-        },
-      }}
-      miniKit={{
-        enabled: true,
-      }}
-    >
-      {children}
-    </OnchainKitProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </WagmiProvider>
   );
 }
-

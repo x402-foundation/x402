@@ -67,7 +67,7 @@ NEXT_PUBLIC_ICON_URL=https://example.com/app-logo.png
 
 ### Server-Side Payment Protection
 
-The `/api/protected` endpoint uses the `withX402` wrapper for payment protection:
+The `/api/protected` endpoint uses the `withX402` wrapper for payment protection. This is a **static** route, so a bare route config (no path key) is sufficient:
 
 ```typescript
 // app/api/protected/route.ts
@@ -98,6 +98,8 @@ export const GET = withX402(
   server,
 );
 ```
+
+For **dynamic** routes (`/api/users/[id]`, etc.) or bazaar discovery with an explicit catalog path, key the config by pattern: `{ "/api/users/[id]": { accepts: … } }`. See [`@x402/next` README](../../../../typescript/packages/http/next/README.md#protecting-api-routes).
 
 ### Client-Side Payment Handling
 
@@ -211,7 +213,7 @@ The `PAYMENT-REQUIRED` header contains payment requirements:
 
 ### Adding More Protected Routes
 
-Create a new route file (e.g., `app/api/premium/route.ts`) and use the `withX402` wrapper:
+Create a new route file (e.g., `app/api/premium/route.ts`) and use the `withX402` wrapper. Static paths can use a bare config; dynamic paths need a path key — see [`@x402/next` README](../../../../typescript/packages/http/next/README.md#protecting-api-routes).
 
 ```typescript
 // app/api/premium/route.ts

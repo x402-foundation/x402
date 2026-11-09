@@ -11,7 +11,7 @@ With x402, any web service can require payment before serving a response, using 
 
 **Want to contribute to our docs?** [The documentation source in this repository is open to PRs.](https://github.com/x402-foundation/x402) Our only ask is that you keep these docs as a neutral resource, with no branded content other than linking out to other resources where appropriate.
 
-**Note about the docs:** These docs are the credibly neutral source of truth for x402, as x402 is a completely open standard under the Apache-2.0 license. Coinbase Developer Platform is currently sponsoring [AI-powered docs for users here](https://docs.cdp.coinbase.com/x402/welcome), as we migrate to our own AI-powered solution on the main x402.org domain.
+**Note about the docs:** These docs are the credibly neutral source of truth for x402, as x402 is a completely open standard under the Apache-2.0 license. 
 
 ### Why Use x402?
 
@@ -65,4 +65,4 @@ Ready to build? Start here:
 - [Quickstart for Buyers](/getting-started/quickstart-for-buyers)
 - [Explore Core Concepts](/core-concepts/http-402)
 - [Batch settlement](/schemes/batch-settlement) (EVM micropayments / batched redemption)
-- [Join our community on Discord](https://discord.gg/invite/cdp)
+- [Join our community on Slack](http://slack.x402.org/)

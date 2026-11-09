@@ -2,9 +2,12 @@
 
 import pytest
 
-from x402 import x402ResourceServer, x402ResourceServerSync
+from x402 import FacilitatorCapabilityError, x402ResourceServer, x402ResourceServerSync
 from x402.schemas import (
+    PaymentPayload,
+    PaymentRequirements,
     ResourceConfig,
+    ResourceInfo,
     SettleResponse,
     SupportedKind,
     SupportedResponse,
@@ -93,6 +96,10 @@ class MockSchemeServer:
     """Mock scheme server for testing."""
 
     scheme = "mock"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
 
     def __init__(self, scheme: str = "mock"):
         self.scheme = scheme
@@ -269,6 +276,72 @@ class TestServerInitialization:
         # First client should be registered
         assert server._facilitator_clients_map["eip155:8453"]["exact"] is client1
 
+    def test_initialize_raises_when_no_kinds_loaded(self):
+        """Empty /supported must fail retryably, matching TypeScript."""
+        server = x402ResourceServer(MockFacilitatorClient([]))
+
+        with pytest.raises(
+            RuntimeError,
+            match="no supported payment kinds loaded from any facilitator",
+        ):
+            server.initialize()
+
+        assert server._initialized is False
+        assert server._supported_responses == {}
+
+
+class _ValidatingSchemeServer(MockSchemeServer):
+    """Mock scheme exposing the optional validate_facilitator_support hook."""
+
+    def __init__(self, scheme: str = "mock", problem: str | None = None):
+        super().__init__(scheme)
+        self._problem = problem
+        self.calls: list = []
+
+    def validate_facilitator_support(self, network, supported_kind, facilitator_extensions):
+        self.calls.append((network, supported_kind, facilitator_extensions))
+        return self._problem
+
+
+class TestValidateFacilitatorCapabilities:
+    """Tests for the fail-fast facilitator-capability validation in initialize()."""
+
+    def _client(self) -> MockFacilitatorClient:
+        return MockFacilitatorClient(
+            [SupportedKind(x402_version=2, scheme="mock", network="eip155:8453")]
+        )
+
+    def test_initialize_raises_when_scheme_reports_problem(self):
+        server = x402ResourceServer(self._client())
+        server.register("eip155:8453", _ValidatingSchemeServer("mock", problem="needs authorizer"))
+
+        with pytest.raises(FacilitatorCapabilityError, match="needs authorizer"):
+            server.initialize()
+
+    def test_initialize_succeeds_when_hook_returns_none(self):
+        scheme = _ValidatingSchemeServer("mock", problem=None)
+        server = x402ResourceServer(self._client())
+        server.register("eip155:8453", scheme)
+
+        server.initialize()
+
+        assert server._initialized is True
+        assert len(scheme.calls) == 1
+
+    def test_initialize_skips_unsupported_scheme_network(self):
+        scheme = _ValidatingSchemeServer("mock", problem="should not be evaluated")
+        # Facilitator advertises a different network than the scheme is registered on.
+        client = MockFacilitatorClient(
+            [SupportedKind(x402_version=2, scheme="mock", network="eip155:1")]
+        )
+        server = x402ResourceServer(client)
+        server.register("eip155:8453", scheme)
+
+        server.initialize()
+
+        assert server._initialized is True
+        assert scheme.calls == []
+
 
 # =============================================================================
 # has_registered_scheme Tests
@@ -423,6 +496,11 @@ class TestBuildPaymentRequirements:
         """Merchant config extra should be preserved when requirements are built."""
 
         class SchemeWithParsedExtra(MockSchemeServer):
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+                "permit2": {"supported": ("authorization",), "default": "authorization"},
+            }
+
             def parse_price(self, price, network):
                 from dataclasses import dataclass
 
@@ -501,3 +579,174 @@ class TestServerErrorHandling:
 
         with pytest.raises(RuntimeError, match="not initialized"):
             server.build_payment_requirements(None)  # type: ignore
+
+
+def _matching_req(**overrides) -> PaymentRequirements:
+    base = {
+        "scheme": "exact",
+        "network": "eip155:8453",
+        "asset": "USDC",
+        "amount": "1000000",
+        "pay_to": "0xabc",
+        "max_timeout_seconds": 300,
+        "extra": {},
+    }
+    extra = overrides.pop("extra", None)
+    base.update(overrides)
+    if extra is not None:
+        base["extra"] = extra
+    return PaymentRequirements(**base)
+
+
+def _matching_payload(accepted: PaymentRequirements) -> PaymentPayload:
+    return PaymentPayload(payload={}, accepted=accepted)
+
+
+class TestFindMatchingRequirements:
+    def test_matches_when_server_declared_terms_are_unchanged(self):
+        server = x402ResourceServer()
+        req1 = _matching_req(amount="1000000")
+        req2 = _matching_req(amount="2000000")
+        result = server.find_matching_requirements([req1, req2], _matching_payload(req1))
+        assert result == req1
+
+    def test_matches_additive_accepted_extra_fields(self):
+        server = x402ResourceServer()
+        req = _matching_req(
+            scheme="batch-settlement",
+            extra={"name": "USDC", "version": "2", "nested": {"required": True}},
+        )
+        accepted = req.model_copy(
+            update={
+                "extra": {
+                    **req.extra,
+                    "nested": {"required": True, "clientOnly": "ok"},
+                    "channelState": {"chargedCumulativeAmount": "2000"},
+                }
+            }
+        )
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) == req
+
+    def test_matches_when_server_extra_has_none_fields_omitted_by_client(self):
+        server = x402ResourceServer()
+        req = _matching_req(
+            scheme="batch-settlement",
+            extra={"name": "USDC", "version": "2", "assetTransferMethod": None},
+        )
+        accepted = req.model_copy(update={"extra": {"name": "USDC", "version": "2"}})
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) == req
+
+    def test_does_not_match_when_accepted_extra_overwrites_server_fields(self):
+        server = x402ResourceServer()
+        req = _matching_req(scheme="batch-settlement", extra={"name": "USDC", "version": "2"})
+        accepted = req.model_copy(update={"extra": {**req.extra, "version": "3"}})
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+    def test_does_not_match_when_accepted_extra_array_is_a_superset(self):
+        server = x402ResourceServer()
+        req = _matching_req(scheme="batch-settlement", extra={"allowedSigners": ["0xalice"]})
+        accepted = req.model_copy(update={"extra": {"allowedSigners": ["0xmallory", "0xalice"]}})
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+    def test_does_not_match_when_accepted_extra_array_is_reordered(self):
+        server = x402ResourceServer()
+        req = _matching_req(
+            scheme="batch-settlement", extra={"allowedSigners": ["0xalice", "0xbob"]}
+        )
+        accepted = req.model_copy(update={"extra": {"allowedSigners": ["0xbob", "0xalice"]}})
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+    def test_does_not_match_when_accepted_extra_omits_server_fields(self):
+        server = x402ResourceServer()
+        req = _matching_req(scheme="batch-settlement", extra={"name": "USDC", "version": "2"})
+        accepted = req.model_copy(update={"extra": {"name": "USDC"}})
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+    def test_returns_none_if_no_match_found(self):
+        server = x402ResourceServer()
+        req = _matching_req(scheme="exact")
+        payload = _matching_payload(_matching_req(scheme="intent"))
+        assert server.find_matching_requirements([req], payload) is None
+
+    def test_matches_when_only_declared_dynamic_extra_fields_differ(self):
+        class SvmLike(MockSchemeServer):
+            dynamic_extra_fields = ["recentBlockhash", "lastValidBlockHeight"]
+
+        server = x402ResourceServer()
+        server.register("solana:mainnet", SvmLike("exact"))
+        req = _matching_req(
+            network="solana:mainnet",
+            extra={
+                "feePayer": "FeePayer111111111111111111111111111111111",
+                "recentBlockhash": "freshBlockhash",
+                "lastValidBlockHeight": "200",
+            },
+        )
+        accepted = req.model_copy(
+            update={
+                "extra": {
+                    "feePayer": "FeePayer111111111111111111111111111111111",
+                    "recentBlockhash": "staleBlockhash",
+                    "lastValidBlockHeight": "100",
+                }
+            }
+        )
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) == req
+
+    def test_does_not_match_when_static_extra_field_differs_despite_dynamic_fields(self):
+        class SvmLike(MockSchemeServer):
+            dynamic_extra_fields = ["recentBlockhash", "lastValidBlockHeight"]
+
+        server = x402ResourceServer()
+        server.register("solana:mainnet", SvmLike("exact"))
+        req = _matching_req(
+            network="solana:mainnet",
+            extra={
+                "feePayer": "FeePayer111111111111111111111111111111111",
+                "recentBlockhash": "freshBlockhash",
+            },
+        )
+        accepted = req.model_copy(
+            update={
+                "extra": {
+                    "feePayer": "OtherPayer1111111111111111111111111111111",
+                    "recentBlockhash": "staleBlockhash",
+                }
+            }
+        )
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+    def test_keeps_strict_extra_comparison_when_no_dynamic_fields_are_declared(self):
+        server = x402ResourceServer()
+        server.register("solana:mainnet", MockSchemeServer("exact"))
+        req = _matching_req(
+            network="solana:mainnet",
+            extra={"feePayer": "FeePayer", "recentBlockhash": "fresh"},
+        )
+        accepted = req.model_copy(
+            update={"extra": {"feePayer": "FeePayer", "recentBlockhash": "stale"}}
+        )
+        assert server.find_matching_requirements([req], _matching_payload(accepted)) is None
+
+
+@pytest.mark.asyncio
+async def test_rejects_extension_enrichment_that_injects_payment_flow() -> None:
+    class FlowAttack:
+        key = "flowAttack"
+
+        def enrich_declaration(self, declaration, transport_context):
+            return declaration
+
+        def enrich_payment_required_response(self, declaration, context):
+            context.requirements[0].extra["paymentFlow"] = "upfront"
+            return {}
+
+    server = x402ResourceServer()
+    server.register_extension(FlowAttack())
+    with pytest.raises(ValueError, match=r'extra\["paymentFlow"\].*protocol-reserved'):
+        await server.create_payment_required_response(
+            [_matching_req(extra={"name": "USDC"})],
+            ResourceInfo(url="https://example.com", description="", mime_type=""),
+            None,
+            {"flowAttack": {}},
+        )

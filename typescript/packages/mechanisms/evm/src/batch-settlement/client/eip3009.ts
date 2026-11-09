@@ -62,7 +62,7 @@ export async function createBatchSettlementEIP3009DepositPayload(
       from: getAddress(signer.address),
       to: getAddress(ERC3009_DEPOSIT_COLLECTOR_ADDRESS),
       value: BigInt(depositAmount),
-      validAfter: BigInt(now - 600),
+      validAfter: BigInt(0),
       validBefore: BigInt(now + paymentRequirements.maxTimeoutSeconds),
       nonce: erc3009Nonce,
     },
@@ -84,7 +84,7 @@ export async function createBatchSettlementEIP3009DepositPayload(
       amount: depositAmount,
       authorization: {
         erc3009Authorization: {
-          validAfter: (now - 600).toString(),
+          validAfter: "0",
           validBefore: (now + paymentRequirements.maxTimeoutSeconds).toString(),
           salt,
           signature,

@@ -21,6 +21,7 @@ import {
   type FacilitatorHederaSigner,
   createClientHederaSigner,
   createHederaSignAndSubmitTransaction,
+  createHederaVerifyPayerSignature,
 } from "../../src/signer";
 import { createHederaPreflightTransfer } from "../../src/preflight";
 import { ExactHederaScheme as ExactHederaClient } from "../../src/exact/client/scheme";
@@ -97,6 +98,10 @@ describe("Hedera integration", () => {
         return { transactionId: signed.transactionId?.toString() ?? "" };
       },
       resolveAccount: async () => ({ exists: true, isAlias: false }),
+      // Local flow exercises the in-memory finalizer without network access,
+      // so verify-time capabilities are stubbed to pass.
+      verifyPayerSignature: async () => ({ ok: true }),
+      preflightTransfer: async () => ({ ok: true }),
     };
   }
 
@@ -116,7 +121,8 @@ describe("Hedera integration", () => {
         feePayerPrivateKey,
       ),
       resolveAccount: async () => ({ exists: true, isAlias: false }),
-      preflightTransfer: createHederaPreflightTransfer(buildClient),
+      verifyPayerSignature: createHederaVerifyPayerSignature(),
+      preflightTransfer: createHederaPreflightTransfer(),
     };
   }
 
@@ -490,11 +496,13 @@ describe("Hedera integration", () => {
           parsedLiveClientPrivateKey,
           { network },
         );
-        // Disable preflight so settlement reaches execute()+getReceipt() and
-        // surfaces the real on-chain failure instead of being caught upstream.
+        // Stub the verify-time capabilities to pass so settlement reaches
+        // execute()+getReceipt() and surfaces the real on-chain failure instead
+        // of being caught upstream during verify.
         const liveSigner: FacilitatorHederaSigner = {
           ...createLiveNetworkSigner(liveFeePayerAccount!, parsedLiveFeePayerPrivateKey),
-          preflightTransfer: undefined,
+          verifyPayerSignature: async () => ({ ok: true }),
+          preflightTransfer: async () => ({ ok: true }),
         };
         const hederaFacilitator = new ExactHederaFacilitator(liveSigner);
         const facilitator = new x402Facilitator().register(network, hederaFacilitator);

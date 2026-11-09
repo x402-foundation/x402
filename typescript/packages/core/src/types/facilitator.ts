@@ -13,6 +13,7 @@ export type VerifyResponse = {
   invalidMessage?: string;
   payer?: string;
   extensions?: Record<string, unknown>;
+  extensionResponses?: Record<string, unknown>;
   extra?: Record<string, unknown>;
 };
 
@@ -32,6 +33,7 @@ export type SettleResponse = {
   /** Actual amount settled in atomic token units. Present for schemes like `upto` where settlement amount may differ from the authorized maximum. */
   amount?: string;
   extensions?: Record<string, unknown>;
+  extensionResponses?: Record<string, unknown>;
   extra?: Record<string, unknown>;
 };
 
@@ -118,6 +120,57 @@ export class FacilitatorResponseError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FacilitatorResponseError";
+  }
+}
+
+/**
+ * Error thrown when a facilitator HTTP request exceeds the client's configured timeout.
+ *
+ * Extends FacilitatorResponseError so HTTP middlewares surface it as a facilitator
+ * boundary failure (502) rather than an unhandled runtime error.
+ *
+ * Note: for settle(), a client-side timeout is an indeterminate outcome — the
+ * facilitator may have received and completed the settlement after the client
+ * stopped waiting. Callers must not treat this error as proof that settlement
+ * did not occur.
+ */
+export class FacilitatorTimeoutError extends FacilitatorResponseError {
+  /** The facilitator operation that timed out ("verify", "settle", or "supported") */
+  readonly operation: string;
+  /** The timeout that elapsed, in milliseconds */
+  readonly timeoutMs: number;
+
+  /**
+   * Creates a FacilitatorTimeoutError.
+   *
+   * @param operation - The facilitator operation that timed out
+   * @param timeoutMs - The configured timeout in milliseconds
+   */
+  constructor(operation: string, timeoutMs: number) {
+    super(`Facilitator ${operation} request timed out after ${timeoutMs}ms`);
+    this.name = "FacilitatorTimeoutError";
+    this.operation = operation;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Error thrown when a registered scheme's configuration is incompatible with
+ * the capabilities the facilitator advertised for that scheme and network.
+ */
+export class FacilitatorCapabilityError extends Error {
+  /** Human-readable problem lines, one per scheme/network mismatch. */
+  readonly problems: string[];
+
+  /**
+   * Creates a FacilitatorCapabilityError listing every capability problem.
+   *
+   * @param problems - Scheme/network problem lines to include in the message
+   */
+  constructor(problems: string[]) {
+    super(`x402 facilitator capability errors:\n${problems.map(e => `  - ${e}`).join("\n")}`);
+    this.name = "FacilitatorCapabilityError";
+    this.problems = problems;
   }
 }
 

@@ -19,7 +19,10 @@ const storage = new InMemorySIWxStorage();
 
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme())
-  .registerExtension(createSIWxResourceServerExtension({ storage }));
+  .registerExtension(createSIWxResourceServerExtension({
+    storage,
+    origin: "http://localhost:4021",
+  }));
 
 const app = express();
 app.use(paymentMiddleware(routes, resourceServer));
@@ -125,7 +128,11 @@ const routes = {
 ```typescript
 const resourceServer = new x402ResourceServer(facilitatorClient)
   .register("eip155:84532", new ExactEvmScheme())
-  .registerExtension(createSIWxResourceServerExtension({ storage, onEvent }));
+  .registerExtension(createSIWxResourceServerExtension({
+    storage,
+    origin: process.env.PUBLIC_ORIGIN ?? "http://localhost:4021",
+    onEvent,
+  }));
 ```
 
 The extension refreshes SIWX challenges, records successful payments, and checks SIWX proofs for routes that declare `sign-in-with-x`. For routes declared with `accepts: []`, it grants access on valid SIWX alone. For paid routes, it also checks whether that wallet has already paid.
@@ -169,7 +176,11 @@ function onEvent(event: { type: string; resource: string; address?: string }) {
   console.log(`[SIWX] ${event.type}`, event);
 }
 
-createSIWxResourceServerExtension({ storage, onEvent });
+createSIWxResourceServerExtension({
+  storage,
+  origin: process.env.PUBLIC_ORIGIN ?? "http://localhost:4021",
+  onEvent,
+});
 ```
 
 Event types:

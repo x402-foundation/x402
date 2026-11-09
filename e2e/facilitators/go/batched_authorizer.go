@@ -11,8 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
-	evmmech "github.com/x402-foundation/x402/go/mechanisms/evm"
-	"github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // batchedAuthorizerSigner produces ClaimBatch and Refund EIP-712 signatures
@@ -36,6 +36,16 @@ func newBatchedAuthorizerSigner(privateKeyHex string) (*batchedAuthorizerSigner,
 }
 
 func (a *batchedAuthorizerSigner) Address() string { return a.address.Hex() }
+
+func (a *batchedAuthorizerSigner) SignTypedData(
+	_ context.Context,
+	domain evmmech.TypedDataDomain,
+	types map[string][]evmmech.TypedDataField,
+	primaryType string,
+	message map[string]interface{},
+) ([]byte, error) {
+	return a.signTypedData(domain, types, primaryType, message)
+}
 
 func (a *batchedAuthorizerSigner) SignClaimBatch(ctx context.Context, claims []batchsettlement.BatchSettlementVoucherClaim, network string) ([]byte, error) {
 	chainId, err := evmmech.GetEvmChainId(network)

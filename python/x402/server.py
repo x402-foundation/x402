@@ -13,13 +13,19 @@ from typing import Any
 from typing_extensions import Self
 
 from .schemas import (
+    AfterSettleAbortError,
     PaymentPayload,
     PaymentPayloadV1,
+    PaymentRequired,
     PaymentRequirements,
     PaymentRequirementsV1,
     ResourceConfig,
+    ResourceInfo,
+    ResourceVerifyResponse,
+    SettleError,
+    SettlePhase,
     SettleResponse,
-    VerifyResponse,
+    VerifiedPaymentCancelOptions,
 )
 from .server_base import (
     AfterSettleHook,
@@ -29,13 +35,18 @@ from .server_base import (
     FacilitatorClient,
     FacilitatorClientSync,
     OnSettleFailureHook,
+    OnVerifiedPaymentCanceledHook,
     OnVerifyFailureHook,
     SyncAfterSettleHook,
     SyncAfterVerifyHook,
     SyncBeforeSettleHook,
     SyncBeforeVerifyHook,
     SyncOnSettleFailureHook,
+    SyncOnVerifiedPaymentCanceledHook,
     SyncOnVerifyFailureHook,
+    _SyncServerAsyncHookError,
+    settle_with_pending_retry,
+    settle_with_pending_retry_async,
     x402ResourceServerBase,
 )
 
@@ -103,6 +114,7 @@ class x402ResourceServer(x402ResourceServerBase):
         self._before_settle_hooks: list[BeforeSettleHook] = []
         self._after_settle_hooks: list[AfterSettleHook] = []
         self._on_settle_failure_hooks: list[OnSettleFailureHook] = []
+        self._on_verified_payment_canceled_hooks: list[OnVerifiedPaymentCanceledHook] = []
 
     # ========================================================================
     # Hook Registration
@@ -114,12 +126,12 @@ class x402ResourceServer(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: AfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: OnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 
@@ -138,6 +150,30 @@ class x402ResourceServer(x402ResourceServerBase):
         self._on_settle_failure_hooks.append(hook)
         return self
 
+    def on_verified_payment_canceled(self, hook: OnVerifiedPaymentCanceledHook) -> Self:
+        """Register hook when a verified payment is canceled before settlement."""
+        self._on_verified_payment_canceled_hooks.append(hook)
+        return self
+
+    async def create_payment_required_response(
+        self,
+        requirements: list[PaymentRequirements],
+        resource: ResourceInfo | None = None,
+        error: str | None = None,
+        extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+        payment_payload: PaymentPayload | None = None,
+    ) -> PaymentRequired:
+        """Create a 402 Payment Required response with scheme/extension enrichment."""
+        return await self._build_payment_required_response_async(
+            requirements,
+            resource,
+            error,
+            extensions,
+            transport_context,
+            payment_payload,
+        )
+
     # ========================================================================
     # Verify Payment (Async)
     # ========================================================================
@@ -148,7 +184,10 @@ class x402ResourceServer(x402ResourceServerBase):
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None = None,
         requirements_bytes: bytes | None = None,
-    ) -> VerifyResponse:
+        *,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+    ) -> ResourceVerifyResponse:
         """Verify a payment via facilitator.
 
         Args:
@@ -156,29 +195,50 @@ class x402ResourceServer(x402ResourceServerBase):
             requirements: Requirements to verify against.
             payload_bytes: Raw payload bytes (escape hatch).
             requirements_bytes: Raw requirements bytes (escape hatch).
+            declared_extensions: Optional per-extension declarations for the request.
+            transport_context: Optional transport-specific context (e.g. HTTP, MCP).
 
         Returns:
-            VerifyResponse with is_valid=True or is_valid=False.
+            ResourceVerifyResponse with verify outcome and optional skip-handler directive.
 
         Raises:
             SchemeNotFoundError: If no facilitator for scheme/network.
             PaymentAbortedError: If a before hook aborts.
             RuntimeError: If not initialized.
         """
-        gen = self._verify_payment_core(payload, requirements, payload_bytes, requirements_bytes)
+        gen = self._verify_payment_core(
+            payload,
+            requirements,
+            payload_bytes,
+            requirements_bytes,
+            declared_extensions,
+            transport_context,
+        )
         result = None
         try:
             while True:
                 phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = await target.verify(p, r)
-                    else:
-                        result = await target.settle(p, r)
-                else:
-                    result = await self._execute_hook(target, ctx)
+                while True:
+                    try:
+                        if phase == "call_facilitator":
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = await target.verify(p, r)
+                            else:
+                                result = await target.settle(p, r)
+                        elif phase == "dispatch_cancel":
+                            p, r, declared, transport = ctx
+                            await self._dispatch_verified_payment_canceled(
+                                p, r, declared, target, transport
+                            )
+                            result = None
+                        else:
+                            result = await self._execute_hook(target, ctx)
+                        break
+                    except Exception as e:
+                        if phase not in ("call_facilitator", "before"):
+                            raise
+                        phase, target, ctx = gen.throw(e)
         except StopIteration as e:
             return e.value
 
@@ -192,6 +252,10 @@ class x402ResourceServer(x402ResourceServerBase):
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None = None,
         requirements_bytes: bytes | None = None,
+        *,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         """Settle a payment via facilitator.
 
@@ -200,6 +264,9 @@ class x402ResourceServer(x402ResourceServerBase):
             requirements: Requirements for settlement.
             payload_bytes: Raw payload bytes (escape hatch).
             requirements_bytes: Raw requirements bytes (escape hatch).
+            declared_extensions: Optional per-extension declarations for the request.
+            transport_context: Optional transport-specific context (e.g. HTTP, MCP).
+            phase: Which settle invocation this is (defaults to ``after-handler``).
 
         Returns:
             SettleResponse with success=True or success=False.
@@ -209,22 +276,126 @@ class x402ResourceServer(x402ResourceServerBase):
             PaymentAbortedError: If a before hook aborts.
             RuntimeError: If not initialized.
         """
-        gen = self._settle_payment_core(payload, requirements, payload_bytes, requirements_bytes)
+        gen = self._settle_payment_core(
+            payload,
+            requirements,
+            payload_bytes,
+            requirements_bytes,
+            declared_extensions,
+            transport_context,
+            phase,
+        )
         result = None
+        facilitator_called = False
         try:
             while True:
-                phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
+                phase_cmd, target, ctx = gen.send(result)
+                if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
                         result = await target.verify(p, r)
                     else:
-                        result = await target.settle(p, r)
+                        result = await settle_with_pending_retry_async(target, p, r)
                 else:
-                    result = await self._execute_hook(target, ctx)
+                    try:
+                        result = await self._execute_hook(target, ctx)
+                    except AfterSettleAbortError as abort:
+                        # The settle generator receives hook results via send(), so the abort is returned to it.
+                        if phase_cmd != "after":
+                            raise
+                        result = abort
+                    except Exception as error:
+                        if phase_cmd != "before":
+                            raise
+                        phase_cmd, target, ctx = gen.throw(error)
         except StopIteration as e:
-            return e.value
+            return await self._finalize_settle_result_async(
+                e.value,
+                payload,
+                requirements,
+                payload_bytes,
+                requirements_bytes,
+                declared_extensions,
+                transport_context,
+                phase,
+            )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                await self._dispatch_verified_payment_canceled(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
+
+    async def _dispatch_verified_payment_canceled(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        declared_extensions: dict[str, Any] | None,
+        options: VerifiedPaymentCancelOptions,
+        transport_context: Any,
+        settled_phases: tuple[SettlePhase, ...] | list[SettlePhase] | None = None,
+    ) -> SettleResponse | None:
+        resolved_phases = tuple(settled_phases or ())
+        context = self._build_verified_payment_canceled_context(
+            payload,
+            requirements,
+            declared_extensions,
+            options,
+            transport_context,
+            resolved_phases,
+        )
+        for label, hook in self._verified_payment_canceled_hooks(
+            declared_extensions,
+            requirements,
+        ):
+            try:
+                await self._execute_hook(hook, context)
+            except Exception as error:
+                self._warn_resource_server_hook_failure(
+                    "onVerifiedPaymentCanceled",
+                    label,
+                    error,
+                )
+
+        scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
+        settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
+        if settle_on_cancel is None:
+            return None
+
+        label = f'scheme "{requirements.scheme}" settleOnCancel'
+        try:
+            cancel_requirements = settle_on_cancel(context)
+            if asyncio.iscoroutine(cancel_requirements):
+                cancel_requirements = await cancel_requirements
+            if not cancel_requirements:
+                return None
+            return await self.settle_payment(
+                payload,
+                cancel_requirements,
+                declared_extensions=declared_extensions,
+                transport_context=transport_context,
+                phase="cancel",
+            )
+        except Exception as error:
+            self._warn_resource_server_hook_failure("settleOnCancel", label, error)
+            error_message = str(error)
+            error_reason = error.error_reason if isinstance(error, SettleError) else error_message
+            error_detail = error.error_message if isinstance(error, SettleError) else None
+            return SettleResponse(
+                success=False,
+                error_reason=error_reason or error_message,
+                error_message=error_detail,
+                transaction="",
+                network=requirements.network,
+            )
 
     async def _execute_hook(self, hook: Any, context: Any) -> Any:
         """Execute hook, auto-detecting sync/async."""
@@ -282,6 +453,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
         self._before_settle_hooks: list[SyncBeforeSettleHook] = []
         self._after_settle_hooks: list[SyncAfterSettleHook] = []
         self._on_settle_failure_hooks: list[SyncOnSettleFailureHook] = []
+        self._on_verified_payment_canceled_hooks: list[SyncOnVerifiedPaymentCanceledHook] = []
 
     @staticmethod
     def _validate_sync_facilitator_clients(
@@ -317,12 +489,12 @@ class x402ResourceServerSync(x402ResourceServerBase):
         return self
 
     def on_after_verify(self, hook: SyncAfterVerifyHook) -> Self:
-        """Register hook after successful verification."""
+        """Register hook after verification returns a result, including is_valid false."""
         self._after_verify_hooks.append(hook)
         return self
 
     def on_verify_failure(self, hook: SyncOnVerifyFailureHook) -> Self:
-        """Register hook on verification failure. Return RecoveredVerifyResult to recover."""
+        """Register hook when verification raises. Return RecoveredVerifyResult to recover."""
         self._on_verify_failure_hooks.append(hook)
         return self
 
@@ -341,6 +513,11 @@ class x402ResourceServerSync(x402ResourceServerBase):
         self._on_settle_failure_hooks.append(hook)
         return self
 
+    def on_verified_payment_canceled(self, hook: SyncOnVerifiedPaymentCanceledHook) -> Self:
+        """Register hook when a verified payment is canceled before settlement."""
+        self._on_verified_payment_canceled_hooks.append(hook)
+        return self
+
     # ========================================================================
     # Verify Payment (Sync)
     # ========================================================================
@@ -351,7 +528,10 @@ class x402ResourceServerSync(x402ResourceServerBase):
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None = None,
         requirements_bytes: bytes | None = None,
-    ) -> VerifyResponse:
+        *,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+    ) -> ResourceVerifyResponse:
         """Verify a payment via facilitator.
 
         Args:
@@ -359,29 +539,50 @@ class x402ResourceServerSync(x402ResourceServerBase):
             requirements: Requirements to verify against.
             payload_bytes: Raw payload bytes (escape hatch).
             requirements_bytes: Raw requirements bytes (escape hatch).
+            declared_extensions: Optional per-extension declarations for the request.
+            transport_context: Optional transport-specific context (e.g. HTTP, MCP).
 
         Returns:
-            VerifyResponse with is_valid=True or is_valid=False.
+            ResourceVerifyResponse with verify outcome and optional skip-handler directive.
 
         Raises:
             SchemeNotFoundError: If no facilitator for scheme/network.
             PaymentAbortedError: If a before hook aborts.
             RuntimeError: If not initialized.
         """
-        gen = self._verify_payment_core(payload, requirements, payload_bytes, requirements_bytes)
+        gen = self._verify_payment_core(
+            payload,
+            requirements,
+            payload_bytes,
+            requirements_bytes,
+            declared_extensions,
+            transport_context,
+        )
         result = None
         try:
             while True:
                 phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
-                    # target is client, ctx is (method_name, payload, requirements)
-                    method_name, p, r = ctx
-                    if method_name == "verify":
-                        result = target.verify(p, r)
-                    else:
-                        result = target.settle(p, r)
-                else:
-                    result = self._execute_hook_sync(target, ctx)
+                while True:
+                    try:
+                        if phase == "call_facilitator":
+                            method_name, p, r = ctx
+                            if method_name == "verify":
+                                result = target.verify(p, r)
+                            else:
+                                result = target.settle(p, r)
+                        elif phase == "dispatch_cancel":
+                            p, r, declared, transport = ctx
+                            self._dispatch_verified_payment_canceled_sync(
+                                p, r, declared, target, transport
+                            )
+                            result = None
+                        else:
+                            result = self._execute_hook_sync(target, ctx)
+                        break
+                    except Exception as e:
+                        if phase not in ("call_facilitator", "before"):
+                            raise
+                        phase, target, ctx = gen.throw(e)
         except StopIteration as e:
             return e.value
 
@@ -395,6 +596,10 @@ class x402ResourceServerSync(x402ResourceServerBase):
         requirements: PaymentRequirements | PaymentRequirementsV1,
         payload_bytes: bytes | None = None,
         requirements_bytes: bytes | None = None,
+        *,
+        declared_extensions: dict[str, Any] | None = None,
+        transport_context: Any = None,
+        phase: SettlePhase = "after-handler",
     ) -> SettleResponse:
         """Settle a payment via facilitator.
 
@@ -403,6 +608,9 @@ class x402ResourceServerSync(x402ResourceServerBase):
             requirements: Requirements for settlement.
             payload_bytes: Raw payload bytes (escape hatch).
             requirements_bytes: Raw requirements bytes (escape hatch).
+            declared_extensions: Optional per-extension declarations for the request.
+            transport_context: Optional transport-specific context (e.g. HTTP, MCP).
+            phase: Which settle invocation this is (defaults to ``after-handler``).
 
         Returns:
             SettleResponse with success=True or success=False.
@@ -412,29 +620,138 @@ class x402ResourceServerSync(x402ResourceServerBase):
             PaymentAbortedError: If a before hook aborts.
             RuntimeError: If not initialized.
         """
-        gen = self._settle_payment_core(payload, requirements, payload_bytes, requirements_bytes)
+        gen = self._settle_payment_core(
+            payload,
+            requirements,
+            payload_bytes,
+            requirements_bytes,
+            declared_extensions,
+            transport_context,
+            phase,
+        )
         result = None
+        facilitator_called = False
         try:
             while True:
-                phase, target, ctx = gen.send(result)
-                if phase == "call_facilitator":
+                phase_cmd, target, ctx = gen.send(result)
+                if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
                         result = target.verify(p, r)
                     else:
-                        result = target.settle(p, r)
+                        result = settle_with_pending_retry(target, p, r)
                 else:
-                    result = self._execute_hook_sync(target, ctx)
+                    try:
+                        result = self._execute_hook_sync(target, ctx)
+                    except AfterSettleAbortError as abort:
+                        # The settle generator receives hook results via send(), so the abort is returned to it.
+                        if phase_cmd != "after":
+                            raise
+                        result = abort
+                    except Exception as error:
+                        if phase_cmd != "before":
+                            raise
+                        phase_cmd, target, ctx = gen.throw(error)
         except StopIteration as e:
-            return e.value
+            return self._finalize_settle_result(
+                e.value,
+                payload,
+                requirements,
+                payload_bytes,
+                requirements_bytes,
+                declared_extensions,
+                transport_context,
+                self._run_enrich_hook_sync,
+                phase,
+            )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                self._dispatch_verified_payment_canceled_sync(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
+
+    def _dispatch_verified_payment_canceled_sync(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        declared_extensions: dict[str, Any] | None,
+        options: VerifiedPaymentCancelOptions,
+        transport_context: Any,
+        settled_phases: tuple[SettlePhase, ...] | list[SettlePhase] | None = None,
+    ) -> SettleResponse | None:
+        resolved_phases = tuple(settled_phases or ())
+        context = self._build_verified_payment_canceled_context(
+            payload,
+            requirements,
+            declared_extensions,
+            options,
+            transport_context,
+            resolved_phases,
+        )
+        for label, hook in self._verified_payment_canceled_hooks(
+            declared_extensions,
+            requirements,
+        ):
+            try:
+                self._execute_hook_sync(hook, context)
+            except Exception as error:
+                self._warn_resource_server_hook_failure(
+                    "onVerifiedPaymentCanceled",
+                    label,
+                    error,
+                )
+
+        scheme = self._find_registered_scheme(requirements.scheme, requirements.network)
+        settle_on_cancel = getattr(scheme, "settle_on_cancel", None) if scheme else None
+        if settle_on_cancel is None:
+            return None
+
+        label = f'scheme "{requirements.scheme}" settleOnCancel'
+        try:
+            cancel_requirements = settle_on_cancel(context)
+            if asyncio.iscoroutine(cancel_requirements):
+                cancel_requirements.close()
+                raise TypeError(
+                    "Async settle_on_cancel is not supported in x402ResourceServerSync. "
+                    "Use x402ResourceServer for async hook support."
+                )
+            if not cancel_requirements:
+                return None
+            return self.settle_payment(
+                payload,
+                cancel_requirements,
+                declared_extensions=declared_extensions,
+                transport_context=transport_context,
+                phase="cancel",
+            )
+        except Exception as error:
+            self._warn_resource_server_hook_failure("settleOnCancel", label, error)
+            error_message = str(error)
+            error_reason = error.error_reason if isinstance(error, SettleError) else error_message
+            error_detail = error.error_message if isinstance(error, SettleError) else None
+            return SettleResponse(
+                success=False,
+                error_reason=error_reason or error_message,
+                error_message=error_detail,
+                transaction="",
+                network=requirements.network,
+            )
 
     def _execute_hook_sync(self, hook: Any, context: Any) -> Any:
         """Execute hook synchronously. Raises if async hook detected."""
         result = hook(context)
         if asyncio.iscoroutine(result):
             result.close()  # Prevent warning
-            raise TypeError(
+            raise _SyncServerAsyncHookError(
                 "Async hooks are not supported in x402ResourceServerSync. "
                 "Use x402ResourceServer for async hook support."
             )

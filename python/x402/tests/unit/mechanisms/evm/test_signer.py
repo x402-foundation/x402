@@ -1,5 +1,8 @@
 """Tests for EVM signer implementations."""
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
 try:
@@ -8,6 +11,17 @@ except ImportError:
     pytest.skip("EVM signers require eth_account", allow_module_level=True)
 
 from x402.mechanisms.evm.signers import EthAccountSigner, FacilitatorWeb3Signer
+
+
+class _RecordingEth:
+    """Stands in for web3's `eth` namespace, capturing the receipt-wait timeout."""
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+
+    def wait_for_transaction_receipt(self, tx_hash, timeout):
+        self.timeout = timeout
+        return {"status": 1, "blockNumber": 1, "logs": []}
 
 
 class TestEthAccountSigner:
@@ -123,6 +137,42 @@ class TestFacilitatorWeb3Signer:
 
         assert signer.address == account.address
 
+    @pytest.mark.parametrize(
+        ("signer_kwargs", "expected_gas_limit"),
+        [
+            pytest.param({}, 500_000, id="default"),
+            pytest.param({"gas_limit": 750_000}, 750_000, id="configured"),
+        ],
+    )
+    def test_transactions_use_gas_limit(self, signer_kwargs, expected_gas_limit):
+        """Transactions should use the default or configured gas limit."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+            **signer_kwargs,
+        )
+        builder = Mock()
+        builder.build_transaction.side_effect = lambda tx: tx
+        signer._w3 = Mock()
+        signer._w3.eth.contract.return_value.functions.transfer = Mock(return_value=builder)
+        signer._w3.eth.get_transaction_count.return_value = 0
+        signer._w3.eth.gas_price = 1
+        signer._w3.eth.send_raw_transaction.return_value = bytes.fromhex("12" * 32)
+        signer._account.sign_transaction = Mock(
+            return_value=SimpleNamespace(raw_transaction=b"signed")
+        )
+
+        signer.write_contract("0x1111111111111111111111111111111111111111", [], "transfer")
+        signer.send_transaction("0x2222222222222222222222222222222222222222", b"")
+
+        assert [
+            call.args[0]["gas"] for call in signer._account.sign_transaction.call_args_list
+        ] == [
+            expected_gas_limit,
+            expected_gas_limit,
+        ]
+
     def test_should_have_required_methods(self):
         """Should have all required facilitator signer methods."""
         account = Account.create()
@@ -184,3 +234,30 @@ class TestSignerProtocols:
         assert hasattr(signer, "get_balance")
         assert hasattr(signer, "get_chain_id")
         assert hasattr(signer, "get_code")
+
+    def test_receipt_wait_defaults_to_120_seconds(self):
+        """Receipt wait should keep its historical 120s bound when unconfigured."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+        )
+        signer._w3 = SimpleNamespace(eth=_RecordingEth())
+
+        signer.wait_for_transaction_receipt("0x" + "ab" * 32)
+
+        assert signer._w3.eth.timeout == 120
+
+    def test_receipt_wait_honors_configured_timeout(self):
+        """A configured timeout should bound the receipt wait."""
+        account = Account.create()
+        signer = FacilitatorWeb3Signer(
+            private_key=account.key.hex(),
+            rpc_url="https://sepolia.base.org",
+            confirmation_timeout_seconds=25,
+        )
+        signer._w3 = SimpleNamespace(eth=_RecordingEth())
+
+        signer.wait_for_transaction_receipt("0x" + "ab" * 32)
+
+        assert signer._w3.eth.timeout == 25

@@ -1,5 +1,26 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
+
+/**
+ * Caps a 402 that will be returned to the caller. Paid resource payloads are left
+ * untouched. The body is re-materialized so callers can still read it.
+ *
+ * @param response - Fetch response from the resource server
+ * @returns The original response, or a 402 with a bounded body
+ */
+async function capReturnedPaymentRequired(response: Response): Promise<Response> {
+  if (response.status !== 402) {
+    return response;
+  }
+
+  const body = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
 
 /**
  * Enables the payment of APIs using the x402 payment protocol v2.
@@ -53,6 +74,8 @@ export function wrapFetchWithPayment(
       return response;
     }
 
+    const responseText = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+
     // Parse payment requirements from response
     let paymentRequired: PaymentRequired;
     try {
@@ -62,7 +85,6 @@ export function wrapFetchWithPayment(
       // Try to get from headers first (v2), then from body (v1)
       let body: PaymentRequired | undefined;
       try {
-        const responseText = await response.text();
         if (responseText) {
           body = JSON.parse(responseText) as PaymentRequired;
         }
@@ -78,7 +100,8 @@ export function wrapFetchWithPayment(
     }
 
     // Run payment required hooks
-    const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired);
+    const requestUrl = response.url || request.url;
+    const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired, requestUrl);
     if (hookHeaders) {
       const hookRequest = clonedRequest.clone();
       for (const [key, value] of Object.entries(hookHeaders)) {
@@ -88,6 +111,7 @@ export function wrapFetchWithPayment(
       if (hookResponse.status !== 402) {
         return hookResponse; // Hook succeeded
       }
+      await readLimitedText(hookResponse, MAX_CONTROL_PLANE_RESPONSE_BYTES);
       // Hook's retry got 402, fall through to payment
     }
 
@@ -119,7 +143,7 @@ export function wrapFetchWithPayment(
     );
 
     // Retry the request with payment
-    const secondResponse = await fetch(clonedRequest);
+    const secondResponse = await fetch(clonedRequest.clone());
 
     // Fire payment response hooks and handle recovery
     const result = await httpClient.processPaymentResult(
@@ -129,10 +153,13 @@ export function wrapFetchWithPayment(
     );
 
     if (result.recovered) {
+      if (secondResponse.status === 402) {
+        await readLimitedText(secondResponse, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+      }
       // Hook fixed state — retry with fresh payload (bounded to one recovery)
       const freshPayload = await client.createPaymentPayload(paymentRequired);
       const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
-      const retryRequest = new Request(input, init);
+      const retryRequest = clonedRequest;
       for (const [k, v] of Object.entries(retryHeaders)) {
         retryRequest.headers.set(k, v);
       }
@@ -147,10 +174,10 @@ export function wrapFetchWithPayment(
         name => retryResponse.headers.get(name),
         retryResponse.status,
       );
-      return retryResponse;
+      return capReturnedPaymentRequired(retryResponse);
     }
 
-    return secondResponse;
+    return capReturnedPaymentRequired(secondResponse);
   };
 }
 
@@ -171,14 +198,14 @@ export function wrapFetchWithPaymentFromConfig(
 
 // Re-export types and utilities for convenience
 export { x402Client, x402HTTPClient } from "@x402/core/client";
-export type { x402PaymentResult } from "@x402/core/client";
+export type { HTTPResourceResponse } from "@x402/core/client";
 export type {
   PaymentPolicy,
   SchemeRegistration,
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,

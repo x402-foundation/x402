@@ -20,7 +20,7 @@ import type { McpDiscoveryInfo } from "./mcp/types";
 import type { DiscoveredHTTPResource } from "./http/types";
 import type { DiscoveredMCPResource } from "./mcp/types";
 import { BAZAAR } from "./types";
-import { extractDiscoveryInfoV1 } from "./v1/facilitator";
+import { buildV1CatalogExtensions, extractDiscoveryInfoV1 } from "./v1/facilitator";
 
 /**
  * Valid routeTemplate pattern: must start with "/", contain only safe URL path characters
@@ -29,6 +29,52 @@ import { extractDiscoveryInfoV1 } from "./v1/facilitator";
  * Allowed: /users/:userId, /weather/:country/:city, /api/v1/items
  */
 const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
+
+/**
+ * Maximum number of successive `decodeURIComponent` passes applied while
+ * canonicalizing a routeTemplate before giving up and rejecting it.
+ *
+ * A legitimate single-encoded value reaches a fixed point (further decoding
+ * changes nothing) after one pass. This allows a few extra passes so
+ * multiply-encoded traversal/injection payloads (not just doubly-encoded
+ * ones) are still caught, while bounding the work done on adversarial input.
+ */
+const MAX_ROUTE_TEMPLATE_DECODE_PASSES = 5;
+
+/**
+ * Repeatedly percent-decodes `value` until a fixed point is reached (further
+ * decoding produces no change) or {@link MAX_ROUTE_TEMPLATE_DECODE_PASSES} is
+ * exhausted, returning the fully-canonicalized string.
+ *
+ * A single decode pass only catches a payload encoded exactly once (e.g.
+ * `%2e%2e`); a double- or triple-encoded payload (`%252e%252e`,
+ * `%25252e%25252e`, ...) would still contain literal `%` sequences after one
+ * pass and slip past a traversal/injection substring check performed on that
+ * partially-decoded result. Decoding to a fixed point closes that gap for any
+ * encoding depth, not just the double-encoded case.
+ *
+ * @param value - The string to canonicalize.
+ * @returns The fully-decoded string, or `undefined` if any pass fails to
+ *   parse (malformed percent-encoding) or the pass budget is exhausted
+ *   without reaching a fixed point.
+ */
+function fullyDecodeRouteTemplate(value: string): string | undefined {
+  let decoded = value;
+  for (let i = 0; i < MAX_ROUTE_TEMPLATE_DECODE_PASSES; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return undefined;
+    }
+    if (next === decoded) return decoded;
+    decoded = next;
+  }
+  // Still changing after the pass budget: either pathologically deep
+  // encoding or a `%` that never resolves to a fixed point. Either way,
+  // there's no safe canonical form to validate against — reject.
+  return undefined;
+}
 
 /**
  * Checks whether a routeTemplate value is structurally valid.
@@ -42,8 +88,8 @@ const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
  * This function enforces minimal structural requirements:
  * - Must be a non-empty string starting with "/"
  * - Must match the safe URL path character set (alphanumeric, _, :, /, ., -, ~, %)
- * - Must not contain ".." (path traversal)
- * - Must not contain "://" (URL injection)
+ * - Must not contain ".." (path traversal), at any percent-encoding depth
+ * - Must not contain "://" (URL injection), at any percent-encoding depth
  *
  * @param value - The raw routeTemplate string from the client payload
  * @returns true if the value is a valid routeTemplate, false otherwise
@@ -53,13 +99,11 @@ const ROUTE_TEMPLATE_REGEX = /^\/[a-zA-Z0-9_/:.\-~%]+$/;
 export function isValidRouteTemplate(value: string | undefined): value is string {
   if (!value) return false;
   if (!ROUTE_TEMPLATE_REGEX.test(value)) return false;
-  // Decode percent-encoding before traversal checks so that %2e%2e is caught.
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value);
-  } catch {
-    return false;
-  }
+  // Decode to a fixed point before traversal checks, so that %2e%2e,
+  // %252e%252e, and deeper encodings are all caught rather than just the
+  // single-encoded case.
+  const decoded = fullyDecodeRouteTemplate(value);
+  if (decoded === undefined) return false;
   if (decoded.includes("..")) return false;
   if (decoded.includes("://")) return false;
   return true;
@@ -291,6 +335,39 @@ export interface ValidationResult {
 }
 
 /**
+ * Recursively scans a decoded JSON Schema document for "$ref"/"$id" values that are not
+ * same-document fragments (i.e. do not start with "#").
+ *
+ * Ajv's default `compile` throws rather than dereferencing an unregistered absolute/relative
+ * `$ref`, so this SDK does not fetch or read anything by default. This guard exists for
+ * defense-in-depth and to give a consistent, explicit rejection message across all x402 SDKs,
+ * since schema is client-controlled (it arrives in the payment payload) and any external
+ * $ref/$id is a CWE-918 SSRF / local file disclosure pattern other JSON Schema tooling
+ * (including future Ajv options like `loadSchema`) can act on.
+ *
+ * @param node - The (sub)tree of a decoded JSON Schema document to scan
+ * @returns True if any non-fragment "$ref"/"$id" value is found
+ */
+function hasExternalSchemaReference(node: unknown): boolean {
+  if (Array.isArray(node)) {
+    return node.some(item => hasExternalSchemaReference(item));
+  }
+  if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "$ref" || key === "$id") {
+        if (typeof value !== "string" || !value.startsWith("#")) {
+          return true;
+        }
+      }
+      if (hasExternalSchemaReference(value)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Validates a discovery extension's info against its schema
  *
  * @param extension - The discovery extension containing info and schema
@@ -310,6 +387,16 @@ export interface ValidationResult {
  */
 export function validateDiscoveryExtension(extension: DiscoveryExtension): ValidationResult {
   try {
+    // The schema is attacker-controlled (it arrives in the client's payment payload). Only
+    // same-document fragment references (e.g. "#/definitions/foo") are safe, since they
+    // resolve against the in-memory document instead of fetching or reading anything.
+    if (hasExternalSchemaReference(extension.schema)) {
+      return {
+        valid: false,
+        errors: ["schema must not contain external $ref/$id references"],
+      };
+    }
+
     const ajv = new Ajv({ strict: false, allErrors: true });
     const validate = ajv.compile(extension.schema);
 
@@ -336,6 +423,94 @@ export function validateDiscoveryExtension(extension: DiscoveryExtension): Valid
       ],
     };
   }
+}
+
+const VALID_QUERY_METHODS = new Set(["GET", "HEAD", "DELETE"]);
+const VALID_BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
+const VALID_METHODS = new Set([...VALID_QUERY_METHODS, ...VALID_BODY_METHODS]);
+const VALID_BODY_TYPES = new Set(["json", "form-data", "text"]);
+const VALID_MCP_TRANSPORTS = new Set(["streamable-http", "sse"]);
+
+/**
+ * Validates a discovery extension against the Bazaar protocol specification.
+ *
+ * Unlike `validateDiscoveryExtension` which checks internal consistency (info vs schema),
+ * this function enforces protocol-level invariants:
+ *   - `info.input.type` must be "http" or "mcp"
+ *   - HTTP: if `method` is present it must be GET/POST/PUT/PATCH/DELETE/HEAD
+ *   - HTTP body methods: `bodyType` must be "json" | "form-data" | "text"
+ *   - MCP: `toolName` (string) and `inputSchema` (object) are required
+ *   - MCP: if `transport` is present it must be "streamable-http" | "sse"
+ *
+ * Designed to be safe for pre-enrichment HTTP extensions where `method` may be absent.
+ *
+ * @param extension - The discovery extension to validate
+ * @returns Validation result with spec-level errors
+ */
+export function validateDiscoveryExtensionSpec(
+  extension: Record<string, unknown>,
+): ValidationResult {
+  const errors: string[] = [];
+
+  const info = extension.info;
+  if (!info || typeof info !== "object") {
+    return { valid: false, errors: ["Missing or invalid 'info' field"] };
+  }
+
+  const input = (info as Record<string, unknown>).input;
+  if (!input || typeof input !== "object") {
+    return { valid: false, errors: ["Missing or invalid 'info.input' field"] };
+  }
+
+  const inputObj = input as Record<string, unknown>;
+  const inputType = inputObj.type;
+
+  if (inputType !== "http" && inputType !== "mcp") {
+    errors.push(`info.input.type must be "http" or "mcp", got "${String(inputType)}"`);
+    return { valid: false, errors };
+  }
+
+  if (inputType === "http") {
+    const method = inputObj.method;
+    if (method !== undefined && !VALID_METHODS.has(method as string)) {
+      errors.push(
+        `info.input.method must be one of ${[...VALID_METHODS].join(", ")}, got "${String(method)}"`,
+      );
+    }
+
+    const bodyType = inputObj.bodyType;
+    if (bodyType !== undefined) {
+      if (!VALID_BODY_TYPES.has(bodyType as string)) {
+        errors.push(
+          `info.input.bodyType must be one of ${[...VALID_BODY_TYPES].join(", ")}, got "${String(bodyType)}"`,
+        );
+      }
+      if (method !== undefined && !VALID_BODY_METHODS.has(method as string)) {
+        errors.push(
+          `info.input.bodyType is set but method "${String(method)}" is not a body method (POST, PUT, PATCH)`,
+        );
+      }
+    }
+  }
+
+  if (inputType === "mcp") {
+    if (typeof inputObj.toolName !== "string" || inputObj.toolName.length === 0) {
+      errors.push(
+        "info.input.toolName is required and must be a non-empty string for MCP extensions",
+      );
+    }
+    if (!inputObj.inputSchema || typeof inputObj.inputSchema !== "object") {
+      errors.push("info.input.inputSchema is required and must be an object for MCP extensions");
+    }
+    const transport = inputObj.transport;
+    if (transport !== undefined && !VALID_MCP_TRANSPORTS.has(transport as string)) {
+      errors.push(
+        `info.input.transport must be one of ${[...VALID_MCP_TRANSPORTS].join(", ")}, got "${String(transport)}"`,
+      );
+    }
+  }
+
+  return errors.length === 0 ? { valid: true } : { valid: false, errors };
 }
 
 /**
@@ -380,7 +555,9 @@ export type DiscoveredResource = DiscoveredHTTPResource | DiscoveredMCPResource;
  * @param paymentPayload - The payment payload containing extensions and resource info
  * @param paymentRequirements - The payment requirements to validate against
  * @param validate - Whether to validate the discovery info against the schema (default: true)
- * @returns Discovered resource info with URL, method, version and discovery data, or null if not found
+ * @returns Discovered resource info with URL, method, version, discovery data, and catalog
+ *   extensions echo (v2: `paymentPayload.extensions`; v1: synthesized `extensions.bazaar`
+ *   from requirements outputSchema), or null if not found
  */
 export function extractDiscoveryInfo(
   paymentPayload: PaymentPayload,
@@ -440,12 +617,25 @@ export function extractDiscoveryInfo(
     return null;
   }
 
-  // Strip query params (?) and hash sections (#) for discovery cataloging
+  // Strip query params (?) and hash sections (#) for discovery cataloging.
+  // `url.origin` is only meaningful for a WHATWG "special scheme" (http,
+  // https, ws, wss, ftp, file) — those are the only schemes the URL spec
+  // defines a real origin for. Any other scheme (e.g. mcp://) parses to an
+  // opaque origin, which URL.prototype.origin serializes as the literal
+  // string "null". That's not a reason to skip stripping too: `protocol`,
+  // `host`, and `pathname` all populate correctly for an opaque-origin URL
+  // (only `origin` collapses), so reconstructing from those three still
+  // strips the query/fragment this function exists to strip, without
+  // reintroducing a per-scheme allowlist. A producer declaring
+  // `mcp://tool/x?session=abc` would otherwise carry that query into the
+  // canonical, recreating the per-variant catalog duplication the
+  // stripping exists to prevent. See
+  // https://github.com/x402-foundation/x402/pull/3138#issuecomment-5273664506.
   const url = new URL(resourceUrl);
-  // If a routeTemplate is present (dynamic route), use it as the canonical path
-  const canonicalUrl = routeTemplate
-    ? `${url.origin}${routeTemplate}`
-    : `${url.origin}${url.pathname}`;
+  const originBase = url.origin === "null" ? `${url.protocol}//${url.host}` : url.origin;
+  // If a routeTemplate is present (dynamic route), use it as the canonical path,
+  // for opaque origins too, so each concrete variant is not catalogued separately.
+  const canonicalUrl = `${originBase}${routeTemplate ?? url.pathname}`;
 
   // Extract description and mimeType from resource info (v2) or requirements (v1)
   let description: string | undefined;
@@ -463,6 +653,13 @@ export function extractDiscoveryInfo(
     mimeType = requirementsV1.mimeType;
   }
 
+  let extensions: Record<string, unknown> | undefined;
+  if (paymentPayload.x402Version === 2) {
+    extensions = paymentPayload.extensions;
+  } else if (paymentPayload.x402Version === 1) {
+    extensions = buildV1CatalogExtensions(paymentPayload.extensions, discoveryInfo);
+  }
+
   const base = {
     resourceUrl: canonicalUrl,
     description,
@@ -470,6 +667,7 @@ export function extractDiscoveryInfo(
     ...serviceMetadata,
     x402Version: paymentPayload.x402Version,
     discoveryInfo,
+    extensions,
   };
 
   if (discoveryInfo.input.type === "mcp") {

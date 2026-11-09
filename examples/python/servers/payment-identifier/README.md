@@ -49,7 +49,7 @@ server.on_after_settle(after_settle)
 1. Install dependencies:
 
 ```bash
-uv sync
+uv sync --reinstall-package x402
 ```
 
 2. Copy `.env-local` to `.env` and add your EVM address:

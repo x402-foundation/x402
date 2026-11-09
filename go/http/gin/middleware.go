@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // SetSettlementOverrides sets settlement overrides on the Gin response for partial settlement.
@@ -192,9 +193,11 @@ func PaymentMiddleware(routes x402http.RoutesConfig, server *x402.X402ResourceSe
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
+
+	bazaar.ValidateBazaarRouteExtensions(routes)
 
 	// Create middleware handler using shared logic
 	return createMiddlewareHandler(httpServer, config)
@@ -231,9 +234,11 @@ func PaymentMiddlewareFromHTTPServer(httpServer *x402http.HTTPServer, opts ...Mi
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
+
+	bazaar.ValidateBazaarRouteExtensionsFromServer(httpServer)
 
 	// Create middleware handler using shared logic
 	return createMiddlewareHandler(httpServer, config)
@@ -274,9 +279,11 @@ func PaymentMiddlewareFromConfig(routes x402http.RoutesConfig, opts ...Middlewar
 		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 		defer cancel()
 		if err := httpServer.Initialize(ctx); err != nil {
-			fmt.Printf("Warning: failed to initialize x402 server: %v\n", err)
+			x402http.HandleBackgroundInitError(err)
 		}
 	}
+
+	bazaar.ValidateBazaarRouteExtensions(config.Routes)
 
 	// Create middleware handler
 	return createMiddlewareHandler(httpServer, config)
@@ -289,8 +296,11 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 		adapter := NewGinAdapter(c)
 		reqCtx := x402http.HTTPRequestContext{
 			Adapter: adapter,
-			Path:    c.Request.URL.Path,
-			Method:  c.Request.Method,
+			// Match both EscapedPath and URL.Path (the decoded routing view)
+			// so a route can't be bypassed via either representation.
+			Path:        c.Request.URL.EscapedPath(),
+			DecodedPath: c.Request.URL.Path,
+			Method:      c.Request.Method,
 		}
 
 		// Check if route requires payment before waiting for initialization
@@ -333,8 +343,16 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 	}
 
 	// Send response body
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
 	if response.IsHTML {
 		c.Data(response.Status, "text/html; charset=utf-8", []byte(response.Body.(string)))
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		c.Data(response.Status, contentType, []byte(text))
 	} else {
 		c.JSON(response.Status, response.Body)
 	}
@@ -385,15 +403,26 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
+					var cancelSettlement *x402.SettleResponse
 					if result.CancellationDispatcher != nil {
 						err, ok := rec.(error)
 						if !ok {
 							err = fmt.Errorf("%v", rec)
 						}
-						result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
 						})
+					}
+					if headers := server.CreateFailurePathSettlementHeaders(
+						cancelSettlement,
+						result.BeforeHandlerSettlement,
+						result.PaymentPayload,
+						writer.Header().Get("Cache-Control"),
+					); headers != nil {
+						for key, value := range headers {
+							c.Header(key, value)
+						}
 					}
 					panic(rec)
 				}
@@ -404,11 +433,22 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Check if aborted by the handler (SkipHandler is an intentional bypass, not a failure).
 	if !skipHandler && c.IsAborted() {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: writer.statusCode,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			writer.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				c.Header(key, value)
+			}
 		}
 		return
 	}
@@ -418,11 +458,22 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Don't settle if response failed
 	if writer.statusCode >= 400 {
+		var cancelSettlement *x402.SettleResponse
 		if result.CancellationDispatcher != nil {
-			result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: writer.statusCode,
 			})
+		}
+		if headers := server.CreateFailurePathSettlementHeaders(
+			cancelSettlement,
+			result.BeforeHandlerSettlement,
+			result.PaymentPayload,
+			writer.Header().Get("Cache-Control"),
+		); headers != nil {
+			for key, value := range headers {
+				c.Header(key, value)
+			}
 		}
 		// Write captured response
 		c.Writer.WriteHeader(writer.statusCode)
@@ -441,6 +492,8 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 			ResponseHeaders: writer.Header(),
 		},
 		result.DeclaredExtensions,
+		result.BeforeHandlerSettlement,
+		"",
 	)
 
 	// Check settlement success
@@ -460,7 +513,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 			handlePaymentError(c, settleResult.Response, config)
 		default:
 			// Fallback if Response is nil
-			c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
+			c.JSON(http.StatusPaymentRequired, map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
@@ -469,6 +522,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 	for key, value := range settleResult.Headers {
 		c.Header(key, value)
 	}
+	c.Header("Cache-Control", x402http.WithPrivateCacheControl(c.Writer.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured
 	if config.SettlementHandler != nil {

@@ -1,5 +1,9 @@
 """Tests for Bazaar facilitator functions."""
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import quote
+
 from x402.extensions.bazaar import (
     BAZAAR,
     BodyDiscoveryInfo,
@@ -11,6 +15,7 @@ from x402.extensions.bazaar import (
     validate_discovery_extension,
 )
 from x402.extensions.bazaar.facilitator import (
+    _has_external_schema_reference,
     _is_valid_icon_url,
     _is_valid_route_template,
     _is_valid_service_name,
@@ -64,6 +69,40 @@ class TestIsValidRouteTemplate:
     def test_rejects_percent_encoded_traversal_sequences(self) -> None:
         assert _is_valid_route_template("/users/%2e%2e/admin") is False
         assert _is_valid_route_template("/users/%2E%2E/admin") is False
+
+    def test_rejects_double_encoded_traversal_sequences(self) -> None:
+        # %25 decodes to "%", so %252e%252e decodes-once to "%2e%2e" (still
+        # encoded) and only decodes-twice to "..". A single-pass decode
+        # wouldn't see the traversal here.
+        assert _is_valid_route_template("/users/%252e%252e/admin") is False
+        assert _is_valid_route_template("/users/%252E%252E/admin") is False
+
+    def test_rejects_triple_encoded_traversal_sequences(self) -> None:
+        assert _is_valid_route_template("/users/%25252e%25252e/admin") is False
+
+    def test_rejects_double_encoded_scheme_injection(self) -> None:
+        # %3a decodes to ":", %2f decodes to "/" — %253a%252f%252f decodes-once
+        # to "%3a%2f%2f" (still encoded) and decodes-twice to "://".
+        assert _is_valid_route_template("/users/javascript%253a%252f%252fevil") is False
+
+    def test_still_accepts_a_legitimate_single_percent_encoded_segment(self) -> None:
+        # One decode pass resolves this to plain text with no further
+        # encoding, reaching a fixed point immediately — must not be rejected
+        # just for containing a "%".
+        assert _is_valid_route_template("/search/caf%C3%A9") is True
+
+    def test_rejects_a_value_whose_percent_encoding_never_resolves_to_a_fixed_point(
+        self,
+    ) -> None:
+        # Pathologically deep encoding (more than the decode-pass budget) has
+        # no safe canonical form to validate — reject rather than decode
+        # indefinitely. ":" is re-encoded ("%3A" → "%253A" → ...) on every
+        # encodeURIComponent pass, so this compounds correctly (unlike "..",
+        # whose dots encodeURIComponent leaves untouched).
+        value = ":"
+        for _ in range(8):
+            value = quote(value, safe="")
+        assert _is_valid_route_template(f"/users/x{value}/admin") is False
 
 
 class TestValidateDiscoveryExtension:
@@ -817,3 +856,249 @@ class TestExtractDiscoveryInfoServiceMetadata:
         assert discovered.service_name is None
         assert discovered.tags == ["weather", "forecast"]
         assert discovered.icon_url is None
+
+
+class TestExtractDiscoveryInfoV1Extensions:
+    """Tests that v1 discovery echoes synthesized bazaar extensions."""
+
+    def test_synthesizes_bazaar_extension_when_payload_has_no_extensions(self) -> None:
+        v1_requirements = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "maxAmountRequired": "10000",
+            "resource": "https://mesh.heurist.xyz/x402/agents/TokenResolverAgent/search",
+            "description": "Find tokens",
+            "mimeType": "application/json",
+            "outputSchema": {
+                "input": {
+                    "bodyFields": {"query": {"type": "string"}},
+                    "bodyType": "json",
+                    "discoverable": True,
+                    "method": "POST",
+                    "type": "http",
+                },
+            },
+            "payTo": "0x7d9d1821d15B9e0b8Ab98A058361233E255E405D",
+            "maxTimeoutSeconds": 120,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "extra": {},
+        }
+        v1_payload = {
+            "x402Version": 1,
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "payload": {},
+        }
+
+        discovered = extract_discovery_info(v1_payload, v1_requirements)
+
+        assert discovered is not None
+        assert discovered.extensions is not None
+        assert "outputSchema" not in discovered.extensions
+        assert BAZAAR.key in discovered.extensions
+        assert discovered.extensions[BAZAAR.key]["info"] == discovered.discovery_info
+        assert validate_discovery_extension(discovered.extensions[BAZAAR.key]).valid is True
+
+    def test_maps_output_schema_payload_extensions_to_bazaar_format(self) -> None:
+        v1_requirements = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "maxAmountRequired": "10000",
+            "resource": "https://api.example.com/jwt-verify",
+            "description": "Verify JWT",
+            "mimeType": "application/json",
+            "outputSchema": {
+                "input": {
+                    "discoverable": True,
+                    "method": "GET",
+                    "queryParams": {"token": "JWT token string"},
+                    "type": "http",
+                },
+                "output": {"type": "object"},
+            },
+            "payTo": "0x1234567890123456789012345678901234567890",
+            "maxTimeoutSeconds": 60,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "extra": {},
+        }
+        v1_payload = {
+            "x402Version": 1,
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "payload": {},
+            "extensions": {"outputSchema": v1_requirements["outputSchema"]},
+        }
+
+        discovered = extract_discovery_info(v1_payload, v1_requirements)
+
+        assert discovered is not None
+        assert discovered.extensions is not None
+        assert "outputSchema" not in discovered.extensions
+        assert discovered.extensions[BAZAAR.key]["info"] == discovered.discovery_info
+
+
+class _CountingHandler(BaseHTTPRequestHandler):
+    """Records a hit and serves a trivial JSON Schema document."""
+
+    hits = 0
+
+    def do_GET(self) -> None:  # noqa: N802
+        type(self).hits += 1
+        body = b'{"type": "object"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
+class TestValidateDiscoveryExtensionSSRF:
+    """Regression tests for CWE-918: a client-controlled schema $ref/$id must never be
+    dereferenced. jsonschema's default resolver dereferences any non-fragment $ref via an
+    outbound HTTP request or filesystem read during schema compilation, before the instance
+    is ever checked. Since ``schema`` arrives in the client's payment payload, this is a real
+    SSRF / local file disclosure vector.
+    """
+
+    def _serve(self) -> tuple[HTTPServer, str]:
+        _CountingHandler.hits = 0
+        server = HTTPServer(("127.0.0.1", 0), _CountingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, f"http://127.0.0.1:{server.server_port}"
+
+    def test_rejects_ref_over_http_without_dereferencing_it(self) -> None:
+        server, base_url = self._serve()
+        try:
+            extension = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {"$ref": f"{base_url}/attacker-schema.json"},
+            }
+
+            result = validate_discovery_extension(extension)
+
+            assert _CountingHandler.hits == 0, (
+                "an attacker-controlled $ref must never cause an outbound HTTP request "
+                "(CWE-918 SSRF)"
+            )
+            assert result.valid is False
+        finally:
+            server.shutdown()
+
+    def test_rejects_ref_via_file_uri_without_reading_the_file(self, tmp_path) -> None:
+        secret_path = tmp_path / "attacker-schema.json"
+        secret_path.write_text('{"type": "object"}')
+
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {"$ref": f"file://{secret_path}"},
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is False
+
+    def test_rejects_ref_nested_inside_schema_properties(self) -> None:
+        server, base_url = self._serve()
+        try:
+            extension = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {
+                    "properties": {
+                        "input": {"$ref": f"{base_url}/attacker-schema.json"},
+                    },
+                },
+            }
+
+            result = validate_discovery_extension(extension)
+
+            assert _CountingHandler.hits == 0, "nested $ref must not be dereferenced"
+            assert result.valid is False
+        finally:
+            server.shutdown()
+
+    def test_rejects_external_id(self) -> None:
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {"$id": "https://evil.example.com/schema.json", "type": "object"},
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is False
+
+    def test_still_validates_schemas_with_only_local_fragment_refs(self) -> None:
+        extension = {
+            "info": {"input": {"type": "http", "method": "GET"}},
+            "schema": {
+                "$ref": "#/definitions/root",
+                "definitions": {"root": {"type": "object"}},
+            },
+        }
+
+        result = validate_discovery_extension(extension)
+
+        assert result.valid is True, result.errors
+
+    def test_extract_discovery_info_rejects_external_ref_end_to_end(self) -> None:
+        """Matches the real attack path: a client's paymentPayload with a malicious
+        extensions.bazaar.schema, processed via extract_discovery_info(validate=True) the
+        way a facilitator's verify hook does.
+        """
+        server, base_url = self._serve()
+        try:
+            ext_dict = {
+                "info": {"input": {"type": "http", "method": "GET"}},
+                "schema": {"$ref": f"{base_url}/attacker-schema.json"},
+            }
+            payload = {
+                "x402Version": 2,
+                "resource": {"url": "http://api.example.com/weather"},
+                "extensions": {BAZAAR.key: ext_dict},
+                "accepted": {},
+            }
+            requirements = {"scheme": "exact", "network": "eip155:84532"}
+
+            discovered = extract_discovery_info(payload, requirements)
+
+            assert _CountingHandler.hits == 0, (
+                "an attacker-controlled $ref in extensions.bazaar.schema must never cause "
+                "the facilitator to make an outbound HTTP request (CWE-918 SSRF)"
+            )
+            assert discovered is None, (
+                "a schema containing an external $ref should fail validation, not silently succeed"
+            )
+        finally:
+            server.shutdown()
+
+
+class TestHasExternalSchemaReference:
+    """Direct unit tests for the _has_external_schema_reference helper."""
+
+    def test_returns_false_for_empty_schema(self) -> None:
+        assert _has_external_schema_reference({}) is False
+
+    def test_returns_false_for_fragment_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "#/definitions/foo"}) is False
+
+    def test_returns_true_for_http_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "http://evil.com/x.json"}) is True
+
+    def test_returns_true_for_https_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "https://evil.com/x.json"}) is True
+
+    def test_returns_true_for_file_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "file:///etc/passwd"}) is True
+
+    def test_returns_true_for_relative_ref(self) -> None:
+        assert _has_external_schema_reference({"$ref": "../../etc/passwd"}) is True
+
+    def test_returns_true_for_external_id(self) -> None:
+        assert _has_external_schema_reference({"$id": "https://evil.com/x.json"}) is True
+
+    def test_returns_true_for_nested_ref_in_list(self) -> None:
+        schema = {"allOf": [{"type": "object"}, {"$ref": "http://evil.com/x.json"}]}
+        assert _has_external_schema_reference(schema) is True

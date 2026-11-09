@@ -22,9 +22,7 @@ Communicates with remote x402 facilitator services.
 ```python
 from x402.http import HTTPFacilitatorClient, FacilitatorConfig
 
-facilitator = HTTPFacilitatorClient(
-    FacilitatorConfig(url="https://x402.org/facilitator")
-)
+facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
 
 # Get supported payment kinds
 supported = await facilitator.get_supported()
@@ -52,6 +50,7 @@ result = facilitator.verify(payload, requirements)
 ```python
 from x402.http import FacilitatorConfig, AuthHeaders
 
+
 class MyAuth:
     async def get_auth_headers(self) -> AuthHeaders:
         return AuthHeaders(
@@ -59,6 +58,7 @@ class MyAuth:
             settle={"Authorization": "Bearer ..."},
             supported={},
         )
+
 
 config = FacilitatorConfig(
     url="https://custom-facilitator.com",
@@ -91,12 +91,12 @@ payload = decode_payment_signature_header(header_value)
 
 ```python
 from x402.http import (
-    PAYMENT_SIGNATURE_HEADER,    # "PAYMENT-SIGNATURE"
-    PAYMENT_REQUIRED_HEADER,     # "PAYMENT-REQUIRED"
-    PAYMENT_RESPONSE_HEADER,     # "PAYMENT-RESPONSE"
-    X_PAYMENT_HEADER,            # "X-PAYMENT" (V1)
-    X_PAYMENT_RESPONSE_HEADER,   # "X-PAYMENT-RESPONSE" (V1)
-    HTTP_STATUS_PAYMENT_REQUIRED, # 402
+    PAYMENT_SIGNATURE_HEADER,  # "PAYMENT-SIGNATURE"
+    PAYMENT_REQUIRED_HEADER,  # "PAYMENT-REQUIRED"
+    PAYMENT_RESPONSE_HEADER,  # "PAYMENT-RESPONSE"
+    X_PAYMENT_HEADER,  # "X-PAYMENT" (V1)
+    X_PAYMENT_RESPONSE_HEADER,  # "X-PAYMENT-RESPONSE" (V1)
+    HTTP_STATUS_PAYMENT_REQUIRED,  # 402
     DEFAULT_FACILITATOR_URL,
 )
 ```
@@ -133,6 +133,7 @@ def get_price(context):
     if context.path.endswith("/premium"):
         return "$0.10"
     return "$0.01"
+
 
 routes = {
     "GET /api/*": RouteConfig(

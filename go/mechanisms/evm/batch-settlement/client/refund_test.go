@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ---------- normalizeRefundAmount ----------
@@ -79,7 +79,7 @@ func TestDecodePaymentRequiredHeader(t *testing.T) {
 	pr := x402.PaymentRequired{
 		X402Version: 2,
 		Error:       "boom",
-		Accepts:     []types.PaymentRequirements{{Scheme: "batch-settlement"}},
+		Accepts:     []types.PaymentRequirements{{Scheme: "batch-settlement", Network: "eip155:8453"}},
 	}
 	raw, _ := json.Marshal(pr)
 	encoded := base64.StdEncoding.EncodeToString(raw)
@@ -132,72 +132,59 @@ func TestDecodePaymentResponseHeader_Errors(t *testing.T) {
 
 func TestUpdateSessionAfterRefund_FullRefundDeletes(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set("ch", &BatchSettlementClientContext{Balance: "100"})
-	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{"balance": "0"})
-	if err != nil {
+	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "5000",
+	})
+	if err := UpdateSessionAfterRefund(storage, testChannelID, nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got, _ := storage.Get("ch"); got != nil {
+	if got, _ := storage.Get(testChannelID); got != nil {
 		t.Fatalf("session not deleted: %+v", got)
 	}
 }
 
-func TestUpdateSessionAfterRefund_MissingBalanceDeletes(t *testing.T) {
+func TestUpdateSessionAfterRefund_SubtractsPartialFromLocalBalance(t *testing.T) {
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set("ch", &BatchSettlementClientContext{Balance: "100"})
-	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{})
-	if err != nil {
+	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "1000",
+		Balance:                 "10000",
+	})
+	if err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000")); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got, _ := storage.Get("ch"); got != nil {
+	got, _ := storage.Get(testChannelID)
+	if got == nil || got.Balance != "8000" || got.ChargedCumulativeAmount != "1000" {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestUpdateSessionAfterRefund_DeletesWhenPartialCappedToRefundable(t *testing.T) {
+	storage := NewInMemoryClientChannelStorage()
+	_ = storage.Set(testChannelID, &BatchSettlementClientContext{
+		ChargedCumulativeAmount: "9000",
+		Balance:                 "10000",
+	})
+	if err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000")); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got, _ := storage.Get(testChannelID); got != nil {
 		t.Fatalf("session not deleted: %+v", got)
 	}
 }
 
-func TestUpdateSessionAfterRefund_PartialRefundUpdates(t *testing.T) {
-	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set("ch", &BatchSettlementClientContext{
-		Balance:                 "1000",
-		ChargedCumulativeAmount: "100",
-		TotalClaimed:            "100",
-		Signature:               "0xsig",
-	})
-	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"balance":                 "500",
-			"chargedCumulativeAmount": "200",
-			"totalClaimed":            "150",
-		},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
+func TestUpdateSessionAfterRefund_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	storage := &failingClientChannelStorage{
+		storage: NewInMemoryClientChannelStorage(),
+		getErr:  storageErr,
 	}
-	got, _ := storage.Get("ch")
-	if got == nil {
-		t.Fatal("session deleted but should be retained")
+	err := UpdateSessionAfterRefund(storage, testChannelID, strPtr("2000"))
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
 	}
-	if got.Balance != "500" || got.ChargedCumulativeAmount != "200" || got.TotalClaimed != "150" {
-		t.Fatalf("not updated: %+v", got)
-	}
-	if got.Signature != "0xsig" {
-		t.Fatalf("signature lost: %q", got.Signature)
-	}
-}
-
-func TestUpdateSessionAfterRefund_NoPriorSessionPartial(t *testing.T) {
-	storage := NewInMemoryClientChannelStorage()
-	err := UpdateSessionAfterRefund(storage, "ch", map[string]interface{}{
-		"channelState": map[string]interface{}{
-			"balance":                 "500",
-			"chargedCumulativeAmount": "10",
-		},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	got, _ := storage.Get("ch")
-	if got == nil || got.Balance != "500" {
-		t.Fatalf("session not seeded: %+v", got)
+	if storage.setCalls != 0 {
+		t.Fatalf("Set called %d time(s) after Get failure", storage.setCalls)
 	}
 }
 
@@ -224,7 +211,7 @@ func TestProbeRefundRequirements_MissingHeader(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: "exact"}}}
+	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: "exact", Network: "eip155:8453"}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -238,7 +225,7 @@ func TestProbeRefundRequirements_NoBatchedScheme(t *testing.T) {
 }
 
 func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
-	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched}}}
+	pr := x402.PaymentRequired{Accepts: []types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}}}
 	raw, _ := json.Marshal(pr)
 	header := base64.StdEncoding.EncodeToString(raw)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -254,8 +241,9 @@ func TestProbeRefundRequirements_MissingReceiverAuthorizer(t *testing.T) {
 func TestProbeRefundRequirements_OK(t *testing.T) {
 	pr := x402.PaymentRequired{
 		Accepts: []types.PaymentRequirements{{
-			Scheme: batchsettlement.SchemeBatched,
-			Extra:  map[string]interface{}{"receiverAuthorizer": "0x1"},
+			Scheme:  batchsettlement.SchemeBatched,
+			Network: "eip155:8453",
+			Extra:   map[string]interface{}{"receiverAuthorizer": "0x1"},
 		}},
 	}
 	raw, _ := json.Marshal(pr)
@@ -288,7 +276,7 @@ func TestProbeRefundRequirements_BadHeader(t *testing.T) {
 // ---------- buildRefundVoucherPayload via stub RefundContext ----------
 
 type fakeRefundContext struct {
-	storage       *InMemoryClientChannelStorage
+	storage       ClientChannelStorage
 	signer        *mockSigner
 	voucherSigner *mockSigner
 	config        batchsettlement.ChannelConfig
@@ -316,7 +304,6 @@ func (f *fakeRefundContext) RecoverSession(_ context.Context, _ types.PaymentReq
 	}
 	return f.recovered, nil
 }
-func (f *fakeRefundContext) ProcessSettleResponse(_ map[string]interface{}) error { return nil }
 func (f *fakeRefundContext) ProcessCorrectivePaymentRequired(_ context.Context, _ string, _ []types.PaymentRequirements) (bool, error) {
 	return false, nil
 }
@@ -345,13 +332,30 @@ func TestBuildRefundVoucherPayload_NoSession(t *testing.T) {
 	}
 }
 
+func TestBuildRefundVoucherPayload_GetError(t *testing.T) {
+	storageErr := errors.New("storage unavailable")
+	fctx := &fakeRefundContext{
+		storage: &failingClientChannelStorage{
+			storage: NewInMemoryClientChannelStorage(),
+			getErr:  storageErr,
+		},
+		signer: &mockSigner{address: "0x1"},
+		config: defaultConfig(),
+	}
+
+	_, err := buildRefundVoucherPayload(context.Background(), fctx, types.PaymentRequirements{Network: "eip155:8453"}, "")
+	if !errors.Is(err, storageErr) {
+		t.Fatalf("expected storage error, got %v", err)
+	}
+}
+
 func TestBuildRefundVoucherPayload_HasSession(t *testing.T) {
 	channelId, err := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
 		ChargedCumulativeAmount: "200",
 	})
 
@@ -377,7 +381,7 @@ func TestBuildRefundVoucherPayload_HasSession(t *testing.T) {
 func TestBuildRefundVoucherPayload_DefaultsChargedZero(t *testing.T) {
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{})
+	_ = storage.Set(channelId, &BatchSettlementClientContext{})
 
 	fctx := &fakeRefundContext{
 		storage: storage,
@@ -397,7 +401,7 @@ func TestBuildRefundVoucherPayload_DefaultsChargedZero(t *testing.T) {
 func TestBuildRefundVoucherPayload_SignerError(t *testing.T) {
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{ChargedCumulativeAmount: "1"})
+	_ = storage.Set(channelId, &BatchSettlementClientContext{ChargedCumulativeAmount: "1"})
 
 	fctx := &fakeRefundContext{
 		storage: storage,
@@ -488,7 +492,7 @@ func TestFormatRefundFailure_EmptyDefaults(t *testing.T) {
 func TestBuildRefundVoucherPayload_DrainedChannelShortCircuits(t *testing.T) {
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
 		Balance:                 "100",
 		ChargedCumulativeAmount: "100", // balance <= charged → drained
 	})
@@ -507,7 +511,7 @@ func TestBuildRefundVoucherPayload_DrainedChannelShortCircuits(t *testing.T) {
 func TestBuildRefundVoucherPayload_PartiallyDrainedProceeds(t *testing.T) {
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
 		Balance:                 "1000",
 		ChargedCumulativeAmount: "100", // 1000 > 100 → has remainder
 	})
@@ -527,7 +531,7 @@ func TestBuildRefundVoucherPayload_EmptyBalanceBypassesShortCircuit(t *testing.T
 	// session.balance == "" → can't compare → don't short-circuit.
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
 		ChargedCumulativeAmount: "100",
 	})
 
@@ -548,7 +552,7 @@ func TestBuildRefundVoucherPayload_EmptyBalanceBypassesShortCircuit(t *testing.T
 func fakeRefundContextWithSession(charged string) *fakeRefundContext {
 	channelId, _ := batchsettlement.ComputeChannelId(defaultConfig(), "eip155:8453")
 	storage := NewInMemoryClientChannelStorage()
-	_ = storage.Set(batchsettlement.NormalizeChannelId(channelId), &BatchSettlementClientContext{
+	_ = storage.Set(channelId, &BatchSettlementClientContext{
 		Balance:                 "10000",
 		ChargedCumulativeAmount: charged,
 	})
@@ -669,5 +673,58 @@ func TestExecuteRefund_402MissingHeadersErrors(t *testing.T) {
 		"", http.DefaultClient)
 	if err == nil || !strings.Contains(err.Error(), "missing PAYMENT-REQUIRED") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteRefund_SessionUpdateErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		refundAmount string
+		configure    func(*failingClientChannelStorage, error)
+	}{
+		{
+			name:         "partial refund set",
+			refundAmount: "2000",
+			configure: func(storage *failingClientChannelStorage, err error) {
+				storage.setErr = err
+			},
+		},
+		{
+			name:         "full refund delete",
+			refundAmount: "",
+			configure: func(storage *failingClientChannelStorage, err error) {
+				storage.deleteErr = err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storageErr := errors.New("storage unavailable")
+			fctx := fakeRefundContextWithSession("100")
+			storage := &failingClientChannelStorage{storage: fctx.storage}
+			tc.configure(storage, storageErr)
+			fctx.storage = storage
+
+			settle := x402.SettleResponse{Success: true}
+			settleBytes, err := json.Marshal(settle)
+			if err != nil {
+				t.Fatalf("marshal settle response: %v", err)
+			}
+			settleHeader := base64.StdEncoding.EncodeToString(settleBytes)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("PAYMENT-RESPONSE", settleHeader)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			got, err := executeRefund(context.Background(), fctx, srv.URL,
+				types.PaymentRequirements{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"},
+				tc.refundAmount, http.DefaultClient)
+			if !errors.Is(err, storageErr) {
+				t.Fatalf("expected storage error, got %v", err)
+			}
+			if got == nil || !got.Success {
+				t.Fatalf("expected settle response with storage error, got %+v", got)
+			}
+		})
 	}
 }

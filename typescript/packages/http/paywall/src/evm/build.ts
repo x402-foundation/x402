@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 import { htmlPlugin } from "@craftamap/esbuild-plugin-html";
 import fs from "fs";
 import path from "path";
-import { DEFAULT_STABLECOINS } from "@x402/evm";
+import { DEFAULT_ASSETS } from "@x402/evm";
 import { getBaseTemplate } from "../baseTemplate";
 import { formatTypeScript, toPythonStringLiteral } from "../genHelpers";
 
@@ -104,21 +104,21 @@ const EVMPaywallTemplate = ${JSON.stringify(html)}
       console.log(`[EVM] Generated template.ts (${(html.length / 1024 / 1024).toFixed(2)} MB)`);
 
       // Generate a runtime-dep-free decimals lookup sourced from @x402/evm's
-      // DEFAULT_STABLECOINS. Keeps @x402/evm as a devDependency only while
+      // DEFAULT_ASSETS. Keeps @x402/evm as a devDependency only while
       // preserving a single source of truth for per-network decimals (CI drift
       // check in check_paywall_template.yml covers regen correctness).
       const paywallDefaultTokenDecimals = 6;
       const decimalsMap: Record<string, number> = Object.fromEntries(
-        Object.entries(DEFAULT_STABLECOINS)
-          .filter(([, info]) => info.decimals !== paywallDefaultTokenDecimals)
-          .map(([network, info]) => [network, info.decimals]),
+        Object.entries(DEFAULT_ASSETS)
+          .filter(([, assets]) => assets[0]?.decimals !== paywallDefaultTokenDecimals)
+          .map(([network, assets]) => [network, assets[0].decimals]),
       );
       const decimalsEntries = Object.entries(decimalsMap)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([network, decimals]) => `  ${JSON.stringify(network)}: ${decimals},`)
         .join("\n");
       const decimalsContent = `// THIS FILE IS AUTO-GENERATED - DO NOT EDIT
-// Source: @x402/evm DEFAULT_STABLECOINS (decimals !== ${paywallDefaultTokenDecimals} only).
+// Source: @x402/evm DEFAULT_ASSETS (decimals !== ${paywallDefaultTokenDecimals} only).
 // Regenerate via: pnpm --filter @x402/paywall run build:paywall
 
 /**

@@ -89,8 +89,27 @@ interface PaywallConfig {
   appLogo?: string;              // App logo URL
   currentUrl?: string;           // URL of protected resource
   testnet?: boolean;             // Use testnet (default: true)
+  rpcUrls?: Record<string, string>; // Browser RPC per CAIP-2 network (SVM only for now)
 }
 ```
+
+### Solana RPC
+
+The Solana paywall reads the payer's balance and builds the transaction from the browser. By default it uses the public endpoints (`https://api.mainnet-beta.solana.com`, `https://api.devnet.solana.com`). The public mainnet endpoint returns 403 to requests sent from a browser, so set `rpcUrls` for mainnet:
+
+```typescript
+const paywall = createPaywall()
+  .withNetwork(svmPaywall)
+  .withConfig({
+    testnet: false,
+    rpcUrls: {
+      'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': 'https://your-rpc.example.com',
+    },
+  })
+  .build();
+```
+
+> **Warning:** the URL is embedded in the paywall HTML and visible to every visitor. Use an endpoint that is safe to expose in a browser, such as a key restricted to your domain or your own RPC proxy. Never put a secret API key here.
 
 ## How It Works
 
@@ -155,17 +174,19 @@ app.use(paymentMiddleware(
 
 ### Automatic Detection
 
-If you provide `paywallConfig` without a custom paywall, `@x402/core` automatically:
-1. Tries to load `@x402/paywall` if installed
-2. Falls back to basic HTML if not installed
+If you don't provide a custom paywall, `@x402/core` automatically:
+1. Tries to load `@x402/paywall` if installed, and renders its EVM, Solana or Algorand paywall
+2. Falls back to basic HTML if not installed, or if the route's first payment option isn't an `exact` payment on one of those networks
 
 ```typescript
 // Simple usage - auto-detects @x402/paywall
-app.use(paymentMiddleware(routes, facilitators, schemes, {
+app.use(paymentMiddleware(routes, resourceServer, {
   appName: 'My App',
   testnet: true
 }));
 ```
+
+`@x402/paywall` is imported by `@x402/core` at request time rather than bundled, so deployments that ship without `node_modules` (edge runtimes, Workers, standalone builds) and strict resolvers such as Yarn PnP serve the basic HTML. Pass a paywall explicitly there.
 
 ## Custom Network Handlers
 

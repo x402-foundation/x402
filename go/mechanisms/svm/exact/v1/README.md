@@ -32,30 +32,30 @@ The V1 implementation exists solely for backwards compatibility. **New implement
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    "github.com/x402-foundation/x402/go/mechanisms/solana/v1"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 )
 
 client := x402.NewX402Client()
 signer := &MySolanaSigner{...}
 
 // Register for V1 networks
-v1.RegisterClient(client, signer, "solana", "solana-devnet")
+client.RegisterV1("solana-devnet", svmv1.NewExactSvmSchemeV1(signer))
 ```
 
 ### V1 Facilitator
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    "github.com/x402-foundation/x402/go/mechanisms/solana/v1"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
 )
 
 facilitator := x402.NewX402Facilitator()
 signer := &MyFacilitatorSigner{...}
 
 // Register for V1 networks
-v1.RegisterFacilitator(facilitator, signer, "solana", "solana-devnet")
+facilitator.RegisterV1([]x402.Network{"solana", "solana-devnet"}, svmv1.NewExactSvmSchemeV1(signer))
 ```
 
 ## Migration to V2
@@ -64,16 +64,16 @@ If you're currently using V1, consider migrating to V2:
 
 **Before (V1)**:
 ```go
-import "github.com/x402-foundation/x402/go/mechanisms/solana/v1"
+import svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 
-v1.RegisterClient(client, signer, "solana")
+client.RegisterV1("solana", svmv1.NewExactSvmSchemeV1(signer))
 ```
 
 **After (V2)**:
 ```go
-import "github.com/x402-foundation/x402/go/mechanisms/solana"
+import svmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 
-solana.RegisterClient(client, signer, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")
+client.Register("solana:*", svmclient.NewExactSvmScheme(signer))
 ```
 
 ## V1 Networks

@@ -3,7 +3,7 @@ package x402
 import (
 	"context"
 
-	"github.com/x402-foundation/x402/go/types"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // MoneyParser is a function that converts a decimal amount to an AssetAmount
@@ -13,13 +13,13 @@ import (
 //
 // Args:
 //
-//	amount: Decimal amount (e.g., 1.50 for $1.50)
+//	amount: Decimal string (e.g., "1.50" for $1.50)
 //	network: Network identifier
 //
 // Returns:
 //
 //	AssetAmount or nil if this parser cannot handle the conversion
-type MoneyParser func(amount float64, network Network) (*AssetAmount, error)
+type MoneyParser func(amount string, network Network) (*AssetAmount, error)
 
 // ============================================================================
 // V1 Interfaces (Legacy - explicitly versioned)
@@ -28,7 +28,7 @@ type MoneyParser func(amount float64, network Network) (*AssetAmount, error)
 // SchemeNetworkClientV1 is implemented by client-side V1 payment mechanisms
 type SchemeNetworkClientV1 interface {
 	Scheme() string
-	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1) (types.PaymentPayloadV1, error)
+	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirementsV1, payloadCtx PaymentPayloadContext) (types.PaymentPayloadV1, error)
 }
 
 // SchemeNetworkFacilitatorV1 is implemented by facilitator-side V1 payment mechanisms
@@ -86,16 +86,20 @@ type SchemeNetworkFacilitatorV1 interface {
 // SchemeNetworkClient is implemented by client-side payment mechanisms (V2)
 type SchemeNetworkClient interface {
 	Scheme() string
-	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements) (types.PaymentPayload, error)
+	CreatePaymentPayload(ctx context.Context, requirements types.PaymentRequirements, payloadCtx PaymentPayloadContext) (types.PaymentPayload, error)
 }
 
-// ExtensionAwareClient is an optional interface for schemes that can handle extensions.
-// When a scheme implements this, x402Client will call CreatePaymentPayloadWithExtensions
-// instead of CreatePaymentPayload, passing the server-declared extensions so the scheme
-// can enrich the payload (e.g., EIP-2612 gas sponsoring).
-type ExtensionAwareClient interface {
-	SchemeNetworkClient
-	CreatePaymentPayloadWithExtensions(ctx context.Context, requirements types.PaymentRequirements, extensions map[string]interface{}) (types.PaymentPayload, error)
+// PaymentPayloadContext is passed to scheme CreatePaymentPayload.
+// MaxAmountPerPayment is the resolved atomic spend cap; omitted when uncapped.
+type PaymentPayloadContext struct {
+	Extensions          map[string]interface{}
+	MaxAmountPerPayment string
+}
+
+// DefaultAssetFinder is an optional reverse lookup for USD spend caps.
+// Not the same as AssetDecimalsProvider.
+type DefaultAssetFinder interface {
+	FindDefaultAsset(asset string, network Network) *DefaultAsset
 }
 
 // PaymentResponseContext is passed to PaymentResponseHandler implementations after
@@ -123,10 +127,18 @@ type PaymentResponseResult struct {
 	Recovered bool
 }
 
+// PaymentCreationFailureHandler is an optional interface that SchemeNetworkClient
+// implementations satisfy to recover from a failed payload build. The client
+// invokes it after user-registered creation-failure hooks. The first recovered
+// payload wins.
+type PaymentCreationFailureHandler interface {
+	OnPaymentCreationFailure(ctx context.Context, failure PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error)
+}
+
 // PaymentResponseHandler is an optional interface that SchemeNetworkClient
 // implementations satisfy to reconcile local state after a paid response.
-// The transport (PaymentRoundTripper) invokes this hook automatically — user
-// code does not need to call ProcessSettleResponse manually.
+// HTTP (PaymentRoundTripper) and MCP (X402MCPClient) invoke this hook
+// automatically — user code does not need to update local channel state manually.
 //
 // Mirrors the TS schemeHooks.onPaymentResponse field on SchemeClientHooks.
 type PaymentResponseHandler interface {
@@ -135,16 +147,18 @@ type PaymentResponseHandler interface {
 
 // ClientExtension can enrich payment payloads on the client side.
 // Client extensions are invoked after the scheme creates the base payload
-// but before it is returned. This allows mechanism-specific logic (e.g., EVM EIP-2612
-// permit signing) to enrich the payload's extensions data.
+// but before it is returned. Optional transport-specific capabilities can be
+// exposed through package-level provider interfaces such as the HTTP client's
+// payment-required hook provider.
 type ClientExtension interface {
 	// Key returns the unique extension identifier (e.g., "eip2612GasSponsoring").
 	// Must match the extension key used in PaymentRequired.Extensions.
 	Key() string
 
-	// EnrichPaymentPayload is called after payload creation when the extension key
-	// is present in paymentRequired.Extensions. Allows the extension to enrich the
-	// payload with extension-specific data (e.g., signing an EIP-2612 permit).
+	// EnrichPaymentPayload is called after payload creation for every registered
+	// extension. Allows the extension to enrich the payload with extension-specific
+	// data (e.g., builder-code service codes). Extensions that require a server
+	// declaration must no-op when the server did not advertise them.
 	EnrichPaymentPayload(ctx context.Context, payload types.PaymentPayload, required types.PaymentRequired) (types.PaymentPayload, error)
 }
 
@@ -187,9 +201,43 @@ func (c *FacilitatorContext) GetExtension(key string) FacilitatorExtension {
 	return c.extensions[key]
 }
 
+// PaymentFlowName is a closed set of payment-flow orchestration modes.
+//
+// Multi-settle flows (escrow) fire settle lifecycle hooks once per settle.
+// Side-effecting hooks should branch on SettleContext.Phase.
+type PaymentFlowName string
+
+const (
+	PaymentFlowAuthorization PaymentFlowName = "authorization"
+	PaymentFlowUpfront       PaymentFlowName = "upfront"
+	PaymentFlowEscrow        PaymentFlowName = "escrow"
+)
+
+// PaymentFlowPhases are the verify/settle phase flags for a PaymentFlowName.
+type PaymentFlowPhases struct {
+	VerifyBeforeHandler bool
+	SettleBeforeHandler bool
+	SettleAfterHandler  bool
+}
+
+// PaymentFlowConfig lists supported payment flows for one assetTransferMethod,
+// plus the default when extra.paymentFlow is omitted.
+type PaymentFlowConfig struct {
+	Supported []PaymentFlowName
+	// Default must be a member of Supported.
+	Default PaymentFlowName
+}
+
 // SchemeNetworkServer is implemented by server-side payment mechanisms (V2)
 type SchemeNetworkServer interface {
 	Scheme() string
+	// DefaultAssetTransferMethod is used when requirements.extra.assetTransferMethod
+	// is absent. Use SDKDefaultAssetTransferMethod only as SDK plumbing when the
+	// scheme has no on-wire ATM.
+	DefaultAssetTransferMethod() string
+	// PaymentFlows returns payment flows supported per assetTransferMethod.
+	// Every ATM the scheme accepts must appear here.
+	PaymentFlows() map[string]PaymentFlowConfig
 	ParsePrice(price Price, network Network) (AssetAmount, error)
 	EnhancePaymentRequirements(
 		ctx context.Context,
@@ -202,9 +250,28 @@ type SchemeNetworkServer interface {
 // AssetDecimalsProvider is an optional interface that SchemeNetworkServer implementations
 // can satisfy to report the decimal precision of the asset for a given network.
 // SettlePayment uses this to convert dollar-format settlement overrides to atomic units.
-// Falls back to 6 decimals when the scheme does not implement this interface.
+// ok is false when the asset is not a known default (TS undefined).
 type AssetDecimalsProvider interface {
-	GetAssetDecimals(asset string, network Network) int
+	GetAssetDecimals(asset string, network Network) (decimals int, ok bool)
+}
+
+// SettleOnCancelProvider is an optional interface for schemes that settle once when a
+// verified payment is canceled (handler failure/throw or post-verify abort).
+// Core calls SettlePayment with the returned requirements and SettlePhaseCancel.
+// Return nil, nil to skip cancel settle.
+//
+// ctx.SettledPhases lists the settle phases already completed for this payment
+// and may be empty. Only return requirements when cancel settle is appropriate
+// for the completed phases.
+type SettleOnCancelProvider interface {
+	SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error)
+}
+
+// DynamicExtraFieldsProvider is an optional interface for schemes that regenerate
+// per-response keys under PaymentRequirements.Extra (e.g. recentBlockhash).
+// FindMatchingRequirements omits these fields from the v2 extra comparison.
+type DynamicExtraFieldsProvider interface {
+	DynamicExtraFields() []string
 }
 
 // PaymentRequiredContext is passed to PaymentRequiredEnricher.EnrichPaymentRequiredResponse.
@@ -223,6 +290,15 @@ type PaymentRequiredContext struct {
 // implementations may mutate ctx.Requirements entries in place.
 type PaymentRequiredEnricher interface {
 	EnrichPaymentRequiredResponse(ctx PaymentRequiredContext)
+}
+
+// FacilitatorSupportValidator is an optional interface that SchemeNetworkServer
+// implementations can satisfy to validate facilitator capabilities at startup.
+// Invoked during Initialize(), only when the facilitator supports the
+// scheme/network. Returns a non-nil error describing the problem when the
+// configuration cannot be fulfilled, or nil when valid.
+type FacilitatorSupportValidator interface {
+	ValidateFacilitatorSupport(network Network, supportedKind types.SupportedKind, facilitatorExtensions []string) error
 }
 
 // SchemeNetworkFacilitator is implemented by facilitator-side payment mechanisms (V2)

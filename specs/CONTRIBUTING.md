@@ -16,14 +16,18 @@ The `specs/` directory contains the formal specifications for the x402 protocol.
 
 ```
 specs/
-├── x402-specification.md      # Core protocol specification
+├── x402-specification-v2.md   # Core protocol specification (v1 kept alongside)
 ├── schemes/
-│   └── exact/
-│       ├── scheme_exact.md    # Scheme overview
-│       ├── scheme_exact_evm.md
-│       ├── scheme_exact_svm.md
-│       └── scheme_exact_sui.md
-├── transports/
+│   ├── exact/
+│   │   ├── scheme_exact.md    # Scheme overview
+│   │   ├── scheme_exact_evm.md
+│   │   ├── scheme_exact_svm.md
+│   │   └── …                  # one file per network
+│   ├── upto/
+│   ├── auth-capture/
+│   └── batch-settlement/
+├── extensions/                # optional functionality beyond core payment mechanics
+├── transports-v2/             # (transports-v1/ kept alongside)
 │   ├── http.md
 │   ├── mcp.md
 │   └── a2a.md
@@ -43,6 +47,9 @@ Schemes define how funds are transferred from client to server. Each scheme has:
 
 Current schemes:
 - `exact` - Transfers a specific amount for resource access
+- `upto` - Authorizes a maximum and settles the amount actually used
+- `auth-capture` - Holds funds, then captures, voids or refunds
+- `batch-settlement` - Grants access immediately and settles later, in batches
 
 ### Transports
 
@@ -54,7 +61,7 @@ Transports define how x402 messages are transmitted over different protocols:
 
 ### Core Specification
 
-`x402-specification.md` defines the protocol fundamentals:
+`x402-specification-v2.md` defines the protocol fundamentals:
 - Core types (`PaymentRequirements`, `PaymentPayload`, `SettlementResponse`)
 - Facilitator interface
 - Security considerations
@@ -83,7 +90,7 @@ Use the appropriate template:
 
 1. Create the spec file in the appropriate directory
 2. For schemes: `specs/schemes/<scheme_name>/scheme_<name>.md`
-3. For transports: `specs/transports/<name>.md`
+3. For transports: `specs/transports-v2/<name>.md`
 4. Reference the core spec for shared types
 
 ## Templates
@@ -176,7 +183,7 @@ Every section should include concrete examples:
 
 Don't redefine types from the core spec. Reference them:
 
-> See `PaymentRequirements` in [x402-specification.md](x402-specification.md#5-types)
+> See `PaymentRequirements` in [x402-specification-v2.md](x402-specification-v2.md#5-types)
 
 ### Document Security Considerations
 

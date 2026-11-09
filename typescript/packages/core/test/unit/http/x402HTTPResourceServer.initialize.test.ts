@@ -88,6 +88,59 @@ describe("x402HTTPResourceServer.initialize", () => {
 
       await expect(httpServer.initialize()).resolves.not.toThrow();
     });
+
+    it("should throw RouteConfigurationError at construction for unsupported paymentFlow", () => {
+      const routes: RoutesConfig = {
+        "GET /api/data": {
+          accepts: {
+            scheme: testScheme,
+            payTo: "0x123",
+            price: "$0.01",
+            network: testNetwork,
+            extra: { paymentFlow: "escrow" },
+          },
+          description: "Test endpoint",
+        },
+      };
+
+      try {
+        new x402HTTPResourceServer(server, routes);
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteConfigurationError);
+        const configError = error as RouteConfigurationError;
+        expect(configError.errors).toHaveLength(1);
+        expect(configError.errors[0].reason).toBe("unsupported_payment_flow");
+        expect(configError.errors[0].routePattern).toBe("GET /api/data");
+        expect(configError.errors[0].message).toContain("does not support paymentFlow");
+      }
+    });
+
+    it("should throw RouteConfigurationError at construction for unsupported assetTransferMethod", () => {
+      const routes: RoutesConfig = {
+        "GET /api/data": {
+          accepts: {
+            scheme: testScheme,
+            payTo: "0x123",
+            price: "$0.01",
+            network: testNetwork,
+            extra: { assetTransferMethod: "not-a-real-atm" },
+          },
+          description: "Test endpoint",
+        },
+      };
+
+      try {
+        new x402HTTPResourceServer(server, routes);
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouteConfigurationError);
+        const configError = error as RouteConfigurationError;
+        expect(configError.errors).toHaveLength(1);
+        expect(configError.errors[0].reason).toBe("unsupported_asset_transfer_method");
+        expect(configError.errors[0].message).toContain("does not support assetTransferMethod");
+      }
+    });
   });
 
   describe("with missing scheme registration", () => {

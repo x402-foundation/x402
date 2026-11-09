@@ -12,10 +12,12 @@ from ..constants import (
     UPTO_PERMIT2_WITNESS_TYPES,
     X402_UPTO_PERMIT2_PROXY_ADDRESS,
 )
+from ..default_assets import find_default_asset
 from ..signer import (
     ClientEvmSigner,
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
+    warn_cannot_read_for_sponsoring,
 )
 from ..types import (
     ExactPermit2TokenPermissions,
@@ -32,11 +34,11 @@ from ..utils import (
 
 
 def _wrap_if_local_account(signer: Any) -> ClientEvmSigner:
-    """Auto-wrap eth_account LocalAccount in EthAccountSigner if needed."""
+    """Auto-wrap an eth_account-compatible signer (any BaseAccount) in EthAccountSigner."""
     try:
-        from eth_account.signers.local import LocalAccount
+        from eth_account.signers.base import BaseAccount
 
-        if isinstance(signer, LocalAccount):
+        if isinstance(signer, BaseAccount):
             from ..signers import EthAccountSigner
 
             return EthAccountSigner(signer)
@@ -55,6 +57,7 @@ class UptoEvmScheme:
     """
 
     scheme = SCHEME_UPTO
+    find_default_asset = staticmethod(find_default_asset)
 
     def __init__(self, signer: ClientEvmSigner):
         self._signer = _wrap_if_local_account(signer)
@@ -106,6 +109,7 @@ class UptoEvmScheme:
             return None
 
         if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         extra = requirements.extra or {}
@@ -164,6 +168,10 @@ class UptoEvmScheme:
         if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
             return None
 
+        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
+            return None
+
         if not isinstance(self._signer, ClientEvmSignerWithSignTransaction):
             return None
 
@@ -208,10 +216,14 @@ def _create_upto_permit2_payload(
             "Ensure the server is configured with an upto facilitator that provides getExtra()."
         )
 
+    timeout = requirements.max_timeout_seconds
+    if timeout is not None and timeout <= 0:
+        raise ValueError(f"Invalid time window: max_timeout_seconds ({timeout}) must be positive.")
+
     now = int(time.time())
     nonce = create_permit2_nonce()
-    valid_after = str(now - 600)
-    deadline = str(now + (requirements.max_timeout_seconds or 3600))
+    valid_after = "0"
+    deadline = str(now + (timeout or 3600))
     if int(deadline) <= int(valid_after):
         raise ValueError(
             f"Invalid time window: deadline ({deadline}) must be after validAfter ({valid_after}). "

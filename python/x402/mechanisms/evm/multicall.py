@@ -7,7 +7,7 @@ from typing import Any
 
 try:
     from eth_abi import decode, encode
-    from eth_utils import keccak
+    from eth_utils import keccak, to_checksum_address
 except ImportError as e:
     raise ImportError(
         "EVM mechanism requires ethereum packages. Install with: pip install x402[evm]"
@@ -65,7 +65,10 @@ def multicall(
             if not call.abi or not call.function_name:
                 raise ValueError("typed multicall entries require ABI and function name")
             call_data = encode_contract_call(call.abi, call.function_name, *call.args)
-        aggregate_calls.append((call.address, call_data))
+        # web3.py rejects non-checksummed addresses during ABI encoding. Targets can arrive
+        # lowercase (e.g. an ERC-6492 factory derived from raw signature bytes), so normalize
+        # every target here rather than relying on each caller to checksum.
+        aggregate_calls.append((to_checksum_address(call.address), call_data))
 
     raw_results = signer.read_contract(
         MULTICALL3_ADDRESS,
@@ -85,10 +88,12 @@ def multicall(
     for raw_result, call in zip(normalized, calls, strict=True):
         success, return_data = raw_result
         if not success:
+            # Decode the sub-call's revert payload so callers can classify the failure
+            # (e.g. "transfer amount exceeds balance") instead of a generic message.
             results.append(
                 MulticallResult(
                     success=False,
-                    error=RuntimeError("multicall: call reverted"),
+                    error=RuntimeError(_decode_revert_message(return_data)),
                 )
             )
             continue
@@ -106,6 +111,37 @@ def multicall(
         results.append(MulticallResult(success=True, result=decoded))
 
     return results
+
+
+# Standard Solidity error selectors.
+_ERROR_STRING_SELECTOR = bytes.fromhex("08c379a0")  # Error(string)
+_PANIC_SELECTOR = bytes.fromhex("4e487b71")  # Panic(uint256)
+
+
+def _decode_revert_message(return_data: bytes) -> str:
+    """Decode a sub-call's revert payload into a human/parser-readable reason.
+
+    Recognizes the standard `Error(string)` and `Panic(uint256)` ABI encodings and falls
+    back to the raw hex. The returned string always contains "revert" so callers can use
+    `is_contract_revert` / `parse_eip3009_transfer_error` to classify it.
+    """
+    if len(return_data) >= 4:
+        selector = return_data[:4]
+        if selector == _ERROR_STRING_SELECTOR:
+            try:
+                (reason,) = decode(["string"], return_data[4:])
+                return f"execution reverted: {reason}"
+            except Exception:
+                pass
+        if selector == _PANIC_SELECTOR:
+            try:
+                (code,) = decode(["uint256"], return_data[4:])
+                return f"execution reverted: panic({hex(code)})"
+            except Exception:
+                pass
+    if return_data:
+        return f"execution reverted (0x{return_data.hex()})"
+    return "execution reverted"
 
 
 def _decode_contract_result(

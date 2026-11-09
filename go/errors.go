@@ -1,6 +1,9 @@
 package x402
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PaymentError represents a payment-specific error
 type PaymentError struct {
@@ -43,6 +46,16 @@ const (
 	ErrFailedToMarshalPayload      = "failed_to_marshal_payload"
 	ErrFailedToMarshalRequirements = "failed_to_marshal_requirements"
 )
+
+// ErrSettlementPending is the generic (scheme/network-agnostic) settle error
+// reason meaning a transaction broadcast successfully but its receipt/
+// confirmation wait failed — non-terminal, and always carries the broadcast
+// transaction hash so a caller can reconcile onchain. Mirrors
+// evm.ErrSettlementPending (go/mechanisms/evm/errors.go); duplicated here as a
+// plain string constant so core does not depend on the mechanisms package.
+// x402ResourceServer.SettlePaymentWithExtensions uses this to drive its
+// single automatic settle retry (see settleWithPendingRetry in server.go).
+const ErrSettlementPending = "settlement_pending"
 
 // NewPaymentError creates a new payment error
 func NewPaymentError(code, message string, details map[string]interface{}) *PaymentError {
@@ -128,4 +141,27 @@ func NewSettleError(reason string, payer string, network Network, transaction st
 		Transaction:  transaction,
 		ErrorMessage: message,
 	}
+}
+
+// FacilitatorCapabilityError is thrown when a registered scheme's configuration
+// is incompatible with the capabilities the facilitator advertised for that
+// scheme and network.
+type FacilitatorCapabilityError struct {
+	// Problems are human-readable lines, one per scheme/network mismatch.
+	Problems []string
+}
+
+// Error implements the error interface.
+func (e *FacilitatorCapabilityError) Error() string {
+	lines := make([]string, 0, len(e.Problems)+1)
+	lines = append(lines, "x402 facilitator capability errors:")
+	for _, problem := range e.Problems {
+		lines = append(lines, "  - "+problem)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// NewFacilitatorCapabilityError lists every capability problem.
+func NewFacilitatorCapabilityError(problems []string) *FacilitatorCapabilityError {
+	return &FacilitatorCapabilityError{Problems: problems}
 }

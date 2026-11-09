@@ -52,7 +52,22 @@ async function main(): Promise<void> {
     }
   });
 
-  const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+  const httpClient = new x402HTTPClient(client);
+
+  // After the first request is signed, capture the exact encoded payment header.
+  let capturedPaymentHeaders: Record<string, string> | undefined;
+  client.onAfterPaymentCreation(async ({ paymentPayload }) => {
+    capturedPaymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
+  });
+
+  // On any subsequent 402, replay the captured headers instead of creating a new signature.
+  httpClient.onPaymentRequired(async () => {
+    if (capturedPaymentHeaders) {
+      return { headers: capturedPaymentHeaders };
+    }
+  });
+
+  const fetchWithPayment = wrapFetchWithPayment(fetch, httpClient);
 
   // First request - will process payment
   console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

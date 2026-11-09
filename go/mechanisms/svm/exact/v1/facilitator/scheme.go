@@ -2,40 +2,74 @@ package facilitator
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math"
+	"math/rand/v2"
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 
-	x402 "github.com/x402-foundation/x402/go"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	exactv2 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactSvmSchemeV1 implements the SchemeNetworkFacilitator interface for SVM (Solana) exact payments (V1)
 type ExactSvmSchemeV1 struct {
-	signer          svm.FacilitatorSvmSigner
-	settlementCache *svm.SettlementCache
+	signer              svm.FacilitatorSvmSigner
+	settlementCache     *svm.SettlementCache
+	transactionVersions []int
 }
 
-// NewExactSvmSchemeV1 creates a new ExactSvmSchemeV1.
+// Config configures an ExactSvmSchemeV1.
+type Config struct {
+	// SettlementCache shares deduplication state across V1 and V2 instances;
+	// nil creates a new cache.
+	SettlementCache *svm.SettlementCache
+	// TransactionVersions is the set of message versions this facilitator
+	// accepts and advertises as extra.transactionVersions. Any other version
+	// is rejected with unsupported_transaction_version; legacy is accepted
+	// exactly when 0 is. Nil means [0, 1]. Narrow it to [0] for a sponsor whose
+	// signer or RPC does not yet handle version 1.
+	TransactionVersions []int
+}
+
+// NewExactSvmSchemeV1 creates a new ExactSvmSchemeV1 accepting versions 0 and 1.
 // An optional SettlementCache may be provided to share deduplication state
 // across V1 and V2 instances; if nil a new cache is created.
 func NewExactSvmSchemeV1(signer svm.FacilitatorSvmSigner, cache ...*svm.SettlementCache) *ExactSvmSchemeV1 {
-	var c *svm.SettlementCache
-	if len(cache) > 0 && cache[0] != nil {
-		c = cache[0]
-	} else {
-		c = svm.NewSettlementCache()
+	cfg := &Config{}
+	if len(cache) > 0 {
+		cfg.SettlementCache = cache[0]
+	}
+	return NewExactSvmSchemeV1WithConfig(signer, cfg)
+}
+
+// NewExactSvmSchemeV1WithConfig creates a new ExactSvmSchemeV1 from config.
+// Panics when TransactionVersions is invalid, so operators learn about it at
+// startup.
+func NewExactSvmSchemeV1WithConfig(signer svm.FacilitatorSvmSigner, config *Config) *ExactSvmSchemeV1 {
+	cfg := Config{}
+	if config != nil {
+		cfg = *config
+	}
+	transactionVersions, err := svm.NormalizeAcceptedTransactionVersions(cfg.TransactionVersions)
+	if err != nil {
+		panic("exact svm v1 facilitator: " + err.Error())
+	}
+	cache := cfg.SettlementCache
+	if cache == nil {
+		cache = svm.NewSettlementCache()
 	}
 	return &ExactSvmSchemeV1{
-		signer:          signer,
-		settlementCache: c,
+		signer:              signer,
+		settlementCache:     cache,
+		transactionVersions: transactionVersions,
 	}
 }
 
@@ -56,10 +90,11 @@ func (f *ExactSvmSchemeV1) GetExtra(network x402.Network) map[string]interface{}
 	addresses := f.signer.GetAddresses(context.Background(), string(network))
 
 	// Randomly select from available addresses to distribute load
-	randomIndex := rand.Intn(len(addresses))
+	randomIndex := rand.IntN(len(addresses))
 
 	return map[string]interface{}{
-		"feePayer": addresses[randomIndex].String(),
+		"feePayer":                   addresses[randomIndex].String(),
+		svm.ExtraTransactionVersions: append([]int(nil), f.transactionVersions...),
 	}
 }
 
@@ -136,29 +171,66 @@ func (f *ExactSvmSchemeV1) Verify(
 	}
 
 	// Step 2: Parse and Validate Transaction Structure
+	// Read the version from the raw bytes first so a newer wire format is
+	// reported as unsupported however the installed decoder handles it.
+	if wireVersion, ok := svm.PeekWireTransactionVersion(svmPayload.Transaction); ok && !svm.IsAcceptedWireTransactionVersionIn(wireVersion, f.transactionVersions) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", wireVersion))
+	}
 	tx, err := svm.DecodeTransaction(svmPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
 	}
 
-	// Allow 3-6 instructions:
+	// Message version gate, before any signature or instruction check.
+	if !svm.IsAcceptedTransactionVersionIn(tx.Message.GetVersion(), f.transactionVersions) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", svm.WireTransactionVersion(tx.Message.GetVersion())))
+	}
+
+	// Size limit of the message version (§1.5): 1232 bytes for legacy and
+	// version 0, 4096 for version 1. The decoder accepts larger payloads.
+	if size, limit, exceeded := svm.TransactionSizeExceeded(svmPayload.Transaction, tx.Message.GetVersion()); exceeded {
+		return nil, x402.NewVerifyError(ErrTransactionSizeExceeded, "", fmt.Sprintf("transaction is %d bytes, above the %d-byte limit", size, limit))
+	}
+
+	if err := exactv2.VerifyRequiredSignatures(tx, feePayerStr); err != nil {
+		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+	}
+
+	if len(tx.Message.GetAddressTableLookups()) > 0 {
+		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", "transaction uses Address Lookup Tables")
+	}
+
+	// Legacy and version 0 allow 3-6 instructions:
 	// - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
 	// - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
 	// - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
 	// - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
 	// See: https://github.com/x402-foundation/x402/issues/828
+	// Version 1 carries the compute budget in its message config, so the same
+	// layout starts at the TransferChecked: 1-4 instructions.
+	transferIndex := 2
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		transferIndex = 0
+	}
 	numInstructions := len(tx.Message.Instructions)
-	if numInstructions < 3 || numInstructions > 6 {
-		return nil, x402.NewVerifyError(ErrTransactionInstructionsLength, "", fmt.Sprintf("transaction instructions length mismatch: %d < 3 or %d > 6", numInstructions, numInstructions))
+	minInstructions, maxInstructions := transferIndex+1, transferIndex+4
+	if numInstructions < minInstructions || numInstructions > maxInstructions {
+		return nil, x402.NewVerifyError(ErrTransactionInstructionsLength, "", fmt.Sprintf("transaction instructions length mismatch: %d < %d or %d > %d", numInstructions, minInstructions, numInstructions, maxInstructions))
 	}
 
-	// Step 3: Verify Compute Budget Instructions
-	if err := f.verifyComputeLimitInstruction(tx, tx.Message.Instructions[0]); err != nil {
-		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
-	}
+	// Step 3: Verify the compute budget
+	if transferIndex == 0 {
+		if err := verifyTransactionV1Config(tx); err != nil {
+			return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+		}
+	} else {
+		if err := f.verifyComputeLimitInstruction(tx, tx.Message.Instructions[0]); err != nil {
+			return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+		}
 
-	if err := f.verifyComputePriceInstruction(tx, tx.Message.Instructions[1]); err != nil {
-		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+		if err := f.verifyComputePriceInstruction(tx, tx.Message.Instructions[1]); err != nil {
+			return nil, x402.NewVerifyError(err.Error(), "", err.Error())
+		}
 	}
 
 	// Extract payer from transaction
@@ -168,16 +240,16 @@ func (f *ExactSvmSchemeV1) Verify(
 	}
 
 	// Step 4: Verify Transfer Instruction
-	if err := f.verifyTransferInstruction(tx, tx.Message.Instructions[2], requirements, signerAddressStrs); err != nil {
+	if err := f.verifyTransferInstruction(tx, tx.Message.Instructions[transferIndex], requirements, signerAddressStrs); err != nil {
 		return nil, x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
 	// Step 5: Verify optional instructions (if present)
 	// Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-	if numInstructions >= 4 {
+	if numInstructions > transferIndex+1 {
 		lighthousePubkey := solana.MustPublicKeyFromBase58(svm.LighthouseProgramAddress)
 		memoPubkey := solana.MustPublicKeyFromBase58(svm.MemoProgramAddress)
-		optionalInstructions := tx.Message.Instructions[3:]
+		optionalInstructions := tx.Message.Instructions[transferIndex+1:]
 		invalidReasons := []string{
 			ErrUnknownFourthInstruction,
 			ErrUnknownFifthInstruction,
@@ -185,7 +257,14 @@ func (f *ExactSvmSchemeV1) Verify(
 		}
 
 		for i, instruction := range optionalInstructions {
-			progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
+			progID, progErr := tx.Message.Program(instruction.ProgramIDIndex)
+			if progErr != nil {
+				reason := ErrUnknownSixthInstruction
+				if i < len(invalidReasons) {
+					reason = invalidReasons[i]
+				}
+				return nil, x402.NewVerifyError(reason, payer, progErr.Error())
+			}
 			if progID.Equals(lighthousePubkey) || progID.Equals(memoPubkey) {
 				continue
 			}
@@ -203,7 +282,10 @@ func (f *ExactSvmSchemeV1) Verify(
 			var memoCount int
 			var actualMemoData []byte
 			for _, instruction := range optionalInstructions {
-				progID := tx.Message.AccountKeys[instruction.ProgramIDIndex]
+				progID, progErr := tx.Message.Program(instruction.ProgramIDIndex)
+				if progErr != nil {
+					continue
+				}
 				if progID.Equals(memoPubkey) {
 					memoCount++
 					actualMemoData = instruction.Data
@@ -218,22 +300,10 @@ func (f *ExactSvmSchemeV1) Verify(
 		}
 	}
 
-	// Step 6: Sign and Simulate Transaction
+	// Step 6: Simulate Transaction
 	// CRITICAL: Simulation proves transaction will succeed (catches insufficient balance, invalid accounts, etc)
-
-	// feePayer already validated in Step 1
-	feePayer, err := solana.PublicKeyFromBase58(feePayerStr)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidFeePayer, payer, err.Error())
-	}
-
-	// Sign transaction with the feePayer's signer
-	if err := f.signer.SignTransaction(ctx, tx, feePayer, string(requirements.Network)); err != nil {
-		return nil, x402.NewVerifyError(ErrTransactionSigningFailed, payer, err.Error())
-	}
-
-	// Simulate transaction to verify it would succeed
-	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network)); err != nil {
+	// Signatures are verified locally; the fee-payer slot is unsigned until settle.
+	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network), nil); err != nil {
 		return nil, x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
 	}
 
@@ -253,9 +323,36 @@ func (f *ExactSvmSchemeV1) Settle(
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(payload.Network)
 
+	// Parse payload
+	svmPayload, err := svm.PayloadFromMap(payload.Payload)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
+	}
+	// Decode transaction before the cache check so we can key on the message hash.
+	if wireVersion, ok := svm.PeekWireTransactionVersion(svmPayload.Transaction); ok && !svm.IsAcceptedWireTransactionVersionIn(wireVersion, f.transactionVersions) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", wireVersion))
+	}
+	tx, err := svm.DecodeTransaction(svmPayload.Transaction)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
+	}
+	if !svm.IsAcceptedTransactionVersionIn(tx.Message.GetVersion(), f.transactionVersions) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", svm.WireTransactionVersion(tx.Message.GetVersion())))
+	}
+	txKey, err := svm.MessageHash(tx)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
+	}
+	// Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+	if f.settlementCache.IsDuplicate(txKey) {
+		payer, _ := svm.GetTokenPayerFromTransaction(tx)
+		return nil, x402.NewSettleError(ErrDuplicateSettlement, payer, network, "", "duplicate transaction")
+	}
+
 	// First verify the payment
 	verifyResp, err := f.Verify(ctx, payload, requirements, fctx)
 	if err != nil {
+		f.settlementCache.Delete(txKey)
 		// Convert VerifyError to SettleError
 		ve := &x402.VerifyError{}
 		if errors.As(err, &ve) {
@@ -264,63 +361,43 @@ func (f *ExactSvmSchemeV1) Settle(
 		return nil, x402.NewSettleError(ErrVerificationFailed, "", network, "", err.Error())
 	}
 
-	// Parse payload
-	svmPayload, err := svm.PayloadFromMap(payload.Payload)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
-	}
-
-	// Duplicate settlement check: reject if this transaction is already being settled.
-	txKey := svmPayload.Transaction
-	if f.settlementCache.IsDuplicate(txKey) {
-		return nil, x402.NewSettleError(ErrDuplicateSettlement, verifyResp.Payer, network, "", "duplicate transaction")
-	}
-
-	// Decode transaction
-	tx, err := svm.DecodeTransaction(svmPayload.Transaction)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, verifyResp.Payer, network, "", err.Error())
-	}
-
 	// Parse extra field for feePayer (V1 uses *json.RawMessage)
 	var reqExtraMap map[string]interface{}
 	if requirements.Extra != nil {
 		if err := json.Unmarshal(*requirements.Extra, &reqExtraMap); err != nil {
+			f.settlementCache.Delete(txKey)
 			return nil, x402.NewSettleError(ErrInvalidExtraField, verifyResp.Payer, network, "", err.Error())
 		}
 	}
 
-	// Extract and validate feePayer from requirements matches transaction
 	feePayerStr, ok := reqExtraMap["feePayer"].(string)
 	if !ok {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrMissingFeePayer, verifyResp.Payer, network, "", "")
 	}
 
 	expectedFeePayer, err := solana.PublicKeyFromBase58(feePayerStr)
 	if err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrInvalidFeePayer, verifyResp.Payer, network, "", err.Error())
-	}
-
-	// Verify transaction feePayer matches requirements
-	actualFeePayer := tx.Message.AccountKeys[0] // First account is fee payer
-	if actualFeePayer != expectedFeePayer {
-		return nil, x402.NewSettleError(ErrFeePayerMismatch, verifyResp.Payer, network, "",
-			fmt.Sprintf("expected %s, got %s", expectedFeePayer, actualFeePayer))
 	}
 
 	// Sign with the feePayer's signer
 	if err := f.signer.SignTransaction(ctx, tx, expectedFeePayer, string(requirements.Network)); err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	// Send transaction to network
 	signature, err := f.signer.SendTransaction(ctx, tx, string(requirements.Network))
 	if err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrTransactionFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
 	// Wait for confirmation
 	if err := f.signer.ConfirmTransaction(ctx, signature, string(requirements.Network)); err != nil {
+		f.settlementCache.Delete(txKey)
 		return nil, x402.NewSettleError(ErrTransactionConfirmationFailed, verifyResp.Payer, network, signature.String(), err.Error())
 	}
 
@@ -332,65 +409,63 @@ func (f *ExactSvmSchemeV1) Settle(
 	}, nil
 }
 
+// verifyTransactionV1Config applies the compute caps to a version-1 message
+// config (SIMD-0385), which replaces the ComputeBudget instructions. Like the
+// version-0 check, the compute unit limit is uncapped and the price is capped
+// at svm.MaxComputeUnitPriceMicrolamports.
+func verifyTransactionV1Config(tx *solana.Transaction) error {
+	switch svm.ValidateTransactionV1Config(&tx.Message, math.MaxUint32, svm.MaxComputeUnitPriceMicrolamports) {
+	case svm.TransactionV1ConfigOK:
+		return nil
+	case svm.TransactionV1ComputeBudgetInstruction:
+		return errors.New(ErrTransactionV1ComputeBudgetIx)
+	case svm.TransactionV1HeapSize:
+		return errors.New(ErrTransactionV1HeapSize)
+	case svm.TransactionV1ComputeUnitLimitMissing:
+		return errors.New(ErrComputeLimitInstruction)
+	case svm.TransactionV1ComputeUnitLimitTooHigh:
+		return errors.New(ErrComputeLimitInstructionTooHigh)
+	case svm.TransactionV1LoadedAccountsDataSizeLimitMissing:
+		return errors.New(ErrLoadedAccountsDataSizeLimitMissing)
+	default:
+		return errors.New(ErrComputePriceInstructionTooHigh)
+	}
+}
+
 // verifyComputeLimitInstruction verifies the compute unit limit instruction
 func (f *ExactSvmSchemeV1) verifyComputeLimitInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
-
-	if !progID.Equals(solana.ComputeBudget) {
+	progID, err := tx.Message.Program(inst.ProgramIDIndex)
+	if err != nil || !progID.Equals(solana.ComputeBudget) {
 		return errors.New(ErrComputeLimitInstruction)
 	}
 
 	// Check discriminator (should be 2 for SetComputeUnitLimit)
-	if len(inst.Data) < 1 || inst.Data[0] != 2 {
+	if len(inst.Data) < 5 || inst.Data[0] != 2 {
 		return errors.New(ErrComputeLimitInstruction)
 	}
 
 	// Decode to validate format
-	accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
-	if err != nil {
-		return errors.New(ErrComputeLimitInstruction)
-	}
-
-	_, err = computebudget.DecodeInstruction(accounts, inst.Data)
-	if err != nil {
-		return errors.New(ErrComputeLimitInstruction)
-	}
-
 	return nil
 }
 
 // verifyComputePriceInstruction verifies the compute unit price instruction
 func (f *ExactSvmSchemeV1) verifyComputePriceInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
-
-	if !progID.Equals(solana.ComputeBudget) {
+	progID, err := tx.Message.Program(inst.ProgramIDIndex)
+	if err != nil || !progID.Equals(solana.ComputeBudget) {
 		return errors.New(ErrComputePriceInstruction)
 	}
 
 	// Check discriminator (should be 3 for SetComputeUnitPrice)
-	if len(inst.Data) < 1 || inst.Data[0] != 3 {
+	if len(inst.Data) < 9 || inst.Data[0] != 3 {
 		return errors.New(ErrComputePriceInstruction)
 	}
 
 	// Decode to get microLamports
-	accounts, err := inst.ResolveInstructionAccounts(&tx.Message)
-	if err != nil {
-		return errors.New(ErrComputePriceInstruction)
-	}
-
-	decoded, err := computebudget.DecodeInstruction(accounts, inst.Data)
-	if err != nil {
-		return errors.New(ErrComputePriceInstruction)
-	}
-
+	microLamports := binary.LittleEndian.Uint64(inst.Data[1:9])
 	// Check if it's SetComputeUnitPrice and validate the price
-	if priceInst, ok := decoded.Impl.(*computebudget.SetComputeUnitPrice); ok {
+	if microLamports > uint64(svm.MaxComputeUnitPriceMicrolamports) {
 		// Check if price exceeds maximum (5 lamports per compute unit = 5,000,000 microlamports)
-		if priceInst.MicroLamports > uint64(svm.MaxComputeUnitPriceMicrolamports) {
-			return errors.New(ErrComputePriceInstructionTooHigh)
-		}
-	} else {
-		return errors.New(ErrComputePriceInstruction)
+		return errors.New(ErrComputePriceInstructionTooHigh)
 	}
 
 	return nil
@@ -403,7 +478,10 @@ func (f *ExactSvmSchemeV1) verifyTransferInstruction(
 	requirements types.PaymentRequirementsV1,
 	signerAddresses []string,
 ) error {
-	progID := tx.Message.AccountKeys[inst.ProgramIDIndex]
+	progID, err := tx.Message.Program(inst.ProgramIDIndex)
+	if err != nil {
+		return errors.New(ErrNoTransferInstruction)
+	}
 
 	// Must be Token Program or Token-2022 Program
 	if progID != solana.TokenProgramID && progID != solana.Token2022ProgramID {
@@ -470,11 +548,11 @@ func (f *ExactSvmSchemeV1) verifyTransferInstruction(
 
 	requiredAmount, err := strconv.ParseUint(amountStr, 10, 64)
 	if err != nil {
-		return errors.New(ErrAmountInsufficient)
+		return errors.New(ErrAmountMismatch)
 	}
 
-	if *transferChecked.Amount < requiredAmount {
-		return errors.New(ErrAmountInsufficient)
+	if *transferChecked.Amount != requiredAmount {
+		return errors.New(ErrAmountMismatch)
 	}
 
 	return nil

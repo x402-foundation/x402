@@ -1,21 +1,6 @@
 import type { PaymentRequired } from "../types";
+import { toScriptJson } from "../scriptJson";
 import { getSvmTemplate } from "./template-loader";
-
-/**
- * Escapes a string for safe injection into JavaScript string literals
- *
- * @param str - The string to escape
- * @returns The escaped string
- */
-function escapeString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-}
 
 interface SvmPaywallOptions {
   amount: number;
@@ -25,6 +10,7 @@ interface SvmPaywallOptions {
   appName?: string;
   appLogo?: string;
   faucetUrls?: Record<string, string>;
+  rpcUrls?: Record<string, string>;
 }
 
 /**
@@ -38,6 +24,7 @@ interface SvmPaywallOptions {
  * @param options.appName - The name of the application to display in the wallet connection modal
  * @param options.appLogo - The logo of the application to display in the wallet connection modal
  * @param options.faucetUrls - Per-chain (CAIP-2 keyed) override for the testnet faucet link
+ * @param options.rpcUrls - Per-chain (CAIP-2 keyed) RPC endpoint for browser-side reads
  * @returns HTML string for the paywall page
  */
 export function getSvmPaywallHtml(options: SvmPaywallOptions): string {
@@ -47,7 +34,8 @@ export function getSvmPaywallHtml(options: SvmPaywallOptions): string {
     return `<!DOCTYPE html><html><body><h1>SVM Paywall (run pnpm build:paywall to generate full template)</h1></body></html>`;
   }
 
-  const { amount, testnet, paymentRequired, currentUrl, appName, appLogo, faucetUrls } = options;
+  const { amount, testnet, paymentRequired, currentUrl, appName, appLogo, faucetUrls, rpcUrls } =
+    options;
 
   const logOnTestnet = testnet
     ? "console.log('SVM Payment required initialized:', window.x402);"
@@ -57,18 +45,19 @@ export function getSvmPaywallHtml(options: SvmPaywallOptions): string {
   <script>
     window.x402 = {
       amount: ${amount},
-      paymentRequired: ${JSON.stringify(paymentRequired)},
+      paymentRequired: ${toScriptJson(paymentRequired)},
       testnet: ${testnet},
-      currentUrl: "${escapeString(currentUrl)}",
+      currentUrl: ${toScriptJson(currentUrl)},
       config: {
         chainConfig: {},
       },
-      appName: "${escapeString(appName || "")}",
-      appLogo: "${escapeString(appLogo || "")}",
-      faucetUrls: ${faucetUrls ? JSON.stringify(faucetUrls) : "undefined"},
+      appName: ${toScriptJson(appName || "")},
+      appLogo: ${toScriptJson(appLogo || "")},
+      faucetUrls: ${faucetUrls ? toScriptJson(faucetUrls) : "undefined"},
+      rpcUrls: ${rpcUrls ? toScriptJson(rpcUrls) : "undefined"},
     };
     ${logOnTestnet}
   </script>`;
 
-  return SVM_PAYWALL_TEMPLATE.replace("</head>", `${configScript}\n</head>`);
+  return SVM_PAYWALL_TEMPLATE.replace("</head>", () => `${configScript}\n</head>`);
 }

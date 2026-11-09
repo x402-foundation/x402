@@ -7,6 +7,7 @@ const baseConfig = {
     "sign-in-with-x/index": "src/sign-in-with-x/index.ts",
     "offer-receipt/index": "src/offer-receipt/index.ts",
     "payment-identifier/index": "src/payment-identifier/index.ts",
+    "builder-code/index": "src/builder-code/index.ts",
   },
   dts: {
     resolve: true,
@@ -27,5 +28,6 @@ export default defineConfig([
     format: "cjs",
     outDir: "dist/cjs",
     clean: false,
+    dts: false,
   },
 ]);

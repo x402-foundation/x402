@@ -59,6 +59,23 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       expect(resource.extensions).toBeUndefined();
     });
 
+    it("DiscoveryResource should allow bazaar service metadata fields", () => {
+      const resource: DiscoveryResource = {
+        resource: "https://api.example.com/weather",
+        type: "http",
+        x402Version: 2,
+        accepts: [],
+        lastUpdated: "2024-01-01T00:00:00.000Z",
+        description: "Weather data",
+        mimeType: "application/json",
+        serviceName: "Weather API",
+        tags: ["weather", "api"],
+      };
+
+      expect(resource.serviceName).toBe("Weather API");
+      expect(resource.tags).toEqual(["weather", "api"]);
+    });
+
     it("DiscoveryResourcesResponse should have correct shape with pagination", () => {
       const response: DiscoveryResourcesResponse = {
         x402Version: 2,
@@ -210,10 +227,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 20, offset: 0, total: 0 },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -236,10 +250,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, offset: 5, total: 100 },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -314,10 +325,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -337,6 +345,19 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       });
     });
 
+    it("rejects a discovery body over the 4 MiB limit", async () => {
+      const oversized = JSON.stringify({ items: "a".repeat(4 * 1024 * 1024) });
+      mockFetch.mockResolvedValue(new Response(oversized, { status: 200 }));
+
+      const extendedClient = withBazaar(
+        new HTTPFacilitatorClient({ url: "https://x402.org/facilitator" }),
+      );
+
+      await expect(extendedClient.extensions.bazaar.listResources()).rejects.toThrow(
+        /http response body too large/,
+      );
+    });
+
     describe("search", () => {
       it("should call correct endpoint with required query param", async () => {
         const mockResponse: SearchDiscoveryResourcesResponse = {
@@ -344,10 +365,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           resources: [],
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -373,10 +391,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, cursor: "eyJwYWdlIjoyfQ==" },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",
@@ -437,10 +452,7 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
           pagination: { limit: 10, cursor: "nextPageToken" },
         };
 
-        mockFetch.mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch.mockResolvedValue(new Response(JSON.stringify(mockResponse), { status: 200 }));
 
         const facilitatorClient = new HTTPFacilitatorClient({
           url: "https://x402.org/facilitator",

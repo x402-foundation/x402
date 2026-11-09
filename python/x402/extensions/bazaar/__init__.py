@@ -57,6 +57,7 @@ from .facilitator import (
     extract_discovery_info_from_extension,
     validate_and_extract,
     validate_discovery_extension,
+    validate_discovery_extension_spec,
 )
 from .facilitator_client import (
     BazaarClientExtension,
@@ -148,6 +149,7 @@ __all__ = [
     "declare_discovery_extension",
     "declare_mcp_discovery_extension",
     "validate_discovery_extension",
+    "validate_discovery_extension_spec",
     "extract_discovery_info",
     "extract_discovery_info_from_extension",
     "validate_and_extract",

@@ -1,13 +1,20 @@
 """SVM server implementation for the Exact payment scheme (V2)."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from ....schemas import AssetAmount, Network, PaymentRequirements, Price, SupportedKind
-from ..constants import DEFAULT_DECIMALS, SCHEME_EXACT
-from ..utils import get_network_config, get_usdc_address, parse_money_to_decimal
+from ....schemas.helpers import convert_to_token_amount, parse_money
+from ..constants import SCHEME_EXACT
+from ..default_assets import find_default_asset, get_default_asset
+
+if TYPE_CHECKING:
+    from ..rpc import SvmRpcClient
 
 # Type alias for money parser (sync)
-MoneyParser = Callable[[float, str], AssetAmount | None]
+MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
 
 class ExactSvmScheme:
@@ -15,24 +22,37 @@ class ExactSvmScheme:
 
     Parses prices and enhances payment requirements with feePayer info.
 
-    Note: Money/price parsing lives here, not as a standalone utility.
-    USD→atomic conversion is scheme-specific.
+    Note: parse_price orchestrates shared helpers plus scheme asset/extra.
 
     Attributes:
         scheme: The scheme identifier ("exact").
     """
 
     scheme = SCHEME_EXACT
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization", "upfront"), "default": "authorization"},
+    }
+    dynamic_extra_fields = ["recentBlockhash", "lastValidBlockHeight"]
 
-    def __init__(self):
-        """Create ExactSvmScheme."""
+    def __init__(self, rpc_url: str | None = None):
+        """Create ExactSvmScheme.
+
+        Args:
+            rpc_url: Optional RPC URL used to add blockhash construction hints.
+        """
         self._money_parsers: list[MoneyParser] = []
+        self._rpc_client: SvmRpcClient | None = None
+        if rpc_url:
+            from ..rpc import SvmRpcClient
 
-    def register_money_parser(self, parser: MoneyParser) -> "ExactSvmScheme":
+            self._rpc_client = SvmRpcClient(rpc_url)
+
+    def register_money_parser(self, parser: MoneyParser) -> ExactSvmScheme:
         """Register custom money parser in the parser chain.
 
         Multiple parsers can be registered - tried in registration order.
-        Each parser receives decimal amount (e.g., 1.50 for $1.50).
+        Each parser receives a decimal string (e.g., "1.50" for $1.50).
         If parser returns None, next parser is tried.
         Default parser is always the final fallback.
 
@@ -44,6 +64,10 @@ class ExactSvmScheme:
         """
         self._money_parsers.append(parser)
         return self
+
+    def get_asset_decimals(self, asset: str, network: Network) -> int | None:
+        found = find_default_asset(asset, str(network))
+        return found["decimals"] if found is not None else None
 
     def parse_price(self, price: Price, network: Network) -> AssetAmount:
         """Parse price into asset amount.
@@ -78,8 +102,9 @@ class ExactSvmScheme:
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
             return price
 
-        # Parse Money to decimal
-        decimal_amount = parse_money_to_decimal(price)
+        parsed = parse_money(price)
+        decimal_amount = parsed["amount"]
+        symbol = parsed.get("symbol")
 
         # Try custom parsers (sync)
         for parser in self._money_parsers:
@@ -87,8 +112,7 @@ class ExactSvmScheme:
             if result is not None:
                 return result
 
-        # Default: convert to USDC
-        return self._default_money_conversion(decimal_amount, str(network))
+        return self._default_money_conversion(decimal_amount, str(network), symbol)
 
     def enhance_payment_requirements(
         self,
@@ -111,11 +135,8 @@ class ExactSvmScheme:
         # Mark unused parameters to satisfy linter
         _ = extension_keys
 
-        config = get_network_config(str(requirements.network))
-
-        # Default asset
         if not requirements.asset:
-            requirements.asset = config["default_asset"]["address"]
+            requirements.asset = get_default_asset(str(requirements.network))["asset"]
 
         # Add feePayer from supportedKind.extra to payment requirements
         # The facilitator provides its address as the fee payer for transaction fees
@@ -126,23 +147,33 @@ class ExactSvmScheme:
         if "feePayer" in extra:
             requirements.extra["feePayer"] = extra["feePayer"]
 
+        # Copy the transaction message versions the facilitator advertises so
+        # the client builds one of them (absent means version 0).
+        if "transactionVersions" in extra:
+            versions = extra["transactionVersions"]
+            requirements.extra["transactionVersions"] = (
+                list(versions) if isinstance(versions, list) else versions
+            )
+
+        if self._rpc_client:
+            try:
+                blockhash = self._rpc_client.get_latest_blockhash().value
+                requirements.extra["recentBlockhash"] = str(blockhash.blockhash)
+                requirements.extra["lastValidBlockHeight"] = str(blockhash.last_valid_block_height)
+            except Exception:
+                requirements.extra.pop("recentBlockhash", None)
+                requirements.extra.pop("lastValidBlockHeight", None)
+
         return requirements
 
-    def _default_money_conversion(self, amount: float, network: str) -> AssetAmount:
-        """Convert decimal amount to USDC AssetAmount.
-
-        Args:
-            amount: Decimal amount (e.g., 1.50).
-            network: Network identifier.
-
-        Returns:
-            AssetAmount in USDC.
-        """
-        # Convert to smallest unit (6 decimals for USDC)
-        token_amount = int(amount * (10**DEFAULT_DECIMALS))
+    def _default_money_conversion(
+        self, amount: str, network: str, symbol: str | None = None
+    ) -> AssetAmount:
+        asset = get_default_asset(network, symbol)
+        token_amount = convert_to_token_amount(amount, asset["decimals"])
 
         return AssetAmount(
             amount=str(token_amount),
-            asset=get_usdc_address(network),
+            asset=asset["asset"],
             extra={},
         )

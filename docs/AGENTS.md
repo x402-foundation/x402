@@ -11,6 +11,7 @@
 - `extensions/` — x402 extension documentation (Bazaar discovery, and future extensions)
 - `getting-started/` — Quickstart guides for buyers and sellers (MDX files with tabs)
 - `guides/` — How-to guides (MCP server, v1→v2 migration)
+- `dev-tools/` — Curated third-party SDKs, extensions, and facilitators
 - `introduction.md` — Welcome/landing page
 - `faq.md` — Frequently asked questions
 - `docs.json` — Mintlify navigation and configuration
@@ -28,6 +29,7 @@
 - Changes to facilitator endpoints affect quickstart guides
 - Changes to `specs/schemes/` may require updates to Payment Schemes docs
 - Changes to other `specs/` files may require updates to Core Concepts docs
+- Curated third-party SDK, extension, or facilitator listings → update `dev-tools/*.md`
 
 ## Style Guidelines
 - Use TypeScript for primary code examples (it's the reference SDK)
@@ -60,6 +62,7 @@
 - `advanced-concepts/*.mdx` — Advanced topics (lifecycle hooks for custom workflows, etc.)
 - `getting-started/*.mdx` — Quickstart guides (MDX for tab components)
 - `guides/*.md` — How-to guides
+- `dev-tools/*.md` — Curated third-party SDKs, extensions, and facilitators
 - `sdk-features.md` — Update when SDK capabilities change
 
 ## File Extensions
@@ -118,7 +121,7 @@ When triggered by GitHub Actions or other automated workflows:
 | Comment removal, formatting | NO update needed |
 | Test file changes | NO update needed |
 | Build/CI config changes | NO update needed |
-| Ecosystem partner metadata only | NO update needed (site handles this) |
+| Ecosystem partner metadata only | NO update needed (`partners-data/` is not the docs source of truth; curated listings live in `dev-tools/`) |
 
 ### When to Skip (No PR)
 

@@ -33,13 +33,13 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/extensions/bazaar"
-	"github.com/x402-foundation/x402/go/mcp"
-	evmclient "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-	evmfacilitator "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-	evmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
+	"github.com/x402-foundation/x402/go/v2/mcp"
+	evmclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+	evmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+	evmserver "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 const (
@@ -94,9 +94,7 @@ func TestMCPEVMIntegration(t *testing.T) {
 		}
 
 		facilitator := x402.Newx402Facilitator()
-		evmConfig := &evmfacilitator.ExactEvmSchemeConfig{
-			DeployERC4337WithEIP6492: true,
-		}
+		evmConfig := &evmfacilitator.ExactEvmSchemeConfig{}
 		evmFacilitator := evmfacilitator.NewExactEvmScheme(facilitatorSigner, evmConfig)
 		facilitator.Register([]x402.Network{TEST_NETWORK}, evmFacilitator)
 

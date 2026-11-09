@@ -63,7 +63,7 @@ For production deployments with additional features (Bazaar discovery, multiple 
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees (optional)
 
@@ -103,9 +103,10 @@ if err != nil {
 result, err := facilitator.Verify(ctx, payload, requirements)
 if err != nil {
     // Extract structured error details if needed
-    if ve, ok := err.(*x402.VerifyError); ok {
-        log.Printf("Verification failed: reason=%s, payer=%s, network=%s",
-                   ve.Reason, ve.Payer, ve.Network)
+    var ve *x402.VerifyError
+    if errors.As(err, &ve) {
+        log.Printf("Verification failed: reason=%s, payer=%s",
+                   ve.InvalidReason, ve.Payer)
     }
     return err
 }
@@ -238,16 +239,16 @@ Register additional schemes for other networks:
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/facilitator"
-    svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/facilitator"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
+    svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 )
 
 facilitator := x402.Newx402Facilitator()
 
-// Register EVM scheme with smart wallet deployment enabled
+// Register EVM scheme with smart wallet deployment support
 evmConfig := &evm.ExactEvmSchemeConfig{
-    DeployERC4337WithEIP6492: true,
+    EIP6492AllowedFactories: []string{ /* trusted factory addresses */ },
 }
 facilitator.Register([]x402.Network{"eip155:84532"}, evm.NewExactEvmScheme(evmSigner, evmConfig))
 
@@ -260,7 +261,7 @@ facilitator.Register([]x402.Network{"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"}, 
 Extract and validate payment identifiers for deduplication:
 
 ```go
-import "github.com/x402-foundation/x402/go/extensions/paymentidentifier"
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
 
 // In verification hook, extract and track payment ID
 facilitator.OnAfterVerify(func(ctx x402.FacilitatorVerifyResultContext) error {
@@ -295,6 +296,12 @@ if existing, found := store.Get(paymentID); found && existing.Status == "settled
     return existing.Transaction, nil
 }
 ```
+
+For production use, bind the payment ID to a normalized fingerprint of the
+settlement request, such as network, scheme, asset, amount, payer, payee, and
+the application operation ID when available. If the same payment ID is replayed
+with a different fingerprint, reject it with a conflict instead of returning a
+cached transaction or settling a different payment.
 
 **Use case:** Prevent duplicate settlements, provide exactly-once semantics, track payment lifecycle.
 

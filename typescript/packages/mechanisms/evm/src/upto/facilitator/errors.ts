@@ -8,6 +8,9 @@
  * to maintain cross-SDK parity.
  */
 
+// Re-export shared EVM errors
+export { ErrAssetNotDeployedContract } from "../../exact/facilitator/errors";
+
 // Re-export shared Permit2 errors
 export {
   ErrPermit2InvalidSpender,
@@ -34,11 +37,16 @@ export {
   ErrErc20ApprovalTxInvalidCalldata,
   ErrErc20ApprovalTxSignerMismatch,
   ErrErc20ApprovalTxInvalidSignature,
+  ErrErc20ApprovalTxFailed,
+  ErrErc20ApprovalBroadcastFailed,
   ErrErc20ApprovalTxParseFailed,
 } from "../../exact/facilitator/errors";
 
 // Upto-specific errors
+export const ErrUptoTransactionFailed = "invalid_upto_evm_transaction_failed";
 export const ErrUptoInvalidScheme = "invalid_upto_evm_scheme";
+export const ErrUptoInvalidPayload = "invalid_upto_evm_payload";
+export const ErrUptoInvalidRequiredAmount = "invalid_upto_evm_required_amount";
 export const ErrUptoNetworkMismatch = "invalid_upto_evm_network_mismatch";
 export const ErrUptoSettlementExceedsAmount = "invalid_upto_evm_payload_settlement_exceeds_amount";
 export const ErrUptoAmountExceedsPermitted = "upto_amount_exceeds_permitted";

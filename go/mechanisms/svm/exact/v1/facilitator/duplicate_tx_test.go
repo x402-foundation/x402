@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/x402-foundation/x402/go/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 func TestDuplicateSettlementCacheV1(t *testing.T) {

@@ -5,16 +5,19 @@ import {
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import {
   extractEip2612GasSponsoringInfo,
   extractErc20ApprovalGasSponsoringInfo,
   ERC20_APPROVAL_GAS_SPONSORING_KEY,
   resolveErc20ApprovalExtensionSigner,
+  resolvePermit2ReceiptWaitSigner,
   type Eip2612GasSponsoringInfo,
   type Erc20ApprovalGasSponsoringFacilitatorExtension,
   type Erc20ApprovalGasSponsoringSigner,
 } from "../extensions";
 import { getAddress, encodeFunctionData } from "viem";
+import { appendDataSuffix, resolveDataSuffix } from "../../shared/extensions";
 import {
   PERMIT2_ADDRESS,
   permit2WitnessTypes,
@@ -24,8 +27,10 @@ import {
 import * as Errors from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
 import { ExactPermit2Payload } from "../../types";
-import { getEvmChainId } from "../../utils";
+import { startAssetContractCheck } from "../../assetCache";
+import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
+import { verifyTypedDataSignature } from "../../shared/verifySignature";
 import {
   simulatePermit2Settle,
   simulatePermit2SettleWithPermit,
@@ -35,10 +40,13 @@ import {
   validateEip2612PermitForPayment,
   buildExactPermit2SettleArgs,
   splitEip2612Signature,
-  waitAndReturnSettleResponse,
   mapSettleError,
   type Permit2ProxyConfig,
 } from "../../shared/permit2";
+import {
+  waitAndReturnSettleResponse,
+  withPendingSettlementStore,
+} from "../../shared/settleReceipt";
 
 const exactProxyConfig: Permit2ProxyConfig = {
   proxyAddress: x402ExactPermit2ProxyAddress,
@@ -104,6 +112,9 @@ export async function verifyPermit2(
 
   const chainId = getEvmChainId(requirements.network);
   const tokenAddress = getAddress(requirements.asset);
+
+  // Run the asset-contract check concurrently with the signature check below.
+  const assetCheck = startAssetContractCheck(signer, requirements.network, requirements.asset);
 
   if (
     getAddress(permit2Payload.permit2Authorization.spender) !==
@@ -185,34 +196,29 @@ export async function verifyPermit2(
     },
   };
 
-  // Verify signature
-  // Note: verifyTypedData is implementation-dependent and pluggable on FacilitatorEvmSigner
-  // Some implementations only do EOA-style ECDSA recovery (e.g. viem/utils verifyTypedData, ethers.verifyTypedData)
-  // Viem's publicClient.verifyTypedData supports EOA and Smart Contract Account (ERC-1271 / ERC-6492) signature verification
-  let signatureValid = false;
-  try {
-    signatureValid = await signer.verifyTypedData({
-      address: payer,
-      ...permit2TypedData,
-      signature: permit2Payload.signature,
-    });
-  } catch {
-    signatureValid = false;
+  // Verify signature using a strict primitive that mirrors Permit2's
+  // on-chain SignatureVerification (libraries/SignatureVerification.sol):
+  // ecrecover when the address has no code, strict EIP-1271 isValidSignature
+  // when it does. No ECDSA fallback for addresses with code — that fallback
+  // would accept signatures Permit2 rejects on-chain (notably for ERC-7702
+  // EOAs whose delegate doesn't accept raw owner ECDSA).
+  const signatureValid = await verifyTypedDataSignature(signer, {
+    address: payer,
+    ...permit2TypedData,
+    signature: permit2Payload.signature,
+  });
+
+  const assetReason = await assetCheck.await();
+  if (assetReason) {
+    return { isValid: false, invalidReason: assetReason, payer };
   }
 
   if (!signatureValid) {
-    // Check if the payer is a deployed smart contract
-    const bytecode = await signer.getCode({ address: payer });
-    const isDeployedContract = bytecode && bytecode !== "0x";
-
-    if (!isDeployedContract) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrPermit2InvalidSignature,
-        payer,
-      };
-    }
-    // Deployed smart contract: fall through to simulation
+    return {
+      isValid: false,
+      invalidReason: Errors.ErrPermit2InvalidSignature,
+      payer,
+    };
   }
 
   // If simulation is disabled, return early
@@ -328,6 +334,11 @@ export async function verifyPermit2(
  * @param permit2Payload - The Permit2 specific payload
  * @param context - Optional facilitator context for extension-provided capabilities
  * @param config - Optional facilitator config (simulateInSettle)
+ * @param store - Pending-settlement store. A prior settle attempt for this exact
+ *   payload that broadcast a transaction whose receipt wait failed
+ *   (settlement_pending) is reconciled against here instead of re-verifying and
+ *   re-broadcasting. Defaults to a fresh in-memory store when omitted (no
+ *   cross-call sharing).
  * @returns Promise resolving to settlement response
  */
 export async function settlePermit2(
@@ -337,8 +348,38 @@ export async function settlePermit2(
   permit2Payload: ExactPermit2Payload,
   context?: FacilitatorContext,
   config?: Permit2FacilitatorConfig,
+  store: PendingSettlementStore = new InMemoryPendingSettlementStore(),
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
+  const signature = permit2Payload.signature;
+
+  // Fast path: a prior settle attempt for this exact payload already
+  // broadcast a transaction whose receipt wait failed (settlement_pending).
+  // Reconcile against it instead of re-verifying/re-broadcasting.
+  if (signature) {
+    const cachedTx = await store.get(signature);
+    if (cachedTx) {
+      // Remove before reconciling (rather than after) so a concurrent retry
+      // of the same payload misses here instead of also reconciling: it
+      // falls through to the normal broadcast path, which independently
+      // rejects it as an on-chain replay (nonce already consumed).
+      await store.delete(signature);
+      const receiptWaitSigner = resolvePermit2ReceiptWaitSigner(signer, payload, context);
+      return withPendingSettlementStore(
+        store,
+        signature,
+        () =>
+          waitAndReturnSettleResponse(
+            receiptWaitSigner,
+            cachedTx as `0x${string}`,
+            payload.accepted.network,
+            payer,
+            { failedStatusReason: Errors.ErrTransactionFailed },
+          ),
+        Errors.ErrTransactionFailed,
+      );
+    }
+  }
 
   const valid = await verifyPermit2(signer, payload, requirements, permit2Payload, context, {
     simulate: config?.simulateInSettle ?? false,
@@ -349,14 +390,33 @@ export async function settlePermit2(
       network: payload.accepted.network,
       transaction: "",
       errorReason: valid.invalidReason ?? Errors.ErrInvalidScheme,
+      errorMessage: valid.invalidMessage,
       payer,
     };
   }
 
+  const dataSuffix = await resolveDataSuffix(context, {
+    paymentPayload: payload,
+    paymentRequirements: requirements,
+  });
+
   // Branch: EIP-2612 gas sponsoring (atomic settleWithPermit via contract)
   const eip2612Info = extractEip2612GasSponsoringInfo(payload);
   if (eip2612Info) {
-    return settlePermit2WithEIP2612(exactProxyConfig, signer, payload, permit2Payload, eip2612Info);
+    return withPendingSettlementStore(
+      store,
+      signature,
+      () =>
+        settlePermit2WithEIP2612(
+          exactProxyConfig,
+          signer,
+          payload,
+          permit2Payload,
+          eip2612Info,
+          dataSuffix,
+        ),
+      Errors.ErrTransactionFailed,
+    );
   }
 
   // Branch: ERC-20 approval gas sponsoring (broadcast approval + settle via extension signer)
@@ -371,18 +431,30 @@ export async function settlePermit2(
       payload.accepted.network,
     );
     if (extensionSigner) {
-      return settlePermit2WithERC20Approval(
-        exactProxyConfig,
-        extensionSigner,
-        payload,
-        permit2Payload,
-        erc20Info,
+      return withPendingSettlementStore(
+        store,
+        signature,
+        () =>
+          settlePermit2WithERC20Approval(
+            exactProxyConfig,
+            extensionSigner,
+            payload,
+            permit2Payload,
+            erc20Info,
+            dataSuffix,
+          ),
+        Errors.ErrTransactionFailed,
       );
     }
   }
 
   // Branch: standard settle (allowance already on-chain)
-  return settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload);
+  return withPendingSettlementStore(
+    store,
+    signature,
+    () => settlePermit2Direct(exactProxyConfig, signer, payload, permit2Payload, dataSuffix),
+    Errors.ErrTransactionFailed,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +469,7 @@ export async function settlePermit2(
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param eip2612Info - The EIP-2612 gas sponsoring info from the payload extension
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithEIP2612(
@@ -405,6 +478,7 @@ async function settlePermit2WithEIP2612(
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
   eip2612Info: Eip2612GasSponsoringInfo,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
   try {
@@ -424,9 +498,12 @@ async function settlePermit2WithEIP2612(
         },
         ...buildExactPermit2SettleArgs(permit2Payload),
       ],
+      dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -441,6 +518,7 @@ async function settlePermit2WithEIP2612(
  * @param permit2Payload - The Permit2 payload with authorization and signature
  * @param erc20Info - Object containing the signed approval transaction
  * @param erc20Info.signedTransaction - The RLP-encoded signed ERC-20 approve transaction
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2WithERC20Approval(
@@ -449,23 +527,39 @@ async function settlePermit2WithERC20Approval(
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
   erc20Info: { signedTransaction: string },
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
 
   try {
-    const settleData = encodeFunctionData({
-      abi: config.proxyABI,
-      functionName: "settle",
-      args: buildExactPermit2SettleArgs(permit2Payload),
-    });
+    const settleData = appendDataSuffix(
+      encodeFunctionData({
+        abi: config.proxyABI,
+        functionName: "settle",
+        args: buildExactPermit2SettleArgs(permit2Payload),
+      }),
+      dataSuffix,
+    );
 
     const txHashes = await extensionSigner.sendTransactions([
       erc20Info.signedTransaction as `0x${string}`,
       { to: config.proxyAddress, data: settleData, gas: BigInt(300_000) },
     ]);
 
-    const settleTxHash = txHashes[txHashes.length - 1];
-    return waitAndReturnSettleResponse(extensionSigner, settleTxHash, payload, payer);
+    const settleTxHash = finalHashFromTwoRequestSend(txHashes);
+    if (!settleTxHash || !isValidTxHash(settleTxHash)) {
+      throw new Error(
+        `${Errors.ErrErc20ApprovalTxFailed}: extension signer returned no valid settlement transaction hash`,
+      );
+    }
+
+    return await waitAndReturnSettleResponse(
+      extensionSigner,
+      settleTxHash,
+      payload.accepted.network,
+      payer,
+      { failedStatusReason: Errors.ErrTransactionFailed },
+    );
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }
@@ -478,6 +572,7 @@ async function settlePermit2WithERC20Approval(
  * @param signer - The facilitator signer for contract writes
  * @param payload - The payment payload for network info
  * @param permit2Payload - The Permit2 payload with authorization and signature
+ * @param dataSuffix - Optional hex suffix appended to the settlement transaction
  * @returns Promise resolving to a settlement response
  */
 async function settlePermit2Direct(
@@ -485,6 +580,7 @@ async function settlePermit2Direct(
   signer: FacilitatorEvmSigner,
   payload: PaymentPayload,
   permit2Payload: ExactPermit2Payload,
+  dataSuffix?: `0x${string}`,
 ): Promise<SettleResponse> {
   const payer = permit2Payload.permit2Authorization.from;
   try {
@@ -493,9 +589,12 @@ async function settlePermit2Direct(
       abi: config.proxyABI,
       functionName: "settle",
       args: buildExactPermit2SettleArgs(permit2Payload),
+      dataSuffix,
     });
 
-    return waitAndReturnSettleResponse(signer, tx, payload, payer);
+    return await waitAndReturnSettleResponse(signer, tx, payload.accepted.network, payer, {
+      failedStatusReason: Errors.ErrTransactionFailed,
+    });
   } catch (error) {
     return mapSettleError(error, payload, payer);
   }

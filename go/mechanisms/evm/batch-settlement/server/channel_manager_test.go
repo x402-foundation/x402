@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
-	x402 "github.com/x402-foundation/x402/go"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // fakeFacilitator records Settle/Verify calls and returns canned responses.
@@ -19,6 +20,7 @@ type fakeFacilitator struct {
 	settlePayloads []map[string]interface{}
 	settleResp     *x402.SettleResponse
 	settleErr      error
+	settleErrAt    map[int]error // fails the Nth (1-indexed) Settle call
 	verifyCalls    int
 	verifyResp     *x402.VerifyResponse
 	verifyErr      error
@@ -44,6 +46,9 @@ func (f *fakeFacilitator) Settle(_ context.Context, payloadBytes []byte, _ []byt
 			f.settlePayloads = append(f.settlePayloads, p)
 		}
 	}
+	if err, ok := f.settleErrAt[f.settleCalls]; ok {
+		return nil, err
+	}
 	if f.settleErr != nil {
 		return nil, f.settleErr
 	}
@@ -58,12 +63,16 @@ func (f *fakeFacilitator) GetSupported(_ context.Context) (x402.SupportedRespons
 }
 
 func newManager(s *BatchSettlementEvmScheme, f *fakeFacilitator) *BatchSettlementChannelManager {
+	return newManagerOn(s, f, "eip155:8453")
+}
+
+func newManagerOn(s *BatchSettlementEvmScheme, f *fakeFacilitator, network x402.Network) *BatchSettlementChannelManager {
 	return NewBatchSettlementChannelManager(ChannelManagerConfig{
 		Scheme:      s,
 		Facilitator: f,
 		Receiver:    "0xreceiver",
 		Token:       "0xtoken",
-		Network:     x402.Network("eip155:8453"),
+		Network:     network,
 	})
 }
 
@@ -91,11 +100,11 @@ func TestClaim_NoClaimableVouchers(t *testing.T) {
 
 func TestClaim_SingleBatch(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -136,13 +145,16 @@ func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeChannelId: %v", err)
 	}
-	channelId = batchsettlement.NormalizeChannelId(channelId)
+	channelId, err = batchsettlement.NormalizeChannelId(channelId)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	sess := sampleSession(channelId, "1000")
 	sess.ChannelConfig = cfg
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
-	_ = s.UpdateSession(channelId, sess)
+	seedSession(t, s, channelId, sess)
 
 	f := &fakeFacilitator{}
 	m := &BatchSettlementChannelManager{scheme: s, facilitator: f, network: "eip155:8453"}
@@ -167,12 +179,12 @@ func TestClaim_AdvancesTotalClaimedInStorageAfterSuccess(t *testing.T) {
 
 func TestClaim_BatchesAcrossMaxClaimsPerBatch(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	for _, id := range []string{"0xa", "0xb", "0xc"} {
+	for _, id := range []string{testChA, testChB, testChC} {
 		sess := sampleSession(id, "100")
 		sess.SignedMaxClaimable = "1000"
 		sess.TotalClaimed = "100"
 		sess.ChargedCumulativeAmount = "1000"
-		_ = s.UpdateSession(id, sess)
+		seedSession(t, s, id, sess)
 	}
 
 	f := &fakeFacilitator{}
@@ -195,11 +207,11 @@ func TestClaim_BatchesAcrossMaxClaimsPerBatch(t *testing.T) {
 
 func TestClaim_FacilitatorError(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
@@ -211,9 +223,9 @@ func TestClaim_FacilitatorError(t *testing.T) {
 
 func TestSettle_Success(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.ChannelConfig.Token = "0xtoken"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -270,13 +282,13 @@ func TestRefund_SkipsMissingSession(t *testing.T) {
 
 func TestRefund_SkipsZeroRefundAmount(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "500")
+	sess := sampleSession(testChA, "500")
 	sess.Balance = "500" // balance == charged → refund = 0
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, _ := m.Refund(context.Background(), []string{"0xa"})
+	res, _ := m.Refund(context.Background(), []string{testChA})
 	if len(res) != 0 {
 		t.Fatalf("expected empty, got %+v", res)
 	}
@@ -287,12 +299,12 @@ func TestRefund_SkipsZeroRefundAmount(t *testing.T) {
 
 func TestRefund_SkipsMalformedNumbers(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "not-a-number")
-	_ = s.UpdateSession("0xa", sess)
+	sess := sampleSession(testChA, "not-a-number")
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, _ := m.Refund(context.Background(), []string{"0xa"})
+	res, _ := m.Refund(context.Background(), []string{testChA})
 	if len(res) != 0 {
 		t.Fatalf("expected empty, got %+v", res)
 	}
@@ -300,18 +312,18 @@ func TestRefund_SkipsMalformedNumbers(t *testing.T) {
 
 func TestRefund_SuccessDeletesSession(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(res) != 1 || res[0].Channel != "0xa" {
+	if len(res) != 1 || res[0].Channel != testChA {
 		t.Fatalf("got %+v", res)
 	}
 	if res[0].Transaction != "0xtx" {
@@ -321,21 +333,21 @@ func TestRefund_SuccessDeletesSession(t *testing.T) {
 		t.Fatalf("payload = %+v", f.settlePayloads[0])
 	}
 	// Session should be deleted.
-	if got, _ := s.GetSession("0xa"); got != nil {
+	if got, _ := s.GetSession(testChA); got != nil {
 		t.Fatalf("expected session deleted, got %+v", got)
 	}
 }
 
 func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err == nil {
 		t.Fatal("expected error from facilitator failure")
 	}
@@ -343,7 +355,7 @@ func TestRefund_FacilitatorErrorIsReturned(t *testing.T) {
 		t.Fatalf("expected empty results on facilitator error, got %+v", res)
 	}
 	// Session must NOT be deleted on failure.
-	if got, _ := s.GetSession("0xa"); got == nil {
+	if got, _ := s.GetSession(testChA); got == nil {
 		t.Fatal("session unexpectedly deleted after refund error")
 	}
 }
@@ -353,14 +365,14 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
 		ReceiverAuthorizerSigner: auth,
 	})
-	sess := sampleSession("0xab", "500")
+	sess := sampleSession(testChA, "500")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "500" // > TotalClaimed (100) → claim batch is non-empty
-	_ = s.UpdateSession("0xab", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	if _, err := m.Refund(context.Background(), []string{"0xab"}); err != nil {
+	if _, err := m.Refund(context.Background(), []string{testChA}); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if len(f.settlePayloads) == 0 {
@@ -375,20 +387,19 @@ func TestRefund_WithAuthorizerSignerAttachesSignatures(t *testing.T) {
 	}
 }
 
-func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
+func TestRefund_SkipsChannelWithLiveAdmissionLock(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	sess.PendingRequest = &PendingRequest{
-		PendingId: "p1",
-		ExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
+	seedSession(t, s, testChA, sess)
+	if _, err := s.GetLockStorage().Acquire(context.Background(), testChA, "p1", 60_000); err != nil {
+		t.Fatalf("Acquire: %v", err)
 	}
-	_ = s.UpdateSession("0xa", sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
-	res, err := m.Refund(context.Background(), []string{"0xa"})
+	res, err := m.Refund(context.Background(), []string{testChA})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -397,13 +408,78 @@ func TestRefund_SkipsChannelWithLivePendingRequest(t *testing.T) {
 	}
 }
 
-func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
+func TestRefund_StillRefundsWhenLockStoreThrows(t *testing.T) {
+	storage := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		Storage:     storage,
+		LockStorage: throwingLockStorage{},
+	})
+	sess := sampleSession(testChA, "1000")
+	sess.Balance = "10000"
+	sess.ChargedCumulativeAmount = "1000"
+	seedSession(t, s, testChA, sess)
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	res, err := m.Refund(context.Background(), []string{testChA})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(res) != 1 || res[0].Channel != testChA || res[0].Transaction != "0xtx" {
+		t.Fatalf("got %+v", res)
+	}
+}
+
+func TestRefund_IsHeldSyntaxErrorFailsClosed(t *testing.T) {
+	storage := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		Storage:     storage,
+		LockStorage: errLockStorage{isHeldErr: corruptHoldError()},
+	})
+	sess := sampleSession(testChA, "1000")
+	sess.Balance = "10000"
+	sess.ChargedCumulativeAmount = "1000"
+	seedSession(t, s, testChA, sess)
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	_, err := m.Refund(context.Background(), []string{testChA})
+	requireSyntaxError(t, err)
+}
+
+func TestClaim_PreservesLiveAdmissionLock(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
+	if _, err := s.GetLockStorage().Acquire(context.Background(), testChA, "pending", 60_000); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	results, err := m.Claim(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(results) != 1 || results[0].Transaction != "0xtx" {
+		t.Fatalf("got %+v", results)
+	}
+	held, err := s.GetLockStorage().IsHeld(context.Background(), testChA, "pending")
+	if err != nil || !held {
+		t.Fatalf("expected lock held: held=%v err=%v", held, err)
+	}
+}
+
+func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	sess := sampleSession(testChA, "100")
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	sess.ChargedCumulativeAmount = "1000"
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{settleErr: errors.New("boom")}
 	m := newManager(s, f)
@@ -414,11 +490,11 @@ func TestClaimAndSettle_PropagatesClaimError(t *testing.T) {
 
 func TestClaimAndSettle_SettlesAfterClaim(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -491,11 +567,11 @@ func TestStartStop_Idempotent(t *testing.T) {
 
 func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -513,11 +589,11 @@ func TestStop_FlushTriggersClaimAndSettle(t *testing.T) {
 // runtime helpers to avoid needing a full timer dance.
 func TestRunClaimJob_FiresOnClaim(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -590,11 +666,11 @@ func TestRunSettleJob_ShouldSettleFalseSkips(t *testing.T) {
 
 func TestRunRefundJob_UsesSelectRefundChannels(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
 	sess.LastRequestTimestamp = time.Now().Add(-1 * time.Hour).UnixMilli()
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -613,10 +689,10 @@ func TestRunRefundJob_UsesSelectRefundChannels(t *testing.T) {
 
 func TestRunRefundJob_NoOpWithoutSelectRefundChannels(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.Balance = "1000"
 	sess.ChargedCumulativeAmount = "100"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 
 	f := &fakeFacilitator{}
 	m := newManager(s, f)
@@ -641,10 +717,10 @@ func TestGetClaimableVouchers_NoSessions(t *testing.T) {
 
 func TestGetClaimableVouchers_FiltersUnclaimed(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "10")
+	sess := sampleSession(testChA, "10")
 	sess.SignedMaxClaimable = "10"
 	sess.TotalClaimed = "10"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, _ := m.GetClaimableVouchers(nil)
 	if len(got) != 0 {
@@ -654,11 +730,11 @@ func TestGetClaimableVouchers_FiltersUnclaimed(t *testing.T) {
 
 func TestGetClaimableVouchers_ReturnsClaimable(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, err := m.GetClaimableVouchers(nil)
 	if err != nil {
@@ -671,12 +747,12 @@ func TestGetClaimableVouchers_ReturnsClaimable(t *testing.T) {
 
 func TestGetClaimableVouchers_FiltersByIdle(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	sess := sampleSession("0xa", "100")
+	sess := sampleSession(testChA, "100")
 	sess.SignedMaxClaimable = "1000"
 	sess.TotalClaimed = "100"
 	sess.ChargedCumulativeAmount = "1000"
 	sess.LastRequestTimestamp = nowMs() // very recent
-	_ = s.UpdateSession("0xa", sess)
+	seedSession(t, s, testChA, sess)
 	m := newManager(s, &fakeFacilitator{})
 	got, _ := m.GetClaimableVouchers(&GetClaimableVouchersOpts{IdleSecs: 3600})
 	if len(got) != 0 {
@@ -686,17 +762,515 @@ func TestGetClaimableVouchers_FiltersByIdle(t *testing.T) {
 
 func TestGetWithdrawalPendingSessions(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
-	a := sampleSession("0xa", "10")
-	b := sampleSession("0xb", "10")
+	a := sampleSession(testChA, "10")
+	b := sampleSession(testChB, "10")
 	b.WithdrawRequestedAt = 12345
-	_ = s.UpdateSession("0xa", a)
-	_ = s.UpdateSession("0xb", b)
+	seedSession(t, s, testChA, a)
+	seedSession(t, s, testChB, b)
 	m := newManager(s, &fakeFacilitator{})
 	got, err := m.GetWithdrawalPendingSessions()
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(got) != 1 || got[0].ChannelId != "0xb" {
+	if len(got) != 1 || got[0].ChannelId != testChB {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func buildManagedManager(t *testing.T) (*BatchSettlementChannelManager, *fakeFacilitator, SessionStorage) {
+	t.Helper()
+	store := NewInMemoryChannelStorage()
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{
+		VoucherStoreMode: VoucherStoreModeFacilitator,
+		Storage:          store,
+	})
+	f := &fakeFacilitator{}
+	return newManager(s, f), f, store
+}
+
+func TestChannelManager_ManagedClaimFromReplica(t *testing.T) {
+	m, f, store := buildManagedManager(t)
+	sess := sampleSession(testChA, "100")
+	sess.ChargedCumulativeAmount = "5000"
+	sess.TotalClaimed = "0"
+	seedStore(t, store, testChA, sess)
+	results, err := m.Claim(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(results) != 1 || f.settleCalls != 1 {
+		t.Fatalf("results=%+v settleCalls=%d", results, f.settleCalls)
+	}
+	if f.settlePayloads[0]["type"] != "claim" {
+		t.Fatalf("payload = %+v", f.settlePayloads[0])
+	}
+}
+
+func TestChannelManager_ManagedRefundRejected(t *testing.T) {
+	m, _, _ := buildManagedManager(t)
+	_, err := m.Refund(context.Background(), nil)
+	if err == nil || err.Error() != "cooperative refunds are client-initiated in facilitator-managed mode" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestChannelManager_ManagedRefundIdleRejected(t *testing.T) {
+	m, _, _ := buildManagedManager(t)
+	_, err := m.RefundIdleChannels(context.Background(), 60)
+	if err == nil || err.Error() != "cooperative refunds are client-initiated in facilitator-managed mode" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestChannelManager_ManagedDoesNotStartRefundTimer(t *testing.T) {
+	m, _, _ := buildManagedManager(t)
+	m.Start(AutoSettlementConfig{ClaimIntervalSecs: 3600, SettleIntervalSecs: 3600, RefundIntervalSecs: 3600})
+	defer func() { _ = m.Stop(context.Background(), nil) }()
+	m.mu.Lock()
+	_, hasRefund := m.timers[autoJobRefund]
+	m.mu.Unlock()
+	if hasRefund {
+		t.Fatal("managed mode must not start a refund timer")
+	}
+}
+
+const (
+	networkBase    = x402.Network("eip155:8453")
+	networkSepolia = x402.Network("eip155:84532")
+)
+
+// boundSession returns a claimable and refundable session whose channel id is
+// bound to network. A false stamped drops the persisted Network, modelling a
+// row written before sessions carried one.
+func boundSession(t *testing.T, network x402.Network, salt int, stamped bool) *ChannelSession {
+	t.Helper()
+	cfg := batchsettlement.ChannelConfig{
+		Payer:              "0xabc1000000000000000000000000000000000001",
+		PayerAuthorizer:    "0xabc1000000000000000000000000000000000001",
+		Receiver:           "0xabc2000000000000000000000000000000000002",
+		ReceiverAuthorizer: "0xabc3000000000000000000000000000000000003",
+		Token:              "0xabc4000000000000000000000000000000000004",
+		WithdrawDelay:      900,
+		Salt:               fmt.Sprintf("0x%064x", salt),
+	}
+	channelId, err := batchsettlement.ComputeChannelId(cfg, string(network))
+	if err != nil {
+		t.Fatalf("ComputeChannelId: %v", err)
+	}
+	sess := sampleSession(channelId, "1000")
+	sess.ChannelConfig = cfg
+	sess.Balance = "5000"
+	sess.SignedMaxClaimable = "1000"
+	sess.TotalClaimed = "100"
+	sess.Network = ""
+	if stamped {
+		sess.Network = string(network)
+	}
+	return sess
+}
+
+// networkFixture shares one store between a Base and a Base Sepolia manager.
+type networkFixture struct {
+	scheme              *BatchSettlementEvmScheme
+	base, sepolia       *ChannelSession
+	baseFac, sepoliaFac *fakeFacilitator
+	baseMgr, sepoliaMgr *BatchSettlementChannelManager
+}
+
+func newNetworkFixture(t *testing.T, stamped bool) *networkFixture {
+	t.Helper()
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	fx := &networkFixture{
+		scheme:     s,
+		base:       boundSession(t, networkBase, 1, stamped),
+		sepolia:    boundSession(t, networkSepolia, 2, stamped),
+		baseFac:    &fakeFacilitator{},
+		sepoliaFac: &fakeFacilitator{},
+	}
+	fx.baseMgr = newManagerOn(s, fx.baseFac, networkBase)
+	fx.sepoliaMgr = newManagerOn(s, fx.sepoliaFac, networkSepolia)
+	seedSession(t, s, fx.base.ChannelId, fx.base)
+	seedSession(t, s, fx.sepolia.ChannelId, fx.sepolia)
+	return fx
+}
+
+func requireTotalClaimed(t *testing.T, s *BatchSettlementEvmScheme, channelId, want string) {
+	t.Helper()
+	got, err := s.GetSession(channelId)
+	if err != nil || got == nil {
+		t.Fatalf("GetSession(%s): %v %+v", channelId, err, got)
+	}
+	if got.TotalClaimed != want {
+		t.Fatalf("TotalClaimed = %s, want %s", got.TotalClaimed, want)
+	}
+}
+
+func requireSessionPresent(t *testing.T, s *BatchSettlementEvmScheme, channelId string, want bool) {
+	t.Helper()
+	got, err := s.GetSession(channelId)
+	if err != nil {
+		t.Fatalf("GetSession(%s): %v", channelId, err)
+	}
+	if (got != nil) != want {
+		t.Fatalf("session %s present = %v, want %v", channelId, got != nil, want)
+	}
+}
+
+var networkScopeCases = []struct {
+	name    string
+	stamped bool
+}{
+	{"persisted network", true},
+	{"legacy row without network", false},
+}
+
+func TestChannelManager_ClaimSelectsOnlyOwnNetwork(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+
+			for _, c := range []struct {
+				mgr  *BatchSettlementChannelManager
+				want *ChannelSession
+			}{{fx.baseMgr, fx.base}, {fx.sepoliaMgr, fx.sepolia}} {
+				claims, err := c.mgr.GetClaimableVouchers(nil)
+				if err != nil {
+					t.Fatalf("GetClaimableVouchers: %v", err)
+				}
+				if len(claims) != 1 || claims[0].Voucher.Channel.Salt != c.want.ChannelConfig.Salt {
+					t.Fatalf("expected only the manager's own channel, got %+v", claims)
+				}
+			}
+
+			results, err := fx.baseMgr.Claim(context.Background(), nil)
+			if err != nil || len(results) != 1 || results[0].Vouchers != 1 {
+				t.Fatalf("results=%+v err=%v", results, err)
+			}
+			if fx.baseFac.settleCalls != 1 || fx.sepoliaFac.settleCalls != 0 {
+				t.Fatalf("settle calls base=%d sepolia=%d", fx.baseFac.settleCalls, fx.sepoliaFac.settleCalls)
+			}
+			requireTotalClaimed(t, fx.scheme, fx.base.ChannelId, "1000")
+			requireTotalClaimed(t, fx.scheme, fx.sepolia.ChannelId, "100")
+
+			results, err = fx.sepoliaMgr.Claim(context.Background(), nil)
+			if err != nil || len(results) != 1 {
+				t.Fatalf("results=%+v err=%v", results, err)
+			}
+			requireTotalClaimed(t, fx.scheme, fx.sepolia.ChannelId, "1000")
+		})
+	}
+}
+
+func TestChannelManager_ClaimSelectorReceivesOnlyOwnNetworkChannels(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+
+			var seen []*ChannelSession
+			results, err := fx.baseMgr.Claim(context.Background(), &ClaimOptions{
+				SelectClaimChannels: func(channels []*ChannelSession, _ AutoSettlementContext) ([]*ChannelSession, error) {
+					seen = channels
+					return channels, nil
+				},
+			})
+			if err != nil || len(results) != 1 {
+				t.Fatalf("results=%+v err=%v", results, err)
+			}
+			if len(seen) != 1 || seen[0].ChannelId != fx.base.ChannelId {
+				t.Fatalf("selector saw %+v, want only %s", seen, fx.base.ChannelId)
+			}
+		})
+	}
+}
+
+func TestChannelManager_WithdrawalPendingSessionsAreNetworkScoped(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+			for _, sess := range []*ChannelSession{fx.base, fx.sepolia} {
+				sess.WithdrawRequestedAt = 12345
+				seedSession(t, fx.scheme, sess.ChannelId, sess)
+			}
+			got, err := fx.baseMgr.GetWithdrawalPendingSessions()
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if len(got) != 1 || got[0].ChannelId != fx.base.ChannelId {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
+
+func TestChannelManager_LegacyRowWithUnboundChannelIdIsExcluded(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	sess := sampleSession(testChA, "1000")
+	sess.Network = ""
+	seedSession(t, s, testChA, sess)
+
+	f := &fakeFacilitator{}
+	m := newManager(s, f)
+	claims, err := m.GetClaimableVouchers(nil)
+	if err != nil || len(claims) != 0 {
+		t.Fatalf("claims=%+v err=%v", claims, err)
+	}
+	if results, err := m.Claim(context.Background(), nil); err != nil || len(results) != 0 || f.settleCalls != 0 {
+		t.Fatalf("results=%+v err=%v settleCalls=%d", results, err, f.settleCalls)
+	}
+}
+
+func TestChannelManager_RefundSkipsForeignNetworkChannels(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+
+			res, err := fx.sepoliaMgr.Refund(context.Background(), []string{fx.base.ChannelId, fx.sepolia.ChannelId})
+			if err != nil || len(res) != 1 || res[0].Channel != fx.sepolia.ChannelId {
+				t.Fatalf("res=%+v err=%v", res, err)
+			}
+			if fx.baseFac.settleCalls != 0 {
+				t.Fatalf("foreign channel reached the wrong network: base settle calls = %d", fx.baseFac.settleCalls)
+			}
+			requireSessionPresent(t, fx.scheme, fx.base.ChannelId, true)
+			requireSessionPresent(t, fx.scheme, fx.sepolia.ChannelId, false)
+
+			seedSession(t, fx.scheme, fx.sepolia.ChannelId, fx.sepolia)
+			res, err = fx.baseMgr.Refund(context.Background(), nil)
+			if err != nil || len(res) != 1 || res[0].Channel != fx.base.ChannelId {
+				t.Fatalf("res=%+v err=%v", res, err)
+			}
+			if fx.sepoliaFac.settleCalls != 1 {
+				t.Fatalf("sepolia settle calls = %d, want only its own earlier refund", fx.sepoliaFac.settleCalls)
+			}
+			requireSessionPresent(t, fx.scheme, fx.sepolia.ChannelId, true)
+		})
+	}
+}
+
+func TestChannelManager_IdleRefundSelectionIsNetworkScoped(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+			idle, err := fx.baseMgr.getIdleChannelsForRefund(context.Background(), 1)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if len(idle) != 1 || idle[0].ChannelId != fx.base.ChannelId {
+				t.Fatalf("got %+v", idle)
+			}
+
+			res, err := fx.baseMgr.RefundIdleChannels(context.Background(), 1)
+			if err != nil || len(res) != 1 || res[0].Channel != fx.base.ChannelId {
+				t.Fatalf("res=%+v err=%v", res, err)
+			}
+			if fx.sepoliaFac.settleCalls != 0 {
+				t.Fatalf("sepolia settle calls = %d", fx.sepoliaFac.settleCalls)
+			}
+			requireSessionPresent(t, fx.scheme, fx.sepolia.ChannelId, true)
+		})
+	}
+}
+
+func TestRunRefundJob_SelectorOnlySeesOwnNetworkChannels(t *testing.T) {
+	for _, tc := range networkScopeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newNetworkFixture(t, tc.stamped)
+			var seen []*ChannelSession
+			var refunds []RefundResult
+			fx.baseMgr.autoSettleConfig = AutoSettlementConfig{
+				SelectRefundChannels: func(channels []*ChannelSession, _ AutoSettlementContext) ([]*ChannelSession, error) {
+					seen = channels
+					// Also return the foreign channel: the manager must still not refund it.
+					return append(append([]*ChannelSession{}, channels...), fx.sepolia), nil
+				},
+				OnRefund: func(r RefundResult) { refunds = append(refunds, r) },
+			}
+			fx.baseMgr.runRefundJob(context.Background())
+			if len(seen) != 1 || seen[0].ChannelId != fx.base.ChannelId {
+				t.Fatalf("selector saw %+v", seen)
+			}
+			if len(refunds) != 1 || refunds[0].Channel != fx.base.ChannelId {
+				t.Fatalf("refunds = %+v", refunds)
+			}
+			if fx.baseFac.settleCalls != 1 || fx.sepoliaFac.settleCalls != 0 {
+				t.Fatalf("settle calls base=%d sepolia=%d", fx.baseFac.settleCalls, fx.sepoliaFac.settleCalls)
+			}
+			requireSessionPresent(t, fx.scheme, fx.sepolia.ChannelId, true)
+		})
+	}
+}
+
+// failedBatchSalt returns the channel salt carried by the first claim payload,
+// which identifies the channel whose batch the facilitator rejected.
+func failedBatchSalt(t *testing.T, f *fakeFacilitator) string {
+	t.Helper()
+	if len(f.settlePayloads) == 0 {
+		t.Fatal("no claim payload recorded")
+	}
+	claims, _ := f.settlePayloads[0]["claims"].([]interface{})
+	if len(claims) != 1 {
+		t.Fatalf("expected single-claim batch, got %+v", f.settlePayloads[0])
+	}
+	claim, _ := claims[0].(map[string]interface{})
+	voucher, _ := claim["voucher"].(map[string]interface{})
+	channel, _ := voucher["channel"].(map[string]interface{})
+	salt, _ := channel["salt"].(string)
+	return salt
+}
+
+// twoClaimableChannels seeds two Base channels so MaxClaimsPerBatch: 1 yields
+// two claim batches.
+func twoClaimableChannels(t *testing.T, f *fakeFacilitator) (*BatchSettlementEvmScheme, *BatchSettlementChannelManager, [2]*ChannelSession) {
+	t.Helper()
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	sessions := [2]*ChannelSession{
+		boundSession(t, networkBase, 1, true),
+		boundSession(t, networkBase, 2, true),
+	}
+	for _, sess := range sessions {
+		seedSession(t, s, sess.ChannelId, sess)
+	}
+	return s, newManager(s, f), sessions
+}
+
+func TestClaim_ContinuesAfterFailedBatch(t *testing.T) {
+	boom := errors.New("boom")
+	f := &fakeFacilitator{settleErrAt: map[int]error{1: boom}}
+	s, m, sessions := twoClaimableChannels(t, f)
+
+	results, err := m.Claim(context.Background(), &ClaimOptions{MaxClaimsPerBatch: 1})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected joined batch error, got %v", err)
+	}
+	if len(results) != 1 || f.settleCalls != 2 {
+		t.Fatalf("results=%+v settleCalls=%d", results, f.settleCalls)
+	}
+	m.mu.Lock()
+	pendingSettle := m.pendingSettle
+	m.mu.Unlock()
+	if !pendingSettle {
+		t.Fatal("expected pendingSettle after a successful batch")
+	}
+
+	failedSalt := failedBatchSalt(t, f)
+	for _, sess := range sessions {
+		want := "1000"
+		if sess.ChannelConfig.Salt == failedSalt {
+			want = "100"
+		}
+		requireTotalClaimed(t, s, sess.ChannelId, want)
+	}
+
+	// The failed channel stays claimable and lands on the next pass.
+	results, err = m.Claim(context.Background(), &ClaimOptions{MaxClaimsPerBatch: 1})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("retry results=%+v err=%v", results, err)
+	}
+	for _, sess := range sessions {
+		requireTotalClaimed(t, s, sess.ChannelId, "1000")
+	}
+}
+
+func TestClaim_ReturnsEveryBatchError(t *testing.T) {
+	first, second := errors.New("first"), errors.New("second")
+	f := &fakeFacilitator{settleErrAt: map[int]error{1: first, 2: second}}
+	s, m, sessions := twoClaimableChannels(t, f)
+
+	results, err := m.Claim(context.Background(), &ClaimOptions{MaxClaimsPerBatch: 1})
+	if !errors.Is(err, first) || !errors.Is(err, second) {
+		t.Fatalf("expected both batch errors, got %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %+v", results)
+	}
+	m.mu.Lock()
+	pendingSettle := m.pendingSettle
+	m.mu.Unlock()
+	if pendingSettle {
+		t.Fatal("pendingSettle must stay false when no batch succeeded")
+	}
+	for _, sess := range sessions {
+		requireTotalClaimed(t, s, sess.ChannelId, "100")
+	}
+}
+
+func TestClaimAndSettle_SettlesAfterPartialClaim(t *testing.T) {
+	boom := errors.New("boom")
+	f := &fakeFacilitator{settleErrAt: map[int]error{1: boom}}
+	_, m, _ := twoClaimableChannels(t, f)
+
+	claims, settle, err := m.ClaimAndSettle(context.Background(), &ClaimOptions{MaxClaimsPerBatch: 1})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected claim error, got %v", err)
+	}
+	if len(claims) != 1 || settle == nil || settle.Transaction != "0xtx" {
+		t.Fatalf("claims=%+v settle=%+v", claims, settle)
+	}
+	if f.settleCalls != 3 || f.settlePayloads[2]["type"] != "settle" {
+		t.Fatalf("expected two claim batches then settle, got %d calls", f.settleCalls)
+	}
+}
+
+func TestClaimAndSettle_JoinsClaimAndSettleErrors(t *testing.T) {
+	claimErr, settleErr := errors.New("claim failed"), errors.New("settle failed")
+	f := &fakeFacilitator{settleErrAt: map[int]error{1: claimErr, 3: settleErr}}
+	_, m, _ := twoClaimableChannels(t, f)
+
+	claims, settle, err := m.ClaimAndSettle(context.Background(), &ClaimOptions{MaxClaimsPerBatch: 1})
+	if !errors.Is(err, claimErr) || !errors.Is(err, settleErr) {
+		t.Fatalf("expected both errors, got %v", err)
+	}
+	if len(claims) != 1 || settle != nil {
+		t.Fatalf("claims=%+v settle=%+v", claims, settle)
+	}
+}
+
+func TestRunClaimJob_ReportsFailedBatchAndKeepsSuccessfulClaims(t *testing.T) {
+	boom := errors.New("boom")
+	f := &fakeFacilitator{settleErrAt: map[int]error{1: boom}}
+	_, m, _ := twoClaimableChannels(t, f)
+	var errs []error
+	var claims []ClaimResult
+	m.autoSettleConfig = AutoSettlementConfig{
+		MaxClaimsPerBatch: 1,
+		OnError:           func(err error) { errs = append(errs, err) },
+		OnClaim:           func(r ClaimResult) { claims = append(claims, r) },
+	}
+
+	m.runClaimJob(context.Background())
+	if len(errs) != 1 || !errors.Is(errs[0], boom) {
+		t.Fatalf("errs = %v", errs)
+	}
+	if len(claims) != 1 {
+		t.Fatalf("OnClaim calls = %d", len(claims))
+	}
+	m.mu.Lock()
+	lastClaimTime := m.lastClaimTime
+	m.mu.Unlock()
+	if lastClaimTime == 0 {
+		t.Fatal("expected lastClaimTime to advance after a successful batch")
+	}
+}
+
+func TestRunClaimJob_AllBatchesFailKeepsLastClaimTime(t *testing.T) {
+	f := &fakeFacilitator{settleErr: errors.New("boom")}
+	_, m, _ := twoClaimableChannels(t, f)
+	var errs []error
+	var claims []ClaimResult
+	m.autoSettleConfig = AutoSettlementConfig{
+		MaxClaimsPerBatch: 1,
+		OnError:           func(err error) { errs = append(errs, err) },
+		OnClaim:           func(r ClaimResult) { claims = append(claims, r) },
+	}
+
+	m.runClaimJob(context.Background())
+	if len(errs) != 1 || len(claims) != 0 {
+		t.Fatalf("errs=%v claims=%+v", errs, claims)
+	}
+	m.mu.Lock()
+	lastClaimTime := m.lastClaimTime
+	m.mu.Unlock()
+	if lastClaimTime != 0 {
+		t.Fatalf("lastClaimTime = %d, want unchanged", lastClaimTime)
 	}
 }

@@ -4,7 +4,7 @@ Example client demonstrating how to implement x402 payment handling manually usi
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - Valid EVM private key for making payments
 - A running x402 server (see [server examples](../../servers/))
 
@@ -73,9 +73,9 @@ go run .
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 evmSigner, _ := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))

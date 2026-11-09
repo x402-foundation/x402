@@ -19,7 +19,7 @@ import {
 } from "@x402/core/types";
 import { toClientEvmSigner, toFacilitatorEvmSigner } from "../../src";
 import { BatchSettlementEvmScheme as BatchSettlementEvmClient } from "../../src/batch-settlement/client/scheme";
-import { processSettleResponse } from "../../src/batch-settlement/client/channel";
+import { updateChannelFromSettle } from "../../src/batch-settlement/client/channel";
 import { InMemoryClientChannelStorage } from "../../src/batch-settlement/client/storage";
 import { BatchSettlementEvmScheme as BatchSettlementEvmServer } from "../../src/batch-settlement/server/scheme";
 import { BatchSettlementEvmScheme as BatchSettlementEvmFacilitator } from "../../src/batch-settlement/facilitator/scheme";
@@ -291,7 +291,16 @@ describe("Batch-Settlement EVM Integration Tests", () => {
           .voucher.channelId;
         await waitForChannelBalanceOnChain(publicClient, depositChannelId);
 
-        await processSettleResponse(batchSettlementStorage, settleResponse);
+        const depositAmount = (firstPayload.payload as { deposit: { amount: string } }).deposit
+          .amount;
+        await updateChannelFromSettle(batchSettlementStorage, {
+          server: { chargedAmount: settleResponse.extra?.chargedAmount },
+          local: {
+            channelId: depositChannelId,
+            requestAmount: accepted!.amount,
+            depositAmount,
+          },
+        });
 
         const followupRequired = await server.createPaymentRequiredResponse(accepts, resource);
         const secondPayload = await client.createPaymentPayload(followupRequired);

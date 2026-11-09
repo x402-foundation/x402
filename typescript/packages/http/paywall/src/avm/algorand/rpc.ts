@@ -1,6 +1,6 @@
 import { AlgorandClient } from "@algorandfoundation/algokit-utils/algorand-client";
 import type { AlgodClient } from "@algorandfoundation/algokit-utils/algod-client";
-import { ALGORAND_NETWORK_REFS } from "../../paywallUtils";
+import { ALGORAND_GENESIS_HASHES, resolveAlgorandGenesisRef } from "../../paywallUtils";
 
 /**
  * Gets an AlgorandClient for the given network.
@@ -16,8 +16,8 @@ export function getAlgorandClient(network: string): AlgorandClient {
     );
   }
 
-  const ref = network.split(":")[1];
-  const isTestnet = ref === ALGORAND_NETWORK_REFS.TESTNET;
+  const ref = resolveAlgorandGenesisRef(network);
+  const isTestnet = ref === ALGORAND_GENESIS_HASHES.TESTNET;
 
   return isTestnet ? AlgorandClient.testNet() : AlgorandClient.mainNet();
 }
@@ -45,8 +45,8 @@ export function getAlgodClient(network: string, url?: string): AlgodClient {
  * USDC ASA IDs for Algorand networks
  */
 export const USDC_ASA_IDS: Record<string, string> = {
-  [ALGORAND_NETWORK_REFS.MAINNET]: "31566704",
-  [ALGORAND_NETWORK_REFS.TESTNET]: "10458941",
+  [ALGORAND_GENESIS_HASHES.MAINNET]: "31566704",
+  [ALGORAND_GENESIS_HASHES.TESTNET]: "10458941",
 };
 
 /**
@@ -56,5 +56,8 @@ export const USDC_ASA_IDS: Record<string, string> = {
  * @returns The USDC ASA ID or undefined if not found.
  */
 export function getUsdcAsaId(networkRef: string): string | undefined {
-  return USDC_ASA_IDS[networkRef];
+  const ref = networkRef.startsWith("algorand:")
+    ? resolveAlgorandGenesisRef(networkRef)
+    : resolveAlgorandGenesisRef(`algorand:${networkRef}`);
+  return USDC_ASA_IDS[ref];
 }

@@ -10,6 +10,7 @@ These must be funded accounts on Solana Devnet with SOL and USDC
 """
 
 import os
+from decimal import Decimal
 
 import pytest
 from solders.keypair import Keypair
@@ -36,6 +37,7 @@ from x402.schemas import (
     SupportedResponse,
     VerifyResponse,
 )
+from x402.schemas.helpers import convert_to_token_amount
 
 # =============================================================================
 # Environment Variable Loading
@@ -157,9 +159,13 @@ class TestSvmIntegrationV2:
         self.facilitator_address = self.facilitator_signer.get_addresses()[0]
 
         # Create client with SVM scheme
-        self.client = x402ClientSync().register(
-            SOLANA_DEVNET_CAIP2,
-            ExactSvmClientScheme(self.client_signer, rpc_url=RPC_URL),
+        self.client = (
+            x402ClientSync()
+            .register(
+                SOLANA_DEVNET_CAIP2,
+                ExactSvmClientScheme(self.client_signer, rpc_url=RPC_URL),
+            )
+            .set_spend_controls(False)
         )
 
         # Create facilitator with SVM scheme
@@ -465,10 +471,10 @@ class TestSvmPriceParsing:
         from x402.schemas import AssetAmount
 
         # Register custom parser for large amounts
-        def large_amount_parser(amount: float, network: str):
-            if amount > 100:
+        def large_amount_parser(amount: str | int | float, network: str):
+            if Decimal(str(amount)) > 100:
                 return AssetAmount(
-                    amount=str(int(amount * 1_000_000)),  # USDC has 6 decimals
+                    amount=convert_to_token_amount(str(amount), 6),  # USDC has 6 decimals
                     asset="LargeTokenMint11111111111111111111111111111",
                     extra={"token": "LARGE", "tier": "large"},
                 )

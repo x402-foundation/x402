@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assertAcceptsAllowlistedAfterExtensionEnrich,
+  assertAcceptsAdditiveExtraAfterSchemeEnrich,
   assertAdditivePayloadEnrichment,
   assertAdditiveSettlementExtra,
   assertSettleResponseCoreUnchanged,
@@ -101,6 +102,117 @@ describe("hookPolicy", () => {
       expect(() => assertAcceptsAllowlistedAfterExtensionEnrich(baseline, current, "ext")).toThrow(
         /extra\["nested"\]/,
       );
+    });
+
+    describe.each([
+      ["paymentFlow", "upfront"],
+      ["assetTransferMethod", "permit2"],
+    ] as const)("protocol-reserved extra.${0}", (key, injectedValue) => {
+      it("rejects injection when baseline omitted the key", () => {
+        const baseline = snapshotPaymentRequirementsList([
+          buildPaymentRequirements({ extra: { schemeField: "x" } }),
+        ]);
+        const current = snapshotPaymentRequirementsList(baseline);
+        current[0].extra = { ...current[0].extra, [key]: injectedValue };
+        expect(() =>
+          assertAcceptsAllowlistedAfterExtensionEnrich(baseline, current, "ext"),
+        ).toThrow(new RegExp(`extra\\["${key}"\\].*protocol-reserved`));
+      });
+
+      it("rejects changing the key when baseline set it", () => {
+        const baseline = snapshotPaymentRequirementsList([
+          buildPaymentRequirements({
+            extra: { [key]: key === "paymentFlow" ? "authorization" : "eip3009" },
+          }),
+        ]);
+        const current = snapshotPaymentRequirementsList(baseline);
+        current[0].extra = { ...current[0].extra, [key]: injectedValue };
+        expect(() =>
+          assertAcceptsAllowlistedAfterExtensionEnrich(baseline, current, "ext"),
+        ).toThrow(new RegExp(`extra\\["${key}"\\]`));
+      });
+    });
+  });
+
+  describe("assertAcceptsAdditiveExtraAfterSchemeEnrich", () => {
+    describe.each([
+      ["paymentFlow", "upfront"],
+      ["assetTransferMethod", "permit2"],
+    ] as const)("protocol-reserved extra.${0}", (key, injectedValue) => {
+      it("rejects injection on a matching accept when baseline omitted the key", () => {
+        const baseline = snapshotPaymentRequirementsList([
+          buildPaymentRequirements({ extra: { name: "USDC" } }),
+        ]);
+        const current = snapshotPaymentRequirementsList(baseline);
+        current[0].extra = { ...current[0].extra, [key]: injectedValue };
+        expect(() =>
+          assertAcceptsAdditiveExtraAfterSchemeEnrich(
+            baseline,
+            current,
+            baseline[0].scheme,
+            baseline[0].network,
+          ),
+        ).toThrow(new RegExp(`extra\\["${key}"\\].*protocol-reserved`));
+      });
+
+      it("rejects changing the key when baseline set it", () => {
+        const baseline = snapshotPaymentRequirementsList([
+          buildPaymentRequirements({
+            extra: { [key]: key === "paymentFlow" ? "escrow" : "eip3009" },
+          }),
+        ]);
+        const current = snapshotPaymentRequirementsList(baseline);
+        current[0].extra = { ...current[0].extra, [key]: injectedValue };
+        expect(() =>
+          assertAcceptsAdditiveExtraAfterSchemeEnrich(
+            baseline,
+            current,
+            baseline[0].scheme,
+            baseline[0].network,
+          ),
+        ).toThrow(new RegExp(`extra\\["${key}"\\]`));
+      });
+    });
+
+    it("rejects changing payment terms on a matching accept", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ payTo: "0xabc", amount: "1000", asset: "USDC" }),
+      ]);
+      const current = snapshotPaymentRequirementsList(baseline);
+      current[0].payTo = "0xdef";
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(
+          baseline,
+          current,
+          baseline[0].scheme,
+          baseline[0].network,
+        ),
+      ).toThrow(/payment terms are immutable/);
+    });
+
+    it("rejects adding extra keys on a non-matching accept", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453" as Network,
+          extra: { name: "USDC" },
+        }),
+        buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:1" as Network,
+          extra: { name: "USDC" },
+        }),
+      ]);
+      const current = snapshotPaymentRequirementsList(baseline);
+      current[1].extra = { ...current[1].extra, injected: true };
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(
+          baseline,
+          current,
+          "exact",
+          "eip155:8453" as Network,
+        ),
+      ).toThrow(/only matching accepts may receive new extra fields/);
     });
   });
 

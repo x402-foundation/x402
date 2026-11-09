@@ -1,7 +1,0 @@
-{
-  "name": "QuantumShield API",
-  "category": "Services/Endpoints",
-  "logoUrl": "/logos/quantumshield-api.png",
-  "description": "Security-as-a-service API for token risk analysis. Get comprehensive token security scores, honeypot detection, and holder risk analysis powered by x402 micropayments on Base.",
-  "websiteUrl": "https://quantumshield-api.vercel.app"
-}

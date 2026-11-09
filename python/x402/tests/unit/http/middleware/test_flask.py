@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,9 +12,10 @@ import pytest
 
 # Skip all tests if flask not installed
 pytest.importorskip("flask")
-from flask import Flask
+from flask import Flask, redirect
 from werkzeug.datastructures import Headers, ImmutableMultiDict
 
+from x402 import x402FacilitatorSync, x402ResourceServerSync
 from x402.http.facilitator_client_base import FacilitatorResponseError
 from x402.http.middleware.flask import (
     FlaskAdapter,
@@ -30,6 +32,18 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.schemas import PaymentPayload, PaymentRequirements
+from x402.schemas.errors import FacilitatorCapabilityError
+from x402.schemas.hooks import (
+    CompletedSettlement,
+    PaymentCancellationDispatcher,
+    VerifiedPaymentCancelOptions,
+)
+
+from ....mocks import (
+    CashFacilitatorClientSync,
+    CashSchemeNetworkFacilitator,
+    CashSchemeNetworkServer,
+)
 
 # =============================================================================
 # Helpers
@@ -459,16 +473,100 @@ class TestFlaskMiddlewareConcurrency:
             mock_http_server.return_value = mock_http_server_instance
 
             PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+            assert call_count == 1
 
             with app.test_client() as client:
-                # First request fails
+                # First request retries after the eager attempt failed
                 response1 = client.get("/api/protected")
                 assert response1.status_code == 502
 
                 # Second request retries init since first failed
                 response2 = client.get("/api/protected")
                 assert response2.status_code == 502
-                assert call_count == 2
+                assert call_count == 3
+
+
+class TestFlaskBackgroundInit:
+    """Fatal capability errors at eager initialize must exit the process."""
+
+    def test_eager_init_exits_on_capability_mismatch(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = FacilitatorCapabilityError(
+                ["upto on solana:devnet: missing"]
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == [1]
+
+    def test_eager_init_does_not_exit_on_retryable_timeout(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = Exception("facilitator request timed out")
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
+
+    def test_eager_init_does_not_exit_on_empty_supported(self):
+        app = Flask(__name__)
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        exit_codes: list[int] = []
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            instance = MagicMock()
+            instance.initialize.side_effect = RuntimeError(
+                "Failed to initialize: no supported payment kinds loaded from any facilitator."
+            )
+            mock_http_server.return_value = instance
+            with patch(
+                "x402.http.background_init._process_exit",
+                lambda code: exit_codes.append(code),
+            ):
+                PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=True)
+        assert exit_codes == []
 
 
 class TestPaymentMiddlewareFunction:
@@ -586,6 +684,49 @@ class TestFlaskMiddlewareIntegration:
                 response = client.get("/api/protected")
                 assert response.status_code == 402
 
+    def test_sends_declared_text_plain_payment_error_body_without_json_encoding(self):
+        """A declared text/plain payment-error string is sent as raw text."""
+        expected = "Payment required.\nPreview line 2."
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-error",
+                response=HTTPResponseInstructions(
+                    status=402,
+                    headers={"Content-Type": "text/plain; charset=utf-8"},
+                    body=expected,
+                    is_html=False,
+                ),
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+                assert response.status_code == 402
+                assert response.headers.getlist("Content-Type") == ["text/plain; charset=utf-8"]
+                assert response.data == expected.encode("utf-8")
+
     def test_verified_payment_proceeds_to_route(self):
         """Test that verified payment allows route access."""
         app = Flask(__name__)
@@ -633,6 +774,107 @@ class TestFlaskMiddlewareIntegration:
                 assert response.status_code == 200
                 assert b"Protected content" in response.data
                 assert "PAYMENT-RESPONSE" in response.headers
+                assert response.headers["Cache-Control"] == "private"
+
+    def test_verified_payment_merges_private_into_existing_cache_control(self):
+        """Successful settlement appends private without clobbering handler directives."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            response = app.response_class("Protected content")
+            response.headers["Cache-Control"] = "max-age=300"
+            return response
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=True,
+                headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 200
+                assert b"Protected content" in response.data
+                assert response.headers["Cache-Control"] == "max-age=300, private"
+                assert "PAYMENT-RESPONSE" in response.headers
+
+    def test_verified_payment_settles_on_redirect(self):
+        """Test that verified payment settles on 3xx redirect responses."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return redirect("https://cdn.example/signed", 302)
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=True,
+                headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 302
+                assert response.headers["Location"] == "https://cdn.example/signed"
+                assert "PAYMENT-RESPONSE" in response.headers
+                mock_http_server_instance.process_settlement.assert_called_once()
 
     def test_settlement_failure_returns_402(self):
         """Test that settlement failure returns 402 with empty body and PAYMENT-RESPONSE header."""
@@ -678,6 +920,355 @@ class TestFlaskMiddlewareIntegration:
                 data = json.loads(response.data)
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
+
+    def test_sends_declared_text_plain_settlement_failure_body_without_json_encoding(self):
+        """A declared text/plain settlement-failure string is sent as raw text."""
+        expected = "Payment required.\nPreview line 2."
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {}
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=False,
+                error_reason="Insufficient funds",
+                response=HTTPResponseInstructions(
+                    status=402,
+                    headers={
+                        "Content-Type": "text/plain; charset=utf-8",
+                        "PAYMENT-RESPONSE": "base64encoded",
+                    },
+                    body=expected,
+                    is_html=False,
+                ),
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+                assert response.status_code == 402
+                assert response.headers.getlist("Content-Type") == ["text/plain; charset=utf-8"]
+                assert response.data == expected.encode("utf-8")
+                assert response.headers["PAYMENT-RESPONSE"] == "base64encoded"
+
+    def test_settlement_unexpected_exception_returns_402_with_payment_response(self, caplog):
+        """An unexpected settlement error must be LOGGED and surfaced as a settle
+        failure (402 + PAYMENT-RESPONSE, success=False) - not a silent empty-body
+        402 with no header and no log (see issue #2603). The raw exception detail
+        is logged only, not leaked to the client."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {}
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+            )
+            mock_http_server_instance.process_settlement.side_effect = RuntimeError(
+                "boom: RPC node unreachable mid-settle"
+            )
+            mock_http_server_instance._create_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "base64encoded"
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with caplog.at_level(logging.ERROR):
+                with app.test_client() as client:
+                    response = client.get("/api/protected")
+
+            assert response.status_code == 402
+            assert json.loads(response.data) == {"error": "settlement_failed"}
+            assert "PAYMENT-RESPONSE" in response.headers
+            # raw exception detail is logged for operators...
+            assert "boom: RPC node unreachable mid-settle" in caplog.text
+            # ...but not leaked to the client
+            assert "boom" not in response.get_data(as_text=True)
+
+    def test_cancels_on_handler_error_status(self):
+        """Test that handler 4xx/5xx triggers cancellation without settlement."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "failed", 500
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel_sync = MagicMock()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                cancellation_dispatcher=dispatcher,
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            dispatcher.cancel_sync.assert_called_once_with(
+                VerifiedPaymentCancelOptions(reason="handler_failed", response_status=500)
+            )
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_cancels_when_handler_throws(self):
+        """Test that WSGI handler exceptions trigger cancellation without settlement."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel_sync = MagicMock()
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                cancellation_dispatcher=dispatcher,
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            middleware = PaymentMiddleware(
+                app, routes, mock_server, sync_facilitator_on_start=False
+            )
+
+            def raising_wsgi(_environ, _start_response):
+                raise RuntimeError("handler failed")
+
+            middleware._original_wsgi = raising_wsgi
+
+            with app.test_client() as client:
+                with pytest.raises(RuntimeError, match="handler failed"):
+                    client.get("/api/protected")
+
+            dispatcher.cancel_sync.assert_called_once()
+            cancel_options = dispatcher.cancel_sync.call_args.args[0]
+            assert cancel_options.reason == "handler_threw"
+            assert isinstance(cancel_options.error, RuntimeError)
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_echoes_before_handler_receipt_when_handler_returns_error_status(self):
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return {"error": "failed"}, 500
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        before_handler_settlement = CompletedSettlement(
+            phase="before-handler",
+            flow="upfront",
+            result=MagicMock(),
+            requirements=payment_requirements,
+        )
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                before_handler_settlement=before_handler_settlement,
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "before-handler-receipt",
+                "Cache-Control": "private",
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.headers["PAYMENT-RESPONSE"] == "before-handler-receipt"
+            assert response.headers["Cache-Control"] == "private"
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_attaches_cancel_receipt_headers_when_handler_throws(self):
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+        before_handler_settlement = CompletedSettlement(
+            phase="before-handler",
+            flow="escrow",
+            result=MagicMock(),
+            requirements=payment_requirements,
+        )
+        dispatcher = MagicMock(spec=PaymentCancellationDispatcher)
+        dispatcher.cancel_sync = MagicMock(
+            return_value=MagicMock(success=True, amount="0", transaction="0xrefund")
+        )
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=payment_payload,
+                payment_requirements=payment_requirements,
+                cancellation_dispatcher=dispatcher,
+                before_handler_settlement=before_handler_settlement,
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = {
+                "PAYMENT-RESPONSE": "cancel-receipt",
+                "Cache-Control": "private",
+            }
+            mock_http_server.return_value = mock_http_server_instance
+
+            middleware = PaymentMiddleware(
+                app, routes, mock_server, sync_facilitator_on_start=False
+            )
+
+            def raising_wsgi(_environ, _start_response):
+                raise RuntimeError("handler failed")
+
+            middleware._original_wsgi = raising_wsgi
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.get_json() == {"error": "Internal Server Error"}
+            assert response.headers["PAYMENT-RESPONSE"] == "cancel-receipt"
+            dispatcher.cancel_sync.assert_called_once()
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_unexpected_process_http_request_error_returns_generic_500(self):
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            return "Protected content"
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.side_effect = RuntimeError(
+                "scheme exploded"
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 500
+            assert response.get_json() == {"error": "Internal Server Error"}
+            assert b"scheme exploded" not in response.data
 
     def test_invalid_facilitator_verify_response_returns_502(self):
         """Test that invalid facilitator data during verify returns 502 instead of 500."""
@@ -760,3 +1351,153 @@ class TestFlaskMiddlewareIntegration:
                 assert response.get_json() == {
                     "error": "Facilitator settle returned invalid data: {'success': true}"
                 }
+
+
+def test_payment_middleware_from_config_builds_with_sync_server():
+    """flask_payment_middleware_from_config must construct without raising.
+
+    Regression: the factory used to instantiate the async x402ResourceServer,
+    which x402HTTPResourceServerSync rejects at construction with TypeError
+    ("requires a sync server"). It must use x402ResourceServerSync instead,
+    mirroring how the FastAPI factory uses the async server for its async path.
+    """
+    from x402.http.middleware.flask import payment_middleware_from_config
+
+    app = Flask(__name__)
+    facilitator = MagicMock()
+
+    # Must not raise TypeError about async methods on a sync server.
+    middleware = payment_middleware_from_config(
+        app,
+        {"/api/protected": {"price": "$0.01", "pay_to": "0x" + "1" * 40}},
+        facilitator_client=facilitator,
+        sync_facilitator_on_start=False,
+    )
+
+    assert middleware is not None
+
+
+class TestEncodedPathBypass:
+    @staticmethod
+    def _bypass_routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {
+            "GET /api/report/:id": RouteConfig(accepts=option),
+            "GET /api/premium/*": RouteConfig(accepts=option),
+        }
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServerSync:
+        facilitator = x402FacilitatorSync().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServerSync(CashFacilitatorClientSync(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = Flask(__name__)
+        payment_middleware(
+            app,
+            self._bypass_routes(),
+            self._cash_server(),
+            sync_facilitator_on_start=False,
+        )
+
+        @app.route("/", defaults={"path": ""})
+        @app.route("/<path:path>")
+        def catch_all(path: str) -> tuple[str, int]:
+            return "ok", 200
+
+        return app.test_client()
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/report/baseline",
+            "/api/report/a%2Fb",
+            "/api/report/a%252Fb",
+            "/api/report/a%5Cb",
+            "/api/premium/",
+            "/api/premium",
+        ],
+    )
+    def test_protected_paths_return_402(self, client, path: str) -> None:
+        assert client.get(path).status_code == 402
+
+    def test_unrelated_path_is_not_gated(self, client) -> None:
+        assert client.get("/health").status_code == 200
+
+
+class TestLiteralRoutePercentEncodedSeparatorBypass:
+    """A literal route must stay gated when a WSGI server reports an escaped
+    ``RAW_URI`` that diverges from the decoded ``PATH_INFO`` Werkzeug dispatches on.
+    """
+
+    @staticmethod
+    def _routes() -> dict[str, RouteConfig]:
+        option = PaymentOption(
+            scheme="cash",
+            pay_to="Alice",
+            price="$0.01",
+            network="x402:cash",
+        )
+        return {"GET /api/premium": RouteConfig(accepts=option)}
+
+    @staticmethod
+    def _cash_server() -> x402ResourceServerSync:
+        facilitator = x402FacilitatorSync().register(
+            ["x402:cash"],
+            CashSchemeNetworkFacilitator(),
+        )
+        server = x402ResourceServerSync(CashFacilitatorClientSync(facilitator))
+        server.register("x402:cash", CashSchemeNetworkServer())
+        server.initialize()
+        return server
+
+    @pytest.fixture()
+    def client(self):
+        app = Flask(__name__)
+        payment_middleware(
+            app,
+            self._routes(),
+            self._cash_server(),
+            sync_facilitator_on_start=False,
+        )
+
+        @app.route("/api/premium")
+        def premium() -> tuple[str, int]:
+            return "paid content", 200
+
+        return app.test_client()
+
+    def test_baseline_literal_route_returns_402(self, client) -> None:
+        assert client.get("/api/premium").status_code == 402
+
+    def test_head_uses_get_payment_rule(self, client) -> None:
+        assert client.head("/api/premium").status_code == 402
+
+    @pytest.mark.parametrize(
+        "raw_uri",
+        [
+            "/api%2Fpremium",
+            "/api%2fpremium",
+            "/%61pi%2Fpremium",
+        ],
+        ids=["encoded-slash", "lowercase-encoded-slash", "encoded-slash-and-letter"],
+    )
+    def test_percent_encoded_raw_uri_still_returns_402(self, client, raw_uri: str) -> None:
+        # PATH_INFO stays decoded; RAW_URI carries the escaped target.
+        response = client.get("/api/premium", environ_overrides={"RAW_URI": raw_uri})
+        assert response.status_code == 402
+
+    def test_unrelated_path_is_not_gated(self, client) -> None:
+        assert client.get("/health").status_code == 404

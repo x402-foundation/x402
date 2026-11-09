@@ -1,13 +1,27 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { x402Client } from "@x402/core/client";
+import { Network, PaymentRequirements } from "@x402/core/types";
 import { ExactEvmScheme } from "../../../src/exact/client/scheme";
+import { registerExactEvmScheme } from "../../../src/exact/client/register";
+import { NETWORKS } from "../../../src/v1";
 import {
   createPermit2ApprovalTx,
   getPermit2AllowanceReadParams,
 } from "../../../src/exact/client/permit2";
 import type { ClientEvmSigner } from "../../../src/signer";
-import { PaymentRequirements } from "@x402/core/types";
 import { PERMIT2_ADDRESS, x402ExactPermit2ProxyAddress } from "../../../src/constants";
 import { isPermit2Payload, isEIP3009Payload } from "../../../src/types";
+import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
+
+type ClientInternals = {
+  registeredClientSchemes: Map<number, Map<string, Map<string, unknown>>>;
+};
+
+function getRegisteredNetworks(client: x402Client, version: number): string[] {
+  const internals = client as unknown as ClientInternals;
+  const byNetwork = internals.registeredClientSchemes.get(version);
+  return byNetwork ? [...byNetwork.keys()] : [];
+}
 
 describe("ExactEvmScheme (Client)", () => {
   let client: ExactEvmScheme;
@@ -74,7 +88,7 @@ describe("ExactEvmScheme (Client)", () => {
       expect(result1.payload.authorization.nonce).toMatch(/^0x[0-9a-f]{64}$/i);
     });
 
-    it("should set validAfter to 10 minutes before current time", async () => {
+    it("should set validAfter to 0", async () => {
       const requirements: PaymentRequirements = {
         scheme: "exact",
         network: "eip155:8453",
@@ -85,14 +99,9 @@ describe("ExactEvmScheme (Client)", () => {
         extra: { name: "USD Coin", version: "2" },
       };
 
-      const beforeTime = Math.floor(Date.now() / 1000) - 600;
       const result = await client.createPaymentPayload(2, requirements);
-      const afterTime = Math.floor(Date.now() / 1000) - 600;
 
-      const validAfter = parseInt(result.payload.authorization.validAfter);
-
-      expect(validAfter).toBeGreaterThanOrEqual(beforeTime);
-      expect(validAfter).toBeLessThanOrEqual(afterTime + 1); // Allow 1 second tolerance
+      expect(result.payload.authorization.validAfter).toBe("0");
     });
 
     it("should set validBefore based on maxTimeoutSeconds", async () => {
@@ -199,6 +208,23 @@ describe("ExactEvmScheme (Client)", () => {
 
       expect(result.x402Version).toBe(2);
       expect(result.payload.authorization).toBeDefined();
+    });
+
+    it("should reject EIP-3009 payload creation when EIP-712 domain fields are missing", async () => {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:8453",
+        amount: "1000000",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        payTo: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+        maxTimeoutSeconds: 300,
+        extra: {},
+      };
+
+      await expect(client.createPaymentPayload(2, requirements)).rejects.toThrow(
+        /EIP-712 domain parameters/,
+      );
+      expect(mockSigner.signTypedData).not.toHaveBeenCalled();
     });
 
     it("should pass correct EIP-712 domain to signTypedData", async () => {
@@ -670,6 +696,42 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions).toBeUndefined();
     });
 
+    it("warns once, and skips the permit, when the extension is advertised but the signer cannot read the chain", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // The documented `new ExactEvmScheme(account)` form: no readContract, no rpcUrl.
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0x" + "ab".repeat(32) + "cd".repeat(32) + "1b"),
+        };
+        const scheme = new ExactEvmScheme(bareSigner);
+        const advertised = {
+          extensions: {
+            eip2612GasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        };
+
+        const result = await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/rpcUrl/);
+
+        // Once per network: a second payment does not repeat it.
+        await scheme.createPaymentPayload(2, permit2Requirements, advertised);
+        expect(warn).toHaveBeenCalledTimes(1);
+
+        // Control: not advertised → nothing to warn about, even with a bare signer.
+        _resetSponsoringWarnings();
+        warn.mockClear();
+        await scheme.createPaymentPayload(2, permit2Requirements, { extensions: {} });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("should return EIP-2612 extensions when allowance insufficient and extension advertised", async () => {
       const signerWithReader: ClientEvmSigner = {
         address: "0x1234567890123456789012345678901234567890",
@@ -778,6 +840,34 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions).toBeUndefined();
     });
 
+    it("warns when erc20 approval sponsoring is advertised but the signer cannot read the chain", async () => {
+      _resetSponsoringWarnings();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const bareSigner: ClientEvmSigner = {
+          address: "0x1234567890123456789012345678901234567890",
+          signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+          signTransaction: vi.fn().mockResolvedValue("0x02ab"),
+          getTransactionCount: vi.fn().mockResolvedValue(0),
+          estimateFeesPerGas: vi
+            .fn()
+            .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
+          // No readContract, no rpcUrl: the allowance cannot be checked.
+        };
+        const scheme = new ExactEvmScheme(bareSigner);
+        const result = await scheme.createPaymentPayload(2, erc20Requirements, {
+          extensions: {
+            erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+          },
+        });
+        expect(result.extensions).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toMatch(/cannot read the chain/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("should not return extensions when signer lacks signTransaction capability", async () => {
       const signer: ClientEvmSigner = {
         address: "0x1234567890123456789012345678901234567890",
@@ -862,6 +952,32 @@ describe("Permit2 Approval Flow", () => {
       expect(signer.signTransaction).not.toHaveBeenCalled();
     });
 
+    it("falls back to default gas fees when estimateFeesPerGas is missing or empty", async () => {
+      const mockSignedTx = "0x02f8ab" as `0x${string}`;
+      const signer: ClientEvmSigner = {
+        address: "0x1234567890123456789012345678901234567890",
+        signTypedData: vi.fn().mockResolvedValue("0xmocksig"),
+        readContract: vi.fn().mockResolvedValue(BigInt(0)),
+        signTransaction: vi.fn().mockResolvedValue(mockSignedTx),
+        getTransactionCount: vi.fn().mockResolvedValue(1),
+        estimateFeesPerGas: vi.fn().mockResolvedValue(undefined),
+      };
+      const scheme = new ExactEvmScheme(signer);
+      const result = await scheme.createPaymentPayload(2, erc20Requirements, {
+        extensions: {
+          erc20ApprovalGasSponsoring: { info: { description: "test", version: "1" }, schema: {} },
+        },
+      });
+
+      expect(result.extensions!.erc20ApprovalGasSponsoring).toBeDefined();
+      expect(signer.signTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxFeePerGas: expect.any(BigInt),
+          maxPriorityFeePerGas: expect.any(BigInt),
+        }),
+      );
+    });
+
     it("should use ERC-20 approval when EIP-2612 not advertised but ERC-20 is", async () => {
       const mockSignedTx = "0x02f8ab" as `0x${string}`;
       const signer: ClientEvmSigner = {
@@ -887,5 +1003,38 @@ describe("Permit2 Approval Flow", () => {
       expect(result.extensions!.erc20ApprovalGasSponsoring).toBeDefined();
       expect(result.extensions!.eip2612GasSponsoring).toBeUndefined();
     });
+  });
+});
+
+describe("registerExactEvmScheme", () => {
+  const mockSigner: ClientEvmSigner = {
+    address: "0x1234567890123456789012345678901234567890",
+    signTypedData: vi.fn(),
+  };
+
+  it("scopes v1 registration to networks matching config.networks", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner, networks: ["eip155:8453"] });
+
+    const v1Networks = getRegisteredNetworks(client, 1);
+    expect(v1Networks).toContain("base");
+    expect(v1Networks).not.toContain("polygon");
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:8453"]);
+  });
+
+  it("registers all v1 networks when config.networks uses a wildcard", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner, networks: ["eip155:*" as Network] });
+
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:*"]);
+  });
+
+  it("registers wildcard v2 and all v1 networks when networks is omitted", () => {
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer: mockSigner });
+
+    expect(getRegisteredNetworks(client, 2)).toEqual(["eip155:*"]);
+    expect(getRegisteredNetworks(client, 1).sort()).toEqual([...NETWORKS].sort());
   });
 });

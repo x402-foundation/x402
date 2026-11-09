@@ -13,7 +13,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "typeRoots": ["./node_modules/@types", "./types"],
+    "typeRoots": ["./node_modules/@types"],
     "plugins": [
       {
         "name": "next"
@@ -24,7 +24,6 @@
     }
   },
   "include": [
-    "types/video.d.ts",
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",

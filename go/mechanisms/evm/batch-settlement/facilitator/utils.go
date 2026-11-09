@@ -9,13 +9,22 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/mechanisms/evm"
-	batchsettlement "github.com/x402-foundation/x402/go/mechanisms/evm/batch-settlement"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 var zeroAddress = "0x0000000000000000000000000000000000000000"
+
+// channelStatePollDeadline / channelStatePollInterval bound the post-transaction
+// polling loops in refund.go and deposit.go, which re-read onchain channel state
+// until it reflects a just-confirmed change (e.g. a pending-withdrawal cancellation
+// or a deposit balance increase). Shared so both call sites stay in lockstep.
+const (
+	channelStatePollDeadline = 2 * time.Second
+	channelStatePollInterval = 150 * time.Millisecond
+)
 
 // ContractChannelConfigTuple is the concrete struct shape passed to BatchSettlement
 // contract calls (deposit, refund, claim). Field names and ordering match the
@@ -120,6 +129,22 @@ func ReadChannelState(
 	}
 
 	return state, nil
+}
+
+// parseRequirementsAmount parses the server-supplied requirements.Amount as a non-negative
+// base-10 integer. The amount comes from the resource server, so the facilitator must not trust
+// it: signs, whitespace, and other non-digit forms are rejected (a negative value would lower
+// the minimum-advance floor).
+func parseRequirementsAmount(amount string) (*big.Int, bool) {
+	if amount == "" {
+		return nil, false
+	}
+	for i := 0; i < len(amount); i++ {
+		if amount[i] < '0' || amount[i] > '9' {
+			return nil, false
+		}
+	}
+	return new(big.Int).SetString(amount, 10)
 }
 
 // ValidateChannelConfig validates a ChannelConfig against payment requirements.
@@ -230,10 +255,11 @@ func VerifyBatchedVoucherTypedData(
 		"maxClaimableAmount": maxClaimable,
 	}
 
-	// If payerAuthorizer is non-zero, verify via ECDSA against payerAuthorizer
+	// If payerAuthorizer is non-zero, verify via pure ECDSA against payerAuthorizer.
+	// On-chain x402BatchSettlement uses ECDSA.recoverCalldata for the payerAuthorizer
+	// path regardless of code at that address — mirror that exactly.
 	if payerAuthorizer != zeroAddress && payerAuthorizer != "" {
-		return signer.VerifyTypedData(
-			ctx,
+		return evm.VerifyEOATypedData(
 			payerAuthorizer,
 			domain,
 			batchsettlement.VoucherTypes,
@@ -243,9 +269,11 @@ func VerifyBatchedVoucherTypedData(
 		)
 	}
 
-	// Otherwise, verify via ERC-1271 against payer (smart wallet)
-	return signer.VerifyTypedData(
+	// payerAuthorizer == 0: on-chain uses OZ SignatureChecker.isValidSignatureNow(payer, …)
+	// which is code-routed. Use the strict primitive to match that.
+	return evm.VerifyTypedDataStrict(
 		ctx,
+		signer,
 		payer,
 		domain,
 		batchsettlement.VoucherTypes,

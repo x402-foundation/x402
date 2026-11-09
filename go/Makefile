@@ -4,7 +4,7 @@
 GOPATH := $(shell go env GOPATH)
 GOBIN := $(GOPATH)/bin
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
-GOLANGCI_LINT_VERSION := v2.7.2
+GOLANGCI_LINT_VERSION := v2.15.0
 MOCKGEN := $(GOBIN)/mockgen
 GOIMPORTS := $(GOBIN)/goimports
 CHANGIE := $(GOBIN)/changie
@@ -126,7 +126,7 @@ changelog-merge: $(CHANGIE)
 docs:
 	@echo "Generating documentation..."
 	@godoc -http=:6060 &
-	@echo "Documentation server started at http://localhost:6060/pkg/github.com/x402-foundation/x402/go/"
+	@echo "Documentation server started at http://localhost:6060/pkg/github.com/x402-foundation/x402/go/v2/"
 
 ## example-client: Run client example
 example-client:

@@ -1,15 +1,23 @@
 import type { PaymentRequirements } from "@x402/core/types";
+// `@hiero-ledger/proto` must stay pinned in lockstep with `@hiero-ledger/sdk`
+// `parseMirrorKey` below relies on the SDK's internal `Key._fromProtobufKey`,
+// so re-check its availability whenever either dependency is bumped.
+import { proto } from "@hiero-ledger/proto";
 import {
   AccountId,
   Client,
   Hbar,
+  Key,
+  KeyList,
   PrivateKey,
+  PublicKey,
   TokenId,
   Transaction,
   TransactionId,
   TransferTransaction,
 } from "@hiero-ledger/sdk";
 import { HEDERA_MAINNET_CAIP2, HEDERA_TESTNET_CAIP2 } from "./constants";
+import { fetchJson, mirrorNodeUrlForNetwork } from "./preflight";
 import { assertSupportedHederaNetwork, isHbarAsset } from "./utils";
 
 /**
@@ -71,6 +79,28 @@ export type FacilitatorHederaSigner = {
   ): Promise<{ transactionId: string }>;
 
   /**
+   * Verify that the inferred payer actually signed the frozen transaction body.
+   *
+   * Required verify-time capability, called unconditionally by the scheme (it
+   * cannot be silently skipped), mirroring EVM's `verifyTypedData`. The default
+   * `createHederaVerifyPayerSignature` fetches the payer's onchain account key
+   * and verifies the signature against it; on `{ ok: false }` or a thrown error
+   * the scheme fails closed with `invalid_exact_hedera_payload_signature_invalid`.
+   *
+   * @param params - Signature verification parameters
+   * @param params.payer - Payer account id (inferred from decoded transfers)
+   * @param params.transaction - Base64-encoded transaction the payer should have signed
+   * @param params.network - CAIP-2 network identifier
+   * @returns `{ ok: true }` when the payer signed, otherwise
+   *          `{ ok: false, reason?, message? }`
+   */
+  verifyPayerSignature(params: {
+    payer: string;
+    transaction: string;
+    network: string;
+  }): Promise<{ ok: boolean; reason?: string; message?: string }>;
+
+  /**
    * Optional account resolution hook (used for alias policy).
    *
    * @param accountIdOrAlias - payTo field value
@@ -80,15 +110,13 @@ export type FacilitatorHederaSigner = {
   resolveAccount?(accountIdOrAlias: string, network: string): Promise<HederaAccountResolution>;
 
   /**
-   * Optional pre-settlement check that the transfer is expected to succeed
-   * on chain. Implements the SHOULD in
-   * `specs/schemes/exact/scheme_exact_hedera.md` §6 — verify payer balance
-   * and recipient token association / auto-association capacity.
+   * Pre-settlement check that the transfer is expected to succeed on chain.
+   * Implements the SHOULD in `specs/schemes/exact/scheme_exact_hedera.md` §6 —
+   * verify payer balance and recipient token association / auto-association
+   * capacity.
    *
-   * The hook is advisory: if it throws or is unreachable, the scheme treats
-   * the check as failed and reports `invalid_exact_hedera_payload_preflight_failed`,
-   * but verify itself never throws. There is an inherent verify→settle race
-   * (balance may change between calls) — this is best-effort.
+   * Required verify-time capability, called unconditionally by the scheme.
+   * The scheme fails closed with `invalid_exact_hedera_payload_preflight_failed` on `{ ok: false }` or a thrown error.
    *
    * @param params - Preflight parameters
    * @param params.payer - Payer account id (inferred from decoded transfers)
@@ -99,7 +127,7 @@ export type FacilitatorHederaSigner = {
    * @returns `{ ok: true }` when the transfer is expected to succeed,
    *          otherwise `{ ok: false, reason?, message? }`
    */
-  preflightTransfer?(params: {
+  preflightTransfer(params: {
     payer: string;
     payTo: string;
     asset: string;
@@ -226,6 +254,149 @@ export function createHederaSignAndSubmitTransaction(
     } finally {
       client.close();
     }
+  };
+}
+
+/**
+ * Returns true when `key` (a single key, or a KeyList whose threshold is met)
+ * has produced a valid signature over `tx`. Recurses into nested KeyLists so
+ * threshold and multi-key accounts are handled.
+ *
+ * @param key - Account key fetched from the network
+ * @param tx - Frozen, signed transaction to verify against
+ * @returns Whether the key's signing requirement is satisfied by `tx`
+ */
+function keySignsTransaction(key: Key, tx: Transaction): boolean {
+  if (key instanceof PublicKey) {
+    return key.verifyTransaction(tx);
+  }
+  if (key instanceof KeyList) {
+    const keys = key.toArray();
+    // A non-positive or absent threshold means every key in the list must sign.
+    const threshold = key.threshold && key.threshold > 0 ? key.threshold : keys.length;
+    return keys.filter(k => keySignsTransaction(k, tx)).length >= threshold;
+  }
+  return false;
+}
+
+/**
+ * Optional configuration for the default Mirror Node verify implementation.
+ */
+export type HederaVerifyConfig = {
+  /**
+   * Mirror Node REST API base URL (no trailing slash). Defaults to the public
+   * Mirror Node for the request's CAIP-2 network.
+   */
+  mirrorNodeUrl?: string;
+};
+
+/**
+ * Account key as returned by the Mirror Node `/accounts/{id}` endpoint.
+ */
+type MirrorAccountKey = {
+  key: { _type: "ED25519" | "ECDSA_SECP256K1" | "ProtobufEncoded"; key: string } | null;
+};
+
+/**
+ * Thrown when the Hedera SDK no longer exposes the internal
+ * `Key._fromProtobufKey` that {@link parseMirrorKey} relies on to rebuild
+ * KeyList/threshold keys, e.g. after an SDK upgrade renames or removes it.
+ */
+class ProtobufKeyReconstructionError extends Error {}
+
+/**
+ * Converts a Mirror Node `key` field into a Hedera SDK `Key`.
+ *
+ * Simple keys are parsed directly; threshold / KeyList accounts arrive as a
+ * hex-encoded protobuf (`ProtobufEncoded`) and are rebuilt via the SDK's
+ * internal `Key._fromProtobufKey`, the only entry point that reconstructs a
+ * `Key` from its protobuf form.
+ *
+ * @param mirrorKey - The `key` object from the Mirror Node account response
+ * @returns Parsed SDK `Key`, or `null` when the key is missing or unrecognized
+ * @throws {ProtobufKeyReconstructionError} If the SDK no longer exposes
+ * `Key._fromProtobufKey`
+ */
+function parseMirrorKey(mirrorKey: MirrorAccountKey["key"]): Key | null {
+  if (!mirrorKey || typeof mirrorKey.key !== "string" || mirrorKey.key.length === 0) {
+    return null;
+  }
+  switch (mirrorKey._type) {
+    case "ED25519":
+      return PublicKey.fromStringED25519(mirrorKey.key);
+    case "ECDSA_SECP256K1":
+      return PublicKey.fromStringECDSA(mirrorKey.key);
+    case "ProtobufEncoded": {
+      const decoded = proto.Key.decode(Buffer.from(mirrorKey.key, "hex"));
+      // `_fromProtobufKey` is an internal static on the SDK `Key` base class; it
+      // is the only way to rebuild a KeyList/threshold `Key` from its protobuf.
+      // Guarded explicitly so a future SDK rename/removal surfaces a
+      // diagnosable error instead of silently failing signature checks.
+      const fromProtobufKey = (Key as unknown as { _fromProtobufKey?: (key: proto.IKey) => Key })
+        ._fromProtobufKey;
+      if (typeof fromProtobufKey !== "function") {
+        throw new ProtobufKeyReconstructionError(
+          "@hiero-ledger/sdk Key._fromProtobufKey is unavailable; check the " +
+            "@hiero-ledger/sdk / @hiero-ledger/proto version pins in package.json",
+        );
+      }
+      return fromProtobufKey(decoded);
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Builds a `verifyPayerSignature` implementation backed by the Hedera Mirror
+ * Node REST API.
+ *
+ * Reads the payer's onchain account key from the free Mirror Node (the same
+ * source as `createHederaPreflightTransfer`) and verifies that the frozen
+ * transaction body carries a valid signature satisfying that key — including
+ * KeyList/threshold accounts. Binds the signature to the payer account, so a
+ * transaction signed with the wrong key (or left unsigned) is rejected.
+ *
+ * @param config - Optional Mirror Node configuration
+ * @returns A function suitable for `FacilitatorHederaSigner.verifyPayerSignature`
+ */
+export function createHederaVerifyPayerSignature(
+  config: HederaVerifyConfig = {},
+): FacilitatorHederaSigner["verifyPayerSignature"] {
+  return async ({ payer, transaction, network }) => {
+    const tx = Transaction.fromBytes(Buffer.from(transaction, "base64"));
+    const baseUrl = config.mirrorNodeUrl ?? mirrorNodeUrlForNetwork(network);
+    const account = await fetchJson<MirrorAccountKey>(
+      `${baseUrl}/api/v1/accounts/${encodeURIComponent(payer)}`,
+    );
+    let key: Key | null;
+    try {
+      key = parseMirrorKey(account.key);
+    } catch (error) {
+      if (error instanceof ProtobufKeyReconstructionError) {
+        return {
+          ok: false,
+          reason: "signature_unverifiable",
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+    if (!key) {
+      return {
+        ok: false,
+        reason: "signature_invalid",
+        message: "could not resolve payer key",
+      };
+    }
+    if (keySignsTransaction(key, tx)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: "signature_invalid",
+      message: `payer ${payer} did not sign the transaction`,
+    };
   };
 }
 

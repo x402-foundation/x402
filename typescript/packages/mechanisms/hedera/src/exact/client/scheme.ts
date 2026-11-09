@@ -5,6 +5,7 @@ import type {
   SchemeNetworkClient,
 } from "@x402/core/types";
 import type { ClientHederaSigner } from "../../signer";
+import { findDefaultAsset } from "../../defaultAssets";
 import type { ExactHederaPayloadV2 } from "../../types";
 import { assertSupportedHederaNetwork } from "../../utils";
 
@@ -13,6 +14,7 @@ import { assertSupportedHederaNetwork } from "../../utils";
  */
 export class ExactHederaScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new ExactHederaScheme instance.

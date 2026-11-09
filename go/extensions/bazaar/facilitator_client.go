@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strconv"
 
-	x402http "github.com/x402-foundation/x402/go/http"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
 // ListDiscoveryResourcesParams contains optional filtering and pagination parameters
@@ -81,7 +81,22 @@ type DiscoveryResource struct {
 	// LastUpdated is an ISO 8601 timestamp of when the resource was last updated.
 	LastUpdated string `json:"lastUpdated"`
 
-	// Extensions contains additional extension payloads for this discovered resource.
+	// Description is a human-readable description of the resource.
+	Description string `json:"description,omitempty"`
+
+	// MimeType is the MIME type of the resource response.
+	MimeType string `json:"mimeType,omitempty"`
+
+	// ServiceName is a human-readable name for the service hosting the resource.
+	ServiceName string `json:"serviceName,omitempty"`
+
+	// Tags are short topical tags for discovery search.
+	Tags []string `json:"tags,omitempty"`
+
+	// IconUrl is an absolute http(s) URL to a service icon.
+	IconUrl string `json:"iconUrl,omitempty"`
+
+	// Extensions contains extension payloads echoed from discovery (e.g. bazaar info/schema).
 	Extensions map[string]any `json:"extensions,omitempty"`
 }
 
@@ -199,7 +214,7 @@ func (c *BazaarFacilitatorClient) ListDiscoveryResources(
 	defer resp.Body.Close()
 
 	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -260,7 +275,7 @@ func (c *BazaarFacilitatorClient) SearchDiscoveryResources(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -352,4 +367,22 @@ func (c *BazaarFacilitatorClient) buildSearchURL(params *SearchDiscoveryResource
 
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// maxDiscoveryResponseBytes bounds discovery responses. Catalog pages carry
+// resource extensions and MCP JSON schemas, so they need more room than
+// control-plane JSON.
+const maxDiscoveryResponseBytes int64 = 4 << 20
+
+// readLimitedBody reads at most maxDiscoveryResponseBytes from r. A larger body
+// returns x402http.ErrResponseBodyTooLarge without buffering the rest.
+func readLimitedBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, maxDiscoveryResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxDiscoveryResponseBytes {
+		return nil, fmt.Errorf("%w: limit %d bytes", x402http.ErrResponseBodyTooLarge, maxDiscoveryResponseBytes)
+	}
+	return body, nil
 }

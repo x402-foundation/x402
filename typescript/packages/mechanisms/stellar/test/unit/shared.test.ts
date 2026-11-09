@@ -1,5 +1,15 @@
+import { Buffer } from "buffer";
 import {
+  Account,
+  Address,
+  Keypair,
+  Operation,
   SorobanDataBuilder,
+  TransactionBuilder,
+  authorizeEntry,
+  buildAuthorizationEntryPreimage,
+  hash,
+  nativeToScVal,
   xdr,
   Networks as StellarNetworks,
   Transaction,
@@ -8,8 +18,17 @@ import { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { STELLAR_TESTNET_CAIP2 } from "../../src/constants";
+import {
+  InsufficientBalanceError,
+  SimulationFailedError,
+  TrustlineMissingError,
+} from "../../src/errors";
 import { ExactStellarScheme } from "../../src/exact/client/scheme";
-import { gatherAuthEntrySignatureStatus, handleSimulationResult } from "../../src/shared";
+import {
+  gatherAuthEntrySignatureStatus,
+  getAddressCredentials,
+  handleSimulationResult,
+} from "../../src/shared";
 import { createEd25519Signer } from "../../src/signer";
 import * as stellarUtils from "../../src/utils";
 import type { PaymentRequirements } from "@x402/core/types";
@@ -25,6 +44,55 @@ vi.mock("../../src/utils", async () => {
 
 describe("Stellar Shared Utilities", () => {
   describe("handleSimulationResult", () => {
+    const context = {
+      payer: "GBBO4ZDDZTSM2IUKQYBAST3CFHNPFXECGEFTGWTA2WELR2BIWDK57UVE",
+      payee: "GCHEI4PQEFJOA27MNZRPQNLGURS6KASW76X5UZCUZIXCOJLKXYCXOR2W",
+      asset: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    };
+    const BALANCE_ERROR_CODE = 10;
+    const BALANCE_RANGE_MESSAGE = "resulting balance is not within the allowed range";
+    const TRUSTLINE_MISSING_ERROR_CODE = 13;
+    const TRUSTLINE_MISSING_MESSAGE = "trustline entry is missing for account";
+
+    const captureError = (callback: () => void): Error => {
+      try {
+        callback();
+      } catch (error) {
+        if (error instanceof Error) {
+          return error;
+        }
+        throw error;
+      }
+      throw new Error("Expected callback to throw");
+    };
+
+    const createDiagnosticErrorEvent = (
+      errorCode: number,
+      args: xdr.ScVal[],
+    ): xdr.DiagnosticEvent => {
+      const eventV0 = new xdr.ContractEventV0({
+        topics: [
+          nativeToScVal("error", { type: "symbol" }),
+          xdr.ScVal.scvError(xdr.ScError.sceContract(errorCode)),
+        ],
+        data: xdr.ScVal.scvVec(args),
+      });
+      const body = xdr.ContractEventBody.fromXDR(
+        Buffer.concat([Buffer.from([0, 0, 0, 0]), xdr.ContractEventV0.toXDR(eventV0)]),
+      );
+      const event = new xdr.ContractEvent({
+        ext: xdr.ExtensionPoint.fromXDR(Buffer.from([0, 0, 0, 0])),
+        contractId: null,
+        type: xdr.ContractEventType.diagnostic(),
+        body,
+      });
+
+      return new xdr.DiagnosticEvent({
+        inSuccessfulContractCall: false,
+        event,
+      });
+    };
+
     it("should throw error when simulation is undefined", () => {
       expect(() => handleSimulationResult(undefined)).toThrow("Simulation result is undefined");
     });
@@ -52,30 +120,154 @@ describe("Stellar Shared Utilities", () => {
       );
     });
 
-    it("should throw error when simulation has type ERROR", () => {
+    it("should throw a typed generic error for an unmapped simulation failure", () => {
+      const rawError = "Transaction simulation failed: insufficient balance";
       const mockErrorSimulation: Api.SimulateTransactionResponse = {
         id: "test-id",
         latestLedger: 12345,
+        events: [],
         _parsed: true,
-        error: "Transaction simulation failed: insufficient balance",
+        error: rawError,
       } as Api.SimulateTransactionErrorResponse;
 
-      expect(() => handleSimulationResult(mockErrorSimulation)).toThrow(
-        /Stellar simulation failed with error message: Transaction simulation failed: insufficient balance/,
-      );
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should keep a known failure generic when diagnostics do not identify an account", () => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it.each([
+      ["payer", context.payer],
+      ["payee", context.payee],
+    ])("should use the missing trustline %s from diagnostic events", (_, account) => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(TRUSTLINE_MISSING_ERROR_CODE, [
+            nativeToScVal(TRUSTLINE_MISSING_MESSAGE),
+            nativeToScVal(account, { type: "address" }),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({
+        account,
+        asset: context.asset,
+        cause: rawError,
+      });
+    });
+
+    it("should keep a foreign trustline diagnostic generic", () => {
+      const rawError = `HostError: ${TRUSTLINE_MISSING_MESSAGE}`;
+      const foreignAccount = "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER";
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(TRUSTLINE_MISSING_ERROR_CODE, [
+            nativeToScVal(TRUSTLINE_MISSING_MESSAGE),
+            nativeToScVal(foreignAccount, { type: "address" }),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(TrustlineMissingError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should keep an over-limit recipient balance generic", () => {
+      const rawError = `HostError: ${BALANCE_RANGE_MESSAGE}`;
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(BALANCE_ERROR_CODE, [
+            nativeToScVal(BALANCE_RANGE_MESSAGE),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("0")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("101")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("100")),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).not.toBeInstanceOf(InsufficientBalanceError);
+      expect(error).toMatchObject({ cause: rawError });
+    });
+
+    it("should map an insufficient balance to the payer and asset", () => {
+      const rawError = "Error(Contract, #10)";
+      const mockErrorSimulation = {
+        id: "test-id",
+        latestLedger: 12345,
+        events: [
+          createDiagnosticErrorEvent(BALANCE_ERROR_CODE, [
+            nativeToScVal(BALANCE_RANGE_MESSAGE),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("100")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("99")),
+            xdr.ScVal.scvI64(xdr.Int64.fromString("1000")),
+          ]),
+        ],
+        _parsed: true,
+        error: rawError,
+      } as Api.SimulateTransactionErrorResponse;
+
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(InsufficientBalanceError);
+      expect(error).toMatchObject({
+        account: context.payer,
+        asset: context.asset,
+        cause: rawError,
+      });
     });
 
     it("should handle simulation with empty error message", () => {
       const mockErrorSimulation: Api.SimulateTransactionResponse = {
         id: "test-id",
         latestLedger: 12345,
+        events: [],
         _parsed: true,
         error: "",
       } as Api.SimulateTransactionErrorResponse;
 
-      expect(() => handleSimulationResult(mockErrorSimulation)).toThrow(
-        /Stellar simulation failed/,
-      );
+      const error = captureError(() => handleSimulationResult(mockErrorSimulation, context));
+
+      expect(error).toBeInstanceOf(SimulationFailedError);
+      expect(error).toMatchObject({ cause: "" });
     });
 
     it("should not throw error when simulation is successful", () => {
@@ -89,6 +281,42 @@ describe("Stellar Shared Utilities", () => {
       } as Api.SimulateTransactionSuccessResponse;
 
       expect(() => handleSimulationResult(mockSuccessSimulation)).not.toThrow();
+    });
+  });
+
+  describe("getAddressCredentials", () => {
+    const addressCredentials = new xdr.SorobanAddressCredentials({
+      address: xdr.ScAddress.scAddressTypeAccount(
+        xdr.PublicKey.publicKeyTypeEd25519(Keypair.random().rawPublicKey()),
+      ),
+      nonce: new xdr.Int64(1),
+      signatureExpirationLedger: 100,
+      signature: xdr.ScVal.scvVoid(),
+    });
+
+    it("returns the credentials for the legacy V1 address arm", () => {
+      const credentials = xdr.SorobanCredentials.sorobanCredentialsAddress(addressCredentials);
+      expect(getAddressCredentials(credentials)).toBe(addressCredentials);
+    });
+
+    it("returns the credentials for the CAP-71 V2 address arm", () => {
+      const credentials = xdr.SorobanCredentials.sorobanCredentialsAddressV2(addressCredentials);
+      expect(getAddressCredentials(credentials)).toBe(addressCredentials);
+    });
+
+    it("returns undefined for source-account credentials", () => {
+      const credentials = xdr.SorobanCredentials.sorobanCredentialsSourceAccount();
+      expect(getAddressCredentials(credentials)).toBeUndefined();
+    });
+
+    it("returns undefined for delegated credentials", () => {
+      const credentials = xdr.SorobanCredentials.sorobanCredentialsAddressWithDelegates(
+        new xdr.SorobanAddressCredentialsWithDelegates({
+          addressCredentials,
+          delegates: [],
+        }),
+      );
+      expect(getAddressCredentials(credentials)).toBeUndefined();
     });
   });
 
@@ -150,6 +378,212 @@ describe("Stellar Shared Utilities", () => {
 
       expect(status.alreadySigned).toContain(CLIENT_PUBLIC);
       expect(status.pendingSignature).toHaveLength(0);
+    });
+
+    describe("CAP-71 V2 address credentials", () => {
+      const PAY_TO = "GCHEI4PQEFJOA27MNZRPQNLGURS6KASW76X5UZCUZIXCOJLKXYCXOR2W";
+      const ASSET = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+      const EXPIRATION_LEDGER = 100_500;
+
+      const transferArgs = new xdr.InvokeContractArgs({
+        contractAddress: new Address(ASSET).toScAddress(),
+        functionName: "transfer",
+        args: [
+          nativeToScVal(CLIENT_PUBLIC, { type: "address" }),
+          nativeToScVal(PAY_TO, { type: "address" }),
+          nativeToScVal("10000", { type: "i128" }),
+        ],
+      });
+
+      const rootInvocation = new xdr.SorobanAuthorizedInvocation({
+        function:
+          xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(transferArgs),
+        subInvocations: [],
+      });
+
+      /**
+       * Builds an unsigned authorization entry on either credential arm.
+       *
+       * @param arm - "v1" for `sorobanCredentialsAddress`, "v2" for `sorobanCredentialsAddressV2`
+       * @param signerAddress - The address recorded in the credentials
+       * @param nonce - The credential nonce (must differ per entry within a transaction)
+       * @returns An unsigned authorization entry with an `scvVoid` signature
+       */
+      function buildUnsignedEntry(
+        arm: "v1" | "v2",
+        signerAddress: string,
+        nonce: number,
+      ): xdr.SorobanAuthorizationEntry {
+        const addressCredentials = new xdr.SorobanAddressCredentials({
+          address: new Address(signerAddress).toScAddress(),
+          nonce: new xdr.Int64(nonce),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        });
+
+        return new xdr.SorobanAuthorizationEntry({
+          credentials:
+            arm === "v2"
+              ? xdr.SorobanCredentials.sorobanCredentialsAddressV2(addressCredentials)
+              : xdr.SorobanCredentials.sorobanCredentialsAddress(addressCredentials),
+          rootInvocation,
+        });
+      }
+
+      /**
+       * Wraps authorization entries in a transaction with a single
+       * InvokeHostFunction operation, as gatherAuthEntrySignatureStatus expects.
+       *
+       * @param auth - The authorization entries to attach to the operation
+       * @returns A built transaction carrying the entries
+       */
+      function wrapInTransaction(auth: xdr.SorobanAuthorizationEntry[]): Transaction {
+        const operation = Operation.invokeHostFunction({
+          func: xdr.HostFunction.hostFunctionTypeInvokeContract(transferArgs),
+          auth,
+        });
+
+        return new TransactionBuilder(new Account(CLIENT_PUBLIC, "100"), {
+          fee: "100",
+          networkPassphrase: StellarNetworks.TESTNET,
+        })
+          .addOperation(operation)
+          .setTimeout(60)
+          .build();
+      }
+
+      /**
+       * Extracts the raw Ed25519 signature bytes written by authorizeEntry, which
+       * stores them as a vector of `{ public_key, signature }` maps.
+       *
+       * @param signature - The signature ScVal from address credentials
+       * @returns The raw signature bytes
+       */
+      function extractSignatureBytes(signature: xdr.ScVal): Buffer {
+        const signatureEntry = signature
+          .vec()![0]
+          .map()!
+          .find(entry => entry.key().sym().toString() === "signature");
+
+        if (!signatureEntry) {
+          throw new Error("Signature ScVal has no `signature` member");
+        }
+        return signatureEntry.val().bytes();
+      }
+
+      it("should count a genuinely signed V2 entry as signed", async () => {
+        const signedEntry = await authorizeEntry(
+          buildUnsignedEntry("v2", CLIENT_PUBLIC, 4242),
+          Keypair.fromSecret(CLIENT_SECRET),
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+
+        // Guards against a relabelled V1 fixture silently passing as V2
+        expect(signedEntry.credentials().switch()).toBe(
+          xdr.SorobanCredentialsType.sorobanCredentialsAddressV2(),
+        );
+
+        const status = gatherAuthEntrySignatureStatus({
+          transaction: wrapInTransaction([signedEntry]),
+        });
+
+        expect(status.alreadySigned).toEqual([CLIENT_PUBLIC]);
+        expect(status.pendingSignature).toHaveLength(0);
+      });
+
+      it("should report an unsigned V2 entry as pending signature", () => {
+        const status = gatherAuthEntrySignatureStatus({
+          transaction: wrapInTransaction([buildUnsignedEntry("v2", CLIENT_PUBLIC, 4242)]),
+        });
+
+        expect(status.alreadySigned).toHaveLength(0);
+        expect(status.pendingSignature).toEqual([CLIENT_PUBLIC]);
+      });
+
+      it("should sign the address-bound V2 preimage rather than the legacy V1 preimage", async () => {
+        const signedEntry = await authorizeEntry(
+          buildUnsignedEntry("v2", CLIENT_PUBLIC, 4242),
+          Keypair.fromSecret(CLIENT_SECRET),
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+
+        const credentials = getAddressCredentials(signedEntry.credentials());
+        if (!credentials) {
+          throw new Error("Expected address credentials on the signed V2 entry");
+        }
+        expect(credentials.signatureExpirationLedger()).toBe(EXPIRATION_LEDGER);
+
+        const signatureBytes = extractSignatureBytes(credentials.signature());
+        const clientKey = Keypair.fromPublicKey(CLIENT_PUBLIC);
+
+        // V2 commits to ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS (CAP-71)
+        const v2Preimage = buildAuthorizationEntryPreimage(
+          signedEntry,
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+        expect(v2Preimage.switch().name).toBe("envelopeTypeSorobanAuthorizationWithAddress");
+        expect(clientKey.verify(hash(v2Preimage.toXDR()), signatureBytes)).toBe(true);
+
+        // The same signature must NOT satisfy the legacy, non-address-bound
+        // preimage over an otherwise identical invocation and nonce - the two
+        // arms are not interchangeable, so V1-only handling really does break V2.
+        const v1Preimage = buildAuthorizationEntryPreimage(
+          buildUnsignedEntry("v1", CLIENT_PUBLIC, 4242),
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+        expect(v1Preimage.switch().name).toBe("envelopeTypeSorobanAuthorization");
+        expect(clientKey.verify(hash(v1Preimage.toXDR()), signatureBytes)).toBe(false);
+      });
+
+      it("should count signed V1 and V2 entries in the same transaction", async () => {
+        const otherKeypair = Keypair.random();
+
+        const signedV1 = await authorizeEntry(
+          buildUnsignedEntry("v1", CLIENT_PUBLIC, 1),
+          Keypair.fromSecret(CLIENT_SECRET),
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+        const signedV2 = await authorizeEntry(
+          buildUnsignedEntry("v2", otherKeypair.publicKey(), 2),
+          otherKeypair,
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+
+        const status = gatherAuthEntrySignatureStatus({
+          transaction: wrapInTransaction([signedV1, signedV2]),
+        });
+
+        expect(status.alreadySigned.sort()).toEqual(
+          [CLIENT_PUBLIC, otherKeypair.publicKey()].sort(),
+        );
+        expect(status.pendingSignature).toHaveLength(0);
+      });
+
+      it("should skip source-account credentials while counting a V2 entry", async () => {
+        const signedV2 = await authorizeEntry(
+          buildUnsignedEntry("v2", CLIENT_PUBLIC, 4242),
+          Keypair.fromSecret(CLIENT_SECRET),
+          EXPIRATION_LEDGER,
+          StellarNetworks.TESTNET,
+        );
+        const sourceAccountEntry = new xdr.SorobanAuthorizationEntry({
+          credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+          rootInvocation,
+        });
+
+        const status = gatherAuthEntrySignatureStatus({
+          transaction: wrapInTransaction([sourceAccountEntry, signedV2]),
+        });
+
+        expect(status.alreadySigned).toEqual([CLIENT_PUBLIC]);
+        expect(status.pendingSignature).toHaveLength(0);
+      });
     });
   });
 });

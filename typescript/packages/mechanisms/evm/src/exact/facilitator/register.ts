@@ -21,12 +21,15 @@ export interface EvmFacilitatorConfig {
   networks: Network | Network[];
 
   /**
-   * If enabled, the facilitator will deploy ERC-4337 smart wallets
-   * via EIP-6492 when encountering undeployed contract signatures.
+   * Allowlist of factory contract addresses (hex strings, case-insensitive) that the facilitator
+   * will call when deploying an undeployed smart wallet via ERC-6492.
    *
-   * @default false
+   * A non-empty list enables ERC-4337 smart wallet deployment via EIP-6492. An empty or omitted
+   * list denies all factory deployment calls (feature disabled by default).
+   *
+   * @default []
    */
-  deployERC4337WithEIP6492?: boolean;
+  eip6492AllowedFactories?: string[];
 
   /**
    * If enabled, reruns on-chain simulation during settle's re-verify.
@@ -76,7 +79,7 @@ export function registerExactEvmScheme(
   facilitator.register(
     config.networks,
     new ExactEvmScheme(config.signer, {
-      deployERC4337WithEIP6492: config.deployERC4337WithEIP6492,
+      eip6492AllowedFactories: config.eip6492AllowedFactories,
       simulateInSettle: config.simulateInSettle,
     }),
   );
@@ -85,7 +88,7 @@ export function registerExactEvmScheme(
   facilitator.registerV1(
     NETWORKS as Network[],
     new ExactEvmSchemeV1(config.signer, {
-      deployERC4337WithEIP6492: config.deployERC4337WithEIP6492,
+      eip6492AllowedFactories: config.eip6492AllowedFactories,
       simulateInSettle: config.simulateInSettle,
     }),
   );

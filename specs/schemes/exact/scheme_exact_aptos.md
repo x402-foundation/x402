@@ -108,14 +108,15 @@ Steps to verify a payment for the `exact` scheme:
 1. **Extract requirements**: Use `payload.accepted` to get the payment requirements being fulfilled.
 2. Verify `x402Version` is `2`.
 3. Verify the network matches the agreed upon chain (CAIP-2 format: `aptos:1` or `aptos:2`).
-4. Deserialize the BCS-encoded transaction and verify the signature is valid.
+4. Deserialize the BCS-encoded transaction and cryptographically verify the submitted signature against the sender authenticator's public key over the transaction signing message (using the fee payer signing message variant for sponsored transactions). This MUST NOT rely on transaction simulation, which substitutes an invalid dummy signature and never checks the submitted one.
 5. Verify the transaction has not expired (check expiration timestamp). Note: A buffer time should be considered to account for network propagation delays and processing time.
 6. Verify the transaction contains a fungible asset transfer operation (`0x1::primary_fungible_store::transfer` or `0x1::fungible_asset::transfer`).
 7. Verify the transfer is for the correct asset (matching `requirements.asset`).
 8. Verify the transfer amount matches `requirements.amount`.
 9. Verify the transfer recipient matches `requirements.payTo`.
 10. Verify the transaction sender has sufficient balance of the `asset` to cover the required amount.
-11. Simulate the transaction using the Aptos REST API to ensure it would succeed and has not already been executed/committed to the chain. This also validates the sequence number to prevent replay attacks.
+11. Verify `gas_unit_price` is within an acceptable upper bound (e.g., no greater than a configured maximum such as 100 octas). This MUST be enforced to prevent a malicious client from setting an arbitrarily high gas price that drains the fee payer's account. Transactions with `gas_unit_price` exceeding the bound MUST be rejected.
+12. Simulate the transaction using the Aptos REST API to ensure it would succeed and has not already been executed/committed to the chain. This also validates the sequence number to prevent replay attacks.
 
 ## Settlement
 
@@ -179,6 +180,8 @@ The facilitator operates (or integrates with) a gas station service that handles
 - Abuse prevention policies
 
 Both approaches are transparent to the client - they simply check for `extra.feePayer` and construct their transaction accordingly.
+
+**Gas Price Bounding:** Because the fee payer covers gas costs, the facilitator MUST enforce an upper bound on `gas_unit_price` during verification. A client that sets an arbitrarily high gas price can cause the fee payer to spend far more APT than the payment is worth. Facilitators SHOULD publish their maximum accepted `gas_unit_price` (e.g., via `extra` fields in payment requirements) so well-behaved clients can set an appropriate value.
 
 ### Non-Sponsored Transactions
 

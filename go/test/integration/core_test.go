@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	x402 "github.com/x402-foundation/x402/go"
-	"github.com/x402-foundation/x402/go/test/mocks/cash"
-	"github.com/x402-foundation/x402/go/types"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/test/mocks/cash"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // TestCoreIntegration tests the integration between x402Client, x402ResourceServer, and x402Facilitator
@@ -16,6 +16,7 @@ func TestCoreIntegration(t *testing.T) {
 
 		// Setup client with cash scheme
 		client := x402.Newx402Client()
+		client.DisableSpendControls()
 		client.Register("x402:cash", cash.NewSchemeNetworkClient("John"))
 
 		// Setup facilitator with cash scheme

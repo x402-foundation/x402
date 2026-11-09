@@ -32,7 +32,7 @@ Nothing prevents you from implementing the spec in Rust, Java, or other language
 
 #### Who runs facilitators today?
 
-Multiple organizations operate production facilitators. The protocol is **permissionless**—anyone can run a facilitator. See the [x402 Ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for available options, including:
+Multiple organizations operate production facilitators. The protocol is **permissionless**—anyone can run a facilitator. See [Facilitators](/dev-tools/facilitators) for selected options, including:
 
 * Community‑run facilitators for various networks and assets
 * Private facilitators for enterprises that need custom KYT / KYC flows.
@@ -68,7 +68,9 @@ Yes. x402 handles the _payment execution_. You can still meter usage, aggregate 
 | Solana         | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Any SPL token or Token-2022 token | fee-free | **Mainnet** |
 | Solana Devnet  | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Any SPL token or Token-2022 | fee-free | **Testnet** |
 
-\* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [ecosystem](https://www.x402.org/ecosystem?filter=facilitators) for details).
+\* Gas paid onchain; many facilitators offer **zero** facilitator fees (see [Facilitators](/dev-tools/facilitators) for details).
+
+For the complete list of protocol-supported networks and tokens, see [Networks & Token Support](/core-concepts/network-and-token-support).
 
 _Support for additional chains and assets is on the roadmap and community‑driven._
 
@@ -126,8 +128,13 @@ Yes. Programmatic wallets (e.g., **CDP Wallet API**, **viem**, **ethers‑v6** H
 #### My test works on Base Sepolia but fails on Base mainnet—what changed?
 
 * Ensure you set `network: "eip155:8453"` (Base mainnet) instead of `"eip155:84532"` (Base Sepolia).
+* If you are still using `https://x402.org/facilitator`, switch to a production facilitator. The default x402.org facilitator is for testnet development and does not support Base mainnet (`eip155:8453`), which can surface as a route-configuration error after changing only the network.
 * Confirm your wallet has _mainnet_ USDC.
 * Gas fees are higher on mainnet; fund the wallet with a small amount of ETH for gas.
+
+#### My service settles payments but doesn't appear in a facilitator's catalog — why?
+
+Catalog indexing is a **facilitator implementation detail**, not something the x402 OSS repo controls. Contact the facilitator or catalog operator you're using first. For common self-checks (echoed `bazaar` extension, SDK helpers, async indexing) and [reference server examples](https://github.com/x402-foundation/x402/tree/main/examples), see [Bazaar — Troubleshooting catalog visibility](/extensions/bazaar#troubleshooting-catalog-visibility).
 
 ### Still have questions?
 

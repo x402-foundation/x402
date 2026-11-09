@@ -1,8 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ExactSvmSchemeV1 } from "../../../src/exact/v1";
+import { fetchMint } from "@solana-program/token-2022";
+import { ExactSvmSchemeV1 } from "../../../src/exact/v1/client/scheme";
 import type { ClientSvmSigner } from "../../../src/signer";
 import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
-import { USDC_DEVNET_ADDRESS } from "../../../src/constants";
+import { MAX_MEMO_BYTES, TOKEN_PROGRAM_ADDRESS } from "../../../src/constants";
+import { USDC_DEVNET_ADDRESS } from "../../../src/defaultAssets";
+
+vi.mock("@solana-program/token-2022", async importOriginal => {
+  const actual = await importOriginal<typeof import("@solana-program/token-2022")>();
+  return {
+    ...actual,
+    fetchMint: vi.fn(),
+  };
+});
+
+vi.mock("../../../src/utils", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../src/utils")>();
+  return {
+    ...actual,
+    createRpcClient: vi.fn(() => ({
+      getLatestBlockhash: () => ({
+        send: async () => ({
+          value: {
+            blockhash: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+            lastValidBlockHeight: 1n,
+          },
+        }),
+      }),
+    })),
+  };
+});
 
 describe("ExactSvmSchemeV1", () => {
   let mockSigner: ClientSvmSigner;
@@ -42,37 +69,6 @@ describe("ExactSvmSchemeV1", () => {
         },
       };
 
-      // Mock RPC and account fetching
-      vi.mock("@solana-program/token-2022", () => ({
-        fetchMint: vi.fn().mockResolvedValue({
-          programAddress: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" as never,
-          data: { decimals: 6 },
-        }),
-        findAssociatedTokenPda: vi.fn().mockResolvedValue(["AssociatedTokenAddress" as never]),
-        getTransferCheckedInstruction: vi.fn().mockReturnValue({} as never),
-        TOKEN_2022_PROGRAM_ADDRESS: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" as never,
-      }));
-
-      vi.mock("@solana/kit", () => ({
-        fetchEncodedAccount: vi.fn().mockResolvedValue({ exists: true }),
-        createTransactionMessage: vi.fn().mockReturnValue({} as never),
-        pipe: vi.fn((initial: unknown, ...fns: ((arg: unknown) => unknown)[]) =>
-          fns.reduce((acc, fn) => fn(acc), initial),
-        ),
-        setTransactionMessageComputeUnitPrice: vi.fn((price: unknown, tx: unknown) => tx),
-        setTransactionMessageFeePayer: vi.fn((payer: unknown, tx: unknown) => tx),
-        appendTransactionMessageInstructions: vi.fn((ixs: unknown, tx: unknown) => tx),
-        prependTransactionMessageInstruction: vi.fn((ix: unknown, tx: unknown) => tx),
-        setTransactionMessageLifetimeUsingBlockhash: vi.fn((hash: unknown, tx: unknown) => tx),
-        partiallySignTransactionMessageWithSigners: vi.fn().mockResolvedValue({
-          messageBytes: new Uint8Array(10),
-          signatures: {},
-        }),
-        getBase64EncodedWireTransaction: vi.fn().mockReturnValue("base64transaction=="),
-      }));
-
-      // Note: Actual testing requires complex mocking of Solana RPC calls
-      // This is a structure test to verify the method exists and has correct return type
       expect(client.createPaymentPayload).toBeDefined();
       expect(typeof client.createPaymentPayload).toBe("function");
       expect(requirements.maxAmountRequired).toBe("100000");
@@ -120,6 +116,82 @@ describe("ExactSvmSchemeV1", () => {
         expect(requirements.maxAmountRequired).toBe("500000");
       }
       expect(client.scheme).toBe("exact");
+    });
+
+    it("rejects a mint owned by an unknown program", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: "11111111111111111111111111111111",
+      } as never);
+      const client = new ExactSvmSchemeV1(mockSigner);
+      await expect(
+        client.createPaymentPayload(1, {
+          scheme: "exact",
+          network: "solana-devnet",
+          asset: USDC_DEVNET_ADDRESS,
+          maxAmountRequired: "100000",
+          payTo: mockSigner.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: mockSigner.address },
+        } as never),
+      ).rejects.toThrow("Asset was not created by a known token program");
+    });
+
+    it("forwards a configured rpcUrl before rejecting an unknown mint program", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: "11111111111111111111111111111111",
+      } as never);
+      const client = new ExactSvmSchemeV1(mockSigner, { rpcUrl: "https://custom-rpc.example" });
+      await expect(
+        client.createPaymentPayload(1, {
+          scheme: "exact",
+          network: "solana-devnet",
+          asset: USDC_DEVNET_ADDRESS,
+          maxAmountRequired: "100000",
+          payTo: mockSigner.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: mockSigner.address },
+        } as never),
+      ).rejects.toThrow("Asset was not created by a known token program");
+    });
+
+    it("rejects when extra.feePayer is missing after mint resolution", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: TOKEN_PROGRAM_ADDRESS,
+      } as never);
+      const client = new ExactSvmSchemeV1(mockSigner);
+      await expect(
+        client.createPaymentPayload(1, {
+          scheme: "exact",
+          network: "solana-devnet",
+          asset: USDC_DEVNET_ADDRESS,
+          maxAmountRequired: "100000",
+          payTo: mockSigner.address,
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        } as never),
+      ).rejects.toThrow("feePayer is required");
+    });
+
+    it("rejects extra.memo that exceeds MAX_MEMO_BYTES", async () => {
+      vi.mocked(fetchMint).mockResolvedValue({
+        data: { decimals: 6 },
+        programAddress: TOKEN_PROGRAM_ADDRESS,
+      } as never);
+      const client = new ExactSvmSchemeV1(mockSigner);
+      await expect(
+        client.createPaymentPayload(1, {
+          scheme: "exact",
+          network: "solana-devnet",
+          asset: USDC_DEVNET_ADDRESS,
+          maxAmountRequired: "100000",
+          payTo: mockSigner.address,
+          maxTimeoutSeconds: 3600,
+          extra: { feePayer: mockSigner.address, memo: "m".repeat(MAX_MEMO_BYTES + 1) },
+        } as never),
+      ).rejects.toThrow(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
     });
   });
 });

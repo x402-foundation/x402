@@ -5,7 +5,7 @@ on:
 
 jobs:
   publish-npm-x402-express:
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'x402-foundation/x402' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: npm
     permissions:

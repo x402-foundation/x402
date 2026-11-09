@@ -8,9 +8,9 @@ Uses **Permit2** exclusively (no EIP-3009 path). The on-chain proxy contract acc
 
 | Role | Import |
 |------|--------|
-| Client | `github.com/x402-foundation/x402/go/mechanisms/evm/upto/client` |
-| Server | `github.com/x402-foundation/x402/go/mechanisms/evm/upto/server` |
-| Facilitator | `github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator` |
+| Client | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client` |
+| Server | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server` |
+| Facilitator | `github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator` |
 
 ## Client Usage
 
@@ -18,10 +18,10 @@ Register `UptoEvmScheme` with an `x402Client` to handle payments for services th
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    exactevm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/client"
-    uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/client"
-    evmsigners "github.com/x402-foundation/x402/go/signers/evm"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+    uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
+    evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 )
 
 evmSigner, err := evmsigners.NewClientSignerFromPrivateKey(os.Getenv("EVM_PRIVATE_KEY"))
@@ -41,10 +41,10 @@ Register `UptoEvmScheme` with middleware and use `SetSettlementOverrides` in you
 
 ```go
 import (
-    x402 "github.com/x402-foundation/x402/go"
-    x402http "github.com/x402-foundation/x402/go/http"
-    ginmw "github.com/x402-foundation/x402/go/http/gin"
-    uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/server"
+    x402 "github.com/x402-foundation/x402/go/v2"
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+    uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/server"
 )
 
 r.Use(ginmw.X402Payment(ginmw.Config{
@@ -95,7 +95,7 @@ For custom facilitator implementations:
 
 ```go
 import (
-    uptoevm "github.com/x402-foundation/x402/go/mechanisms/evm/upto/facilitator"
+    uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 )
 
 scheme := uptoevm.NewUptoEvmScheme(config)
@@ -133,7 +133,7 @@ The preferred path. If the payment token supports [EIP-2612](https://eips.ethere
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 )
 
 routes := x402http.RoutesConfig{
@@ -151,13 +151,21 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** No additional setup. `UptoEvmScheme` automatically checks for the extension and signs the permit when applicable.
+**Client:** The scheme must be able to read token contracts. Configure an RPC endpoint, or provide a functional RPC-backed signer such as one created with `evmsigners.NewClientSignerFromPrivateKeyWithClient`:
+
+```go
+scheme := uptoevm.NewUptoEvmScheme(signer, &uptoevm.UptoEvmSchemeConfig{
+    RPCURL: "https://your-rpc.example",
+})
+```
+
+For multiple networks, use `RPCByChainID` instead of a single `RPCURL`. If an advertised extension cannot obtain the required capability, the client keeps the existing payment behavior and logs an actionable warning.
 
 **Facilitator:** Register the extension:
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/eip2612gassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 )
 
 facilitator.RegisterExtension(eip2612gassponsor.EIP2612GasSponsoring)
@@ -171,7 +179,7 @@ Fallback for tokens that do not support EIP-2612. The client signs a raw `approv
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 )
 
 routes := x402http.RoutesConfig{
@@ -182,13 +190,13 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** The signer must support transaction signing (nonce resolution, fee estimation). `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
+**Client:** The signer must support transaction signing. An RPC-configured scheme can supply nonce resolution and fee estimation, but the signer must still implement `evm.ClientEvmSignerWithSignTransaction`; alternatively, provide a functional RPC-backed signer implementing `evm.ClientEvmSignerWithTxSigning`. `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
 
 **Facilitator:** Register with a signer that can broadcast transactions:
 
 ```go
 import (
-    "github.com/x402-foundation/x402/go/extensions/erc20approvalgassponsor"
+    "github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 )
 
 erc20Ext := &erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{Signer: evmSigner}

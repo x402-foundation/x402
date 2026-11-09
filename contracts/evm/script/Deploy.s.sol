@@ -45,8 +45,8 @@ contract DeployX402Proxies is Script {
     bytes32 constant EXACT_SALT = 0x0000000000000000000000000000000000000000000000003000000007263b0e;
 
     /// @notice Salt for x402UptoPermit2Proxy deterministic deployment
-    /// @dev Vanity mined for address 0x402015c795ecb48a360bdc6e35a2eaeb313a0002
-    bytes32 constant UPTO_SALT = 0x0000000000000000000000000000000000000000000000000800000007e2e4de;
+    /// @dev Vanity mined for address 0x4020a4f3b7b90cca423b9fabcc0ce57c6c240002
+    bytes32 constant UPTO_SALT = 0x000000000000000000000000000000000000000000000000b000000001db633d;
 
     /// @notice Expected initCodeHash for x402ExactPermit2Proxy (pre-built, includes CBOR metadata)
     bytes32 constant EXACT_INIT_CODE_HASH = 0xe774d1d5a07218946ab54efe010b300481478b86861bb17d69c98a57f68a604c;
@@ -79,6 +79,21 @@ contract DeployX402Proxies is Script {
         console2.log("");
         console2.log("All deployments complete!");
         console2.log("");
+    }
+
+    /// @notice Deploys only x402UptoPermit2Proxy.
+    function runUpto() public {
+        address permit2 = vm.envOr("PERMIT2_ADDRESS", CANONICAL_PERMIT2);
+
+        if (block.chainid != 31_337 && block.chainid != 1337) {
+            require(permit2.code.length > 0, "Permit2 not found on this network");
+            console2.log("Permit2 verified");
+
+            require(CREATE2_DEPLOYER.code.length > 0, "CREATE2 deployer not found on this network");
+            console2.log("CREATE2 deployer verified");
+        }
+
+        _deployUpto(permit2);
     }
 
     function _deployExact(

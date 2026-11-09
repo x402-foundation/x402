@@ -4,6 +4,12 @@ export * from "./constants";
 export * from "./signer";
 export * from "./preflight";
 export * from "./utils";
+export {
+  DEFAULT_ASSETS,
+  getDefaultAsset,
+  findDefaultAsset,
+  type HederaDefaultAsset,
+} from "./defaultAssets";
 
 // Re-export the Hiero SDK primitives consumers need so that applications
 // resolve a single SDK instance through @x402/hedera. Importing

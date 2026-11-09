@@ -228,6 +228,67 @@ class TestInjectPaymentData:
         assert script_pos < head_end_pos
 
 
+class TestInjectPaymentDataXSS:
+    """Regression tests: attacker-controlled fields must not break out of <script>."""
+
+    @staticmethod
+    def _build(resource: str, error: str = "Payment required") -> str:
+        payment_req = PaymentRequirements(
+            scheme="exact",
+            network="base-sepolia",
+            max_amount_required="1000000",
+            resource=resource,
+            description="Test",
+            mime_type="application/json",
+            pay_to="0x123",
+            max_timeout_seconds=60,
+            asset="0xUSDC",
+        )
+        html = "<html><head><title>t</title></head><body></body></html>"
+        return inject_payment_data(html, error, [payment_req])
+
+    @staticmethod
+    def _extract_inline_script(result: str) -> str:
+        """Return the JSON literal assigned to window.x402, untrimmed."""
+        marker = "window.x402 = "
+        start = result.index(marker) + len(marker)
+        # The inline script is built as `window.x402 = <json>;\n    {log_or_blank}\n  </script>`.
+        # The JSON literal is everything up to the first `;\n` after the marker.
+        end = result.index(";\n", start)
+        return result[start:end]
+
+    def test_script_close_tag_in_resource_url_is_escaped(self):
+        # An attacker who lures a victim to a URL with </script> in the path
+        # would otherwise close the inline <script> and inject arbitrary HTML.
+        result = self._build(
+            "https://example.com/foo</script><img src=x onerror=alert(1)>"
+        )
+
+        # The raw closing tag must not survive into the rendered HTML.
+        assert "</script><img" not in result
+        # And no literal < or > may appear inside the inline script body.
+        script_json = self._extract_inline_script(result)
+        assert "<" not in script_json
+        assert ">" not in script_json
+
+    def test_lt_gt_amp_escaped_inside_script_block(self):
+        result = self._build("https://example.com/?q=<script>alert(1)</script>&x=&amp;")
+
+        script_json = self._extract_inline_script(result)
+        assert "<" not in script_json
+        assert ">" not in script_json
+        assert "&" not in script_json
+
+    def test_escaped_json_still_round_trips(self):
+        import json as _json
+
+        url = "https://example.com/foo</script>?q=<>&amp;"
+        result = self._build(url)
+        config = _json.loads(self._extract_inline_script(result))
+        assert config["currentUrl"] == url
+        assert config["paymentRequirements"][0]["resource"] == url
+
+
 class TestGetPaywallHtml:
     """Test the main paywall HTML generation function."""
 

@@ -53,7 +53,10 @@ Quick Start (Sync):
 
 # Core components - Async (default)
 from .client import (
+    DEFAULT_MAX_AMOUNT_PER_PAYMENT,
     SchemeRegistration,
+    SpendControlAsset,
+    SpendControls,
     default_payment_selector,
     max_amount,
     prefer_network,
@@ -66,11 +69,32 @@ from .facilitator import x402Facilitator, x402FacilitatorSync
 
 # Interfaces (for implementing custom schemes)
 from .interfaces import (
+    PaymentFlowConfig,
+    PaymentFlowName,
+    PaymentFlowPhases,
+    PaymentPayloadContext,
+    ResolvedPaymentFlow,
     SchemeNetworkClient,
     SchemeNetworkClientV1,
     SchemeNetworkFacilitator,
     SchemeNetworkFacilitatorV1,
     SchemeNetworkServer,
+)
+from .payment_flow import (
+    PAYMENT_FLOWS,
+    SDK_DEFAULT_ASSET_TRANSFER_METHOD,
+    apply_payment_flow_wire_extra,
+    resolve_failure_path_settlement,
+    resolve_payment_flow,
+    resolve_payment_flow_phases,
+)
+
+# Pending-settlement store (settlement_pending auto-recovery)
+from .pending_settlement_store import (
+    ERR_SETTLEMENT_PENDING,
+    PENDING_SETTLEMENT_TTL_SECONDS,
+    InMemoryPendingSettlementStore,
+    PendingSettlementStore,
 )
 
 # Types (re-export commonly used types)
@@ -79,12 +103,15 @@ from .schemas import (
     X402_VERSION,
     # Hooks
     AbortResult,
+    AfterSettleAbortError,
     AssetAmount,
+    CompletedSettlement,
+    # Errors
+    FacilitatorCapabilityError,
     # Config
     FacilitatorConfig,
     Money,
     Network,
-    # Errors
     NoMatchingRequirementsError,
     PaymentAbortedError,
     PaymentCreatedContext,
@@ -96,24 +123,34 @@ from .schemas import (
     # V1 Legacy
     PaymentPayloadV1,
     PaymentRequired,
+    PaymentRequiredContext,
+    PaymentRequiredHeadersResult,
     PaymentRequiredV1,
     PaymentRequirements,
     PaymentRequirementsV1,
+    PaymentResponseContext,
     PaywallConfig,
     Price,
     RecoveredPayloadResult,
+    RecoveredResponseResult,
     RecoveredSettleResult,
     RecoveredVerifyResult,
     ResourceConfig,
     ResourceInfo,
+    ResourceVerifyResponse,
     RoutesConfig,
     SchemeNotFoundError,
     SettleContext,
     SettleError,
     SettleFailureContext,
+    SettlePhase,
     # Responses
     SettleResponse,
     SettleResultContext,
+    SkipHandlerDirective,
+    SkipHandlerResult,
+    SkipSettleResult,
+    SkipVerifyResult,
     SupportedKind,
     SupportedResponse,
     VerifyContext,
@@ -137,7 +174,7 @@ from .server import (
     x402ResourceServerSync,
 )
 
-__version__ = "2.10.0"
+__version__ = "2.27.0"
 
 __all__ = [
     # Version
@@ -153,9 +190,16 @@ __all__ = [
     # Config types
     "SchemeRegistration",
     "x402ClientConfig",
+    "SpendControlAsset",
+    "SpendControls",
+    "DEFAULT_MAX_AMOUNT_PER_PAYMENT",
     # Protocols
     "FacilitatorClient",
     "FacilitatorClientSync",
+    "PendingSettlementStore",
+    "InMemoryPendingSettlementStore",
+    "ERR_SETTLEMENT_PENDING",
+    "PENDING_SETTLEMENT_TTL_SECONDS",
     # Policies
     "default_payment_selector",
     "prefer_network",
@@ -167,6 +211,17 @@ __all__ = [
     "SchemeNetworkServer",
     "SchemeNetworkFacilitator",
     "SchemeNetworkFacilitatorV1",
+    "PaymentPayloadContext",
+    "PaymentFlowName",
+    "PaymentFlowPhases",
+    "PaymentFlowConfig",
+    "ResolvedPaymentFlow",
+    "PAYMENT_FLOWS",
+    "SDK_DEFAULT_ASSET_TRANSFER_METHOD",
+    "resolve_payment_flow",
+    "apply_payment_flow_wire_extra",
+    "resolve_payment_flow_phases",
+    "resolve_failure_path_settlement",
     # Types - Base
     "X402_VERSION",
     "Network",
@@ -197,22 +252,35 @@ __all__ = [
     "RecoveredPayloadResult",
     "RecoveredVerifyResult",
     "RecoveredSettleResult",
+    "ResourceVerifyResponse",
+    "SkipHandlerDirective",
+    "SkipHandlerResult",
+    "SkipSettleResult",
+    "SkipVerifyResult",
     "VerifyContext",
     "VerifyResultContext",
     "VerifyFailureContext",
     "SettleContext",
     "SettleResultContext",
     "SettleFailureContext",
+    "SettlePhase",
+    "CompletedSettlement",
     "PaymentCreationContext",
     "PaymentCreatedContext",
     "PaymentCreationFailureContext",
+    "PaymentResponseContext",
+    "RecoveredResponseResult",
+    "PaymentRequiredContext",
+    "PaymentRequiredHeadersResult",
     # Types - Errors
     "PaymentError",
     "VerifyError",
     "SettleError",
     "SchemeNotFoundError",
     "NoMatchingRequirementsError",
+    "AfterSettleAbortError",
     "PaymentAbortedError",
+    "FacilitatorCapabilityError",
     # Types - Helpers
     "detect_version",
     "match_payload_to_requirements",

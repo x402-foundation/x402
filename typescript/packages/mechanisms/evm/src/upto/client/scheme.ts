@@ -10,6 +10,7 @@ import {
   trySignEip2612PermitExtension,
   trySignErc20ApprovalExtension,
 } from "../../shared/extensions";
+import { findDefaultAsset } from "../../defaultAssets";
 import { UptoEvmSchemeOptions } from "./rpc";
 
 /**
@@ -18,6 +19,7 @@ import { UptoEvmSchemeOptions } from "./rpc";
  */
 export class UptoEvmScheme implements SchemeNetworkClient {
   readonly scheme = "upto";
+  findDefaultAsset = findDefaultAsset;
 
   /**
    * Creates a new UptoEvmScheme instance.

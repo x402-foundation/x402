@@ -1,3 +1,0 @@
-kind: added
-body: 'Add a curated testnet faucet map to the paywall plus PaywallConfig.FaucetURLs (per-chain override keyed by CAIP-2). Unmapped chains render "No faucet configured." instead of a fallback link.'
-time: 2026-04-29T10:38:14.93683-04:00

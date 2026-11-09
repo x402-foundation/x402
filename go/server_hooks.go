@@ -3,6 +3,8 @@ package x402
 import (
 	"context"
 	"sync"
+
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ============================================================================
@@ -46,11 +48,105 @@ type SkipHandlerDirective struct {
 }
 
 // AfterVerifyResult is the optional return value of an AfterVerifyHook.
+// When Abort is true, verification fails closed: remaining after-verify hooks
+// are skipped, verified-payment cancellation runs with after_verify_aborted,
+// and VerifyPayment returns an invalid verify error.
 // When SkipHandler is true, the resource handler is bypassed and settlement is
 // performed inline; the optional Response is used to craft the success body.
+// Abort takes precedence over SkipHandler.
 type AfterVerifyResult struct {
+	Abort       bool
+	Reason      string
+	Message     string
 	SkipHandler bool
 	Response    *SkipHandlerDirective
+}
+
+// SettlePhase identifies which settle invocation is running.
+//
+// - before-handler — settle before the resource handler (upfront / escrow auth)
+// - after-handler — settle after the resource handler (authorization charge, escrow charge)
+// - cancel — refund/close settle from verified-payment cancellation
+//
+// Settle lifecycle hooks (beforeSettle, afterSettle, onSettleFailure,
+// enrichSettlementPayload, enrichSettlementResponse) fire once per settle.
+// Multi-settle flows (escrow) therefore invoke them more than once; branch on
+// this field when a hook has side effects that must not double-run.
+type SettlePhase string
+
+const (
+	SettlePhaseBeforeHandler SettlePhase = "before-handler"
+	SettlePhaseAfterHandler  SettlePhase = "after-handler"
+	SettlePhaseCancel        SettlePhase = "cancel"
+)
+
+// CompletedSettlement stores a settle that already ran (typically before-handler)
+// so adapters can echo PAYMENT-RESPONSE after the resource handler.
+type CompletedSettlement struct {
+	Phase        SettlePhase
+	Flow         PaymentFlowName
+	Result       *SettleResponse
+	Requirements types.PaymentRequirements
+}
+
+// BuildFailurePathSettlementResponse picks the settlement receipt to return when
+// the resource handler fails after a verified (and possibly before-handler settled)
+// payment. A cancel settle is included only when a before-handler settlement
+// exists; a failed cancel attaches deposit recovery facts in extra. Otherwise
+// the before-handler deposit receipt is echoed, or nil when there is none.
+func BuildFailurePathSettlementResponse(
+	cancelSettlement *SettleResponse,
+	beforeHandlerSettlement *CompletedSettlement,
+	paymentPayload *types.PaymentPayload,
+) *SettleResponse {
+	if cancelSettlement != nil && beforeHandlerSettlement != nil {
+		if cancelSettlement.Success {
+			return cancelSettlement
+		}
+		built := buildFailedCancelReceipt(cancelSettlement, beforeHandlerSettlement, paymentPayload)
+		return &built
+	}
+	if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
+		return beforeHandlerSettlement.Result
+	}
+	return nil
+}
+
+// buildFailedCancelReceipt builds a failed cancel receipt with deposit recovery
+// facts in extra (depositTransaction, depositAmount, channelId).
+func buildFailedCancelReceipt(
+	cancelSettlement *SettleResponse,
+	beforeHandlerSettlement *CompletedSettlement,
+	paymentPayload *types.PaymentPayload,
+) SettleResponse {
+	extra := map[string]interface{}{}
+	if cancelSettlement.Extra != nil {
+		for k, v := range cancelSettlement.Extra {
+			extra[k] = v
+		}
+	}
+	if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
+		extra["depositTransaction"] = beforeHandlerSettlement.Result.Transaction
+		extra["depositAmount"] = beforeHandlerSettlement.Result.Amount
+	}
+	if paymentPayload != nil && paymentPayload.Payload != nil {
+		if channelID, ok := paymentPayload.Payload["channelId"].(string); ok && channelID != "" {
+			extra["channelId"] = channelID
+		}
+	}
+	if len(extra) == 0 {
+		extra = nil
+	}
+	return SettleResponse{
+		Success:      false,
+		ErrorReason:  cancelSettlement.ErrorReason,
+		ErrorMessage: cancelSettlement.ErrorMessage,
+		Payer:        cancelSettlement.Payer,
+		Transaction:  "",
+		Network:      cancelSettlement.Network,
+		Extensions:   cancelSettlement.Extensions,
+		Extra:        extra,
+	}
 }
 
 // SettleContext contains information passed to settle hooks
@@ -64,6 +160,7 @@ type SettleContext struct {
 	// route. Extension hooks gate on `DeclaredExtensions[extKey]` being set
 	// before firing — mirrors TS `ctx.declaredExtensions[extensionKey]`.
 	DeclaredExtensions map[string]interface{}
+	Phase              SettlePhase
 	PayloadBytes       []byte // Raw bytes for extensions needing full data
 	RequirementsBytes  []byte // Raw bytes for extensions needing full data
 }
@@ -90,6 +187,13 @@ const (
 	// CancellationReasonHandlerFailed indicates the resource handler completed but with a failing
 	// response status (>= 400).
 	CancellationReasonHandlerFailed VerifiedPaymentCancellationReason = "handler_failed"
+	// CancellationReasonAfterVerifyAborted indicates an AfterVerifyHook aborted verification
+	// after a successful (or recovered) verify, so schemes can clear committed reservations.
+	CancellationReasonAfterVerifyAborted VerifiedPaymentCancellationReason = "after_verify_aborted"
+	// CancellationReasonSettlementPreflightFailed indicates settlement failed before reaching
+	// the facilitator (beforeSettle abort or error, settlement-payload enrichment failure).
+	// It fires only when no earlier settle phase completed, so SettledPhases is empty.
+	CancellationReasonSettlementPreflightFailed VerifiedPaymentCancellationReason = "settlement_preflight_failed"
 )
 
 // VerifiedPaymentCanceledContext is delivered to OnVerifiedPaymentCanceled hooks when a
@@ -99,6 +203,20 @@ type VerifiedPaymentCanceledContext struct {
 	Reason         VerifiedPaymentCancellationReason
 	Err            error
 	ResponseStatus int
+	SettledPhases  []SettlePhase
+	// VerifyResult is the trusted verify response. Set only for after_verify_aborted.
+	VerifyResult *VerifyResponse
+}
+
+// SettledPhasesContain reports whether phases includes want. Schemes use it in
+// SettleOnCancel to settle only when the matching phase already completed.
+func SettledPhasesContain(phases []SettlePhase, want SettlePhase) bool {
+	for _, p := range phases {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifiedPaymentCancelOptions describes a single cancellation event.
@@ -106,20 +224,48 @@ type VerifiedPaymentCancelOptions struct {
 	Reason         VerifiedPaymentCancellationReason
 	Err            error
 	ResponseStatus int
+	VerifyResult   *VerifyResponse
 }
 
-// PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once.
+type cancellationOutcomeUnknownError struct{}
+
+func (cancellationOutcomeUnknownError) Error() string {
+	return "Payment cancellation outcome unknown"
+}
+
+// ErrCancellationOutcomeUnknown means cancel did not produce a receipt and the
+// authorization may still be open. Return it from SettleOnCancel, or when the
+// cancel facilitator call fails, instead of a failed receipt.
+var ErrCancellationOutcomeUnknown error = cancellationOutcomeUnknownError{}
+
+// PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,
+// then optionally settles via SchemeNetworkServer SettleOnCancelProvider.
 type PaymentCancellationDispatcher struct {
-	once sync.Once
-	fire func(VerifiedPaymentCancelOptions)
+	once    sync.Once
+	fire    func(VerifiedPaymentCancelOptions) *SettleResponse
+	unknown error
 }
 
-// Cancel fires the underlying hooks. Safe to call multiple times — only the first call wins.
-func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) {
+// Cancel fires the underlying hooks (and optional cancel settle) at most once.
+// Returns the cancel settle response when the scheme provides settleOnCancel
+// requirements and settle runs; nil when cancel settle is skipped or the
+// outcome is unknown. After Cancel returns, Err reports an unknown outcome.
+func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) *SettleResponse {
 	if d == nil || d.fire == nil {
-		return
+		return nil
 	}
-	d.once.Do(func() { d.fire(opts) })
+	var result *SettleResponse
+	d.once.Do(func() { result = d.fire(opts) })
+	return result
+}
+
+// Err reports an unknown cancellation outcome. The value stays set for the
+// dispatcher, including when a later Cancel is a no-op.
+func (d *PaymentCancellationDispatcher) Err() error {
+	if d == nil {
+		return nil
+	}
+	return d.unknown
 }
 
 // ============================================================================
@@ -164,14 +310,20 @@ type SettleFailureHookResult struct {
 // and an invalid VerifyResponse will be returned with the provided reason
 type BeforeVerifyHook func(VerifyContext) (*BeforeHookResult, error)
 
-// AfterVerifyHook is called after successful payment verification.
+// AfterVerifyHook is called after payment verification returns a result
+// (including BeforeVerify skip, onVerifyFailure recovery, and a facilitator
+// response with IsValid=false).
 // Any error returned will be logged but will not affect the verification result.
-// Returning an AfterVerifyResult with SkipHandler=true signals the HTTP layer to
-// bypass the resource handler and perform settlement inline (e.g. cooperative refund).
-// The last hook to return a SkipHandler directive wins.
+// Returning an AfterVerifyResult with Abort=true fails verification closed and
+// dispatches after_verify_aborted cancellation.
+// Returning SkipHandler=true signals the HTTP layer to bypass the resource
+// handler and perform settlement inline (e.g. cooperative refund).
+// The last hook to return a SkipHandler directive wins (unless a later hook aborts).
 type AfterVerifyHook func(VerifyResultContext) (*AfterVerifyResult, error)
 
-// OnVerifyFailureHook is called when payment verification fails
+// OnVerifyFailureHook is called when payment verification returns an error.
+// It does not run for a facilitator response with IsValid=false; use
+// AfterVerifyHook to react to that rejection.
 // If it returns a result with Recovered=true, the provided VerifyResponse
 // will be returned instead of the error
 type OnVerifyFailureHook func(VerifyFailureContext) (*VerifyFailureHookResult, error)
@@ -182,8 +334,30 @@ type OnVerifyFailureHook func(VerifyFailureContext) (*VerifyFailureHookResult, e
 type BeforeSettleHook func(SettleContext) (*BeforeHookResult, error)
 
 // AfterSettleHook is called after successful payment settlement
-// Any error returned will be logged but will not affect the settlement result
+// Any error returned will be logged but will not affect the settlement result,
+// except *AfterSettleAbortError which fails the settle closed (success:false)
+// while keeping transaction/amount/payer/onchain extra.
 type AfterSettleHook func(SettleResultContext) error
+
+// AfterSettleAbortError fails a successful settle closed after onchain funds
+// moved but the voucher was not persisted.
+type AfterSettleAbortError struct {
+	Reason  string
+	Message string
+}
+
+func (e *AfterSettleAbortError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Reason
+}
+
+// NewAfterSettleAbort returns an abort error for AfterSettleHook deposit persist
+// failures.
+func NewAfterSettleAbort(reason, message string) *AfterSettleAbortError {
+	return &AfterSettleAbortError{Reason: reason, Message: message}
+}
 
 // OnSettleFailureHook is called when payment settlement fails
 // If it returns a result with Recovered=true, the provided SettleResponse
@@ -350,6 +524,14 @@ type EnrichSettlementResponseProvider interface {
 // for that phase" — the server skips it.
 type ResourceServerExtensionHookProvider interface {
 	ResourceServerExtensionHooks() ResourceServerExtensionHooks
+}
+
+// ResourceServerExtensionDynamicInfoFieldsProvider lets an extension declare the
+// names of fields under its `info` that are dynamic — regenerated on every
+// PaymentRequired response (e.g. nonces, timestamps) rather than static
+// committed terms. Dynamic fields are excluded from client echo validation.
+type ResourceServerExtensionDynamicInfoFieldsProvider interface {
+	DynamicInfoFields() []string
 }
 
 // ResourceServerExtensionHooks is an extension's optional bundle of

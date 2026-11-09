@@ -8,11 +8,11 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
-	x402 "github.com/x402-foundation/x402/go"
-	x402http "github.com/x402-foundation/x402/go/http"
-	echomw "github.com/x402-foundation/x402/go/http/echo"
-	evm "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
-	svm "github.com/x402-foundation/x402/go/mechanisms/svm/exact/server"
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402http "github.com/x402-foundation/x402/go/v2/http"
+	echomw "github.com/x402-foundation/x402/go/v2/http/echo"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
 
 const (

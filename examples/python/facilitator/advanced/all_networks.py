@@ -12,7 +12,7 @@ import sys
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
@@ -122,7 +122,11 @@ facilitator = (
 
 # Register schemes based on available signers
 if evm_signer:
-    config = ExactEvmSchemeConfig(deploy_erc4337_with_eip6492=True)
+    config = ExactEvmSchemeConfig(
+        # Add trusted ERC-6492 factory addresses here (e.g. your chosen ERC-4337 smart wallet factory).
+        # A non-empty list enables smart wallet deployment; an empty list denies all factory calls.
+        eip6492_allowed_factories=[],
+    )
     facilitator.register([EVM_NETWORK], ExactEvmScheme(evm_signer, config))
 
 if svm_signer:
@@ -168,12 +172,16 @@ async def verify(request: VerifyRequest):
         VerifyResponse with isValid and payer (if valid) or invalidReason.
     """
     try:
-        from x402.schemas import PaymentRequirements, parse_payment_payload
+        from x402.schemas import parse_payment_payload, parse_payment_requirements
 
-        # Parse payload (auto-detects V1/V2) and requirements
+        # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = PaymentRequirements.model_validate(request.paymentRequirements)
+        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+    except (ValidationError, ValueError) as e:
+        print(f"Verify error: {e}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
+    try:
         # Verify payment (await async method)
         response = await facilitator.verify(payload, requirements)
 
@@ -194,12 +202,16 @@ async def settle(request: SettleRequest):
         SettleResponse with success, transaction, network, and payer.
     """
     try:
-        from x402.schemas import PaymentRequirements, parse_payment_payload
+        from x402.schemas import parse_payment_payload, parse_payment_requirements
 
-        # Parse payload (auto-detects V1/V2) and requirements
+        # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = PaymentRequirements.model_validate(request.paymentRequirements)
+        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+    except (ValidationError, ValueError) as e:
+        print(f"Settle error: {e}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
+    try:
         # Settle payment (await async method)
         response = await facilitator.settle(payload, requirements)
 

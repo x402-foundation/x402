@@ -6,6 +6,7 @@ import {
   APTOS_ADDRESS_REGEX,
   TRANSFER_FUNCTION,
   MAX_GAS_AMOUNT,
+  MAX_GAS_UNIT_PRICE,
   getAptosNetwork,
   getAptosRpcUrl,
   getAptosChainId,
@@ -94,6 +95,23 @@ describe("Aptos Constants", () => {
   describe("MAX_GAS_AMOUNT", () => {
     it("should be a reasonable limit for simple transfers", () => {
       expect(MAX_GAS_AMOUNT).toBe(500000n);
+    });
+  });
+
+  describe("MAX_GAS_UNIT_PRICE", () => {
+    it("should be a bigint", () => {
+      expect(typeof MAX_GAS_UNIT_PRICE).toBe("bigint");
+    });
+
+    it("should be well above typical mainnet gas price of ~100 Octas", () => {
+      expect(MAX_GAS_UNIT_PRICE).toBeGreaterThan(100n);
+    });
+
+    it("should cap the maximum fee-payer gas cost per transaction", () => {
+      // Worst-case gas cost in Octas: MAX_GAS_AMOUNT × MAX_GAS_UNIT_PRICE
+      const maxGasCostOctas = MAX_GAS_AMOUNT * MAX_GAS_UNIT_PRICE;
+      // 50 APT ceiling (5_000_000_000 Octas) — generous but finite
+      expect(maxGasCostOctas).toBeLessThanOrEqual(5_000_000_000n);
     });
   });
 

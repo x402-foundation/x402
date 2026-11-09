@@ -1,15 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { x402ResourceServer } from "@x402/core/server";
 import { ExactSvmScheme } from "../../src/exact/server/scheme";
+import { registerExactSvmScheme } from "../../src/exact/server/register";
 import {
-  USDC_MAINNET_ADDRESS,
-  USDC_DEVNET_ADDRESS,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
 } from "../../src/constants";
+import {
+  USDC_DEVNET_ADDRESS,
+  USDC_MAINNET_ADDRESS,
+  getDefaultAsset,
+} from "../../src/defaultAssets";
+import * as svmUtils from "../../src/utils";
 
 describe("ExactSvmScheme", () => {
   const server = new ExactSvmScheme();
+
+  describe("paymentFlows", () => {
+    it("declares authorization and upfront with authorization as the default", () => {
+      expect(server.defaultAssetTransferMethod).toBe("default");
+      expect(server.paymentFlows).toEqual({
+        default: { supported: ["authorization", "upfront"], default: "authorization" },
+      });
+    });
+  });
 
   describe("parsePrice", () => {
     describe("Solana Mainnet network", () => {
@@ -44,6 +59,25 @@ describe("ExactSvmScheme", () => {
         expect(result.amount).toBe("1000000"); // 1 USDC
       });
 
+      it("should parse supported stablecoin suffixes", async () => {
+        await expect(server.parsePrice("0.10 USDT", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "USDT").asset,
+        });
+        await expect(server.parsePrice("0.10 USDG", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "USDG").asset,
+        });
+        await expect(server.parsePrice("0.10 PYUSD", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "PYUSD").asset,
+        });
+        await expect(server.parsePrice("0.10 CASH", network)).resolves.toMatchObject({
+          amount: "100000",
+          asset: getDefaultAsset(network, "CASH").asset,
+        });
+      });
+
       it("should avoid floating-point rounding error", async () => {
         const result = await server.parsePrice("$4.02", network);
         expect(result.amount).toBe("4020000"); // 4.02 USDC
@@ -57,6 +91,14 @@ describe("ExactSvmScheme", () => {
         const result = await server.parsePrice("1.00", network);
         expect(result.asset).toBe(USDC_DEVNET_ADDRESS);
         expect(result.amount).toBe("1000000");
+      });
+
+      it("should use Devnet Token-2022 stablecoin addresses", async () => {
+        const usdg = await server.parsePrice("1.00 USDG", network);
+        expect(usdg.asset).toBe(getDefaultAsset(network, "USDG").asset);
+
+        const pyusd = await server.parsePrice("1.00 PYUSD", network);
+        expect(pyusd.asset).toBe(getDefaultAsset(network, "PYUSD").asset);
       });
     });
 
@@ -102,6 +144,12 @@ describe("ExactSvmScheme", () => {
       it("should throw for invalid amounts", async () => {
         await expect(
           async () => await server.parsePrice("abc", SOLANA_MAINNET_CAIP2),
+        ).rejects.toThrow("Invalid money format");
+      });
+
+      it("should reject partially numeric money strings", async () => {
+        await expect(
+          async () => await server.parsePrice("1abc", SOLANA_MAINNET_CAIP2),
         ).rejects.toThrow("Invalid money format");
       });
     });
@@ -164,5 +212,132 @@ describe("ExactSvmScheme", () => {
         feePayer: "FeePayer1111111111111111111111111111",
       });
     });
+
+    it("copies the facilitator's transactionVersions into extra", async () => {
+      const result = await server.enhancePaymentRequirements(
+        {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        } as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          extra: { feePayer: "FeePayer1111111111111111111111111111", transactionVersions: [0] },
+        },
+        [],
+      );
+      expect(result.extra.transactionVersions).toEqual([0]);
+    });
+
+    it("forwards malformed transactionVersions so the client fails closed", async () => {
+      const result = await server.enhancePaymentRequirements(
+        {
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          asset: USDC_DEVNET_ADDRESS,
+          amount: "100000",
+          payTo: "PayToAddress11111111111111111111111111",
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        } as never,
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: SOLANA_DEVNET_CAIP2,
+          extra: { feePayer: "FeePayer1111111111111111111111111111", transactionVersions: "0" },
+        },
+        [],
+      );
+      expect(result.extra.transactionVersions).toBe("0");
+    });
+  });
+
+  describe("getAssetDecimals", () => {
+    it("returns decimals for a known mint and undefined for an unknown one", () => {
+      expect(server.getAssetDecimals(USDC_MAINNET_ADDRESS, SOLANA_MAINNET_CAIP2)).toBe(6);
+      expect(
+        server.getAssetDecimals("UnknownMint1111111111111111111111111111111", SOLANA_MAINNET_CAIP2),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("enhancePaymentRequirements rpcUrl", () => {
+    it("omits the blockhash hint when the RPC fetch fails", async () => {
+      const rpcServer = new ExactSvmScheme({ rpcUrl: "https://example.invalid" });
+      vi.spyOn(svmUtils, "createRpcClient").mockImplementation(() => {
+        throw new Error("rpc unavailable");
+      });
+      try {
+        const result = await rpcServer.enhancePaymentRequirements(
+          {
+            scheme: "exact",
+            network: SOLANA_DEVNET_CAIP2,
+            asset: USDC_DEVNET_ADDRESS,
+            amount: "100000",
+            payTo: "PayToAddress11111111111111111111111111",
+            maxTimeoutSeconds: 3600,
+          } as never,
+          {
+            x402Version: 2,
+            scheme: "exact",
+            network: SOLANA_DEVNET_CAIP2,
+            extra: { feePayer: "FeePayer1111111111111111111111111111" },
+          },
+          [],
+        );
+        expect(result.extra?.recentBlockhash).toBeUndefined();
+        expect(result.extra?.feePayer).toBe("FeePayer1111111111111111111111111111");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+});
+
+describe("registerExactSvmScheme", () => {
+  it("registers the wildcard scheme when networks are omitted", () => {
+    const resourceServer = new x402ResourceServer({
+      verify: async () => ({ isValid: true }),
+      settle: async () => ({ success: true, transaction: "", network: "solana:*", payer: "" }),
+      getSupported: async () => ({ kinds: [] }),
+    } as never);
+    const returned = registerExactSvmScheme(resourceServer);
+    expect(returned).toBe(resourceServer);
+
+    const internals = resourceServer as unknown as {
+      registeredServerSchemes: Map<string, Map<string, { scheme: string }>>;
+    };
+    expect([...internals.registeredServerSchemes.keys()]).toEqual(["solana:*"]);
+    expect(internals.registeredServerSchemes.get("solana:*")?.get("exact")?.scheme).toBe("exact");
+  });
+
+  it("registers each explicit network", () => {
+    const resourceServer = new x402ResourceServer({
+      verify: async () => ({ isValid: true }),
+      settle: async () => ({
+        success: true,
+        transaction: "",
+        network: SOLANA_DEVNET_CAIP2,
+        payer: "",
+      }),
+      getSupported: async () => ({ kinds: [] }),
+    } as never);
+    registerExactSvmScheme(resourceServer, {
+      networks: [SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2],
+      rpcUrl: "https://example.invalid",
+    });
+
+    const internals = resourceServer as unknown as {
+      registeredServerSchemes: Map<string, Map<string, { scheme: string }>>;
+    };
+    expect([...internals.registeredServerSchemes.keys()].sort()).toEqual(
+      [SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2].sort(),
+    );
   });
 });
