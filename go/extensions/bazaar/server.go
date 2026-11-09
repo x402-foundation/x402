@@ -16,18 +16,20 @@ var bracketParamRegex = regexp.MustCompile(`\[([^\]]+)\]`)
 // colonParamRegex is a package-local alias for the shared regex in extensions/types.
 var colonParamRegex = types.ColonParamRegex
 
-func resolveDeclaredMethod(input interface{}, requestMethod string) string {
+func resolveQueryMethod(requestMethod string) string {
 	method := strings.ToUpper(requestMethod)
-	if _, isBody := input.(types.BodyInput); isBody {
-		if types.IsBodyMethod(method) {
-			return method
-		}
-		return string(types.MethodPOST)
-	}
 	if types.IsQueryMethod(method) {
 		return method
 	}
 	return string(types.MethodGET)
+}
+
+func resolveBodyMethod(requestMethod string) string {
+	method := strings.ToUpper(requestMethod)
+	if types.IsBodyMethod(method) {
+		return method
+	}
+	return string(types.MethodPOST)
 }
 
 func narrowSchemaMethodEnum(schema types.JSONSchema, method string) {
@@ -183,11 +185,11 @@ func (e *bazaarResourceServerExtension) EnrichDeclaration(
 	var method string
 	switch input := extension.Info.Input.(type) {
 	case types.QueryInput:
-		method = resolveDeclaredMethod(input, httpContext.Method)
+		method = resolveQueryMethod(httpContext.Method)
 		input.Method = types.QueryParamMethods(method)
 		extension.Info.Input = input
 	case types.BodyInput:
-		method = resolveDeclaredMethod(input, httpContext.Method)
+		method = resolveBodyMethod(httpContext.Method)
 		input.Method = types.BodyMethods(method)
 		extension.Info.Input = input
 	}

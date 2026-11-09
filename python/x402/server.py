@@ -44,6 +44,7 @@ from .server_base import (
     SyncOnSettleFailureHook,
     SyncOnVerifiedPaymentCanceledHook,
     SyncOnVerifyFailureHook,
+    _SyncServerAsyncHookError,
     settle_with_pending_retry,
     settle_with_pending_retry_async,
     x402ResourceServerBase,
@@ -235,7 +236,7 @@ class x402ResourceServer(x402ResourceServerBase):
                             result = await self._execute_hook(target, ctx)
                         break
                     except Exception as e:
-                        if phase != "call_facilitator":
+                        if phase not in ("call_facilitator", "before"):
                             raise
                         phase, target, ctx = gen.throw(e)
         except StopIteration as e:
@@ -285,10 +286,12 @@ class x402ResourceServer(x402ResourceServerBase):
             phase,
         )
         result = None
+        facilitator_called = False
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
                 if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
@@ -303,6 +306,10 @@ class x402ResourceServer(x402ResourceServerBase):
                         if phase_cmd != "after":
                             raise
                         result = abort
+                    except Exception as error:
+                        if phase_cmd != "before":
+                            raise
+                        phase_cmd, target, ctx = gen.throw(error)
         except StopIteration as e:
             return await self._finalize_settle_result_async(
                 e.value,
@@ -314,6 +321,18 @@ class x402ResourceServer(x402ResourceServerBase):
                 transport_context,
                 phase,
             )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                await self._dispatch_verified_payment_canceled(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
 
     async def _dispatch_verified_payment_canceled(
         self,
@@ -561,7 +580,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
                             result = self._execute_hook_sync(target, ctx)
                         break
                     except Exception as e:
-                        if phase != "call_facilitator":
+                        if phase not in ("call_facilitator", "before"):
                             raise
                         phase, target, ctx = gen.throw(e)
         except StopIteration as e:
@@ -611,10 +630,12 @@ class x402ResourceServerSync(x402ResourceServerBase):
             phase,
         )
         result = None
+        facilitator_called = False
         try:
             while True:
                 phase_cmd, target, ctx = gen.send(result)
                 if phase_cmd == "call_facilitator":
+                    facilitator_called = True
                     # target is client, ctx is (method_name, payload, requirements)
                     method_name, p, r = ctx
                     if method_name == "verify":
@@ -629,6 +650,10 @@ class x402ResourceServerSync(x402ResourceServerBase):
                         if phase_cmd != "after":
                             raise
                         result = abort
+                    except Exception as error:
+                        if phase_cmd != "before":
+                            raise
+                        phase_cmd, target, ctx = gen.throw(error)
         except StopIteration as e:
             return self._finalize_settle_result(
                 e.value,
@@ -641,6 +666,18 @@ class x402ResourceServerSync(x402ResourceServerBase):
                 self._run_enrich_hook_sync,
                 phase,
             )
+        except Exception as error:
+            if not facilitator_called and self._should_cancel_unsettled_payment(
+                payload, requirements, phase
+            ):
+                self._dispatch_verified_payment_canceled_sync(
+                    payload,
+                    requirements,
+                    declared_extensions,
+                    VerifiedPaymentCancelOptions(reason="settlement_preflight_failed", error=error),
+                    transport_context,
+                )
+            raise
 
     def _dispatch_verified_payment_canceled_sync(
         self,
@@ -714,7 +751,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
         result = hook(context)
         if asyncio.iscoroutine(result):
             result.close()  # Prevent warning
-            raise TypeError(
+            raise _SyncServerAsyncHookError(
                 "Async hooks are not supported in x402ResourceServerSync. "
                 "Use x402ResourceServer for async hook support."
             )

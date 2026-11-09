@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -27,6 +28,33 @@ type BatchSettlementRequestContext struct {
 	ReservationCommitted   *bool
 	CorrectiveChannelState *batchsettlement.BatchSettlementChannelStateExtra
 	CorrectiveVoucherState *batchsettlement.BatchSettlementVoucherStateExtra
+}
+
+const requestContextGrace = 10 * time.Second
+
+const maxRequestContextBase = 24 * time.Hour
+
+// requestContextTtl keeps the per-request state (including the pendingId) available for
+// the payment's maxTimeoutSeconds window plus grace, so a late cancel can still release it.
+func requestContextTtl(maxTimeoutSeconds int) time.Duration {
+	base := time.Duration(storage.PendingTtlMs(0)) * time.Millisecond
+	if maxTimeoutSeconds > 0 {
+		requested := maxRequestContextBase
+		if int64(maxTimeoutSeconds) < int64(maxRequestContextBase/time.Second) {
+			requested = time.Duration(maxTimeoutSeconds) * time.Second
+		}
+		if requested > base {
+			base = requested
+		}
+	}
+	return base + requestContextGrace
+}
+
+const requestContextSweepInterval = time.Minute
+
+type requestContextEntry struct {
+	rc        *BatchSettlementRequestContext
+	expiresAt time.Time
 }
 
 func reservationFlag(committed bool) *bool {
@@ -100,8 +128,9 @@ type BatchSettlementEvmScheme struct {
 
 	// requestContexts maps a per-payment key to state carried across verify and
 	// settle hooks.
-	requestContextsMu sync.Mutex
-	requestContexts   map[string]*BatchSettlementRequestContext
+	requestContextsMu      sync.Mutex
+	requestContexts        map[string]*requestContextEntry
+	requestContextsSweptAt time.Time
 }
 
 // requestContextKey returns a payment identity that stays stable when server
@@ -182,7 +211,7 @@ func NewBatchSettlementEvmScheme(receiverAddress string, config *BatchSettlement
 		storage:           store,
 		enforceMinDeposit: enforceMinDeposit,
 		moneyParsers:      []x402.MoneyParser{},
-		requestContexts:   make(map[string]*BatchSettlementRequestContext),
+		requestContexts:   make(map[string]*requestContextEntry),
 	}
 
 	if config != nil && config.VoucherStoreMode == VoucherStoreModeFacilitator {
@@ -235,16 +264,28 @@ func (s *BatchSettlementEvmScheme) GetOnchainStateTtlMs() int64 {
 
 // MergeRequestContext merges fields into the per-payload request context,
 // creating one if none exists.
-func (s *BatchSettlementEvmScheme) MergeRequestContext(payload any, partial BatchSettlementRequestContext) {
+func (s *BatchSettlementEvmScheme) MergeRequestContext(
+	payload any,
+	partial BatchSettlementRequestContext,
+	ttl ...time.Duration,
+) {
 	key := requestContextKey(payload)
 	if key == "" {
 		return
 	}
 	s.requestContextsMu.Lock()
 	defer s.requestContextsMu.Unlock()
+	now := time.Now()
+	s.evictExpiredRequestContextsLocked(now)
 	merged := BatchSettlementRequestContext{}
-	if cur := s.requestContexts[key]; cur != nil {
-		merged = *cur
+	contextTtl := requestContextTtl(0)
+	if len(ttl) > 0 && ttl[0] > 0 {
+		contextTtl = ttl[0]
+	}
+	expiresAt := now.Add(contextTtl)
+	if cur := s.requestContexts[key]; cur != nil && now.Before(cur.expiresAt) {
+		merged = *cur.rc
+		expiresAt = cur.expiresAt
 	}
 	if partial.ChannelId != "" {
 		merged.ChannelId = partial.ChannelId
@@ -267,7 +308,19 @@ func (s *BatchSettlementEvmScheme) MergeRequestContext(payload any, partial Batc
 	if partial.CorrectiveVoucherState != nil {
 		merged.CorrectiveVoucherState = partial.CorrectiveVoucherState
 	}
-	s.requestContexts[key] = &merged
+	s.requestContexts[key] = &requestContextEntry{rc: &merged, expiresAt: expiresAt}
+}
+
+func (s *BatchSettlementEvmScheme) evictExpiredRequestContextsLocked(now time.Time) {
+	if now.Sub(s.requestContextsSweptAt) < requestContextSweepInterval {
+		return
+	}
+	s.requestContextsSweptAt = now
+	for key, entry := range s.requestContexts {
+		if !now.Before(entry.expiresAt) {
+			delete(s.requestContexts, key)
+		}
+	}
 }
 
 // ReadRequestContext returns the per-payload request context without clearing it.
@@ -278,7 +331,10 @@ func (s *BatchSettlementEvmScheme) ReadRequestContext(payload any) *BatchSettlem
 	}
 	s.requestContextsMu.Lock()
 	defer s.requestContextsMu.Unlock()
-	return s.requestContexts[key]
+	if entry := s.requestContexts[key]; entry != nil {
+		return entry.rc
+	}
+	return nil
 }
 
 // TakeRequestContext reads and clears the per-payload request context.
@@ -289,9 +345,12 @@ func (s *BatchSettlementEvmScheme) TakeRequestContext(payload any) *BatchSettlem
 	}
 	s.requestContextsMu.Lock()
 	defer s.requestContextsMu.Unlock()
-	rc := s.requestContexts[key]
+	entry := s.requestContexts[key]
 	delete(s.requestContexts, key)
-	return rc
+	if entry == nil {
+		return nil
+	}
+	return entry.rc
 }
 
 // RememberChannelSnapshot stores a channel snapshot keyed to a specific payload
@@ -424,7 +483,8 @@ func (s *BatchSettlementEvmScheme) OnVerifiedPaymentCanceledHook() x402.OnVerifi
 func handleVerifiedPaymentCanceled(s *BatchSettlementEvmScheme, ctx x402.VerifiedPaymentCanceledContext) error {
 	if ctx.Reason != x402.CancellationReasonHandlerThrew &&
 		ctx.Reason != x402.CancellationReasonHandlerFailed &&
-		ctx.Reason != x402.CancellationReasonAfterVerifyAborted {
+		ctx.Reason != x402.CancellationReasonAfterVerifyAborted &&
+		ctx.Reason != x402.CancellationReasonSettlementPreflightFailed {
 		return nil
 	}
 	return s.ClearPendingRequest(ctx.Payload)
@@ -435,7 +495,7 @@ func handleVerifiedPaymentCanceled(s *BatchSettlementEvmScheme, ctx x402.Verifie
 func (s *BatchSettlementEvmScheme) SettleOnCancel(ctx x402.VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error) {
 	switch s.configuredMode {
 	case VoucherStoreModeFacilitator:
-		return handleManagedSettleOnCancel(ctx)
+		return handleManagedSettleOnCancel(s, ctx)
 	case VoucherStoreModeSelf:
 		return nil, nil
 	default:

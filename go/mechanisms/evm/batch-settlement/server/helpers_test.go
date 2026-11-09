@@ -17,6 +17,7 @@ func sampleSession(id, charged string) *ChannelSession {
 	return &ChannelSession{
 		ChannelId:               id,
 		ChannelConfig:           batchsettlement.ChannelConfig{Payer: "0x1", Receiver: "0x2"},
+		Network:                 "eip155:8453",
 		ChargedCumulativeAmount: charged,
 		SignedMaxClaimable:      "1000",
 		Signature:               "0xsig",

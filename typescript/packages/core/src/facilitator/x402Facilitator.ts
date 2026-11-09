@@ -42,7 +42,7 @@ export interface FacilitatorSettleFailureContext extends FacilitatorSettleContex
 
 export type FacilitatorBeforeVerifyHook = (
   context: FacilitatorVerifyContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterVerifyHook = (context: FacilitatorVerifyResultContext) => Promise<void>;
 
@@ -52,7 +52,7 @@ export type FacilitatorOnVerifyFailureHook = (
 
 export type FacilitatorBeforeSettleHook = (
   context: FacilitatorSettleContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterSettleHook = (context: FacilitatorSettleResultContext) => Promise<void>;
 
@@ -139,7 +139,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment verification.
-   * Can abort verification by returning { abort: true, reason: string }
+   * Can abort verification by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -176,7 +176,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment settlement.
-   * Can abort settlement by returning { abort: true, reason: string }
+   * Can abort settlement by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -289,13 +289,15 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks
+    // This is a gate phase, so a throwing hook is deliberately not isolated:
+    // verification fails closed instead of skipping the check.
     for (const hook of this.beforeVerifyHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
         return {
           isValid: false,
           invalidReason: result.reason,
+          invalidMessage: result.message,
         };
       }
     }
@@ -344,7 +346,11 @@ export class x402Facilitator {
       };
 
       for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterVerify", error);
+        }
       }
 
       return verifyResult;
@@ -356,9 +362,13 @@ export class x402Facilitator {
 
       // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onVerifyFailure", hookError);
         }
       }
 
@@ -371,7 +381,8 @@ export class x402Facilitator {
    *
    * @param paymentPayload - The payment payload to settle
    * @param paymentRequirements - The payment requirements for settlement
-   * @returns Promise resolving to the settlement response
+   * @returns Promise resolving to the settlement response. A before-hook abort resolves with
+   * `success: false`.
    */
   async settle(
     paymentPayload: PaymentPayload,
@@ -382,11 +393,16 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
-        throw new Error(`Settlement aborted: ${result.reason}`);
+        return {
+          success: false,
+          errorReason: result.reason,
+          errorMessage: result.message,
+          transaction: "",
+          network: paymentRequirements.network,
+        };
       }
     }
 
@@ -434,8 +450,15 @@ export class x402Facilitator {
         result: settleResult,
       };
 
+      // Isolate afterSettle hook failures: settlement has already executed
+      // onchain, so a throwing observer must not convert a successful settle
+      // into an error response (or trigger onSettleFailure hooks).
       for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterSettle", error);
+        }
       }
 
       return settleResult;
@@ -447,14 +470,29 @@ export class x402Facilitator {
 
       // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onSettleFailure", hookError);
         }
       }
 
       throw error;
     }
+  }
+
+  /**
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure) throws.
+   *
+   * @param phase - Lifecycle phase whose hook threw
+   * @param error - Thrown value or rejection reason
+   */
+  private warnFacilitatorHookFailure(phase: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Facilitator ${phase} hook threw: ${detail}`);
   }
 
   /**

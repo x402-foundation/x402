@@ -1,3 +1,0 @@
-kind: fixed
-body: Reject settlement overrides that resolve above the authorized amount in PaymentRequirements.
-time: 2026-10-22T07:15:00.000000Z

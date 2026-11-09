@@ -4,9 +4,18 @@
  * outcomes, kept apart from the scheme's request handling.
  */
 
-import type { Network, SettleResponse, VerifyResponse } from "@x402/core/types";
+import type {
+  Network,
+  PaymentRequirements,
+  SettleResponse,
+  VerifyResponse,
+} from "@x402/core/types";
+import { deepEqual } from "@x402/core/utils";
 
-import { ErrSettlementPending } from "../../exact/facilitator/errors";
+import {
+  ErrSettlementPending,
+  ErrUnsupportedTransactionVersion,
+} from "../../exact/facilitator/errors";
 
 import type { Channel } from "../../payment-channels/generated/accounts/channel";
 import {
@@ -15,11 +24,45 @@ import {
 } from "../../payment-channels/facilitator";
 import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
+import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
 import type { BatchChannelState } from "../types";
 
 /** Reason reported when a channel is already mid-operation. */
 export const CHANNEL_BUSY = "duplicate_settlement";
+
+/** Core x402 reason for a `paymentPayload.accepted` that does not equal the requirements. */
+export const INVALID_PAYMENT_REQUIREMENTS = "invalid_payment_requirements";
+
+/**
+ * Check the request envelope: `paymentPayload.accepted` MUST equal
+ * `paymentRequirements` (spec 4.5). The `extra` fields a server regenerates
+ * for every `PaymentRequired` are left out, since the forwarded requirements
+ * carry this response's values while `accepted` echoes the client's.
+ *
+ * @param accepted - The requirements the client signed against
+ * @param requirements - The requirements the server forwarded
+ * @returns The failure reason, or undefined when the envelope matches
+ */
+export function envelopeFailure(
+  accepted: PaymentRequirements,
+  requirements: PaymentRequirements,
+): string | undefined {
+  if (
+    accepted.scheme !== BATCH_SETTLEMENT_SCHEME ||
+    requirements.scheme !== BATCH_SETTLEMENT_SCHEME
+  ) {
+    return "unsupported_scheme";
+  }
+  const comparable = ({ extra, ...core }: PaymentRequirements) => {
+    const stable = { ...extra };
+    for (const field of DYNAMIC_EXTRA_FIELDS) delete stable[field];
+    return { ...core, extra: stable };
+  };
+  return deepEqual(comparable(accepted), comparable(requirements))
+    ? undefined
+    : INVALID_PAYMENT_REQUIREMENTS;
+}
 
 /**
  * The signature carried by an error that means "broadcast, outcome unknown",
@@ -343,7 +386,8 @@ export function settlementPending(
  */
 /**
  * Map a thrown error onto the scheme's reason vocabulary: the busy marker,
- * a known `BatchError`, or the generic `transaction_failed`.
+ * a known `BatchError`, `unsupported_transaction_version`, or the generic
+ * `transaction_failed`.
  *
  * @param error - The error a settlement path threw
  * @returns The reason code to report
@@ -352,6 +396,7 @@ export function classifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes(CHANNEL_BUSY)) return CHANNEL_BUSY;
   if (/\b429\b/.test(message) || /\b503\b/.test(message)) return BatchError.CHANNEL_STATE;
+  if (message.startsWith(ErrUnsupportedTransactionVersion)) return ErrUnsupportedTransactionVersion;
   const known = Object.values(BatchError).find(value => message.includes(value));
   return known ?? "transaction_failed";
 }

@@ -58,7 +58,9 @@ const { RpcClient, rpcClient, tokenPackage, tokenContract, dictionaryU256, dicti
       ),
     };
     return {
-      RpcClient: vi.fn(() => rpcClient),
+      RpcClient: vi.fn(function () {
+        return rpcClient;
+      }),
       rpcClient,
       tokenPackage: {
         storedValue: {
@@ -518,6 +520,27 @@ describe("ExactCasperScheme facilitator", () => {
       success: false,
       errorReason: ErrAmountMismatch,
       transaction: "",
+      network: testNetwork,
+    });
+  });
+
+  it("returns the transaction hash when a submitted transaction fails", async () => {
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(
+      createMockSigner({
+        waitForTransaction: vi.fn(async () => {
+          throw new Error("transaction execution failed: User error: 37005");
+        }),
+      }),
+    );
+
+    await expect(
+      scheme.settle(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      success: false,
+      errorReason: ErrSettleFailed,
+      errorMessage: "transaction execution failed: User error: 37005",
+      transaction: "a".repeat(64),
       network: testNetwork,
     });
   });

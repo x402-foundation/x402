@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
@@ -71,7 +70,7 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 			return types.PaymentPayloadV1{}, fmt.Errorf(ErrInvalidExtraField+": %w", err)
 		}
 	}
-	version, err := svm.ResolveTransactionVersion(extraMap)
+	version, err := svm.ResolveTransactionVersionFor(extraMap, c.config.ClientTransactionVersions())
 	if err != nil {
 		return types.PaymentPayloadV1{}, err
 	}
@@ -156,21 +155,6 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 	}
 	recentBlockhash := latestBlockhash.Value.Blockhash
 
-	// Build compute budget instructions
-	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
-		SetUnits(svm.DefaultComputeUnitLimit).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildComputeLimitIx+": %w", err)
-	}
-
-	cuPrice, err := computebudget.NewSetComputeUnitPriceInstructionBuilder().
-		SetMicroLamports(svm.DefaultComputeUnitPriceMicrolamports).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToBuildComputePriceIx+": %w", err)
-	}
-
 	// Build final transfer instruction
 	transferIx, err := token.NewTransferCheckedInstructionBuilder().
 		SetAmount(amount).
@@ -204,25 +188,19 @@ func (c *ExactSvmSchemeV1) CreatePaymentPayload(
 		memoPayload,
 	)
 
-	// Create final transaction
-	tx, err := solana.NewTransactionBuilder().
-		AddInstruction(cuLimit).
-		AddInstruction(cuPrice).
-		AddInstruction(transferIx).
-		AddInstruction(memoIx).
-		SetRecentBlockHash(recentBlockhash).
-		SetFeePayer(feePayer).
-		Build()
+	// Build the highest message version shared with extra.transactionVersions
+	// (version 0 when absent). Version 0 carries the compute budget as
+	// ComputeBudget instructions; version 1 carries it in the message config.
+	tx, err := svm.BuildClientTransaction(
+		version,
+		feePayer,
+		recentBlockhash,
+		[]solana.Instruction{transferIx, memoIx},
+		svm.DefaultComputeUnitLimit,
+		svm.DefaultComputeUnitPriceMicrolamports,
+	)
 	if err != nil {
 		return types.PaymentPayloadV1{}, fmt.Errorf(ErrFailedToCreateTransaction+": %w", err)
-	}
-
-	// Build the message version the facilitator advertised in
-	// extra.transactionVersions (version 0 when absent). This client only
-	// produces version 0; a facilitator that accepts no version it can build
-	// is reported before signing.
-	if _, err := tx.Message.SetVersion(version); err != nil {
-		return types.PaymentPayloadV1{}, fmt.Errorf("failed to set transaction version: %w", err)
 	}
 
 	// Partially sign with client's key

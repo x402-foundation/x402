@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -39,7 +38,7 @@ const (
 	// budget for normal settlement. Four MiB covers the mainnet Token-2022
 	// program-data account (about 1.4 MiB) with room for the remaining programs
 	// and accounts loaded by a settlement.
-	DefaultSettleLoadedAccountsDataSizeLimit uint32 = 4_194_304
+	DefaultSettleLoadedAccountsDataSizeLimit = svm.DefaultLoadedAccountsDataSizeLimit
 
 	ReclaimLoadedAccountsDataSizeBase       uint32 = 262_144
 	ReclaimLoadedAccountsDataSizePerChannel uint32 = 1_024
@@ -250,12 +249,9 @@ func BroadcastOpen(
 	openTransactionBase64 string,
 	hooks ChannelBroadcastHooks,
 ) (string, error) {
-	tx, err := svm.DecodeTransaction(openTransactionBase64)
+	tx, err := decodeChannelTransaction(openTransactionBase64, "")
 	if err != nil {
 		return "", err
-	}
-	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
-		return "", fmt.Errorf("%s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(tx.Message.GetVersion())-1)
 	}
 	if err := signer.SignTransaction(ctx, tx, feePayer, network); err != nil {
 		return "", err
@@ -304,6 +300,9 @@ type SettlementSimChannel struct {
 	RentPayer    solana.PublicKey
 	Splits       []Split
 	TokenProgram solana.PublicKey
+	// TreasuryOwner overrides the program's treasury owner; see
+	// DistributeInstructionArgs.TreasuryOwner.
+	TreasuryOwner solana.PublicKey
 }
 
 // SimulateOpenSettleDistribute simulates open + settle_and_seal(has_voucher=0)
@@ -316,20 +315,24 @@ func SimulateOpenSettleDistribute(
 	openTransactionBase64 string,
 	channel SettlementSimChannel,
 ) error {
-	openTx, err := svm.DecodeTransaction(openTransactionBase64)
+	openTx, err := decodeChannelTransaction(openTransactionBase64, "")
 	if err != nil {
 		return err
 	}
-	if !svm.IsAcceptedTransactionVersion(openTx.Message.GetVersion()) {
-		return fmt.Errorf("%s: unsupported transaction message version %d", svm.ErrUnsupportedTransactionVersion, int(openTx.Message.GetVersion())-1)
+	// The simulation follows the open's message version: a version-1 open
+	// (budget in its message config, possibly over the 1232-byte version-0
+	// limit) is simulated as version 1 with no ComputeBudget instructions.
+	v1 := openTx.Message.GetVersion() == solana.MessageVersionV1
+	var instructions []solana.Instruction
+	if !v1 {
+		computeLimitIx, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
+			SetUnits(maxTransactionComputeUnits).
+			ValidateAndBuild()
+		if err != nil {
+			return fmt.Errorf("failed to build compute limit instruction: %w", err)
+		}
+		instructions = append(instructions, computeLimitIx)
 	}
-	computeLimitIx, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
-		SetUnits(maxTransactionComputeUnits).
-		ValidateAndBuild()
-	if err != nil {
-		return fmt.Errorf("failed to build compute limit instruction: %w", err)
-	}
-	instructions := []solana.Instruction{computeLimitIx}
 	for _, compiled := range openTx.Message.Instructions {
 		program, err := openTx.Message.Program(compiled.ProgramIDIndex)
 		if err != nil {
@@ -354,21 +357,31 @@ func SimulateOpenSettleDistribute(
 	}
 	instructions = append(instructions, settle...)
 	distribute, err := BuildDistributeInstruction(DistributeInstructionArgs{
-		Channel:      channel.ChannelID,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: channel.TokenProgram,
-		Splits:       channel.Splits,
-		Network:      channel.Network,
+		Channel:       channel.ChannelID,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  channel.TokenProgram,
+		Splits:        channel.Splits,
+		Network:       channel.Network,
+		TreasuryOwner: channel.TreasuryOwner,
 	})
 	if err != nil {
 		return err
 	}
 	instructions = append(instructions, distribute)
 
-	tx, err := buildSignedTransaction(ctx, signer, feePayer, channel.Network, simPlaceholderBlockhash, instructions)
+	var tx *solana.Transaction
+	if v1 {
+		units := uint32(maxTransactionComputeUnits)
+		tx, err = compileChannelTransaction(ctx, signer, feePayer, channel.Network, simPlaceholderBlockhash, instructions, SubmitSettleOptions{
+			FacilitatorTransactionVersion: FacilitatorTransactionVersion1,
+			ComputeUnitLimit:              &units,
+		})
+	} else {
+		tx, err = buildSignedTransaction(ctx, signer, feePayer, channel.Network, simPlaceholderBlockhash, instructions)
+	}
 	if err != nil {
 		return err
 	}
@@ -383,13 +396,20 @@ func SimulateOpenSettleDistribute(
 	return nil
 }
 
+// Message versions of transactions the facilitator builds itself, in the
+// extra.transactionVersions wire vocabulary (not solana.MessageVersion values).
+const (
+	FacilitatorTransactionVersion0 = 0
+	FacilitatorTransactionVersion1 = 1
+)
+
 // SubmitSettleOptions configures the inline v1 resource budget and broadcast hooks.
 type SubmitSettleOptions struct {
 	ComputeUnitLimit            *uint32
 	LoadedAccountsDataSizeLimit *uint32
-	// UseTransactionV1 opts facilitator-owned submissions into the v1 message
-	// format. The zero value preserves the existing v0 wire format.
-	UseTransactionV1 bool
+	// FacilitatorTransactionVersion is the message version (0 or 1) of the
+	// transaction the facilitator builds. The zero value is v0.
+	FacilitatorTransactionVersion int
 	// ComputeUnitPriceMicroLamports is converted to v1's total priority fee.
 	ComputeUnitPriceMicroLamports *uint64
 	// LatestBlockhash, when set, skips a blockhash fetch.
@@ -596,7 +616,9 @@ func compileChannelTransaction(
 	instructions []solana.Instruction,
 	opts SubmitSettleOptions,
 ) (*solana.Transaction, error) {
-	if opts.UseTransactionV1 {
+	switch opts.FacilitatorTransactionVersion {
+	case FacilitatorTransactionVersion0:
+	case FacilitatorTransactionVersion1:
 		tx, err := buildSettleTransaction(feePayerKey, blockhash, instructions, opts)
 		if err != nil {
 			return nil, err
@@ -605,6 +627,8 @@ func compileChannelTransaction(
 			return nil, err
 		}
 		return tx, nil
+	default:
+		return nil, fmt.Errorf("unsupported facilitator transaction version %d", opts.FacilitatorTransactionVersion)
 	}
 	budget, err := buildSettleComputeBudget(opts)
 	if err != nil {
@@ -637,20 +661,6 @@ func buildSettleComputeBudget(opts SubmitSettleOptions) ([]solana.Instruction, e
 	return append(instructions, priceIx), nil
 }
 
-func priorityFeeLamports(computeUnitLimit uint32, microLamports uint64) (uint64, error) {
-	whole := microLamports / 1_000_000
-	if computeUnitLimit > 0 && whole > math.MaxUint64/uint64(computeUnitLimit) {
-		return 0, fmt.Errorf("priority fee overflows uint64")
-	}
-	fee := whole * uint64(computeUnitLimit)
-	remainder := microLamports % 1_000_000
-	fraction := (remainder*uint64(computeUnitLimit) + 999_999) / 1_000_000
-	if fee > math.MaxUint64-fraction {
-		return 0, fmt.Errorf("priority fee overflows uint64")
-	}
-	return fee + fraction, nil
-}
-
 func buildSettleTransactionConfig(opts SubmitSettleOptions) (solana.TransactionConfig, error) {
 	limit := DefaultSettleComputeUnitLimit
 	if opts.ComputeUnitLimit != nil {
@@ -670,7 +680,7 @@ func buildSettleTransactionConfig(opts SubmitSettleOptions) (solana.TransactionC
 	if price == 0 {
 		return config, nil
 	}
-	fee, err := priorityFeeLamports(limit, price)
+	fee, err := svm.PriorityFeeLamports(limit, price)
 	if err != nil {
 		return solana.TransactionConfig{}, err
 	}

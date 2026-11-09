@@ -1,1 +1,0 @@
-`HTTPFacilitatorClient` again accepts path-keyed `create_headers` results whose per-path values are mappings other than `dict`, such as `httpx.Headers`. Since #3587 these raised `ValueError` as if they were a flat headers dict.

@@ -24,40 +24,7 @@ func logClaimAttestation(
 	result batchedfac.FacilitatorClaimResult,
 	signer *facilitatorEvmSigner,
 ) {
-	if result.Transaction == "" {
-		return
-	}
-	hash := result.Transaction
-	input, err := signer.TransactionInput(ctx, hash)
-	if err != nil {
-		fmt.Printf("[voucher store] Failed to load claim tx %s: %v\n", hash, err)
-		return
-	}
-	logs, err := signer.ReceiptLogs(ctx, hash)
-	if err != nil {
-		fmt.Printf("[voucher store] Failed to load claim receipt %s: %v\n", hash, err)
-		return
-	}
-	builderCode, _ := buildercode.ParseBuilderCodeSuffixFromCalldata("0x" + hex.EncodeToString(input))
-	attestation := batchsettlement.DecodeClaimAttestation(input, logs, result.Network, metadataOf(builderCode))
-
-	chargeCounts := make([]string, len(attestation.ChargeCounts))
-	for i, c := range attestation.ChargeCounts {
-		chargeCounts[i] = fmt.Sprintf("%d", c)
-	}
-
-	payload := map[string]interface{}{
-		"tx":           hash,
-		"functionName": attestation.FunctionName,
-		"chargeCounts": chargeCounts,
-		"builderCode":  nil,
-		"channels":     attestation.Channels,
-	}
-	if builderCode != nil {
-		payload["builderCode"] = builderCode
-	}
-	encoded, _ := json.Marshal(payload)
-	fmt.Printf("[voucher store] Claim attestation %s\n", string(encoded))
+	logSettlementAttestation(ctx, signer, result.Transaction, result.Network, "claim", "Claim", nil)
 }
 
 func logRefundSettlementAttestation(
@@ -65,39 +32,51 @@ func logRefundSettlementAttestation(
 	result batchedfac.FacilitatorRefundResult,
 	signer *facilitatorEvmSigner,
 ) {
-	if result.Transaction == "" {
+	logSettlementAttestation(ctx, signer, result.Transaction, result.Network, "refund", "Refund", map[string]any{
+		"channelId": result.Channel,
+	})
+}
+
+func logSettlementAttestation(
+	ctx context.Context,
+	signer *facilitatorEvmSigner,
+	hash, network, action, title string,
+	extra map[string]any,
+) {
+	if hash == "" {
 		return
 	}
-	hash := result.Transaction
 	input, err := signer.TransactionInput(ctx, hash)
 	if err != nil {
-		fmt.Printf("[voucher store] Failed to load refund tx %s: %v\n", hash, err)
+		fmt.Printf("[voucher store] Failed to load %s tx %s: %v\n", action, hash, err)
 		return
 	}
 	logs, err := signer.ReceiptLogs(ctx, hash)
 	if err != nil {
-		fmt.Printf("[voucher store] Failed to load refund receipt %s: %v\n", hash, err)
+		fmt.Printf("[voucher store] Failed to load %s receipt %s: %v\n", action, hash, err)
 		return
 	}
 	builderCode, _ := buildercode.ParseBuilderCodeSuffixFromCalldata("0x" + hex.EncodeToString(input))
-	attestation := batchsettlement.DecodeClaimAttestation(input, logs, result.Network, metadataOf(builderCode))
+	attestation := batchsettlement.DecodeClaimAttestation(input, logs, network, metadataOf(builderCode))
 
 	chargeCounts := make([]string, len(attestation.ChargeCounts))
-	for i, c := range attestation.ChargeCounts {
-		chargeCounts[i] = fmt.Sprintf("%d", c)
+	for i, count := range attestation.ChargeCounts {
+		chargeCounts[i] = fmt.Sprintf("%d", count)
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"tx":           hash,
-		"channelId":    result.Channel,
 		"functionName": attestation.FunctionName,
 		"chargeCounts": chargeCounts,
 		"builderCode":  nil,
 		"channels":     attestation.Channels,
 	}
+	for key, value := range extra {
+		payload[key] = value
+	}
 	if builderCode != nil {
 		payload["builderCode"] = builderCode
 	}
 	encoded, _ := json.Marshal(payload)
-	fmt.Printf("[voucher store] Refund attestation %s\n", string(encoded))
+	fmt.Printf("[voucher store] %s attestation %s\n", title, string(encoded))
 }

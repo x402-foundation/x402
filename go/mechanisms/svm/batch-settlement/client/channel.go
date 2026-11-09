@@ -193,6 +193,9 @@ type BuildDepositArgs struct {
 	VoucherSigner          string
 	Operator               string
 	AuthorizationExpiresAt *int64
+	// TransactionVersion is the open message version; the zero value builds
+	// version 0.
+	TransactionVersion solana.MessageVersion
 }
 
 // BuiltDeposit is a signed deposit payload and the tracker that produced it.
@@ -252,20 +255,21 @@ func BuildDepositPayload(ctx context.Context, args BuildDepositArgs) (*BuiltDepo
 	}
 	binding := batchsettlement.EncodeReceiverBindingMemo(args.ReceiverAuthorizer)
 	open, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
-		Payer:            args.Payer.Address(),
-		Payee:            feePayer,
-		Mint:             mint,
-		AuthorizedSigner: authorizer,
-		FeePayer:         feePayer,
-		TokenProgram:     tokenProgram,
-		Deposit:          args.DepositAmount,
-		Blockhash:        args.Blockhash,
-		OpenSlot:         args.OpenSlot,
-		GracePeriod:      uint32(args.WithdrawDelay),
-		Recipients:       []paymentchannels.Split{{Recipient: args.Receiver, BPS: batchsettlement.FullSplitBPS}},
-		Salt:             args.Salt,
-		Memo:             args.Memo,
-		BindingMemo:      &binding,
+		Payer:              args.Payer.Address(),
+		Payee:              feePayer,
+		Mint:               mint,
+		AuthorizedSigner:   authorizer,
+		FeePayer:           feePayer,
+		TokenProgram:       tokenProgram,
+		Deposit:            args.DepositAmount,
+		Blockhash:          args.Blockhash,
+		OpenSlot:           args.OpenSlot,
+		GracePeriod:        uint32(args.WithdrawDelay),
+		Recipients:         []paymentchannels.Split{{Recipient: args.Receiver, BPS: batchsettlement.FullSplitBPS}},
+		Salt:               args.Salt,
+		Memo:               args.Memo,
+		BindingMemo:        &binding,
+		TransactionVersion: args.TransactionVersion,
 	})
 	if err != nil {
 		return nil, err
@@ -322,6 +326,9 @@ type BuildRefundArgs struct {
 	Authorization *batchsettlement.BatchAuthorization
 	Blockhash     *solana.Hash
 	Memo          *string
+	// TransactionVersion is the request_close message version; the zero value
+	// builds version 0.
+	TransactionVersion solana.MessageVersion
 }
 
 // BuildRefundPayload builds a cooperative close, optionally with a payer-signed request_close.
@@ -354,11 +361,12 @@ func BuildRefundPayload(ctx context.Context, args BuildRefundArgs) (batchsettlem
 		return batchsettlement.BatchRefundPayload{}, err
 	}
 	tx, err := paymentchannels.BuildRequestCloseTransaction(paymentchannels.BuildRequestCloseArgs{
-		Payer:     args.Payer.Address(),
-		FeePayer:  feePayer,
-		ChannelID: channelID,
-		Blockhash: *args.Blockhash,
-		Memo:      args.Memo,
+		Payer:              args.Payer.Address(),
+		FeePayer:           feePayer,
+		ChannelID:          channelID,
+		Blockhash:          *args.Blockhash,
+		Memo:               args.Memo,
+		TransactionVersion: args.TransactionVersion,
 	})
 	if err != nil {
 		return batchsettlement.BatchRefundPayload{}, err

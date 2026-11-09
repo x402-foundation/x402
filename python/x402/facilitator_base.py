@@ -5,6 +5,7 @@ Contains shared logic for facilitator implementations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar
@@ -26,18 +27,22 @@ from .schemas import (
     RecoveredVerifyResult,
     SchemeNotFoundError,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettleResponse,
     SettleResultContext,
     SupportedKind,
     SupportedResponse,
     VerifyContext,
+    VerifyError,
     VerifyFailureContext,
     VerifyResponse,
     VerifyResultContext,
     derive_network_pattern,
     matches_network_pattern,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Type Aliases - Support both sync and async hooks
@@ -388,6 +393,9 @@ class x402FacilitatorBase:
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
 
+    def _warn_hook_failure(self, operation: str, phase: HookPhase, error: Exception) -> None:
+        logger.warning("[x402] Facilitator %s %s hook threw: %s", operation, phase, error)
+
     def _verify_core(
         self,
         payload: PaymentPayload | PaymentPayloadV1,
@@ -423,9 +431,7 @@ class x402FacilitatorBase:
         for hook in self._before_verify_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise VerifyError(result.reason, result.message)
 
         try:
             # Route by version
@@ -530,9 +536,7 @@ class x402FacilitatorBase:
         for hook in self._before_settle_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise SettleError(result.reason, result.message)
 
         try:
             # Route by version

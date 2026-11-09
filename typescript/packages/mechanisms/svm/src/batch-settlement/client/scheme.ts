@@ -24,6 +24,7 @@ import {
 } from "../../utils";
 import { MAX_WITHDRAW_DELAY, MIN_WITHDRAW_DELAY } from "../constants";
 import { BatchError } from "../errors";
+import { checkCorrectiveState } from "./corrective";
 import {
   BATCH_SETTLEMENT_SCHEME,
   isBatchPayload,
@@ -31,7 +32,6 @@ import {
   type BatchChannelState,
   type BatchPayload,
   type BatchVoucher,
-  type BatchVoucherState,
 } from "../types";
 import {
   type BatchClientSigner,
@@ -191,7 +191,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     if (context) this.creationContexts.set(requirements, context);
     // Fail closed before any channel work when the facilitator accepts no
     // transaction version this client can build (deposit, top-up, close).
-    resolveTransactionVersion(requirements.extra);
+    const transactionVersion = resolveTransactionVersion(
+      requirements.extra,
+      this.config.transactionVersions,
+    );
     const terms = await this.resolveTerms(requirements);
     const charge = parseU64(requirements.amount, "amount");
     const authorizationExpiresAt =
@@ -269,6 +272,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       const rpc = createRpcClient(requirements.network, this.config.rpcUrl);
       const blockhash = await resolveBlockhash(rpc, requirements);
       const topUp = await buildTopUpPaymentChannelTransaction({
+        transactionVersion,
         amount: topUpAmount,
         blockhash,
         channelId: existing.tracker.channelId,
@@ -338,6 +342,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       resolveOpenSlot(rpc, requirements),
     ]);
     const built = await buildDepositPayload({
+      transactionVersion,
       blockhash,
       depositAmount: deposit,
       feePayer: terms.feePayer,
@@ -408,7 +413,10 @@ export class BatchSvmScheme implements SchemeNetworkClient {
   ): Promise<Pick<PaymentPayload, "x402Version" | "payload">> {
     // Fail closed before any channel work when the facilitator accepts no
     // transaction version this client can build (deposit, top-up, close).
-    resolveTransactionVersion(requirements.extra);
+    const transactionVersion = resolveTransactionVersion(
+      requirements.extra,
+      this.config.transactionVersions,
+    );
     const cached = this.findCachedChannelForRoute(requirements);
     const located = await this.locateRefundChannel(requirements, cached);
     if (!located) throw new NoBatchChannelToRefundError();
@@ -436,6 +444,7 @@ export class BatchSvmScheme implements SchemeNetworkClient {
         feePayer: terms.feePayer,
         memo: terms.memo,
         payer: this.signer,
+        transactionVersion,
         ...credential,
       }),
     };
@@ -864,20 +873,16 @@ export class BatchSvmScheme implements SchemeNetworkClient {
       if (charged > authorized) return false;
     }
 
-    const voucherState = accept?.extra?.voucherState as BatchVoucherState | undefined;
-    if (voucherState) {
-      const signed = parseU64(voucherState.signedMaxClaimable, "signedMaxClaimable");
-      if (charged > signed) return false;
-      const verified = await verifyVoucherSignature({
-        message: encodeVoucherMessageBytes({
+    if (accept?.extra?.voucherState !== undefined) {
+      try {
+        await checkCorrectiveState({
+          accept,
+          channelConfig: pending.tracker.channelConfig,
           channelId: pending.tracker.channelId,
-          cumulativeAmount: signed,
-          expiresAt: BigInt(voucherState.expiresAt),
-        }),
-        signatureBase58: voucherState.signature,
-        signerBase58: pending.tracker.channelConfig.payerAuthorizer,
-      });
-      if (!verified) return false;
+        });
+      } catch {
+        return false;
+      }
     } else if (charged !== claimed) {
       // No proof: the only base a client may adopt unproven is the one the
       // chain itself reports as settled.
@@ -1069,6 +1074,14 @@ export class BatchSvmScheme implements SchemeNetworkClient {
     const feePayer = extra.feePayer;
     if (typeof feePayer !== "string" || feePayer.length === 0) {
       throw new Error("extra.feePayer must be a non-empty string");
+    }
+    // The client's key is both the channel payer and its voucher signer, and
+    // neither may be the sponsor: a sponsor that is also the payer could
+    // co-sign away the payer's own escrow.
+    if (feePayer === this.signer.address) {
+      throw new Error(
+        `${BatchError.FEE_PAYER_MISMATCH}: extra.feePayer must not equal the channel payer or payerAuthorizer`,
+      );
     }
     const withdrawDelay = extra.withdrawDelay;
     if (

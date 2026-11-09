@@ -155,6 +155,27 @@ describe("Sign-In-With-X Extension", () => {
       expect(result.success).toBe(false);
     });
 
+    it("should accept 1024 resources", () => {
+      const result = SIWxPayloadSchema.safeParse({
+        ...validPayload,
+        resources: Array.from({ length: 1024 }, () => "https://api.example.com/data"),
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("should reject a resources list longer than 1024 without an issue per element", () => {
+      const result = SIWxPayloadSchema.safeParse({
+        ...validPayload,
+        resources: Array.from({ length: 5000 }, () => 1),
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toHaveLength(1);
+        expect(result.error.issues[0]?.code).toBe("too_big");
+        expect(result.error.issues[0]?.path).toEqual(["resources"]);
+      }
+    });
+
     it("should accept payload with optional fields omitted", () => {
       const minimalPayload = {
         domain: "api.example.com",
@@ -193,6 +214,18 @@ describe("Sign-In-With-X Extension", () => {
     it("should throw on missing required fields", () => {
       const incomplete = safeBase64Encode(JSON.stringify({ domain: "example.com" }));
       expect(() => parseSIWxHeader(incomplete)).toThrow("Invalid SIWX header");
+    });
+
+    it("should throw one resources issue when the list is longer than 1024", () => {
+      const encoded = safeBase64Encode(
+        JSON.stringify({
+          ...validPayload,
+          resources: Array.from({ length: 5000 }, () => 1),
+        }),
+      );
+      expect(() => parseSIWxHeader(encoded)).toThrow(
+        "Invalid SIWX header: resources: Too big: expected array to have <=1024 items",
+      );
     });
   });
 
