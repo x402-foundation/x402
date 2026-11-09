@@ -2,6 +2,8 @@
 
 Sui implementation of the x402 `exact` payment scheme. The facilitator accepts any transaction whose effects credit `payTo` with exactly `amount`, so a payment may be funded from an address balance, coins, swaps, or withdrawals.
 
+Verification simulates the signed bytes with transaction checks enabled and gas selection disabled. It rejects simulations that use mocked gas, including for sponsored payments. The gas owner's funds must cover gas in addition to the transaction's withdrawals; a simulated recipient credit funded by a mock gas coin is not a valid payment.
+
 Supports `sui:mainnet`, `sui:testnet`, and `sui:devnet`.
 
 ## Installation

@@ -8,6 +8,7 @@
  *
  * The USDC case also needs testnet USDC (https://faucet.circle.com/) in the
  * payer's account and skips without it.
+ * The mocked-gas regression only simulates and needs no funded keys.
  */
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
@@ -261,6 +262,72 @@ async function suiChange(digest: string, owner: string): Promise<bigint> {
   );
   return BigInt(change?.amount ?? 0);
 }
+
+describe("Sui mocked-gas verification", () => {
+  it(
+    "rejects a zero-balance sender paying from a mock gas coin",
+    async () => {
+      const sender = new Ed25519Keypair();
+      const payTo = new Ed25519Keypair().toSuiAddress();
+      const [{ systemState }, { chainIdentifier }, { referenceGasPrice }] = await Promise.all([
+        suiClient.core.getCurrentSystemState(),
+        suiClient.core.getChainIdentifier(),
+        suiClient.core.getReferenceGasPrice(),
+      ]);
+      const epoch = BigInt(systemState.epoch);
+      const tx = new Transaction();
+      tx.setSender(sender.toSuiAddress());
+      const [coin] = tx.splitCoins(tx.gas, [BigInt(AMOUNT)]);
+      tx.transferObjects([coin], tx.pure.address(payTo));
+      tx.setGasPayment([]);
+      tx.setGasPrice(referenceGasPrice);
+      tx.setGasBudget(3_000_000);
+      tx.setExpiration({
+        ValidDuring: {
+          minEpoch: String(epoch),
+          maxEpoch: String(epoch + 1n),
+          minTimestamp: null,
+          maxTimestamp: null,
+          chain: chainIdentifier,
+          nonce: 0,
+        },
+      });
+      const transaction = await tx.build();
+      const simulation = await suiClient.core.simulateTransaction({
+        transaction,
+        checksEnabled: true,
+        doGasSelection: false,
+        include: { balanceChanges: true },
+      });
+      expect(simulation.$kind).toBe("Transaction");
+      expect(simulation.gasPaymentMocked).toBe(true);
+      expect(simulation.Transaction?.balanceChanges).toContainEqual({
+        address: payTo,
+        coinType: normalizeStructTag(SUI),
+        amount: AMOUNT,
+      });
+
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: NETWORK,
+        asset: SUI,
+        amount: AMOUNT,
+        payTo,
+        maxTimeoutSeconds: 300,
+        extra: {},
+      };
+      const { bytes, signature } = await sender.signTransaction(transaction);
+      const result = await facilitatorScheme().verify(
+        { x402Version: 2, accepted: requirements, payload: { transaction: bytes, signature } },
+        requirements,
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_sui_payload_simulation_failed");
+      expect(result.invalidMessage).toBe("simulation used a mocked gas payment");
+    },
+    TIMEOUT,
+  );
+});
 
 describeLive("Sui Integration Tests", () => {
   let currentEpoch: bigint;

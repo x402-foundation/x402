@@ -24,6 +24,7 @@ import {
   successRecord,
   testPayload,
   testRequirements,
+  toBase64,
   validDuring,
   type TestTransactionOptions,
 } from "./helpers";
@@ -53,6 +54,7 @@ describe("ExactSuiScheme facilitator", () => {
     mock.core.simulateTransaction.mockResolvedValue({
       $kind: "Transaction",
       Transaction: successRecord(exactBalanceChanges()),
+      gasPaymentMocked: false,
     });
   });
 
@@ -88,6 +90,36 @@ describe("ExactSuiScheme facilitator", () => {
     it("accepts a self-paid payment with gas coins", async () => {
       const result = await scheme.verify(await payment({ gasCoins: 1 }), testRequirements());
       expect(result.isValid).toBe(true);
+    });
+
+    it.each<[string, TestTransactionOptions]>([
+      ["a command using GasCoin", { useGasCoin: true }],
+      ["a SUI withdrawal competing with gas", { withdrawFrom: "sender" }],
+      ["a payment without enough SUI for gas", {}],
+    ])("rejects mocked gas for %s even when the recipient is credited", async (_, options) => {
+      mock.core.simulateTransaction.mockResolvedValue({
+        $kind: "Transaction",
+        Transaction: successRecord(exactBalanceChanges()),
+        gasPaymentMocked: true,
+      });
+
+      const result = await scheme.verify(await payment(options), testRequirements());
+
+      expect(result).toEqual({
+        isValid: false,
+        invalidReason: "invalid_exact_sui_payload_simulation_failed",
+        invalidMessage: "simulation used a mocked gas payment",
+        payer,
+      });
+    });
+
+    it("accepts a gasless payment simulated without mocked gas", async () => {
+      const tx = Transaction.from(await buildTestTransaction());
+      tx.setGasPrice(0);
+      tx.setGasBudget(0);
+      const payload = testPayload(await signPayload(toBase64(await tx.build())));
+
+      expect((await scheme.verify(payload, testRequirements())).isValid).toBe(true);
     });
 
     it("rejects a wrong x402 version", async () => {
@@ -261,6 +293,22 @@ describe("ExactSuiScheme facilitator", () => {
         expect(result).toEqual({ isValid: true, invalidReason: undefined, payer });
       });
 
+      it("rejects mocked gas when the sponsor cannot fund gas", async () => {
+        mock.core.simulateTransaction.mockResolvedValue({
+          $kind: "Transaction",
+          Transaction: successRecord(exactBalanceChanges()),
+          gasPaymentMocked: true,
+        });
+
+        const result = await sponsored.verify(
+          await payment({ sponsored: true }, requirements),
+          requirements,
+        );
+
+        expect(result.invalidReason).toBe("invalid_exact_sui_payload_simulation_failed");
+        expect(result.invalidMessage).toBe("simulation used a mocked gas payment");
+      });
+
       it.each<[string, TestTransactionOptions]>([
         ["a non-empty gas payment", { sponsored: true, gasCoins: 1 }],
         ["a budget over the cap", { sponsored: true, gasBudget: 10_000_001 }],
@@ -402,7 +450,11 @@ describe("ExactSuiScheme facilitator", () => {
       const payload = await payment();
       await scheme.verify(payload, testRequirements());
       expect(mock.core.simulateTransaction).toHaveBeenCalledWith(
-        expect.objectContaining({ doGasSelection: false, include: { balanceChanges: true } }),
+        expect.objectContaining({
+          checksEnabled: true,
+          doGasSelection: false,
+          include: { balanceChanges: true },
+        }),
       );
     });
 

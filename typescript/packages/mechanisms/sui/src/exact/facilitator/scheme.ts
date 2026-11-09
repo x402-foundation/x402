@@ -584,15 +584,24 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     // Without `doGasSelection: false`, gRPC and GraphQL fullnodes may replace an
     // empty gas payment with the gas owner's coins, so the simulation would not
     // be of the signed bytes. JSON-RPC ignores the option and never selects gas.
+    // An empty payment may instead receive a mock gas coin; reject its effects
+    // because they do not establish that the signed transaction can be funded.
     const simulation = await client.core.simulateTransaction({
       transaction: transactionBytes,
       include: { balanceChanges: true },
+      checksEnabled: true,
       doGasSelection: false,
     } as SuiClientTypes.SimulateTransactionOptions<{ balanceChanges: true }>);
     if (simulation.$kind === "FailedTransaction") {
       return {
         reason: "invalid_exact_sui_payload_simulation_failed",
         message: simulation.FailedTransaction.status.error?.message ?? "simulation failed",
+      };
+    }
+    if (simulation.gasPaymentMocked) {
+      return {
+        reason: "invalid_exact_sui_payload_simulation_failed",
+        message: "simulation used a mocked gas payment",
       };
     }
     const problem = this.matchRecipients(simulation.Transaction.balanceChanges, requirements);
