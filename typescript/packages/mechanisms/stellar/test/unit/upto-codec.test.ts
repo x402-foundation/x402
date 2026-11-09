@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { StrKey, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import { CONTRACT, payer, terms } from "./upto-helpers";
 import {
   I128_MAX,
   UPTO_DEPLOYMENTS,
+  UPTO_PUBNET_DEPLOYMENT,
   UPTO_TESTNET_DEPLOYMENT,
   authorityEntry,
   parseAtomicAmount,
@@ -82,7 +85,26 @@ describe("shared", () => {
   it("resolves the settlement contract", () => {
     expect(resolveUptoContract("stellar:testnet", { "stellar:testnet": CONTRACT })).toBe(CONTRACT);
     expect(resolveUptoContract("stellar:testnet")).toBe(UPTO_TESTNET_DEPLOYMENT.address);
-    expect(resolveUptoContract("stellar:pubnet")).toBe(UPTO_DEPLOYMENTS["stellar:pubnet"]?.address);
+    expect(resolveUptoContract("stellar:pubnet")).toBe(UPTO_PUBNET_DEPLOYMENT.address);
+    expect(resolveUptoContract("stellar:pubnet", { "stellar:pubnet": CONTRACT })).toBe(CONTRACT);
+    expect(resolveUptoContract("eip155:8453")).toBeUndefined();
+  });
+
+  it("builds in the deployments their records name", () => {
+    for (const [network, file] of [
+      ["stellar:testnet", "testnet.json"],
+      ["stellar:pubnet", "pubnet.json"],
+    ] as const) {
+      const path = `../../../../../../contracts/stellar/deployments/${file}`;
+      const record = JSON.parse(
+        readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"),
+      );
+      expect(record.caip2).toBe(network);
+      expect(UPTO_DEPLOYMENTS[network]).toEqual({
+        address: record.contract_id,
+        wasmHash: record.wasm_sha256,
+      });
+    }
   });
 
   it("names every code once, each with a reason", () => {

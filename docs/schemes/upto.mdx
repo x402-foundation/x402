@@ -432,7 +432,7 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
 
 ### Stellar Implementation
 
-`upto` on Stellar uses the `x402-upto-stellar` settlement contract, deployed on `stellar:testnet` at `CBTVKCHLSGQ3WSV3NKSU6FZR4FZMC6ENMDMXUS5XQ66HYVUUHYE3TU7U` and built into `@x402/stellar`. The client signs one Soroban authorization entry over the terms — recipient, token, maximum, expiration and the facilitator's settlement authority — and never over the final amount. The facilitator settles the actual amount as that settlement authority; the contract enforces the maximum, and the Soroban host enforces the signature, the expiration and single use. The facilitator sponsors every fee and never holds the buyer's funds.
+`upto` on Stellar uses the `x402-upto-stellar` settlement contract, deployed on `stellar:testnet` at `CBTVKCHLSGQ3WSV3NKSU6FZR4FZMC6ENMDMXUS5XQ66HYVUUHYE3TU7U` and on `stellar:pubnet` at `CAHZA4BYDJFQLNYX43LVPKN676IDELNIKP7BOYF2CT7MR2OG2BAZZHT4`, both built into `@x402/stellar`. The client signs one Soroban authorization entry over the terms — recipient, token, maximum, expiration and the facilitator's settlement authority — and never over the final amount. The facilitator settles the actual amount as that settlement authority; the contract enforces the maximum, and the Soroban host enforces the signature, the expiration and single use. The facilitator sponsors every fee and never holds the buyer's funds.
 
 The facilitator advertises the settlement authority as `extra.facilitatorAddress` in `/supported`, and the server copies it into the payment requirements. It defaults to the facilitator's first signer:
 
@@ -444,7 +444,7 @@ const signer = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY, "stellar:tes
 facilitator.register("stellar:testnet", new UptoStellarScheme([signer]));
 ```
 
-Options include `settlementAuthority` (a separate authority account), `feeBumpSigner` (a sponsor that pays fees through a fee bump), `maxTransactionFeeStroops` (default 500,000) and `contracts` for networks without a built-in deployment. Smart-account payers pass their own entry signer to the client (`authorizeEntry`).
+Options include `settlementAuthority` (a separate authority account), `feeBumpSigner` (a sponsor that pays fees through a fee bump), `maxTransactionFeeStroops` (default 500,000) and `contracts` to use another settlement contract than the built-in one. Smart-account payers pass their own entry signer to the client (`authorizeEntry`).
 
 ### Examples
 

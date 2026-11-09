@@ -145,7 +145,7 @@ import { UptoStellarScheme } from "@x402/stellar/upto/facilitator";
 facilitator.register("stellar:testnet", new UptoStellarScheme([signer], { feeBumpSigner: sponsor }));
 ```
 
-- The settlement contract is built in for `stellar:testnet` (`UPTO_TESTNET_DEPLOYMENT`). Other networks need the `contracts` option (by network) on the client and the facilitator.
+- The settlement contract is built in for `stellar:testnet` (`UPTO_TESTNET_DEPLOYMENT`) and `stellar:pubnet` (`UPTO_PUBNET_DEPLOYMENT`). The `contracts` option (by network) on the client and the facilitator replaces them, for example on a local network.
 - `/supported` advertises `extra: { areFeesSponsored: true, facilitatorAddress }`; the server copies both into the requirements.
 - A zero amount is settled on-chain: it uses up the authorization and moves nothing.
 - A repeat of a settlement returns its result, also shortly after the authorization expires, and a repeat for another amount is refused. These records live in the memory of one process. A settlement that may have been broadcast is answered `settlement_pending` with its hash.

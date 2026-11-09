@@ -15,6 +15,7 @@ export { UptoStellarScheme } from "./upto/client";
 export type { UptoStellarExtra, UptoStellarPayload } from "./upto/types";
 export {
   UPTO_DEPLOYMENTS,
+  UPTO_PUBNET_DEPLOYMENT,
   UPTO_TESTNET_DEPLOYMENT,
   uptoStandardCodes,
   uptoStellarCodes,

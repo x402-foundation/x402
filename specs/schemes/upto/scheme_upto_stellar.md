@@ -71,12 +71,12 @@ A Stellar Asset Contract uses the same numbers for its own errors, so implementa
 
 ### Deployments
 
-The address derives from the deployer and the salt `sha256("x402-upto-stellar/v1.1")` (`379714072c27ad068d175a4e64017065e569fb9fd33b9c7c8b59428741f7330b`); any contract change is a new salt, address and SDK constant.
+The address derives from the deployer and the salt `sha256("x402-upto-stellar/v1.1")` (`379714072c27ad068d175a4e64017065e569fb9fd33b9c7c8b59428741f7330b`); any contract change is a new salt, address and SDK constant. Both networks run the same WASM; the addresses differ because the deployers do.
 
 | Network           | Contract                                                   | WASM sha256                                                        | Record                                                                            |
 | ----------------- | ---------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | `stellar:testnet` | `CBTVKCHLSGQ3WSV3NKSU6FZR4FZMC6ENMDMXUS5XQ66HYVUUHYE3TU7U` | `cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797` | [`deployments/testnet.json`](../../../contracts/stellar/deployments/testnet.json) |
-| `stellar:pubnet`  | reserved; not deployed                                     | —                                                                  | —                                                                                 |
+| `stellar:pubnet`  | `CAHZA4BYDJFQLNYX43LVPKN676IDELNIKP7BOYF2CT7MR2OG2BAZZHT4` | `cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797` | [`deployments/pubnet.json`](../../../contracts/stellar/deployments/pubnet.json)   |
 
 The deployer has no power over a deployment. Address and WASM hash are per-network constants of each implementation, not negotiated in `extra`: a client MUST NOT sign for a contract named at runtime.
 
@@ -377,7 +377,7 @@ A `C…` payer's `__check_auth` sees two contexts, `C_UPTO.settle(terms)` and `a
 
 ### Reproducible build and verification
 
-[`contracts/stellar/upto`](../../../contracts/stellar/upto) is the complete build input. `stellar contract build --optimize` (stellar-cli 28.1.0, Rust 1.98.0) with [SEP-55] `source_repo` metadata naming the repository it is attested from, in the digest-pinned image of the contract [README](../../../contracts/stellar/README.md), reproduces the WASM hash in the [deployments](#deployments) table, as does `stellar contract fetch --id <contract> --network testnet | sha256sum`.
+[`contracts/stellar/upto`](../../../contracts/stellar/upto) is the complete build input. `stellar contract build --optimize` (stellar-cli 28.1.0, Rust 1.98.0) with [SEP-55] `source_repo` metadata naming the repository it is attested from, in the digest-pinned image of the contract [README](../../../contracts/stellar/README.md), reproduces the WASM hash in the [deployments](#deployments) table, as does `stellar contract fetch --id <contract> --network testnet | sha256sum` (on pubnet, pass `--rpc-url` and `--network-passphrase` instead of `--network`).
 
 [SEP-41]: https://stellar.org/protocol/sep-41
 [SEP-55]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0055.md

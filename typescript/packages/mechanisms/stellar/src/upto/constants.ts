@@ -19,11 +19,17 @@ export const UPTO_TESTNET_DEPLOYMENT: UptoContractDeployment = Object.freeze({
   wasmHash: "cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797",
 });
 
-/** Canonical deployments by network. Pubnet is not deployed yet. */
+/** The pubnet deployment of `contracts/stellar/upto` (`contracts/stellar/deployments/pubnet.json`). */
+export const UPTO_PUBNET_DEPLOYMENT: UptoContractDeployment = Object.freeze({
+  address: "CAHZA4BYDJFQLNYX43LVPKN676IDELNIKP7BOYF2CT7MR2OG2BAZZHT4",
+  wasmHash: "cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797",
+});
+
+/** Canonical deployments by network. */
 export const UPTO_DEPLOYMENTS: Readonly<Record<string, UptoContractDeployment | undefined>> =
   Object.freeze({
     [STELLAR_TESTNET_CAIP2]: UPTO_TESTNET_DEPLOYMENT,
-    [STELLAR_PUBNET_CAIP2]: undefined,
+    [STELLAR_PUBNET_CAIP2]: UPTO_PUBNET_DEPLOYMENT,
   });
 
 /** `Error(Contract, #n)` raised by the settlement contract. */

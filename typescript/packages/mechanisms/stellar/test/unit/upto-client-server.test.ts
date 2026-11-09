@@ -137,7 +137,6 @@ describe("upto client", () => {
   it.each<[string, Partial<PaymentRequirements>]>([
     ["another scheme", { scheme: "exact" }],
     ["a non-Stellar network", { network: "eip155:8453" }],
-    ["a network without a settlement contract", { network: "stellar:pubnet" }],
     ["a zero maximum", { amount: "0" }],
     ["a decimal maximum", { amount: "1.5" }],
     ["a G… asset", { asset: payer.publicKey() }],

@@ -1,0 +1,46 @@
+{
+  "contract": "upto",
+  "network": "pubnet",
+  "caip2": "stellar:pubnet",
+  "network_passphrase": "Public Global Stellar Network ; September 2015",
+  "rpc_url": "https://mainnet.sorobanrpc.com",
+  "contract_id": "CAHZA4BYDJFQLNYX43LVPKN676IDELNIKP7BOYF2CT7MR2OG2BAZZHT4",
+  "wasm_sha256": "cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797",
+  "wasm_size": 4451,
+  "crate": "x402-upto-stellar",
+  "source": "contracts/stellar/upto",
+  "source_sha256": "c783ef0838c7d2c235ded5c4e28b8303e7d7e387362ff868f0a3cc5018802343",
+  "bldimg": "docker.io/stellar/stellar-cli:28.0.0-rust1.98.0-slim-trixie-amd64-0@sha256:3901802ef2324ff9563a50995279818ca4b98938b45e1dab0e1e7c5d69adb5a9",
+  "bldopt": ["--locked", "--optimize"],
+  "build_cli": "28.1.0",
+  "repository": "https://github.com/tolgayayci/rail402",
+  "commit": "30438fc2eb85c18ef3d7b0076654fcfa8f966f55",
+  "deployer": "GDNEMVVIZENA2WNMGIBPFUNMIKTLDLUFUXKEIG6DYZWHJVFDSWICCFJY",
+  "salt": "379714072c27ad068d175a4e64017065e569fb9fd33b9c7c8b59428741f7330b",
+  "salt_preimage": "x402-upto-stellar/v1.1",
+  "stellar_cli": "28.0.0",
+  "transactions": {
+    "upload": {
+      "tx": "6e7e9967844f8b73e31cc3a85209adca1e7ec89ee4b412e3fe13c28354989f55",
+      "ledger": 65308169
+    },
+    "deploy": {
+      "tx": "c05705aa9d28ee9be02847d384e5ee115e72ac57bb9ea76a04182b5576af9746",
+      "ledger": 65308171
+    },
+    "extend_instance": {
+      "tx": "c0b77b40de3a3678d66c9bc6a4886e41a7d48d49bb09b3648f0e6959b55e06b2",
+      "ledger": 65308173,
+      "extend_to": 3110399
+    },
+    "extend_code": {
+      "tx": "9c7fef426fb601d92c8f130c23dead7506a6abb7a7dfab4ab77096a6285851a5",
+      "ledger": 65308175,
+      "extend_to": 3110399
+    }
+  },
+  "live_until_ledger": {
+    "instance": 68418572,
+    "code": 68418574
+  }
+}
