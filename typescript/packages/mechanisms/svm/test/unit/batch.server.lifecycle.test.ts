@@ -1,6 +1,6 @@
 import { generateKeyPairSigner } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildDepositPayload, buildRefundPayload } from "../../src/batch-settlement/client/channel";
 import { verifyCloseAuthorization } from "../../src/batch-settlement/closeAuthorization";
@@ -558,6 +558,30 @@ describe("batch server lifecycle boundaries", () => {
     );
   });
 
+  it("aborts verify when the refreshed baseline cannot be read", async () => {
+    const store = new MemoryChannelStore();
+    const server = new BatchSvmScheme({ receiverAuthorizer, store });
+    const payment: PaymentPayload = {
+      accepted: requirements(),
+      payload: { channelConfig, type: "voucher", voucher: depositPayload.voucher },
+      x402Version: 2,
+    };
+    const ctx = { declaredExtensions: {}, paymentPayload: payment, requirements: requirements() };
+    await expect(server.schemeHooks.onBeforeVerify!(ctx)).resolves.toBeUndefined();
+    vi.spyOn(store, "get").mockRejectedValueOnce(new Error("store unavailable"));
+    await expect(
+      server.schemeHooks.onAfterVerify!({
+        ...ctx,
+        result: {
+          extra: { balance: "10000", channelId, totalClaimed: "0", withdrawRequestedAt: 0 },
+          isValid: true,
+          payer: payer.address,
+        },
+      }),
+    ).resolves.toMatchObject({ abort: true, reason: "transaction_failed" });
+    expect((await store.get(channelId))?.reservations ?? {}).toEqual({});
+  });
+
   it("rejects busy, closing, and mismatched stored channel reservations", async () => {
     const cases = [
       state({
@@ -1025,7 +1049,7 @@ describe("batch server lifecycle boundaries", () => {
         paymentPayload: payment,
         requirements: requirements(),
       }),
-    ).resolves.toMatchObject({ abort: true, reason: BatchError.CUMULATIVE_AMOUNT_MISMATCH });
+    ).resolves.toMatchObject({ abort: true, reason: BatchError.CLOSE_STATE });
   });
 
   it("refuses a first deposit whose open binds a different receiver authorizer", async () => {

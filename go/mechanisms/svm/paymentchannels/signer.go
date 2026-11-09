@@ -140,7 +140,7 @@ func (r channelHistoryReads) GetTransaction(ctx context.Context, signature solan
 	if err != nil {
 		return "", err
 	}
-	version := uint64(0)
+	version := svm.MaxSupportedTxVersion
 	result, err := client.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
 		Encoding:                       solana.EncodingBase64,
 		Commitment:                     rpc.CommitmentConfirmed,

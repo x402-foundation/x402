@@ -222,6 +222,114 @@ func TestPaymentRoundTripper_RejectsOversizedAuthRetry402(t *testing.T) {
 	}
 }
 
+func TestPaymentRoundTripper_RejectsOversizedPaidRetry402(t *testing.T) {
+	scheme := &hookSchemeClient{scheme: "test-scheme"}
+	x402Client := x402.Newx402Client().DisableSpendControls()
+	x402Client.Register("eip155:1", scheme)
+
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+	encodedRequired := paymentRequiredHeader(t, accepts)
+	paidBody := &oneShotBody{reader: io.LimitReader(testZeroReader{}, maxControlPlaneResponseBytes+1)}
+
+	rt := &PaymentRoundTripper{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Header.Get("PAYMENT-SIGNATURE") == "" {
+				return stringResponse(http.StatusPaymentRequired, map[string]string{
+					"PAYMENT-REQUIRED": encodedRequired,
+				}, "")
+			}
+			return &http.Response{
+				StatusCode: http.StatusPaymentRequired,
+				Header:     make(http.Header),
+				Body:       paidBody,
+			}, nil
+		}),
+		x402Client: Newx402HTTPClient(x402Client),
+		retryCount: &sync.Map{},
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.example.com/data", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+		t.Fatalf("RoundTrip() response = %v, want nil", resp)
+	}
+	if !errors.Is(err, ErrResponseBodyTooLarge) {
+		t.Fatalf("RoundTrip() error = %v, want ErrResponseBodyTooLarge", err)
+	}
+	if !paidBody.closed {
+		t.Fatal("paid retry response body was not closed")
+	}
+}
+
+func TestPaymentRoundTripper_RejectsOversizedRecovery402(t *testing.T) {
+	scheme := &hookSchemeClient{scheme: "test-scheme", signalRecover: true}
+	x402Client := x402.Newx402Client().DisableSpendControls()
+	x402Client.Register("eip155:1", scheme)
+
+	accepts := []types.PaymentRequirements{{
+		Scheme:  "test-scheme",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "100",
+		PayTo:   "0xrecipient",
+	}}
+	encodedRequired := paymentRequiredHeader(t, accepts)
+	recoveryBody := &oneShotBody{reader: io.LimitReader(testZeroReader{}, maxControlPlaneResponseBytes+1)}
+	attempt := 0
+
+	rt := &PaymentRoundTripper{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			attempt++
+			if req.Header.Get("PAYMENT-SIGNATURE") == "" {
+				return stringResponse(http.StatusPaymentRequired, map[string]string{
+					"PAYMENT-REQUIRED": encodedRequired,
+				}, "")
+			}
+			if attempt == 2 {
+				return stringResponse(http.StatusPaymentRequired, map[string]string{
+					"PAYMENT-REQUIRED": encodedRequired,
+				}, "")
+			}
+			return &http.Response{
+				StatusCode: http.StatusPaymentRequired,
+				Header:     make(http.Header),
+				Body:       recoveryBody,
+			}, nil
+		}),
+		x402Client: Newx402HTTPClient(x402Client),
+		retryCount: &sync.Map{},
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.example.com/data", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+		t.Fatalf("RoundTrip() response = %v, want nil", resp)
+	}
+	if !errors.Is(err, ErrResponseBodyTooLarge) {
+		t.Fatalf("RoundTrip() error = %v, want ErrResponseBodyTooLarge", err)
+	}
+	if !recoveryBody.closed {
+		t.Fatal("recovery response body was not closed")
+	}
+	if attempt != 3 {
+		t.Fatalf("attempts = %d, want 3", attempt)
+	}
+}
+
 func TestPaymentRoundTripper_OnPaymentRequiredHookSkippedWithoutHeaders(t *testing.T) {
 	required := types.PaymentRequired{
 		X402Version: 2,
@@ -650,6 +758,15 @@ func TestGetPaymentRequiredResponse(t *testing.T) {
 
 	if result.X402Version != 1 {
 		t.Errorf("Expected version 1, got %d", result.X402Version)
+	}
+
+	v1LegacyBody := []byte(`{"x402Version":1,"accepts":[{"scheme":"exact","network":"base-sepolia","maxAmountRequired":"10000","resource":"https://api.example.com/premium-data","payTo":"0xrecipient","maxTimeoutSeconds":60,"asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e"}]}`)
+	result, err = client.GetPaymentRequiredResponse(map[string]string{}, v1LegacyBody)
+	if err != nil {
+		t.Fatalf("Unexpected error for v1 legacy network: %v", err)
+	}
+	if result.X402Version != 1 || len(result.Accepts) != 1 || result.Accepts[0].Network != "base-sepolia" {
+		t.Fatalf("decoded v1 legacy network: %+v", result)
 	}
 
 	// Test no payment required found

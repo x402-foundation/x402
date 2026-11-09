@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
 import { BatchSettlementChannelManager } from "../../../src/batch-settlement/server/channelManager";
-import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
+import {
+  InMemoryChannelStorage,
+  type Channel,
+  type ChannelLockStorage,
+  type ChannelStorage,
+} from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import { signVoucher } from "../../../src/batch-settlement/client/voucher";
 import type {
@@ -18,7 +23,12 @@ import type {
   VerifyResponse,
   SettleResponse,
 } from "@x402/core/types";
-import { x402ResourceServer, type FacilitatorClient } from "@x402/core/server";
+import {
+  x402ResourceServer,
+  AfterSettleAbortError,
+  isAfterSettleAborted,
+  type FacilitatorClient,
+} from "@x402/core/server";
 import { privateKeyToAccount } from "viem/accounts";
 import * as Errors from "../../../src/batch-settlement/errors";
 
@@ -48,8 +58,8 @@ async function runBeforeVerify(
   server: BatchSettlementEvmScheme,
   paymentPayload: PaymentPayload,
   requirements: PaymentRequirements,
-): Promise<void> {
-  await server.schemeHooks.onBeforeVerify!({
+) {
+  return server.schemeHooks.onBeforeVerify!({
     paymentPayload,
     requirements,
   } as never);
@@ -62,10 +72,39 @@ function inferCharged(signedMaxClaimable: string, amount: string, isPaid: boolea
   return signed < amt ? "0" : (signed - amt).toString();
 }
 
+function lockStorage(server: BatchSettlementEvmScheme): ChannelLockStorage {
+  const locks = server.getLockStorage();
+  if (!locks) {
+    throw new Error("expected self-managed lock storage");
+  }
+  return locks;
+}
+
 /**
- * Simulates the post-verify reserved state for settle/cleanup tests: writes a live
- * pending reservation to storage (building a provisional channel when none exists) and
- * records the matching request context, mirroring what `handleAfterVerify` produces.
+ * Runs the afterSettle hook and reports an AfterSettleAbortError as `{ abort, reason }`.
+ *
+ * @param server - Scheme under test.
+ * @param ctx - Post-settle lifecycle context.
+ * @returns The abort directive, or undefined when the hook resolves without aborting.
+ */
+async function settleAbort(
+  server: BatchSettlementEvmScheme,
+  ctx: never,
+): Promise<{ abort: true; reason: string } | undefined> {
+  try {
+    await server.schemeHooks.onAfterSettle!(ctx);
+    return undefined;
+  } catch (error) {
+    if (error instanceof AfterSettleAbortError) {
+      return { abort: true, reason: error.reason };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Simulates the post-verify reserved state for settle/cleanup tests: acquires an
+ * admission lock and records the matching request context.
  */
 async function reservePending(
   server: BatchSettlementEvmScheme,
@@ -81,41 +120,29 @@ async function reservePending(
   const isPaid = raw.type === "voucher" || raw.type === "deposit";
   const pendingId = `pending-${Math.random().toString(36).slice(2)}`;
   const now = Date.now();
-  const storage = server.getStorage();
-  const snapshot = await storage.get(channelId);
+  const snapshot = await server.getStorage().get(channelId);
+  const channelSnapshot: Channel = snapshot ?? {
+    channelId,
+    channelConfig: raw.channelConfig,
+    chargedCumulativeAmount: inferCharged(
+      raw.voucher.maxClaimableAmount,
+      requirements.amount,
+      isPaid,
+    ),
+    signedMaxClaimable: raw.voucher.maxClaimableAmount,
+    signature: raw.voucher.signature,
+    balance: "0",
+    totalClaimed: "0",
+    withdrawRequestedAt: 0,
+    refundNonce: 0,
+    lastRequestTimestamp: now,
+  };
 
-  await storage.updateChannel(channelId, current => {
-    const base: Channel = current ?? {
-      channelId,
-      channelConfig: raw.channelConfig,
-      chargedCumulativeAmount: inferCharged(
-        raw.voucher.maxClaimableAmount,
-        requirements.amount,
-        isPaid,
-      ),
-      signedMaxClaimable: raw.voucher.maxClaimableAmount,
-      signature: raw.voucher.signature,
-      balance: "0",
-      totalClaimed: "0",
-      withdrawRequestedAt: 0,
-      refundNonce: 0,
-      lastRequestTimestamp: now,
-    };
-    return {
-      ...base,
-      pendingRequest: {
-        pendingId,
-        signedMaxClaimable: raw.voucher.maxClaimableAmount,
-        expiresAt: now + 600_000,
-      },
-      lastRequestTimestamp: now,
-    };
-  });
-
+  await lockStorage(server).acquire(channelId, pendingId, 600_000);
   server.mergeRequestContext(paymentPayload, {
     channelId,
     pendingId,
-    channelSnapshot: snapshot,
+    channelSnapshot,
     reservationCommitted: true,
   });
 }
@@ -279,6 +306,7 @@ describe("BatchSettlementEvmScheme — construction", () => {
     expect(server.scheme).toBe("batch-settlement");
     expect(server.getEnforceMinDeposit()).toBe(false);
     expect(server.getStorage()).toBeInstanceOf(InMemoryChannelStorage);
+    expect(server.getLockStorage()).toBe(server.getStorage());
     expect(server.getReceiverAddress()).toBe(RECEIVER);
     expect(server.getWithdrawDelay()).toBe(900);
     expect(server.getOnchainStateTtlMs()).toBe(300_000);
@@ -300,9 +328,33 @@ describe("BatchSettlementEvmScheme — construction", () => {
       receiverAuthorizerSigner: signer,
     });
     expect(server.getStorage()).toBe(storage);
+    expect(server.getLockStorage()).toBe(storage);
     expect(server.getWithdrawDelay()).toBe(1800);
     expect(server.getOnchainStateTtlMs()).toBe(45_000);
     expect(server.getReceiverAuthorizerSigner()).toBe(signer);
+  });
+
+  it("uses a separate in-memory lock store when storage has no lock methods", () => {
+    const inner = new InMemoryChannelStorage();
+    const storage: ChannelStorage = {
+      get: channelId => inner.get(channelId),
+      list: () => inner.list(),
+      updateChannel: (channelId, update) => inner.updateChannel(channelId, update),
+    };
+    const server = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    expect(server.getStorage()).toBe(storage);
+    expect(server.getLockStorage()).not.toBe(storage);
+    expect(server.getLockStorage()).toBeInstanceOf(InMemoryChannelStorage);
+  });
+
+  it("does not construct a local lock store in facilitator-managed mode", () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+    });
+    expect(server.getStorage()).toBe(storage);
+    expect(server.getLockStorage()).toBeUndefined();
   });
 });
 
@@ -683,6 +735,44 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     server = new BatchSettlementEvmScheme(RECEIVER, { storage });
   });
 
+  it("rejects a client-supplied pendingId before taking the admission lock", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "2000", config);
+    (paymentPayload.payload as { pendingId?: string }).pendingId = "0xclient";
+    const acquireSpy = vi.spyOn(lockStorage(server), "acquire");
+
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload,
+      requirements: makeRequirements({ amount: "1000" }),
+    } as never);
+
+    expect(result).toMatchObject({
+      abort: true,
+      reason: Errors.ErrUnexpectedPendingId,
+    });
+    expect(acquireSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a client-supplied cancel flag before taking the admission lock", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "2000", config);
+    (paymentPayload.payload as { cancel?: boolean }).cancel = true;
+    const acquireSpy = vi.spyOn(lockStorage(server), "acquire");
+
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload,
+      requirements: makeRequirements({ amount: "1000" }),
+    } as never);
+
+    expect(result).toMatchObject({
+      abort: true,
+      reason: Errors.ErrUnexpectedCancel,
+    });
+    expect(acquireSpy).not.toHaveBeenCalled();
+  });
+
   it("does nothing when payload is not a batch-settlement cumulative payload", async () => {
     const result = await server.schemeHooks.onBeforeVerify!({
       paymentPayload: {
@@ -760,10 +850,11 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     const result = await server.schemeHooks.onBeforeVerify!({
-      paymentPayload: buildVoucherPayload(channelId, "1000", config),
+      paymentPayload: await buildSignedVoucherPayload(channelId, "1000", config),
       requirements: makeRequirements(),
     } as never);
     expect(result).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
   });
 
   it("fails closed when reading the channel snapshot throws", async () => {
@@ -772,7 +863,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     vi.spyOn(storage, "get").mockRejectedValueOnce(new Error("storage unavailable"));
 
     const result = await server.schemeHooks.onBeforeVerify!({
-      paymentPayload: buildVoucherPayload(channelId, "1000", config),
+      paymentPayload: await buildSignedVoucherPayload(channelId, "1000", config),
       requirements: makeRequirements({ amount: "1000" }),
     } as never);
 
@@ -780,6 +871,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
       abort: true,
       reason: Errors.ErrVerificationStateUnavailable,
     });
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("does nothing when client cumulative matches expected", async () => {
@@ -800,10 +892,11 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     });
 
     const result = await server.schemeHooks.onBeforeVerify!({
-      paymentPayload: buildVoucherPayload(channelId, "2000", config),
+      paymentPayload: await buildSignedVoucherPayload(channelId, "2000", config),
       requirements: makeRequirements({ amount: "1000" }),
     } as never);
     expect(result).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
   });
 
   it("locally verifies a fresh EOA-authorized voucher", async () => {
@@ -842,14 +935,15 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
         refundNonce: "2",
       },
     });
-    expect((await storage.get(channelId))?.pendingRequest).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
 
     await server.schemeHooks.onAfterVerify!({
       paymentPayload,
       requirements,
       result: result.result,
     } as never);
-    expect((await storage.get(channelId))?.pendingRequest).toBeDefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
   });
 
   it("does not refresh onchain sync time after a local voucher verify", async () => {
@@ -910,7 +1004,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     } as never);
 
     expect(result).toBeUndefined();
-    expect((await storage.get(channelId))?.pendingRequest).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
 
     await server.schemeHooks.onAfterVerify!({
       paymentPayload,
@@ -921,7 +1015,8 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
         extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
       } as VerifyResponse,
     } as never);
-    expect((await storage.get(channelId))?.pendingRequest).toBeDefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
   });
 
   it("falls through to facilitator verification for EIP-1271 vouchers", async () => {
@@ -954,30 +1049,19 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
   it("rejects a locally invalid voucher signature without facilitator verification", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    await storeChannel(storage, channelId, {
-      channelId,
-      channelConfig: config,
-      chargedCumulativeAmount: "1000",
-      signedMaxClaimable: "1000",
-      signature: "0x",
-      balance: "10000",
-      totalClaimed: "0",
-      withdrawRequestedAt: 0,
-      refundNonce: 0,
-      onchainSyncedAt: Date.now(),
-      lastRequestTimestamp: 0,
-    });
+    const acquire = vi.spyOn(storage, "acquire");
 
     const result = (await server.schemeHooks.onBeforeVerify!({
       paymentPayload: buildVoucherPayload(channelId, "2000", config),
       requirements: makeRequirements({ amount: "1000" }),
-    } as never)) as unknown as { skip: true; result: VerifyResponse };
+    } as never)) as { abort: true; reason: string };
 
-    expect(result?.skip).toBe(true);
-    expect(result.result).toMatchObject({
-      isValid: false,
-      invalidReason: Errors.ErrInvalidVoucherSignature,
+    expect(result).toMatchObject({
+      abort: true,
+      reason: Errors.ErrInvalidVoucherSignature,
     });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("rejects locally when the voucher cumulative amount exceeds balance", async () => {
@@ -1004,6 +1088,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
 
     expect(result?.skip).toBe(true);
     expect(result.result.invalidReason).toBe(Errors.ErrCumulativeExceedsBalance);
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("rejects locally when the voucher cumulative amount is already claimed", async () => {
@@ -1030,6 +1115,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
 
     expect(result?.skip).toBe(true);
     expect(result.result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("does not abort initial deposit payloads with no server channel state", async () => {
@@ -1172,7 +1258,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
 
     const reqs = makeRequirements({ amount: "1000" });
     const result = (await server.schemeHooks.onBeforeVerify!({
-      paymentPayload: buildVoucherPayload(channelId, "500", config),
+      paymentPayload: await buildSignedVoucherPayload(channelId, "500", config),
       requirements: reqs,
     } as never)) as {
       abort: true;
@@ -1182,6 +1268,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     expect(result?.abort).toBe(true);
     expect(result?.reason).toBe(Errors.ErrCumulativeAmountMismatch);
     expect(reqs.extra?.chargedCumulativeAmount).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("adds channel state to corrective payment-required accepts via fallback storage read", async () => {
@@ -1313,7 +1400,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     };
     await storeChannel(countingStorage, channelId, channel);
 
-    const paymentPayload = buildVoucherPayload(channelId, "500", config);
+    const paymentPayload = await buildSignedVoucherPayload(channelId, "500", config);
     const result = (await snapshotServer.schemeHooks.onBeforeVerify!({
       paymentPayload,
       requirements: makeRequirements({ amount: "1000" }),
@@ -1371,7 +1458,7 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     expect(countingStorage.getCalls).toHaveLength(2);
   });
 
-  it("rejects a concurrent same-channel reservation as busy in after-verify", async () => {
+  it("rejects a concurrent same-channel reservation as busy in before-verify", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
@@ -1393,23 +1480,16 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
       makeRequirements({ amount: "1000" }),
     );
 
-    const contender = buildVoucherPayload(channelId, "1000", config);
-    await runBeforeVerify(server, contender, makeRequirements({ amount: "1000" }));
-    const result = (await server.schemeHooks.onAfterVerify!({
-      paymentPayload: contender,
+    const result = (await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: await buildSignedVoucherPayload(channelId, "1000", config),
       requirements: makeRequirements({ amount: "1000" }),
-      result: {
-        isValid: true,
-        payer: PAYER,
-        extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
-      } as VerifyResponse,
     } as never)) as { abort: true; reason: string };
 
     expect(result?.abort).toBe(true);
     expect(result?.reason).toBe(Errors.ErrChannelBusy);
   });
 
-  it("replaces an expired pending reservation in after-verify", async () => {
+  it("replaces an expired admission lock in before-verify", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
@@ -1423,28 +1503,75 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
       withdrawRequestedAt: 0,
       refundNonce: 0,
       lastRequestTimestamp: 0,
-      pendingRequest: {
-        pendingId: "expired",
-        signedMaxClaimable: "1000",
-        expiresAt: Date.now() - 1,
-      },
+    });
+    await storage.acquire(channelId, "expired", 1);
+    await new Promise(resolve => setTimeout(resolve, 5));
+
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+    await runBeforeVerify(server, payload, makeRequirements({ amount: "1000" }));
+
+    expect(await storage.isHeld(channelId, "expired")).toBe(false);
+    expect(await storage.isHeld(channelId)).toBe(true);
+  });
+
+  it("clamps admission-lock TTL to 5s–600s from maxTimeoutSeconds", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const acquire = vi.spyOn(storage, "acquire").mockResolvedValue(true);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+
+    await runBeforeVerify(
+      server,
+      payload,
+      makeRequirements({ amount: "1000", maxTimeoutSeconds: 3600 }),
+    );
+    expect(acquire).toHaveBeenLastCalledWith(channelId, expect.any(String), 600_000);
+
+    await runBeforeVerify(
+      server,
+      payload,
+      makeRequirements({ amount: "1000", maxTimeoutSeconds: 0 }),
+    );
+    expect(acquire).toHaveBeenLastCalledWith(channelId, expect.any(String), 5_000);
+  });
+
+  it("never acquires on a cheap bind or EOA signature reject", async () => {
+    const config = buildChannelConfig();
+    const acquire = vi.spyOn(storage, "acquire");
+    const otherId =
+      "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`;
+
+    const bindResult = (await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildVoucherPayload(otherId, "1000", config),
+      requirements: makeRequirements({ amount: "1000" }),
+    } as never)) as { abort: true; reason: string };
+    expect(bindResult).toMatchObject({
+      abort: true,
+      reason: Errors.ErrChannelIdMismatch,
     });
 
-    const payload = buildVoucherPayload(channelId, "1000", config);
-    await runBeforeVerify(server, payload, makeRequirements({ amount: "1000" }));
-    await server.schemeHooks.onAfterVerify!({
-      paymentPayload: payload,
+    const sigResult = (await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: buildVoucherPayload(computeChannelId(config), "1000", config),
       requirements: makeRequirements({ amount: "1000" }),
-      result: {
-        isValid: true,
-        payer: PAYER,
-        extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
-      } as VerifyResponse,
-    } as never);
+    } as never)) as { abort: true; reason: string };
+    expect(sigResult).toMatchObject({
+      abort: true,
+      reason: Errors.ErrInvalidVoucherSignature,
+    });
 
-    const updated = await storage.get(channelId);
-    expect(updated?.pendingRequest?.pendingId).not.toBe("expired");
-    expect(updated?.pendingRequest?.pendingId).toBeDefined();
+    expect(acquire).not.toHaveBeenCalled();
   });
 });
 
@@ -1510,7 +1637,7 @@ describe("BatchSettlementEvmScheme — two-phase reservation (security)", () => 
     await storeChannel(storage, channelId, stored);
     const before = JSON.stringify(await storage.get(channelId));
 
-    const payload = buildVoucherPayload(channelId, "2000", config);
+    const payload = await buildSignedVoucherPayload(channelId, "2000", config);
     await runBeforeVerify(server, payload, makeRequirements({ amount: "1000" }));
     await server.schemeHooks.onAfterVerify!({
       paymentPayload: payload,
@@ -1527,7 +1654,7 @@ describe("BatchSettlementEvmScheme — two-phase reservation (security)", () => 
   it("clears a committed reservation when a later extension aborts verification", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+    const paymentPayload = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
     const facilitator = {
       verify: vi.fn().mockResolvedValue(validResult),
@@ -1555,7 +1682,7 @@ describe("BatchSettlementEvmScheme — two-phase reservation (security)", () => 
       invalidReason: "extension_rejected",
     });
     expect(facilitator.verify).toHaveBeenCalledTimes(1);
-    expect((await storage.get(channelId))?.pendingRequest).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("lets exactly one of two concurrent requests reserve; the other aborts busy", async () => {
@@ -1574,35 +1701,76 @@ describe("BatchSettlementEvmScheme — two-phase reservation (security)", () => 
       lastRequestTimestamp: 0,
     });
 
-    const first = buildVoucherPayload(channelId, "1000", config);
-    const second = buildVoucherPayload(channelId, "1000", config);
+    const first = await buildSignedVoucherPayload(channelId, "1000", config);
+    const second = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
 
-    // Both read the same snapshot before either reserves.
-    await runBeforeVerify(server, first, requirements);
-    await runBeforeVerify(server, second, requirements);
-
-    const firstResult = await server.schemeHooks.onAfterVerify!({
-      paymentPayload: first,
-      requirements,
-      result: validResult,
-    } as never);
-    const secondResult = (await server.schemeHooks.onAfterVerify!({
-      paymentPayload: second,
-      requirements,
-      result: validResult,
-    } as never)) as { abort: true; reason: string };
+    const firstResult = await runBeforeVerify(server, first, requirements);
+    const secondResult = (await runBeforeVerify(server, second, requirements)) as {
+      abort: true;
+      reason: string;
+    };
 
     expect(firstResult).toBeUndefined();
     expect(secondResult?.abort).toBe(true);
     expect(secondResult?.reason).toBe(Errors.ErrChannelBusy);
-    expect((await storage.get(channelId))?.pendingRequest).toBeDefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
+
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload: first,
+      requirements,
+      result: validResult,
+    } as never);
   });
 
-  it("aborts as stale when the cumulative base moved between snapshot and reserve", async () => {
+  it("aborts a stale voucher at BeforeVerify Get under the lock and does not leave a hold", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+
+    const result = (await runBeforeVerify(
+      server,
+      await buildSignedVoucherPayload(channelId, "1000", config),
+      makeRequirements({ amount: "1000" }),
+    )) as { abort: true; reason: string };
+
+    expect(result?.abort).toBe(true);
+    expect(result?.reason).toBe(Errors.ErrCumulativeAmountMismatch);
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
+    expect(await storage.isHeld(channelId)).toBe(false);
+  });
+
+  it("lets both handlers run when the lock store throws; one charge wins", async () => {
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => {
+        throw new Error("lock down");
+      },
+      release: async () => {
+        throw new Error("lock down");
+      },
+      isHeld: async () => {
+        throw new Error("lock down");
+      },
+    };
+    const optimisticStorage = new InMemoryChannelStorage();
+    const optimisticServer = new BatchSettlementEvmScheme(RECEIVER, {
+      storage: optimisticStorage,
+      lockStorage,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(optimisticStorage, channelId, {
       channelId,
       channelConfig: config,
       chargedCumulativeAmount: "0",
@@ -1615,25 +1783,602 @@ describe("BatchSettlementEvmScheme — two-phase reservation (security)", () => 
       lastRequestTimestamp: 0,
     });
 
-    const payload = buildVoucherPayload(channelId, "1000", config);
+    const first = await buildSignedVoucherPayload(channelId, "1000", config);
+    const second = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
-    await runBeforeVerify(server, payload, requirements);
-
-    // A concurrent request committed a charge before this one reserves.
-    await storage.updateChannel(channelId, current =>
-      current ? { ...current, chargedCumulativeAmount: "1000" } : current,
-    );
-    const before = JSON.stringify(await storage.get(channelId));
-
-    const result = (await server.schemeHooks.onAfterVerify!({
-      paymentPayload: payload,
+    await runBeforeVerify(optimisticServer, first, requirements);
+    await runBeforeVerify(optimisticServer, second, requirements);
+    await optimisticServer.schemeHooks.onAfterVerify!({
+      paymentPayload: first,
       requirements,
       result: validResult,
+    } as never);
+    await optimisticServer.schemeHooks.onAfterVerify!({
+      paymentPayload: second,
+      requirements,
+      result: validResult,
+    } as never);
+
+    const results = await Promise.all([
+      optimisticServer.schemeHooks.onBeforeSettle!({
+        paymentPayload: first,
+        requirements,
+      } as never),
+      optimisticServer.schemeHooks.onBeforeSettle!({
+        paymentPayload: second,
+        requirements,
+      } as never),
+    ]);
+
+    expect(results.filter(result => result && "skip" in result && result.skip)).toHaveLength(1);
+    expect(results.filter(result => result && "abort" in result && result.abort)).toHaveLength(1);
+    expect((await optimisticStorage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
+  });
+});
+
+describe("BatchSettlementEvmScheme — lock-store implementation errors", () => {
+  function lockStorageThrowingOnIsHeld(err: Error): ChannelLockStorage {
+    return {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw err;
+      },
+    };
+  }
+
+  it("rejects refund enrich when isHeld throws a TypeError", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new TypeError("corrupt hold")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "500",
+      signedMaxClaimable: "500",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const payload = buildRefundPayload(channelId, "500", config);
+    await reservePending(scheme, payload, makeRequirements({ amount: "0" }));
+
+    await expect(
+      scheme.enrichSettlementPayload({
+        paymentPayload: payload,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("still enriches a refund when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "500",
+      signedMaxClaimable: "500",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const payload = buildRefundPayload(channelId, "500", config);
+    await reservePending(scheme, payload, makeRequirements({ amount: "0" }));
+
+    const enrichment = await scheme.enrichSettlementPayload({
+      paymentPayload: payload,
+      requirements: makeRequirements({ amount: "0" }),
+    } as never);
+    expect(enrichment?.refundNonce).toBe("0");
+  });
+
+  it("aborts deposit afterSettle when isHeld throws a TypeError", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new TypeError("corrupt hold")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+
+    const outcome = await settleAbort(scheme, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(outcome).toEqual({ abort: true, reason: Errors.ErrVoucherStoreUnavailable });
+  });
+
+  it("does not resurrect a voucher row from snapshot when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+    const requirements = makeRequirements({ amount: "1000" });
+    scheme.mergeRequestContext(payload, {
+      channelId,
+      pendingId: "self",
+      reservationCommitted: true,
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "0",
+        signedMaxClaimable: "0",
+        signature: "0x",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      },
+    });
+
+    const result = (await scheme.schemeHooks.onBeforeSettle!({
+      paymentPayload: payload,
+      requirements,
     } as never)) as { abort: true; reason: string };
 
     expect(result?.abort).toBe(true);
-    expect(result?.reason).toBe(Errors.ErrCumulativeAmountMismatch);
-    expect(JSON.stringify(await storage.get(channelId))).toBe(before);
+    expect(result?.reason).toBe(Errors.ErrMissingChannel);
+    expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("rejects refund enrich from snapshot alone when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildRefundPayload(channelId, "500", config);
+    scheme.mergeRequestContext(payload, {
+      channelId,
+      pendingId: "self",
+      reservationCommitted: true,
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "500",
+        signedMaxClaimable: "500",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      },
+    });
+
+    await expect(
+      scheme.enrichSettlementPayload({
+        paymentPayload: payload,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrMissingChannel);
+  });
+
+  it("does not resurrect a refund row from snapshot when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildRefundPayload(channelId, "500", config);
+    scheme.mergeRequestContext(payload, {
+      channelId,
+      pendingId: "self",
+      reservationCommitted: true,
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "500",
+        signedMaxClaimable: "500",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      },
+    });
+
+    await expect(
+      scheme.schemeHooks.onAfterSettle!({
+        paymentPayload: payload,
+        requirements: makeRequirements({ amount: "0" }),
+        result: {
+          success: true,
+          transaction: "0xref",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "8000",
+              totalClaimed: "500",
+              withdrawRequestedAt: 0,
+              refundNonce: "1",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+    expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("aborts MissingChannel without resurrecting a deposit row when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildDepositPayload(channelId, config, "10000", "1000");
+    scheme.mergeRequestContext(payload, {
+      channelId,
+      pendingId: "self",
+      reservationCommitted: true,
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "0",
+        signedMaxClaimable: "0",
+        signature: "0x",
+        balance: "0",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      },
+    });
+
+    const depositAbort = await settleAbort(scheme, {
+      paymentPayload: payload,
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrMissingChannel });
+    expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("still charges a deposit afterSettle when isHeld throws a store I/O error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: lockStorageThrowingOnIsHeld(new Error("lock down")),
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+
+    await scheme.schemeHooks.onAfterSettle!({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
+  });
+
+  it("fails beforeVerify closed when acquire throws a TypeError", async () => {
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => {
+        throw new TypeError("broken acquire");
+      },
+      release: async () => undefined,
+      isHeld: async () => false,
+    };
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+    const requirements = makeRequirements({ amount: "1000" });
+
+    await expect(runBeforeVerify(scheme, payload, requirements)).resolves.toMatchObject({
+      abort: true,
+      reason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("fails beforeVerify closed when acquire throws a SyntaxError", async () => {
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => {
+        throw new SyntaxError("corrupt hold");
+      },
+      release: async () => undefined,
+      isHeld: async () => false,
+    };
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+
+    await expect(
+      runBeforeVerify(
+        scheme,
+        await buildSignedVoucherPayload(channelId, "1000", config),
+        makeRequirements({ amount: "1000" }),
+      ),
+    ).resolves.toMatchObject({ abort: true, reason: Errors.ErrVerificationStateUnavailable });
+  });
+
+  it("rejects releasePendingRequest when release throws a TypeError", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildVoucherPayload(channelId, "1000", config);
+    await reservePending(scheme, payload, makeRequirements({ amount: "1000" }));
+    vi.spyOn(storage, "release").mockRejectedValueOnce(new TypeError("broken release"));
+
+    await expect(scheme.releasePendingRequest(payload)).rejects.toThrow(TypeError);
+    expect(scheme.readRequestContext(payload)?.reservationCommitted).toBe(true);
+  });
+});
+
+describe("BatchSettlementEvmScheme — fail-closed through x402ResourceServer", () => {
+  const validResult = {
+    isValid: true,
+    payer: PAYER,
+    extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
+  } as VerifyResponse;
+
+  const depositSettleResult = (channelId: string): SettleResponse =>
+    ({
+      success: true,
+      transaction: "0xdeposittx",
+      network: NETWORK,
+      payer: PAYER,
+      extra: {
+        channelState: {
+          channelId,
+          balance: "10000",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+        },
+      },
+    }) as SettleResponse;
+
+  function buildResourceServer(scheme: BatchSettlementEvmScheme, facilitator: FacilitatorClient) {
+    const resourceServer = new x402ResourceServer(facilitator);
+    resourceServer.register(NETWORK as Network, scheme);
+    return resourceServer;
+  }
+
+  function mockFacilitator(settleResult?: SettleResponse): FacilitatorClient {
+    return {
+      verify: vi.fn().mockResolvedValue(validResult),
+      settle: vi.fn().mockResolvedValue(settleResult),
+      getSupported: vi.fn(),
+    } as unknown as FacilitatorClient;
+  }
+
+  async function seedChannel(
+    storage: InMemoryChannelStorage,
+    channelId: string,
+    config: ChannelConfig,
+    chargedCumulativeAmount: string,
+  ): Promise<void> {
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount,
+      signedMaxClaimable: chargedCumulativeAmount,
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+  }
+
+  it("does not reach facilitator verify when lock acquire throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: {
+        acquire: async () => {
+          throw new SyntaxError("corrupt hold");
+        },
+        release: async () => undefined,
+        isHeld: async () => false,
+      },
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    // Durable offchain charges exceed onchain totalClaimed; a stale voucher must not be admitted.
+    await seedChannel(storage, channelId, config, "5000");
+    const facilitator = mockFacilitator();
+    const resourceServer = buildResourceServer(scheme, facilitator);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+
+    const result = await resourceServer.verifyPayment(
+      payload,
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("fails verification closed when the stored channel row is corrupt and a lock is held", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "not-a-number");
+    const facilitator = mockFacilitator();
+    const resourceServer = buildResourceServer(scheme, facilitator);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
+
+    const result = await resourceServer.verifyPayment(
+      payload,
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      isValid: false,
+      invalidReason: Errors.ErrVerificationStateUnavailable,
+    });
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(await storage.isHeld(channelId)).toBe(false);
+    expect(scheme.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("fails a deposit settle closed when persisting the charge throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "0");
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new TypeError("corrupt hold"));
+    const resourceServer = buildResourceServer(
+      scheme,
+      mockFacilitator(depositSettleResult(channelId)),
+    );
+
+    const result = await resourceServer.settlePayment(
+      buildDepositPayload(channelId, config, "10000", "1000"),
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      errorReason: Errors.ErrVoucherStoreUnavailable,
+      transaction: "0xdeposittx",
+    });
+    expect(isAfterSettleAborted(result)).toBe(true);
+  });
+
+  it("fails a deposit settle closed when the admission lock check throws an implementation error", async () => {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      storage,
+      lockStorage: {
+        acquire: async () => true,
+        release: async () => undefined,
+        isHeld: async () => {
+          throw new SyntaxError("corrupt hold");
+        },
+      },
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await seedChannel(storage, channelId, config, "0");
+    const resourceServer = buildResourceServer(
+      scheme,
+      mockFacilitator(depositSettleResult(channelId)),
+    );
+
+    const result = await resourceServer.settlePayment(
+      buildDepositPayload(channelId, config, "10000", "1000"),
+      makeRequirements({ amount: "1000" }),
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      errorReason: Errors.ErrVoucherStoreUnavailable,
+      transaction: "0xdeposittx",
+    });
+    expect(isAfterSettleAborted(result)).toBe(true);
+    expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("0");
   });
 });
 
@@ -1666,7 +2411,7 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
   it("does not update storage when verification throws before reservation", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    const payload = buildVoucherPayload(channelId, "1000", config);
+    const payload = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
     await runBeforeVerify(server, payload, requirements);
     const updateSpy = vi.spyOn(storage, "updateChannel");
@@ -1698,20 +2443,10 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
     });
     const payload = buildVoucherPayload(channelId, "1000", config);
     await reservePending(server, payload, makeRequirements({ amount: "1000" }));
-    const firstPendingId = (await storage.get(channelId))?.pendingRequest?.pendingId;
-
-    await storage.updateChannel(channelId, current =>
-      current
-        ? {
-            ...current,
-            pendingRequest: {
-              pendingId: "newer",
-              signedMaxClaimable: "1000",
-              expiresAt: Date.now() + 60_000,
-            },
-          }
-        : current,
-    );
+    const firstPendingId = server.readRequestContext(payload)?.pendingId;
+    expect(firstPendingId).toBeDefined();
+    await storage.release(channelId, firstPendingId!);
+    await storage.acquire(channelId, "newer", 60_000);
 
     await server.schemeHooks.onVerifiedPaymentCanceled!({
       paymentPayload: payload,
@@ -1721,9 +2456,41 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
       responseStatus: 500,
     } as never);
 
-    const updated = await storage.get(channelId);
-    expect(firstPendingId).toBeDefined();
-    expect(updated?.pendingRequest?.pendingId).toBe("newer");
+    expect(await storage.isHeld(channelId, "newer")).toBe(true);
+    expect(await storage.isHeld(channelId, firstPendingId)).toBe(false);
+  });
+
+  it("releases the admission lock when settlement fails before reaching the facilitator", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildVoucherPayload(channelId, "1000", config);
+    await reservePending(server, payload, makeRequirements({ amount: "1000" }));
+    const pendingId = server.readRequestContext(payload)?.pendingId;
+    expect(pendingId).toBeDefined();
+    expect(await storage.isHeld(channelId, pendingId)).toBe(true);
+
+    await server.schemeHooks.onVerifiedPaymentCanceled!({
+      paymentPayload: payload,
+      requirements: makeRequirements({ amount: "1000" }),
+      declaredExtensions: {},
+      reason: "settlement_preflight_failed",
+      error: new Error("enrichment failed"),
+    } as never);
+
+    expect(await storage.isHeld(channelId, pendingId)).toBe(false);
+    expect(server.readRequestContext(payload)).toBeUndefined();
+  });
+
+  it("ignores lock-store errors when releasing a reservation", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildVoucherPayload(channelId, "1000", config);
+    await reservePending(server, payload, makeRequirements({ amount: "1000" }));
+    vi.spyOn(storage, "release").mockRejectedValueOnce(new Error("lock down"));
+
+    await server.releasePendingRequest(payload);
+
+    expect(server.readRequestContext(payload)?.reservationCommitted).toBe(false);
   });
 
   it("clears a pending marker on verify and settle failures", async () => {
@@ -1738,7 +2505,7 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
       declaredExtensions: {},
       error: new Error("verify failed"),
     } as never);
-    expect((await storage.get(verifyChannelId))?.pendingRequest).toBeUndefined();
+    expect(await storage.isHeld(verifyChannelId)).toBe(false);
 
     const settleConfig = buildChannelConfig({
       salt: "0x00000000000000000000000000000000000000000000000000000000000000aa",
@@ -1765,7 +2532,7 @@ describe("BatchSettlementEvmScheme — pending cleanup hooks", () => {
       declaredExtensions: {},
       error: new Error("settle failed"),
     } as never);
-    expect((await storage.get(settleChannelId))?.pendingRequest).toBeUndefined();
+    expect(await storage.isHeld(settleChannelId)).toBe(false);
   });
 });
 
@@ -1798,13 +2565,15 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
     });
   });
 
-  it("fails closed when reserving the channel throws", async () => {
+  it("continues when lock acquire throws", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+    const paymentPayload = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
-    await runBeforeVerify(server, paymentPayload, requirements);
-    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new Error("storage unavailable"));
+    vi.spyOn(storage, "acquire").mockRejectedValueOnce(new Error("lock unavailable"));
+
+    const before = await runBeforeVerify(server, paymentPayload, requirements);
+    expect(before).toBeUndefined();
 
     const result = await server.schemeHooks.onAfterVerify!({
       paymentPayload,
@@ -1816,14 +2585,12 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       } as VerifyResponse,
     } as never);
 
-    expect(result).toMatchObject({
-      abort: true,
-      reason: Errors.ErrVerificationStateUnavailable,
-    });
+    expect(result).toBeUndefined();
     expect(await storage.get(channelId)).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
-  it("creates a channel record from a deposit payload after a successful verify", async () => {
+  it("does not persist a channel record from a deposit payload after verify", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     const paymentPayload = buildDepositPayload(channelId, config, "10000", "1000");
@@ -1841,11 +2608,10 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       result,
     } as never);
 
-    const channel = await storage.get(channelId);
-    expect(channel?.balance).toBe("10000");
-    expect(channel?.signedMaxClaimable).toBe("1000");
-    expect(channel?.signature).toBe("0xcafebabe");
-    expect(channel?.onchainSyncedAt).toBeGreaterThan(0);
+    expect(await storage.get(channelId)).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
+    expect(server.readRequestContext(paymentPayload)?.channelSnapshot?.balance).toBe("10000");
+    expect(server.readRequestContext(paymentPayload)?.channelSnapshot?.network).toBe(NETWORK);
   });
 
   it("does not create channel record when result.isValid is false", async () => {
@@ -1887,7 +2653,7 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
   it("does not return a skipHandler directive for a non-refund voucher", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+    const paymentPayload = await buildSignedVoucherPayload(channelId, "1000", config);
     const requirements = makeRequirements({ amount: "1000" });
     await runBeforeVerify(server, paymentPayload, requirements);
     const result: VerifyResponse = {
@@ -1920,7 +2686,7 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
     it("uses the onchain totalClaimed as the charged baseline", async () => {
       const config = buildChannelConfig();
       const channelId = computeChannelId(config);
-      const payload = buildVoucherPayload(channelId, "6000", config);
+      const payload = await buildSignedVoucherPayload(channelId, "6000", config);
       const requirements = makeRequirements({ amount: "1000" });
       await runBeforeVerify(server, payload, requirements);
 
@@ -1931,13 +2697,16 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       });
 
       expect(result).toBeUndefined();
-      expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("5000");
+      expect(server.readRequestContext(payload)?.channelSnapshot?.chargedCumulativeAmount).toBe(
+        "5000",
+      );
+      expect(await storage.get(channelId)).toBeUndefined();
     });
 
     it("rejects a voucher advancing by less than the price above the onchain totalClaimed", async () => {
       const config = buildChannelConfig();
       const channelId = computeChannelId(config);
-      const payload = buildVoucherPayload(channelId, "5001", config);
+      const payload = await buildSignedVoucherPayload(channelId, "5001", config);
       const requirements = makeRequirements({ amount: "1000" });
       expect(await runBeforeVerifyResult(payload, requirements)).toBeUndefined();
 
@@ -1956,6 +2725,7 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       expect(corrective?.totalClaimed).toBe("5000");
       expect(corrective?.balance).toBe("10000");
       expect(corrective?.refundNonce).toBe(2);
+      expect(corrective?.network).toBe(NETWORK);
     });
 
     it("rejects a deposit advancing by less than the price above the onchain totalClaimed", async () => {
@@ -1989,7 +2759,10 @@ describe("BatchSettlementEvmScheme — onAfterVerify", () => {
       });
 
       expect(result).toMatchObject({ skipHandler: true });
-      expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("5000");
+      expect(server.readRequestContext(payload)?.channelSnapshot?.chargedCumulativeAmount).toBe(
+        "5000",
+      );
+      expect(await storage.get(channelId)).toBeUndefined();
     });
 
     it.each([
@@ -2041,6 +2814,79 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     } as never)) as { abort: true; reason: string };
     expect(result?.abort).toBe(true);
     expect(result?.reason).toBe(Errors.ErrMissingChannel);
+  });
+
+  it("upserts and charges a first-seen channel at settle", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = await buildSignedVoucherPayload(channelId, "1000", config);
+    const requirements = makeRequirements({ amount: "1000" });
+    await runBeforeVerify(server, paymentPayload, requirements);
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: { balance: "10000", totalClaimed: "0", refundNonce: "0" },
+      } as VerifyResponse,
+    } as never);
+
+    expect(await storage.get(channelId)).toBeUndefined();
+
+    const result = (await server.schemeHooks.onBeforeSettle!({
+      paymentPayload,
+      requirements,
+    } as never)) as { skip: true; result: SettleResponse };
+
+    expect(result?.skip).toBe(true);
+    const created = await storage.get(channelId);
+    expect(created?.chargedCumulativeAmount).toBe("1000");
+    expect(created?.balance).toBe("10000");
+    expect(created?.network).toBe(NETWORK);
+    expect(created?.onchainSyncedAt).toBeGreaterThan(0);
+    expect(await storage.isHeld(channelId)).toBe(false);
+    expect(server.readRequestContext(paymentPayload)).toBeUndefined();
+  });
+
+  it("enriches refund from verify snapshot without a pre-enrich durable write", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "182800",
+      signedMaxClaimable: "182800",
+      signature: "0xlastpaymentsig",
+      balance: "227000",
+      totalClaimed: "173700",
+      withdrawRequestedAt: 0,
+      refundNonce: 5,
+      lastRequestTimestamp: 0,
+    });
+
+    const paymentPayload = buildRefundPayload(channelId, "182800", config);
+    const requirements = makeRequirements({ amount: "0" });
+    await runBeforeVerify(server, paymentPayload, requirements);
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: { balance: "227000", totalClaimed: "173700", refundNonce: "5" },
+      } as VerifyResponse,
+    } as never);
+
+    expect((await storage.get(channelId))?.signature).toBe("0xlastpaymentsig");
+
+    const enrichment = await server.enrichSettlementPayload({
+      paymentPayload,
+      requirements,
+    } as never);
+
+    expect(enrichment?.amount).toBe("44200");
+    expect((await storage.get(channelId))?.signature).toBe("0xlastpaymentsig");
   });
 
   it("aborts when charged exceeds the signed cap", async () => {
@@ -2115,9 +2961,11 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     });
 
     const updated = await storage.get(channelId);
+    expect(updated?.network).toBe(NETWORK);
     expect(updated?.chargedCumulativeAmount).toBe("1000");
     expect(updated?.signedMaxClaimable).toBe("1000");
-    expect(updated?.onchainSyncedAt).toBe(123);
+    expect(updated?.onchainSyncedAt).toBeGreaterThan(123);
+    expect(server.readRequestContext(paymentPayload)).toBeUndefined();
   });
 
   it("enriches a zero-charge refund voucher into a full refundWithSignature payload", async () => {
@@ -2136,7 +2984,6 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
       lastRequestTimestamp: 0,
     });
 
-    // Zero-charge voucher: maxClaimableAmount equals the existing chargedCumulativeAmount.
     const payload = buildRefundPayload(channelId, "500", config);
     await reservePending(server, payload, makeRequirements({ amount: "0" }));
     const ret = await server.schemeHooks.onBeforeSettle!({
@@ -2157,14 +3004,11 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
 
-    // Local server state is empty (channel record loss scenario).
     expect(await storage.get(channelId)).toBeUndefined();
 
-    // 1. handleBeforeVerify must not abort — it should defer to the facilitator.
     const refundPayload = buildRefundPayload(channelId, "1500", config);
     await runBeforeVerify(server, refundPayload, makeRequirements({ amount: "0" }));
 
-    // 2. handleAfterVerify rebuilds the channel record from on-chain snapshot returned by the facilitator.
     const verifyResult: VerifyResponse = {
       isValid: true,
       payer: PAYER,
@@ -2175,19 +3019,20 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
       requirements: makeRequirements({ amount: "0" }),
       result: verifyResult,
     } as never);
-    const recovered = await storage.get(channelId);
+    expect(await storage.get(channelId)).toBeUndefined();
+    const recovered = server.readRequestContext(refundPayload)?.channelSnapshot;
     expect(recovered).toBeDefined();
     expect(recovered?.balance).toBe("10000");
     expect(recovered?.totalClaimed).toBe("1500");
     expect(recovered?.chargedCumulativeAmount).toBe("1500");
     expect(recovered?.refundNonce).toBe(3);
 
-    // 3. Settlement enrichment builds a refundWithSignature payload with amount = balance - totalClaimed.
     const settleRet = await server.schemeHooks.onBeforeSettle!({
       paymentPayload: refundPayload,
       requirements: makeRequirements({ amount: "0" }),
     } as never);
     expect(settleRet).toBeUndefined();
+    expect(await storage.get(channelId)).toBeUndefined();
 
     const enrichment = await server.enrichSettlementPayload({
       paymentPayload: refundPayload,
@@ -2201,7 +3046,6 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
 
-    // Local state is empty; on-chain shows the channel was already drained (balance == totalClaimed).
     const verifyResult: VerifyResponse = {
       isValid: true,
       payer: PAYER,
@@ -2262,6 +3106,68 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
     expect(enrichment?.refundNonce).toBe("0");
   });
 
+  it("rejects a refund enrich when another request holds the lock", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "500",
+      signedMaxClaimable: "500",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    await storage.acquire(channelId, "other", 60_000);
+
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: buildRefundPayload(channelId, "500", config),
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+  });
+
+  it("rejects a refund enrich when no channel row or snapshot exists", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: buildRefundPayload(channelId, "500", config),
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrMissingChannel);
+  });
+
+  it("rejects a refund enrich whose voucher signature does not match the verify snapshot", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "500",
+      signedMaxClaimable: "500",
+      signature: "0xabcd",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    const payload = buildRefundPayload(channelId, "500", config);
+    await reservePending(server, payload, makeRequirements({ amount: "0" }));
+
+    await expect(
+      server.enrichSettlementPayload({
+        paymentPayload: payload,
+        requirements: makeRequirements({ amount: "0" }),
+      } as never),
+    ).rejects.toThrow(Errors.ErrInvalidVoucherSignature);
+  });
+
   it("rejects a refund whose channelId does not match channelConfig", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
@@ -2299,6 +3205,7 @@ describe("BatchSettlementEvmScheme — onBeforeSettle", () => {
         requirements: makeRequirements({ amount: "0" }),
       } as never),
     ).rejects.toThrow(Errors.ErrRefundAmountInvalid);
+    await server.clearPendingRequest(invalid);
 
     const zero = buildRefundPayload(channelId, "500", config, "0");
     await reservePending(server, zero, makeRequirements({ amount: "0" }));
@@ -2513,6 +3420,7 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     } as never);
 
     const updated = await storage.get(channelId);
+    expect(updated?.network).toBe(NETWORK);
     expect(updated).toBeDefined();
     expect(updated?.balance).toBe("8000");
     expect(updated?.refundNonce).toBe(3);
@@ -2542,25 +3450,28 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(await storage.get(channelId)).toBeUndefined();
   });
 
-  it("throws ChannelBusy when a successful deposit settle has no matching pending reservation", async () => {
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
-    await storeChannel(storage, channelId, {
-      channelId,
-      channelConfig: config,
-      chargedCumulativeAmount: "0",
-      signedMaxClaimable: "0",
-      signature: "0x",
-      balance: "0",
-      totalClaimed: "0",
-      withdrawRequestedAt: 0,
-      refundNonce: 0,
-      lastRequestTimestamp: 0,
-    });
-    await expect(
-      server.schemeHooks.onAfterSettle!({
+  it.each([NETWORK, ""])(
+    "charges a deposit when no admission lock is present (network: %s)",
+    async network => {
+      const config = buildChannelConfig();
+      const channelId = computeChannelId(config);
+      await storeChannel(storage, channelId, {
+        channelId,
+        network: network ? undefined : NETWORK,
+        channelConfig: config,
+        chargedCumulativeAmount: "0",
+        signedMaxClaimable: "0",
+        signature: "0x",
+        balance: "0",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: 0,
+      });
+
+      await server.schemeHooks.onAfterSettle!({
         paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
-        requirements: makeRequirements({ amount: "1000" }),
+        requirements: makeRequirements({ amount: "1000", network: network as Network }),
         result: {
           success: true,
           transaction: "0xtx",
@@ -2576,11 +3487,399 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
             },
           },
         } as SettleResponse,
-      } as never),
-    ).rejects.toThrow(Errors.ErrChannelBusy);
+      } as never);
+
+      expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
+      expect((await storage.get(channelId))?.network).toBe(NETWORK);
+    },
+  );
+
+  it("aborts MissingChannel when a deposit settle has no row and no verify snapshot", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrMissingChannel });
   });
 
-  it("throws ChannelBusy when a refund settle's pending reservation no longer matches", async () => {
+  it("releases a self-held lock when deposit afterSettle aborts MissingChannel", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const payload = buildDepositPayload(channelId, config, "10000", "1000");
+    const pendingId = "pending-self-deposit";
+    await storage.acquire(channelId, pendingId, 600_000);
+    server.mergeRequestContext(payload, {
+      channelId,
+      pendingId,
+      reservationCommitted: true,
+    });
+    expect(await storage.isHeld(channelId)).toBe(true);
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: payload,
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrMissingChannel });
+    expect(await storage.isHeld(channelId)).toBe(false);
+  });
+
+  it("aborts ChannelBusy when a successful deposit settle is held by another request", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    await storage.acquire(channelId, "other", 60_000);
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
+  });
+
+  it("aborts VoucherStoreUnavailable when deposit persist throws after onchain success", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new Error("storage write failed"));
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        amount: "1000",
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrVoucherStoreUnavailable });
+  });
+
+  it("surfaces the storage error message when the deposit persist throws", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildDepositPayload(channelId, config, "10000", "1000");
+    await reservePending(server, paymentPayload, makeRequirements({ amount: "1000" }));
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new Error("storage write failed"));
+
+    const error = await server.schemeHooks.onAfterSettle!({
+      paymentPayload,
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(AfterSettleAbortError);
+    expect((error as AfterSettleAbortError).message).toBe("storage write failed");
+  });
+
+  it("aborts ChannelBusy when deposit afterSettle update returns deleted", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockResolvedValueOnce({
+      status: "deleted",
+      channel: undefined,
+    });
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
+  });
+
+  it("aborts ChannelBusy when deposit afterSettle update returns conflict", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockResolvedValueOnce({
+      status: "conflict",
+      channel: undefined,
+    });
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
+  });
+
+  it("aborts ChannelBusy when deposit afterSettle update returns unchanged", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockResolvedValueOnce({
+      status: "unchanged",
+      channel: undefined,
+    });
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
+  });
+
+  it("aborts deposit afterSettle when persist throws a lock implementation error", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new TypeError("corrupt hold"));
+
+    const outcome = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+    expect(outcome).toEqual({ abort: true, reason: Errors.ErrVoucherStoreUnavailable });
+  });
+
+  it("aborts ChannelBusy when deposit afterSettle update returns no channel row", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "0",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockResolvedValueOnce({
+      status: "updated",
+      channel: undefined,
+    });
+
+    const depositAbort = await settleAbort(server, {
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(depositAbort).toEqual({ abort: true, reason: Errors.ErrChannelBusy });
+  });
+
+  it("throws ChannelBusy when a refund settle is held by another request", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
@@ -2595,6 +3894,7 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
       refundNonce: 0,
       lastRequestTimestamp: 0,
     });
+    await storage.acquire(channelId, "other", 60_000);
     const refundPayload = {
       x402Version: 2,
       scheme: "batch-settlement",
@@ -2634,6 +3934,160 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
         } as SettleResponse,
       } as never),
     ).rejects.toThrow(Errors.ErrChannelBusy);
+  });
+
+  it("throws ChannelBusy when a refund settle has no row and no verify snapshot", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const refundPayload = {
+      x402Version: 2,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      payload: {
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId: channelId as `0x${string}`,
+          maxClaimableAmount: "1000",
+          signature: "0xabcd",
+        },
+        amount: "2000",
+        refundNonce: "0",
+        claims: [],
+      } as unknown as Record<string, unknown>,
+    } as unknown as PaymentPayload;
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: refundPayload,
+        requirements: makeRequirements(),
+        result: {
+          success: true,
+          transaction: "0xref",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "8000",
+              totalClaimed: "1000",
+              withdrawRequestedAt: 0,
+              refundNonce: "1",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+  });
+
+  it("propagates storage write failures after a successful refund settle", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0xabcd",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+    vi.spyOn(storage, "updateChannel").mockRejectedValueOnce(new Error("storage write failed"));
+    const refundPayload = {
+      x402Version: 2,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      payload: {
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId: channelId as `0x${string}`,
+          maxClaimableAmount: "1000",
+          signature: "0xabcd",
+        },
+        amount: "2000",
+        refundNonce: "0",
+        claims: [],
+      } as unknown as Record<string, unknown>,
+    } as unknown as PaymentPayload;
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: refundPayload,
+        requirements: makeRequirements(),
+        result: {
+          success: true,
+          transaction: "0xref",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "8000",
+              totalClaimed: "1000",
+              withdrawRequestedAt: 0,
+              refundNonce: "1",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow("storage write failed");
+  });
+
+  it("releases a self-held lock when refund afterSettle throws ChannelBusy", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const refundPayload = {
+      x402Version: 2,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      payload: {
+        type: "refund",
+        channelConfig: config,
+        voucher: {
+          channelId: channelId as `0x${string}`,
+          maxClaimableAmount: "1000",
+          signature: "0xabcd",
+        },
+        amount: "2000",
+        refundNonce: "0",
+        claims: [],
+      } as unknown as Record<string, unknown>,
+    } as unknown as PaymentPayload;
+    const pendingId = "pending-self-refund";
+    await storage.acquire(channelId, pendingId, 600_000);
+    server.mergeRequestContext(refundPayload, {
+      channelId,
+      pendingId,
+      reservationCommitted: true,
+    });
+    expect(await storage.isHeld(channelId)).toBe(true);
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: refundPayload,
+        requirements: makeRequirements(),
+        result: {
+          success: true,
+          transaction: "0xref",
+          network: NETWORK,
+          payer: PAYER,
+          extra: {
+            channelState: {
+              channelId,
+              balance: "8000",
+              totalClaimed: "1000",
+              withdrawRequestedAt: 0,
+              refundNonce: "1",
+            },
+          },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrChannelBusy);
+    expect(await storage.isHeld(channelId)).toBe(false);
   });
 
   it("returns no enrichment for a voucher payload", async () => {
@@ -2777,7 +4231,7 @@ describe("BatchSettlementChannelManager — getClaimableVouchers", () => {
     expect(await manager.getClaimableVouchers({ idleSecs: 60 })).toEqual([]);
   });
 
-  it("claims an older voucher while preserving newer pending request state", async () => {
+  it("claims an older voucher while a live admission lock is held", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     await storeChannel(storage, channelId, {
@@ -2791,12 +4245,8 @@ describe("BatchSettlementChannelManager — getClaimableVouchers", () => {
       withdrawRequestedAt: 0,
       refundNonce: 0,
       lastRequestTimestamp: Date.now(),
-      pendingRequest: {
-        pendingId: "pending",
-        signedMaxClaimable: "6000",
-        expiresAt: Date.now() + 60_000,
-      },
     });
+    await storage.acquire(channelId, "pending", 60_000);
     const facilitator = {
       settle: vi.fn(async () => ({
         success: true,
@@ -2816,12 +4266,12 @@ describe("BatchSettlementChannelManager — getClaimableVouchers", () => {
     expect(results).toEqual([{ vouchers: 1, transaction: "0xclaim" }]);
     const updated = await storage.get(channelId);
     expect(updated?.totalClaimed).toBe("5000");
-    expect(updated?.pendingRequest?.pendingId).toBe("pending");
+    expect(await storage.isHeld(channelId, "pending")).toBe(true);
   });
 });
 
 describe("BatchSettlementChannelManager — refund pending channels", () => {
-  it("skips channels with live pending requests", async () => {
+  it("skips channels with a live admission lock", async () => {
     const storage = new InMemoryChannelStorage();
     const server = new BatchSettlementEvmScheme(RECEIVER, { storage });
     const facilitator = {
@@ -2851,12 +4301,8 @@ describe("BatchSettlementChannelManager — refund pending channels", () => {
       withdrawRequestedAt: 0,
       refundNonce: 0,
       lastRequestTimestamp: 0,
-      pendingRequest: {
-        pendingId: "pending",
-        signedMaxClaimable: "1000",
-        expiresAt: Date.now() + 60_000,
-      },
     });
+    await storage.acquire(channelId, "pending", 60_000);
 
     const result = await manager.refund();
 
@@ -2907,5 +4353,755 @@ describe("BatchSettlementChannelManager — getWithdrawalPendingSessions", () =>
     const result = await manager.getWithdrawalPendingSessions();
     expect(result).toHaveLength(1);
     expect(result[0].channelId).toBe(id2);
+  });
+});
+
+describe("BatchSettlementEvmScheme — self-managed voucherManager tolerance", () => {
+  const supported = (voucherManager?: string[]) => ({
+    x402Version: 2 as const,
+    scheme: "batch-settlement",
+    network: NETWORK,
+    extra: {
+      receiverAuthorizer: RECEIVER_AUTHORIZER,
+      ...(voucherManager ? { voucherManager } : {}),
+    },
+  });
+
+  it("accepts an advertised voucherManager that includes server and adds no wire fields", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements(),
+      supported(["server", "facilitator"]),
+      [],
+    );
+    expect(enhanced.extra).not.toHaveProperty("voucherManager");
+    expect(enhanced.extra).not.toHaveProperty("refundAuthorizer");
+    expect(
+      server.validateFacilitatorSupport(NETWORK, supported(["server", "facilitator"]) as never, []),
+    ).toBeUndefined();
+  });
+
+  it("rejects an advertised voucherManager without server", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    await expect(
+      server.enhancePaymentRequirements(makeRequirements(), supported(["facilitator"]), []),
+    ).rejects.toThrow(/voucherManager/);
+    expect(
+      server.validateFacilitatorSupport(NETWORK, supported(["facilitator"]) as never, []),
+    ).toMatch(/voucherManager/);
+  });
+});
+
+describe("BatchSettlementEvmScheme — self-managed delegation and delegatedRefund", () => {
+  const supported = (delegatedRefund?: boolean) => ({
+    x402Version: 2 as const,
+    scheme: "batch-settlement",
+    network: NETWORK,
+    extra: {
+      receiverAuthorizer: RECEIVER_AUTHORIZER,
+      ...(delegatedRefund === undefined ? {} : { delegatedRefund }),
+    },
+  });
+
+  it("starts when the facilitator advertises delegatedRefund: true", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    expect(
+      server.validateFacilitatorSupport(NETWORK, supported(true) as never, []),
+    ).toBeUndefined();
+  });
+
+  it("starts when delegatedRefund is absent (legacy facilitator)", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    expect(
+      server.validateFacilitatorSupport(NETWORK, supported(undefined) as never, []),
+    ).toBeUndefined();
+  });
+
+  it("fails startup when delegatedRefund is explicitly false", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER);
+    expect(server.validateFacilitatorSupport(NETWORK, supported(false) as never, [])).toMatch(
+      /delegatedRefund: false/,
+    );
+  });
+
+  it("skips the check when the server owns the receiverAuthorizerSigner", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      receiverAuthorizerSigner: buildAuthorizerSigner(),
+    });
+    expect(
+      server.validateFacilitatorSupport(NETWORK, supported(false) as never, []),
+    ).toBeUndefined();
+  });
+});
+
+describe("BatchSettlementEvmScheme — facilitator-managed voucher store", () => {
+  const refundSigner = buildAuthorizerSigner();
+
+  function managedSupportedKind(extra: Record<string, unknown> = {}) {
+    return {
+      x402Version: 2 as const,
+      scheme: "batch-settlement",
+      network: NETWORK,
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        withdrawDelay: 900,
+        voucherManager: ["server", "facilitator"],
+        ...extra,
+      },
+    };
+  }
+
+  it("throws at enhance time when the facilitator did not advertise voucherManager facilitator", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    await expect(
+      server.enhancePaymentRequirements(
+        makeRequirements(),
+        managedSupportedKind({ voucherManager: ["server"] }),
+        [],
+      ),
+    ).rejects.toThrow(/advertised extra\.voucherManager/);
+  });
+
+  it("copies facilitator withdrawDelay and sets voucherManager on the 402", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements(),
+      managedSupportedKind({ withdrawDelay: 1200 }),
+      [],
+    );
+    expect(enhanced.extra?.voucherManager).toBe("facilitator");
+    expect(enhanced.extra?.withdrawDelay).toBe(1200);
+    expect(enhanced.extra?.refundAuthorizer).toBe(refundSigner.address);
+  });
+
+  it("omits extra.refundAuthorizer when relying on the facilitator's delegatedRefund", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, { voucherStoreMode: "facilitator" });
+    const enhanced = await server.enhancePaymentRequirements(
+      makeRequirements(),
+      managedSupportedKind({ delegatedRefund: true }),
+      [],
+    );
+    expect(enhanced.extra?.voucherManager).toBe("facilitator");
+    expect(enhanced.extra).not.toHaveProperty("refundAuthorizer");
+    expect(server.getRefundAuthorizerSigner()).toBeUndefined();
+    expect(
+      server.validateFacilitatorSupport(
+        NETWORK,
+        managedSupportedKind({ delegatedRefund: true }) as never,
+        [],
+      ),
+    ).toBeUndefined();
+  });
+
+  it("announces its own refund key without needing delegatedRefund", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    for (const extra of [{ delegatedRefund: false }, {}]) {
+      const enhanced = await server.enhancePaymentRequirements(
+        makeRequirements(),
+        managedSupportedKind(extra),
+        [],
+      );
+      expect(enhanced.extra?.refundAuthorizer).toBe(refundSigner.address);
+      expect(
+        server.validateFacilitatorSupport(NETWORK, managedSupportedKind(extra) as never, []),
+      ).toBeUndefined();
+    }
+  });
+
+  it("throws at enhance time when neither a signer nor delegatedRefund: true is available", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, { voucherStoreMode: "facilitator" });
+    // An absent field counts as unsupported: managed mode has no legacy deployments.
+    for (const extra of [{ delegatedRefund: false }, {}]) {
+      await expect(
+        server.enhancePaymentRequirements(makeRequirements(), managedSupportedKind(extra), []),
+      ).rejects.toThrow(/delegatedRefund/);
+    }
+  });
+
+  it("reports startup problems when refund consent is not configured", () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, { voucherStoreMode: "facilitator" });
+    for (const extra of [{ delegatedRefund: false }, {}]) {
+      const problem = server.validateFacilitatorSupport(
+        NETWORK,
+        managedSupportedKind(extra) as never,
+        [],
+      );
+      expect(problem).toMatch(/refundAuthorizerSigner/);
+      expect(problem).toMatch(/delegatedRefund/);
+    }
+  });
+
+  it("does not abort voucher settle locally when the replica store is empty", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+
+    const result = await server.schemeHooks.onBeforeSettle!({
+      paymentPayload,
+      requirements,
+    } as never);
+    expect(result).toBeUndefined();
+  });
+
+  it("skips the resource handler for refund verify and stashes a snapshot", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildRefundPayload(channelId, "5000", config);
+    const requirements = makeRequirements({
+      amount: "0",
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    await runBeforeVerify(server, paymentPayload, requirements);
+
+    const directive = await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: {
+          pendingId: "0xrefund-pending",
+          balance: "10000",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+          chargedCumulativeAmount: "5000",
+        },
+      } as VerifyResponse,
+    } as never);
+
+    expect(directive?.skipHandler).toBe(true);
+    expect(
+      server.readRequestContext(paymentPayload)?.channelSnapshot?.chargedCumulativeAmount,
+    ).toBe("5000");
+  });
+
+  it("writes corrective accepts from stashed managed verify context", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const managedReq = makeRequirements({
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    const paymentPayload = {
+      ...buildVoucherPayload(channelId, "7000", config),
+      accepted: managedReq,
+    };
+    server.mergeRequestContext(paymentPayload, {
+      correctiveChannelState: {
+        channelId,
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: "0",
+        chargedCumulativeAmount: "5000",
+      },
+      correctiveVoucherState: {
+        signedMaxClaimable: "5000",
+        signature: "0xdeadbeef",
+      },
+    });
+    const requirements = [managedReq];
+
+    await server.enrichPaymentRequiredResponse({
+      requirements,
+      paymentPayload,
+      resourceInfo: { url: "https://example.com" },
+      error: Errors.ErrCumulativeAmountMismatch,
+      paymentRequiredResponse: {
+        x402Version: 2,
+        resource: { url: "https://example.com" },
+        accepts: requirements,
+      },
+    });
+
+    expect(requirements[0].extra?.voucherState).toEqual({
+      signedMaxClaimable: "5000",
+      signature: "0xdeadbeef",
+    });
+  });
+
+  it("replica storage upserts facilitator channel state after a managed voucher settle", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload,
+      requirements: makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        success: true,
+        transaction: "0xabc",
+        network: NETWORK,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "10000",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+            refundNonce: "0",
+            chargedCumulativeAmount: "1000",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(await storage.get(channelId)).toMatchObject({
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+    });
+  });
+
+  it("stashes corrective channel and voucher state after a managed verify mismatch", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "7000", config);
+
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements: makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        isValid: false,
+        invalidReason: Errors.ErrCumulativeAmountMismatch,
+        extra: {
+          channelState: { channelId, balance: "10000", totalClaimed: "0" },
+          voucherState: { signedMaxClaimable: "5000", signature: "0xdeadbeef" },
+        },
+      } as VerifyResponse,
+    } as never);
+
+    expect(server.readRequestContext(paymentPayload)?.correctiveChannelState).toMatchObject({
+      channelId,
+      balance: "10000",
+    });
+    expect(server.readRequestContext(paymentPayload)?.correctiveVoucherState).toEqual({
+      signedMaxClaimable: "5000",
+      signature: "0xdeadbeef",
+    });
+  });
+
+  it("replica storage drops a channel after a managed refund fully closes escrow", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "5000",
+      signedMaxClaimable: "5000",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: Date.now(),
+    });
+    const paymentPayload = buildRefundPayload(channelId, "5000", config);
+    server.mergeRequestContext(paymentPayload, {
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "5000",
+        signedMaxClaimable: "5000",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: Date.now(),
+      },
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload,
+      requirements: makeRequirements({
+        amount: "0",
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        success: true,
+        transaction: "0xabc",
+        network: NETWORK,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "5000",
+            totalClaimed: "5000",
+            chargedCumulativeAmount: "5000",
+            withdrawRequestedAt: 0,
+            refundNonce: "1",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("enriches managed refund settle payloads with consent but not claim authorizer signatures", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildRefundPayload(channelId, "5000", config);
+    const requirements = makeRequirements({
+      amount: "0",
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    server.mergeRequestContext(paymentPayload, {
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "5000",
+        signedMaxClaimable: "5000",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: Date.now(),
+      },
+    });
+
+    const fields = await server.enrichSettlementPayload({
+      paymentPayload,
+      requirements,
+    } as never);
+
+    expect(fields?.refundAuthorizerSignature).toMatch(/^0x/);
+    expect(fields?.claimAuthorizerSignature).toBeUndefined();
+    expect(fields?.amount).toBe("5000");
+  });
+
+  it("does not abort beforeVerify for managed claim payloads (facilitator-only)", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = {
+      x402Version: 2,
+      accepted: makeRequirements(),
+      payload: { type: "claim", claims: [] },
+    } as PaymentPayload;
+
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload,
+      requirements: makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+    } as never);
+
+    expect(result).toBeUndefined();
+    expect(server.readRequestContext(paymentPayload)).toBeUndefined();
+    void channelId;
+  });
+
+  it("stashes a channel snapshot after successful managed voucher verify", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+    const requirements = makeRequirements({
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    await runBeforeVerify(server, paymentPayload, requirements);
+
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements,
+      result: {
+        isValid: true,
+        payer: PAYER,
+        extra: {
+          pendingId: "0xmanaged-pending",
+          balance: "10000",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "0",
+          chargedCumulativeAmount: "0",
+        },
+      } as VerifyResponse,
+    } as never);
+
+    expect(server.readRequestContext(paymentPayload)?.channelSnapshot).toMatchObject({
+      channelId,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "1000",
+    });
+  });
+
+  it("stashes only the corrective channel snapshot when voucher proof is absent", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const paymentPayload = buildVoucherPayload(channelId, "7000", config);
+
+    await server.schemeHooks.onAfterVerify!({
+      paymentPayload,
+      requirements: makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        isValid: false,
+        invalidReason: Errors.ErrCumulativeAmountMismatch,
+        extra: { channelState: { channelId, balance: "10000" } },
+      } as VerifyResponse,
+    } as never);
+
+    expect(server.readRequestContext(paymentPayload)?.correctiveChannelState).toMatchObject({
+      channelId,
+      balance: "10000",
+    });
+    expect(server.readRequestContext(paymentPayload)?.correctiveVoucherState).toBeUndefined();
+  });
+
+  it("does not write corrective accepts when enrichPaymentRequired sees a different error", async () => {
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const requirements = makeRequirements({
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        voucherManager: "facilitator",
+        withdrawDelay: 900,
+      },
+    });
+    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+    server.mergeRequestContext(paymentPayload, {
+      correctiveChannelState: {
+        channelId,
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: "0",
+        chargedCumulativeAmount: "0",
+      },
+      correctiveVoucherState: { signedMaxClaimable: "1000", signature: "0xdeadbeef" },
+    });
+
+    await server.enrichPaymentRequiredResponse({
+      requirements: [requirements],
+      paymentPayload,
+      resourceInfo: { url: "https://example.com" },
+      error: Errors.ErrChannelBusy,
+      paymentRequiredResponse: {
+        x402Version: 2,
+        resource: { url: "https://example.com" },
+        accepts: [requirements],
+      },
+    });
+
+    expect(requirements.extra?.voucherState).toBeUndefined();
+  });
+
+  it("does not touch replica storage when managed afterSettle sees a failed facilitator response", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: Date.now(),
+    });
+    const paymentPayload = buildVoucherPayload(channelId, "1000", config);
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload,
+      requirements: makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        success: false,
+        errorReason: Errors.ErrInvalidVoucherSignature,
+        transaction: "",
+        network: NETWORK,
+      } as SettleResponse,
+    } as never);
+
+    expect(await storage.get(channelId)).toMatchObject({ chargedCumulativeAmount: "1000" });
+  });
+
+  it("updates replica storage after a partial managed refund leaves escrow open", async () => {
+    const storage = new InMemoryChannelStorage();
+    const server = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+      refundAuthorizerSigner: refundSigner,
+    });
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "5000",
+      signedMaxClaimable: "5000",
+      signature: "0xdeadbeef",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: Date.now(),
+    });
+    const paymentPayload = buildRefundPayload(channelId, "5000", config, "4000");
+    server.mergeRequestContext(paymentPayload, {
+      channelSnapshot: {
+        channelId,
+        channelConfig: config,
+        chargedCumulativeAmount: "5000",
+        signedMaxClaimable: "5000",
+        signature: "0xdeadbeef",
+        balance: "10000",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+        refundNonce: 0,
+        lastRequestTimestamp: Date.now(),
+      },
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload,
+      requirements: makeRequirements({
+        amount: "0",
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          voucherManager: "facilitator",
+          withdrawDelay: 900,
+        },
+      }),
+      result: {
+        success: true,
+        transaction: "0xabc",
+        network: NETWORK,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "6000",
+            totalClaimed: "5000",
+            chargedCumulativeAmount: "5000",
+            withdrawRequestedAt: 0,
+            refundNonce: "1",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    expect(await storage.get(channelId)).toMatchObject({
+      balance: "6000",
+      totalClaimed: "5000",
+      refundNonce: 1,
+    });
   });
 });

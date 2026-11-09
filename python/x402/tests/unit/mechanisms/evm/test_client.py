@@ -10,6 +10,7 @@ except ImportError:
     pytest.skip("EVM client requires eth_account", allow_module_level=True)
 
 from x402.mechanisms.evm.exact import ExactEvmClientScheme
+from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
 from x402.mechanisms.evm.signers import EthAccountSigner
 from x402.mechanisms.evm.utils import get_asset_info
 from x402.schemas import PaymentRequirements
@@ -297,3 +298,106 @@ class TestBaseAccountAutoWrap:
         assert "signature" in payload
         assert payload["signature"].startswith("0x")
         assert len(payload["signature"]) > 2  # not just "0x"
+
+
+def _permit2_requirements(
+    *,
+    name: str | None = "USDC",
+    version: str | None = "2",
+) -> PaymentRequirements:
+    extra: dict = {"assetTransferMethod": "permit2"}
+    if name is not None:
+        extra["name"] = name
+    if version is not None:
+        extra["version"] = version
+    return PaymentRequirements(
+        scheme="exact",
+        network="eip155:84532",
+        amount="1000",
+        asset="0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        pay_to="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+        max_timeout_seconds=60,
+        extra=extra,
+    )
+
+
+def _sponsoring_warnings(caplog):
+    return [record for record in caplog.records if "cannot read the chain" in record.getMessage()]
+
+
+class _SignNoReadSigner(EthAccountSigner):
+    def sign_transaction(self, tx: dict) -> str:
+        return "0x02ab"
+
+    def get_transaction_count(self, address: str) -> int:
+        return 0
+
+
+class _ReadNoSignSigner(EthAccountSigner):
+    def read_contract(self, address: str, abi: list, function_name: str, *args: object) -> int:
+        return 0
+
+
+class TestGasSponsoringReadWarning:
+    def test_warns_once_and_skips_eip2612_when_signer_cannot_read(self, caplog):
+        _reset_sponsoring_warnings()
+        client = ExactEvmClientScheme(EthAccountSigner(Account.create()))
+        requirements = _permit2_requirements()
+        advertised = {
+            "eip2612GasSponsoring": {"info": {"description": "test", "version": "1"}, "schema": {}},
+        }
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            first = client.create_payment_payload(requirements, advertised)
+            second = client.create_payment_payload(requirements, advertised)
+
+        assert "__extensions" not in first
+        assert "__extensions" not in second
+        warnings = _sponsoring_warnings(caplog)
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "cannot read the chain" in message
+        assert "rpc_url" in message
+        assert "read_contract" in message
+
+        _reset_sponsoring_warnings()
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            client.create_payment_payload(requirements, {})
+        assert _sponsoring_warnings(caplog) == []
+
+    def test_warns_and_skips_erc20_approval_when_signer_cannot_read(self, caplog):
+        _reset_sponsoring_warnings()
+        client = ExactEvmClientScheme(_SignNoReadSigner(Account.create()))
+        requirements = _permit2_requirements(name=None, version=None)
+        advertised = {
+            "erc20ApprovalGasSponsoring": {
+                "info": {"description": "test", "version": "1"},
+                "schema": {},
+            },
+        }
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            result = client.create_payment_payload(requirements, advertised)
+
+        assert "__extensions" not in result
+        warnings = _sponsoring_warnings(caplog)
+        assert len(warnings) == 1
+        assert "cannot read the chain" in warnings[0].getMessage()
+
+    def test_erc20_approval_stays_silent_when_signer_can_read_but_cannot_sign(self, caplog):
+        _reset_sponsoring_warnings()
+        client = ExactEvmClientScheme(_ReadNoSignSigner(Account.create()))
+        requirements = _permit2_requirements(name=None, version=None)
+        advertised = {
+            "erc20ApprovalGasSponsoring": {
+                "info": {"description": "test", "version": "1"},
+                "schema": {},
+            },
+        }
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            result = client.create_payment_payload(requirements, advertised)
+
+        assert "__extensions" not in result
+        assert _sponsoring_warnings(caplog) == []

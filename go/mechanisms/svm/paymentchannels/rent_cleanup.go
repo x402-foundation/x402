@@ -25,12 +25,18 @@ const (
 	// no facilitator-visible activity is abandon-closed. Seven days.
 	DefaultMaxIdleSecs int64 = 7 * 24 * 60 * 60
 
-	// DefaultMaxReclaimsPerTx is how many reclaim instructions are packed into
-	// one cleanup transaction.
+	// DefaultMaxReclaimsPerTx preserves the established v0 cleanup batch size.
 	DefaultMaxReclaimsPerTx = 8
 
+	// DefaultMaxReclaimsPerTxV1 is the v1 default: 62 reclaims sharing one
+	// fee payer and rent payer fill the 64 static-account budget (fee payer,
+	// program, one channel PDA each) within 4,096 bytes. The packer still
+	// splits a batch that exceeds the wire, account, or instruction limits.
+	DefaultMaxReclaimsPerTxV1 = 62
+
 	// MaxSafeReclaimsPerTx is the largest reclaim batch that serializes under
-	// Solana's packet data size. MaxReclaimsPerTx is clamped to this.
+	// Solana's v0 packet data size. V0 MaxReclaimsPerTx is clamped to this;
+	// v1 batches are bounded by the actual transaction packer.
 	MaxSafeReclaimsPerTx = 16
 
 	// DefaultMaxTxsPerRun caps the close/distribute transactions the storage
@@ -110,13 +116,16 @@ type RentCleanupOptions struct {
 	OnError          func(err error, channelID string)
 }
 
-func (o RentCleanupOptions) withDefaults(configuredIdle *int64) (RentCleanupOptions, int64) {
+func (o RentCleanupOptions) withDefaults(configuredIdle *int64, useTransactionV1 bool) (RentCleanupOptions, int64) {
 	if o.AbandonGraceSecs <= 0 {
 		o.AbandonGraceSecs = DefaultAbandonGraceSecs
 	}
-	if o.MaxReclaimsPerTx <= 0 {
+	switch {
+	case o.MaxReclaimsPerTx <= 0 && useTransactionV1:
+		o.MaxReclaimsPerTx = DefaultMaxReclaimsPerTxV1
+	case o.MaxReclaimsPerTx <= 0:
 		o.MaxReclaimsPerTx = DefaultMaxReclaimsPerTx
-	} else if o.MaxReclaimsPerTx > MaxSafeReclaimsPerTx {
+	case !useTransactionV1 && o.MaxReclaimsPerTx > MaxSafeReclaimsPerTx:
 		o.MaxReclaimsPerTx = MaxSafeReclaimsPerTx
 	}
 	if o.MaxTxsPerRun <= 0 {
@@ -179,13 +188,18 @@ func (c RentCleanupStartConfig) discoveryOptions() RentDiscoveryOptions {
 
 // PaymentChannelRentCleanupConfig configures a rent cleanup manager for one network.
 type PaymentChannelRentCleanupConfig struct {
-	Signer                        svm.FacilitatorSvmSigner
-	Storage                       PaymentChannelStorage
-	Network                       string
-	ComputeUnitPriceMicroLamports *uint64
-	SettleComputeUnitLimit        *uint32
-	MaxIdleSecs                   *int64
-	AbandonPolicy                 OpenAbandonPolicy
+	Signer  svm.FacilitatorSvmSigner
+	Storage PaymentChannelStorage
+	Network string
+	// TreasuryOwner overrides the program's treasury owner for close/distribute
+	// cleanup; the zero key uses TreasuryOwner(Network).
+	TreasuryOwner                     solana.PublicKey
+	ComputeUnitPriceMicroLamports     *uint64
+	SettleComputeUnitLimit            *uint32
+	SettleLoadedAccountsDataSizeLimit *uint32
+	FacilitatorTransactionVersion     int
+	MaxIdleSecs                       *int64
+	AbandonPolicy                     OpenAbandonPolicy
 	// SealClosingChannels nil defaults to true. upto sets it false.
 	SealClosingChannels *bool
 	Label               string
@@ -194,15 +208,18 @@ type PaymentChannelRentCleanupConfig struct {
 // PaymentChannelRentCleanupManager recovers rent a facilitator fronts for
 // payment channels on one network.
 type PaymentChannelRentCleanupManager struct {
-	signer                        PaymentChannelFacilitatorSigner
-	storage                       PaymentChannelStorage
-	network                       string
-	computeUnitPriceMicroLamports *uint64
-	settleComputeUnitLimit        *uint32
-	maxIdleSecs                   *int64
-	abandonPolicy                 OpenAbandonPolicy
-	sealClosingChannels           bool
-	label                         string
+	signer                            PaymentChannelFacilitatorSigner
+	storage                           PaymentChannelStorage
+	network                           string
+	treasuryOwner                     solana.PublicKey
+	computeUnitPriceMicroLamports     *uint64
+	settleComputeUnitLimit            *uint32
+	settleLoadedAccountsDataSizeLimit *uint32
+	facilitatorTransactionVersion     int
+	maxIdleSecs                       *int64
+	abandonPolicy                     OpenAbandonPolicy
+	sealClosingChannels               bool
+	label                             string
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -236,15 +253,18 @@ func NewPaymentChannelRentCleanupManager(config PaymentChannelRentCleanupConfig)
 		seal = *config.SealClosingChannels
 	}
 	return &PaymentChannelRentCleanupManager{
-		signer:                        AssertPaymentChannelFacilitatorSigner(config.Signer, label),
-		storage:                       config.Storage,
-		network:                       config.Network,
-		computeUnitPriceMicroLamports: config.ComputeUnitPriceMicroLamports,
-		settleComputeUnitLimit:        config.SettleComputeUnitLimit,
-		maxIdleSecs:                   config.MaxIdleSecs,
-		abandonPolicy:                 policy,
-		sealClosingChannels:           seal,
-		label:                         label,
+		signer:                            AssertPaymentChannelFacilitatorSigner(config.Signer, label),
+		storage:                           config.Storage,
+		network:                           config.Network,
+		treasuryOwner:                     config.TreasuryOwner,
+		computeUnitPriceMicroLamports:     config.ComputeUnitPriceMicroLamports,
+		settleComputeUnitLimit:            config.SettleComputeUnitLimit,
+		settleLoadedAccountsDataSizeLimit: config.SettleLoadedAccountsDataSizeLimit,
+		facilitatorTransactionVersion:     config.FacilitatorTransactionVersion,
+		maxIdleSecs:                       config.MaxIdleSecs,
+		abandonPolicy:                     policy,
+		sealClosingChannels:               seal,
+		label:                             label,
 	}
 }
 
@@ -327,7 +347,7 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 	m.passMu.Lock()
 	defer m.passMu.Unlock()
 
-	opts, maxIdleSecs := opts.withDefaults(m.maxIdleSecs)
+	opts, maxIdleSecs := opts.withDefaults(m.maxIdleSecs, m.facilitatorTransactionVersion == FacilitatorTransactionVersion1)
 	records, err := m.storage.List(ctx, m.network)
 	if err != nil {
 		return fmt.Errorf("failed to list stored channels: %w", err)
@@ -582,14 +602,15 @@ func (m *PaymentChannelRentCleanupManager) submitCloseOrDistribute(
 		return "", fmt.Errorf("channel %s has an invalid stored tokenProgram: %w", record.ChannelID, err)
 	}
 	distribute, err := BuildDistributeInstruction(DistributeInstructionArgs{
-		Channel:      channelID,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: tokenProgram,
-		Splits:       []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
-		Network:      m.network,
+		Channel:       channelID,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  tokenProgram,
+		Splits:        []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
+		Network:       m.network,
+		TreasuryOwner: m.treasuryOwner,
 	})
 	if err != nil {
 		return "", err
@@ -610,7 +631,9 @@ func (m *PaymentChannelRentCleanupManager) submitCloseOrDistribute(
 	}
 	return SubmitChannelTransactionWithSigner(ctx, m.signer, m.signer, feePayer, m.network, instructions, SubmitSettleOptions{
 		ComputeUnitLimit:              m.settleComputeUnitLimit,
+		LoadedAccountsDataSizeLimit:   m.settleLoadedAccountsDataSizeLimit,
 		ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
+		FacilitatorTransactionVersion: m.facilitatorTransactionVersion,
 	})
 }
 
@@ -659,37 +682,112 @@ func (m *PaymentChannelRentCleanupManager) submitReclaimGroup(
 		}
 		return
 	}
-	for start := 0; start < len(group); start += opts.MaxReclaimsPerTx {
+	if m.facilitatorTransactionVersion != FacilitatorTransactionVersion1 {
+		for start := 0; start < len(group); start += opts.MaxReclaimsPerTx {
+			if atomic.AddInt64(budget, -1) < 0 {
+				atomic.AddInt64(budget, 1)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			end := start + opts.MaxReclaimsPerTx
+			if end > len(group) {
+				end = len(group)
+			}
+			batch := m.refreshReclaimBatch(ctx, rpcClient, group[start:end], opts)
+			if len(batch) == 0 {
+				continue
+			}
+			instructions := make([]solana.Instruction, 0, len(batch))
+			channelIDs := make([]string, 0, len(batch))
+			for _, candidate := range batch {
+				instructions = append(instructions, BuildReclaimInstruction(candidate.channelID, candidate.rentPayer))
+				channelIDs = append(channelIDs, candidate.channelID.String())
+			}
+			reclaimLimit := ReclaimComputeUnitLimit(len(batch))
+			signature, err := SubmitChannelTransactionWithSigner(ctx, m.signer, m.signer, feePayer, m.network, instructions, SubmitSettleOptions{
+				ComputeUnitLimit:              &reclaimLimit,
+				ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
+			})
+			if err != nil {
+				for _, channelID := range channelIDs {
+					opts.reportError(err, channelID)
+				}
+				continue
+			}
+			if opts.OnReclaim != nil {
+				opts.OnReclaim(RentCleanupReclaimResult{ChannelIDs: channelIDs, Transaction: signature})
+			}
+			for _, channelID := range channelIDs {
+				if err := m.storage.Delete(ctx, m.network, channelID); err != nil {
+					opts.reportError(err, channelID)
+				}
+			}
+		}
+		return
+	}
+	maxLive := int(atomic.LoadInt64(budget)) * opts.MaxReclaimsPerTx
+	if maxLive <= 0 {
+		return
+	}
+	if len(group) > maxLive {
+		group = group[:maxLive]
+	}
+	batch := m.refreshReclaimBatch(ctx, rpcClient, group, opts)
+	for offset := 0; offset < len(batch); {
+		if ctx.Err() != nil {
+			return
+		}
+		packed := make([]reclaimCandidate, 0, len(batch)-offset)
+		for _, candidate := range batch[offset:] {
+			next := make([]reclaimCandidate, len(packed)+1)
+			copy(next, packed)
+			next[len(packed)] = candidate
+			instructions := make([]solana.Instruction, 0, len(next))
+			for _, item := range next {
+				instructions = append(instructions, BuildReclaimInstruction(item.channelID, item.rentPayer))
+			}
+			reclaimLimit := ReclaimComputeUnitLimit(len(next))
+			loadedLimit := ReclaimLoadedAccountsDataSizeLimit(len(next))
+			if len(next) > opts.MaxReclaimsPerTx || !FacilitatorV1TransactionFits(feePayer, instructions, SubmitSettleOptions{
+				ComputeUnitLimit:              &reclaimLimit,
+				LoadedAccountsDataSizeLimit:   &loadedLimit,
+				ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
+				FacilitatorTransactionVersion: FacilitatorTransactionVersion1,
+			}) {
+				break
+			}
+			packed = next
+		}
+		if len(packed) == 0 {
+			opts.reportError(fmt.Errorf("single reclaim instruction exceeds transaction v1 limits"), batch[offset].channelID.String())
+			offset++
+			continue
+		}
 		if atomic.AddInt64(budget, -1) < 0 {
 			atomic.AddInt64(budget, 1)
 			return
 		}
-		if ctx.Err() != nil {
-			return
-		}
-		end := start + opts.MaxReclaimsPerTx
-		if end > len(group) {
-			end = len(group)
-		}
-		batch := m.refreshReclaimBatch(ctx, rpcClient, group[start:end], opts)
-		if len(batch) == 0 {
-			continue
-		}
-		instructions := make([]solana.Instruction, 0, len(batch))
-		channelIDs := make([]string, 0, len(batch))
-		for _, candidate := range batch {
+		instructions := make([]solana.Instruction, 0, len(packed))
+		channelIDs := make([]string, 0, len(packed))
+		for _, candidate := range packed {
 			instructions = append(instructions, BuildReclaimInstruction(candidate.channelID, candidate.rentPayer))
 			channelIDs = append(channelIDs, candidate.channelID.String())
 		}
-		reclaimLimit := ReclaimComputeUnitLimit(len(batch))
+		reclaimLimit := ReclaimComputeUnitLimit(len(packed))
+		loadedLimit := ReclaimLoadedAccountsDataSizeLimit(len(packed))
 		signature, err := SubmitChannelTransactionWithSigner(ctx, m.signer, m.signer, feePayer, m.network, instructions, SubmitSettleOptions{
 			ComputeUnitLimit:              &reclaimLimit,
+			LoadedAccountsDataSizeLimit:   &loadedLimit,
 			ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
+			FacilitatorTransactionVersion: m.facilitatorTransactionVersion,
 		})
 		if err != nil {
 			for _, channelID := range channelIDs {
 				opts.reportError(err, channelID)
 			}
+			offset += len(packed)
 			continue
 		}
 		if opts.OnReclaim != nil {
@@ -700,6 +798,7 @@ func (m *PaymentChannelRentCleanupManager) submitReclaimGroup(
 				opts.reportError(err, channelID)
 			}
 		}
+		offset += len(packed)
 	}
 }
 

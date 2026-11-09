@@ -1185,6 +1185,48 @@ describe("x402Client", () => {
       ]);
     });
 
+    it("aborts payment creation when a before hook requests it", async () => {
+      const client = new x402Client();
+      const mockClient = new MockSchemeNetworkClient("exact");
+      client.register("eip155:*" as Network, mockClient);
+      client.onBeforePaymentCreation(async () => ({ abort: true, reason: "policy" }));
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow("Payment creation aborted: policy");
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(0);
+    });
+
+    it("continues when a before hook returns a result that does not abort", async () => {
+      const client = new x402Client();
+      const mockClient = new MockSchemeNetworkClient("exact");
+      client.register("eip155:*" as Network, mockClient);
+      // The hook type only returns `{ abort: true }`. These results exercise the
+      // runtime checks for a missing abort flag and an explicit false.
+      client.onBeforePaymentCreation(async () => {
+        return {} as { abort: true; reason: string };
+      });
+      client.onBeforePaymentCreation(async () => {
+        return { abort: false } as unknown as { abort: true; reason: string };
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
     it("should skip lifecycle hooks for undeclared extensions", async () => {
       const client = new x402Client();
       let extensionCalled = false;

@@ -26,6 +26,7 @@ from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPResponseInstructions,
     HTTPTransportContext,
     PaywallConfig,
     RoutesConfig,
@@ -189,6 +190,16 @@ def _internal_error_wsgi_response(
         headers.extend(extra_headers.items())
     start_response("500 Internal Server Error", headers)
     return [body]
+
+
+def _declared_plain_text_body(response: HTTPResponseInstructions) -> str | None:
+    content_type = (
+        response.headers.get("Content-Type") or response.headers.get("content-type") or ""
+    )
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "text/plain" and isinstance(response.body, str):
+        return response.body
+    return None
 
 
 class ResponseWrapper:
@@ -412,6 +423,7 @@ class PaymentMiddleware:
 
                 status = f"{response.status} Payment Required"
                 headers = list(response.headers.items())
+                plain_text = _declared_plain_text_body(response)
 
                 if response.is_html:
                     headers.append(("Content-Type", "text/html; charset=utf-8"))
@@ -420,6 +432,8 @@ class PaymentMiddleware:
                         if isinstance(response.body, str)
                         else response.body
                     )
+                elif plain_text is not None:
+                    body = plain_text.encode("utf-8")
                 else:
                     headers.append(("Content-Type", "application/json"))
                     body = json.dumps(response.body or {}).encode("utf-8")
@@ -550,12 +564,15 @@ class PaymentMiddleware:
                             else:
                                 status = f"{response.status} Payment Required"
                                 headers = list(response.headers.items())
+                                plain_text = _declared_plain_text_body(response)
                                 if response.is_html:
                                     body = (
                                         response.body.encode("utf-8")
                                         if isinstance(response.body, str)
                                         else response.body
                                     )
+                                elif plain_text is not None:
+                                    body = plain_text.encode("utf-8")
                                 else:
                                     body = json.dumps(response.body or {}).encode("utf-8")
                             start_response(status, headers)
@@ -593,7 +610,7 @@ class PaymentMiddleware:
                                 *settle_headers.items(),
                             ],
                         )
-                        return [json.dumps({}).encode("utf-8")]
+                        return [json.dumps({"error": "settlement_failed"}).encode("utf-8")]
 
                 # Send buffered response
                 response_wrapper.send_response(body_chunks)

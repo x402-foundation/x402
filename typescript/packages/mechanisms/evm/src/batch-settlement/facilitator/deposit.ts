@@ -212,11 +212,6 @@ async function verifySharedDepositState(
   const payer = config.payer;
   const chainId = getEvmChainId(requirements.network);
 
-  const configErr = validateChannelConfig(config, voucher.channelId, requirements);
-  if (configErr) {
-    return { ok: false, response: { isValid: false, invalidReason: configErr, payer } };
-  }
-
   const price = parseRequirementsAmount(requirements.amount);
   if (price === undefined) {
     return {
@@ -336,9 +331,8 @@ async function verifySharedDepositState(
  * for a deposit settle: the payer's authorization signature (ERC-3009 or
  * Permit2, whichever the payload carries). Returns `undefined` when no
  * signature is available (malformed payload), disabling the
- * pending-settlement fast path for that call — the normal broadcast path
- * still runs and surfaces the appropriate validation error. Mirrors Go's
- * `depositSettlementCacheKey`.
+ * pending-settlement fast path for that call. The normal broadcast path
+ * still runs and surfaces the appropriate validation error.
  *
  * @param payload - Batch deposit payload.
  * @param transferMethod - The resolved asset transfer method.
@@ -362,8 +356,7 @@ function depositSettlementCacheKey(
  * there is no reliable pre-broadcast channel-state snapshot available here
  * (it lived in the earlier, now-returned call), so this reads whatever the
  * RPC currently reports on confirmation instead of the optimistic
- * balance-add fallback the normal path uses. Mirrors Go's
- * `reconcilePendingDeposit`.
+ * balance-add fallback the normal path uses.
  *
  * @param signer - Facilitator signer used for the receipt wait and channel-state read.
  * @param payment - Full payment envelope containing optional extensions.
@@ -791,7 +784,7 @@ async function resolveDepositExecution(
  *
  * The deposit succeeds only if, after the wallet is deployed in the first sub-call, its
  * isValidSignature accepts the inner ERC-3009 signature carried by the (already-stripped)
- * collector data. Mirrors the Go/Python `simulateCounterfactualErc3009Deposit`.
+ * collector data.
  *
  * @param signer - Facilitator signer used for the Multicall3 read.
  * @param counterfactual - Factory + calldata for the undeployed ERC-6492 wallet.

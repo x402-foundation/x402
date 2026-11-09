@@ -63,6 +63,39 @@ class TestWildcardLineFeedBypass:
         assert self._server().requires_payment(_context(path)) is True
 
 
+class TestHeadRouteMatching:
+    def test_head_falls_back_to_get(self) -> None:
+        server = x402HTTPServerBase(
+            MagicMock(),
+            {"GET /api/premium": RouteConfig(accepts=[])},
+        )
+
+        assert server.requires_payment(_context("/api/premium", method="HEAD")) is True
+
+    def test_explicit_head_route_takes_precedence(self) -> None:
+        get_route = RouteConfig(accepts=[], description="GET route")
+        head_route = RouteConfig(accepts=[], description="HEAD route")
+        server = x402HTTPServerBase(
+            MagicMock(),
+            {
+                "GET /api/premium": get_route,
+                "HEAD /api/premium": head_route,
+            },
+        )
+
+        match = server._get_route_config("/api/premium", "HEAD")
+        assert match is not None
+        assert match[0] is head_route
+
+    def test_head_does_not_fall_back_to_non_get_methods(self) -> None:
+        server = x402HTTPServerBase(
+            MagicMock(),
+            {"POST /api/premium": RouteConfig(accepts=[])},
+        )
+
+        assert server.requires_payment(_context("/api/premium", method="HEAD")) is False
+
+
 class TestNormalizePath:
     @pytest.mark.parametrize(
         ("input_path", "expected"),
@@ -194,6 +227,29 @@ class TestDecodedPathDivergenceBypass:
     def test_unrelated_decoded_path_does_not_require_payment(self) -> None:
         context = _context("/public/report", decoded_path="/public/report")
         assert self._server().requires_payment(context) is False
+
+
+class TestCorsPreflight:
+    """A method-less route must not answer the browser's OPTIONS preflight with a 402."""
+
+    @pytest.mark.parametrize(
+        "routes",
+        [
+            {"/api/premium": RouteConfig(accepts=[])},
+            RouteConfig(accepts=[]),
+        ],
+        ids=["method-less-route", "single-route-config"],
+    )
+    def test_options_does_not_require_payment(
+        self, routes: dict[str, RouteConfig] | RouteConfig
+    ) -> None:
+        server = x402HTTPServerBase(MagicMock(), routes)
+        assert server.requires_payment(_context("/api/premium", "OPTIONS")) is False
+        assert server.requires_payment(_context("/api/premium", "GET")) is True
+
+    def test_explicit_options_route_requires_payment(self) -> None:
+        server = x402HTTPServerBase(MagicMock(), {"OPTIONS /api/premium": RouteConfig(accepts=[])})
+        assert server.requires_payment(_context("/api/premium", "OPTIONS")) is True
 
 
 class _ExactAuthorizeScheme:
