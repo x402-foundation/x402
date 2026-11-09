@@ -1877,11 +1877,9 @@ func extractRequiredFields(t *testing.T, schema bazaar.JSONSchema) []string {
 }
 
 func TestBazaarResourceServerExtension(t *testing.T) {
-	// NOTE: Go's API is different from TypeScript.
-	// In Go, DeclareDiscoveryExtension takes the method as a parameter,
-	// so the schema is already narrow at creation time.
-	// In TypeScript, the method is inferred at runtime from the route key,
-	// so declareDiscoveryExtension creates a broad enum and enrichDeclaration narrows it.
+	// DeclareDiscoveryExtension already narrows the schema to the declared method.
+	// EnrichDeclaration then picks the request method when it fits the input
+	// shape, otherwise POST for a body and GET for a query.
 
 	t.Run("should enrich declaration with method from HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
@@ -2089,6 +2087,89 @@ func TestBazaarResourceServerExtension(t *testing.T) {
 		resultExt, ok := result.(bazaar.DiscoveryExtension)
 		require.True(t, ok)
 		assert.Equal(t, extension.Info, resultExt.Info)
+	})
+
+	t.Run("should not advertise the probe method when it disagrees with the declared input", func(t *testing.T) {
+		stringSchema := map[string]interface{}{"type": "string"}
+		tests := []struct {
+			name     string
+			method   interface{}
+			input    map[string]interface{}
+			bodyType bazaar.BodyType
+			probe    string
+			expected string
+		}{
+			{
+				name:     "body declaration probed with GET",
+				method:   bazaar.MethodPUT,
+				input:    map[string]interface{}{"prompt": "hi"},
+				bodyType: bazaar.BodyTypeJSON,
+				probe:    "GET",
+				expected: "POST",
+			},
+			{
+				name:     "query declaration probed with POST",
+				method:   bazaar.MethodDELETE,
+				input:    map[string]interface{}{"q": "hi"},
+				bodyType: "",
+				probe:    "POST",
+				expected: "GET",
+			},
+			{
+				name:     "body declaration probed with PUT",
+				method:   bazaar.MethodPOST,
+				input:    map[string]interface{}{"prompt": "hi"},
+				bodyType: bazaar.BodyTypeJSON,
+				probe:    "PUT",
+				expected: "PUT",
+			},
+			{
+				name:     "query declaration probed with DELETE",
+				method:   bazaar.MethodGET,
+				input:    map[string]interface{}{"q": "hi"},
+				bodyType: "",
+				probe:    "DELETE",
+				expected: "DELETE",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				properties := map[string]interface{}{}
+				for key := range tt.input {
+					properties[key] = stringSchema
+				}
+				extension, err := bazaar.DeclareDiscoveryExtension(
+					tt.method,
+					tt.input,
+					bazaar.JSONSchema{"properties": properties},
+					tt.bodyType,
+					nil,
+				)
+				require.NoError(t, err)
+
+				enriched := bazaar.BazaarResourceServerExtension.EnrichDeclaration(extension, x402http.HTTPRequestContext{
+					Method:  tt.probe,
+					Path:    "/test",
+					Adapter: &mockHTTPAdapterForBazaar{method: tt.probe, path: "/test"},
+				})
+				enrichedExt, ok := enriched.(bazaar.DiscoveryExtension)
+				require.True(t, ok)
+
+				switch input := enrichedExt.Info.Input.(type) {
+				case bazaar.BodyInput:
+					assert.Equal(t, bazaar.BodyMethods(tt.expected), input.Method)
+				case bazaar.QueryInput:
+					assert.Equal(t, bazaar.QueryParamMethods(tt.expected), input.Method)
+				default:
+					t.Fatalf("unexpected input type %T", enrichedExt.Info.Input)
+				}
+
+				assert.Equal(t, []string{tt.expected}, extractMethodEnum(t, enrichedExt.Schema))
+				assert.Equal(t, bazaar.ValidationResult{Valid: true}, bazaar.ValidateDiscoveryExtensionSpec(enrichedExt))
+				assert.Equal(t, bazaar.ValidationResult{Valid: true}, bazaar.ValidateDiscoveryExtension(enrichedExt))
+			})
+		}
 	})
 }
 
@@ -2326,7 +2407,7 @@ func TestBazaarDynamicRoutes(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://example.com/search?q=test"},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): extension,
@@ -3060,7 +3141,7 @@ func TestDynamicRoutesCatalogConsolidation(t *testing.T) {
 			"scheme":      "exact",
 			"network":     "eip155:8453",
 			"payload":     map[string]interface{}{},
-			"accepted":    map[string]interface{}{},
+			"accepted":    map[string]interface{}{"scheme": "exact", "network": "eip155:8453"},
 			"resource":    map[string]interface{}{"url": "http://api.example.com/users/" + userID},
 			"extensions": map[string]interface{}{
 				bazaar.BAZAAR.Key(): enrichedExt,

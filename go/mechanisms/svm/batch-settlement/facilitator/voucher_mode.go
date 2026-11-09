@@ -140,3 +140,32 @@ func extraString(extra map[string]any, key string) (string, bool) {
 func errorsNew(message string) error {
 	return fmt.Errorf("%s", message)
 }
+
+// AssertDepositProof checks a deposit's proof against the escrow it will sit
+// behind (spec 7). A client voucher the server cannot accept (not the first
+// charge on an open, not past the settled watermark on a top-up) is
+// cumulative_amount_mismatch; a proof the deposit cannot cover is
+// cumulative_exceeds_deposit. proof is the client voucher cumulative (the
+// charge in server mode), deposit is the channel deposit once this deposit
+// lands, and settled is the onchain watermark for a top-up or nil for an open.
+func AssertDepositProof(signer string, proof, charge, deposit uint64, settled *uint64) error {
+	switch signer {
+	case batchsettlement.VoucherSignerClient:
+		if settled == nil {
+			if proof != charge {
+				return fmt.Errorf("%s: first voucher must equal the charge", batchsettlement.ErrCumulativeAmountMismatch)
+			}
+		} else if minimum, ok := batchsettlement.AddU64(*settled, charge); !ok || proof < minimum || proof <= *settled {
+			// Cover settled + price, and stay strictly above settled even when the price is zero.
+			return fmt.Errorf("%s: voucher must advance the settled watermark", batchsettlement.ErrCumulativeAmountMismatch)
+		}
+	case batchsettlement.VoucherSignerServer:
+		proof = charge
+	default:
+		return fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
+	}
+	if proof > deposit {
+		return fmt.Errorf("%s: proof exceeds the channel deposit", batchsettlement.ErrCumulativeExceedsDeposit)
+	}
+	return nil
+}

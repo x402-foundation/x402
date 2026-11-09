@@ -9,6 +9,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -34,6 +35,7 @@ const (
 // Extra field names carried in PaymentRequirements.Extra for SVM `upto`.
 const (
 	ExtraFeePayer             = "feePayer"
+	ExtraTransactionVersions  = svm.ExtraTransactionVersions
 	ExtraReceiverAuthorizer   = "receiverAuthorizer"
 	ExtraWithdrawDelay        = "withdrawDelay"
 	ExtraTokenProgram         = "tokenProgram"

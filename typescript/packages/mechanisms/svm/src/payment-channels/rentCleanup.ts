@@ -26,8 +26,11 @@ import type { FacilitatorSigningCapabilities, FacilitatorSvmSigner } from "../si
 import { BASIS_POINTS_DENOMINATOR, SLOT_COMMITMENT, STATE_COMMITMENT } from "./commitments";
 import { discoverChannelsByRentPayer } from "./discovery";
 import {
+  type FacilitatorTransactionVersion,
   type PaymentChannelSvmSigner,
+  facilitatorV1TransactionFits,
   reclaimComputeUnitLimit,
+  reclaimLoadedAccountsDataSizeLimit,
   submitChannelTransactionWithSigner,
 } from "./facilitator";
 import { fetchMaybeChannel, type Channel } from "./generated/accounts/channel";
@@ -238,16 +241,24 @@ export function assertMaxIdleSecs(value: number | undefined): number {
   return value;
 }
 
-/** Default reclaim instructions per cleanup transaction. */
+/** Default v0 reclaim instruction ceiling; wire-size packing may choose fewer. */
 export const DEFAULT_MAX_RECLAIMS_PER_TX = 8;
+
+/**
+ * Default v1 reclaim instruction ceiling: 62 reclaims sharing one fee payer
+ * and rent payer fill the 64 static-account budget (fee payer, program, and
+ * one channel PDA each) within 4,096 bytes. The packer still splits a batch
+ * that exceeds the wire, account, or instruction limits.
+ */
+export const DEFAULT_MAX_RECLAIMS_PER_TX_V1 = 62;
 
 /**
  * Largest reclaim batch proven, by the Go SDK's
  * `TestReclaimBatchFitsInOneTransaction`, to serialize under Solana's
  * `PACKET_DATA_SIZE` (1232 bytes) with every channel PDA distinct and one
- * shared fee payer. `maxReclaimsPerTx` is clamped to this so a misconfigured
+ * shared fee payer. V0 `maxReclaimsPerTx` is clamped to this so a misconfigured
  * operator value can never build a reclaim transaction that fails to
- * serialize or gets rejected on broadcast.
+ * serialize or gets rejected on broadcast. V1 uses the actual transaction packer.
  */
 export const MAX_SAFE_RECLAIMS_PER_TX = 16;
 
@@ -347,6 +358,8 @@ export interface PaymentChannelRentCleanupManagerConfig {
   signer: FacilitatorSvmSigner;
   storage: PaymentChannelStorage;
   network: Network;
+  /** Treasury owner override, as `DistributeBuildArgs.treasuryOwner`. */
+  treasuryOwner?: string | undefined;
   /**
    * `SetComputeUnitPrice` (microlamports per compute unit) attached to cleanup
    * transactions; `0` omits the instruction. Defaults to
@@ -361,6 +374,18 @@ export interface PaymentChannelRentCleanupManagerConfig {
    * (`reclaimComputeUnitLimit`) and are mint-independent.
    */
   settleComputeUnitLimit?: number;
+  /**
+   * Inline v1 loaded-account-data budget for close/distribute cleanup
+   * transactions. Defaults to
+   * `DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT` (4 MiB). Reclaim batches
+   * derive their own budget per channel.
+   */
+  settleLoadedAccountsDataSizeLimit?: number;
+  /**
+   * Message version (0 or 1) of the cleanup transactions the facilitator
+   * builds itself. Defaults to 0.
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion;
   /**
    * Default idle window for passes that do not set
    * {@link RentCleanupOptions.maxIdleSecs}. Facilitator schemes pass the value
@@ -396,8 +421,11 @@ export class PaymentChannelRentCleanupManager {
   private readonly getKitSigner: (feePayer: Address) => FacilitatorSigningCapabilities;
   private readonly storage: PaymentChannelStorage;
   private readonly network: Network;
+  private readonly treasuryOwner: string | undefined;
   private readonly computeUnitPriceMicroLamports: number | undefined;
   private readonly settleComputeUnitLimit: number | undefined;
+  private readonly settleLoadedAccountsDataSizeLimit: number | undefined;
+  private readonly facilitatorTransactionVersion: FacilitatorTransactionVersion;
   private readonly maxIdleSecs: number | undefined;
   private readonly abandonPolicy: OpenAbandonPolicy;
   private readonly sealClosingChannels: boolean;
@@ -445,8 +473,11 @@ export class PaymentChannelRentCleanupManager {
     this.signer = config.signer;
     this.storage = config.storage;
     this.network = config.network;
+    this.treasuryOwner = config.treasuryOwner;
     this.computeUnitPriceMicroLamports = config.computeUnitPriceMicroLamports;
     this.settleComputeUnitLimit = config.settleComputeUnitLimit;
+    this.settleLoadedAccountsDataSizeLimit = config.settleLoadedAccountsDataSizeLimit;
+    this.facilitatorTransactionVersion = config.facilitatorTransactionVersion ?? 0;
     this.maxIdleSecs = config.maxIdleSecs;
     this.abandonPolicy = config.abandonPolicy ?? "idle";
     this.sealClosingChannels = config.sealClosingChannels ?? true;
@@ -560,8 +591,10 @@ export class PaymentChannelRentCleanupManager {
     const maxIdleSecs = resolveMaxIdleSecs(opts.maxIdleSecs ?? this.maxIdleSecs);
     const maxReclaimsPerTx = resolveCleanupCount(
       opts.maxReclaimsPerTx,
-      DEFAULT_MAX_RECLAIMS_PER_TX,
-      MAX_SAFE_RECLAIMS_PER_TX,
+      this.facilitatorTransactionVersion === 1
+        ? DEFAULT_MAX_RECLAIMS_PER_TX_V1
+        : DEFAULT_MAX_RECLAIMS_PER_TX,
+      this.facilitatorTransactionVersion === 1 ? undefined : MAX_SAFE_RECLAIMS_PER_TX,
     );
     const maxTxsPerRun = resolveCleanupCount(opts.maxTxsPerRun, DEFAULT_MAX_TXS_PER_RUN);
     const maxTxsPerSigner = resolveCleanupCount(opts.maxTxsPerSigner, DEFAULT_MAX_TXS_PER_SIGNER);
@@ -820,6 +853,7 @@ export class PaymentChannelRentCleanupManager {
       rentPayer: live.rentPayer,
       splits,
       tokenProgram: record.tokenProgram,
+      treasuryOwner: this.treasuryOwner,
     });
 
     let instructions: ServerInstruction[];
@@ -844,7 +878,9 @@ export class PaymentChannelRentCleanupManager {
       instructions,
       {
         computeUnitLimit: this.settleComputeUnitLimit,
+        loadedAccountsDataSizeLimit: this.settleLoadedAccountsDataSizeLimit,
         computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
+        facilitatorTransactionVersion: this.facilitatorTransactionVersion,
       },
     );
   }
@@ -960,63 +996,151 @@ export class PaymentChannelRentCleanupManager {
       return;
     }
 
-    for (let i = 0; i < group.length; i += opts.maxReclaimsPerTx) {
-      if (budget.remaining <= 0) return;
-      // Silent, unlike the scan loop: batches already submitted reported
-      // through onReclaim, and the pass as a whole reports the cancellation.
-      if (opts.abort.aborted()) return;
-      budget.remaining -= 1;
+    if (this.facilitatorTransactionVersion !== 1) {
+      for (let i = 0; i < group.length; i += opts.maxReclaimsPerTx) {
+        if (budget.remaining <= 0 || opts.abort.aborted()) return;
+        budget.remaining -= 1;
 
-      const batch = group.slice(i, i + opts.maxReclaimsPerTx);
-      try {
-        // Refetch each account immediately before acting (stale → skip).
-        const rpc = accountFetchRpc(this.signer, this.network);
-        const liveBatch: ReclaimCandidate[] = [];
-        for (const candidate of batch) {
-          const maybe = await fetchMaybeChannel(rpc, address(candidate.channelId), {
-            commitment: STATE_COMMITMENT,
-          });
-          if (!maybe.exists) {
-            await this.storage.delete(this.network, candidate.channelId);
-            continue;
+        const batch = group.slice(i, i + opts.maxReclaimsPerTx);
+        try {
+          const rpc = accountFetchRpc(this.signer, this.network);
+          const liveBatch: ReclaimCandidate[] = [];
+          for (const candidate of batch) {
+            const maybe = await fetchMaybeChannel(rpc, address(candidate.channelId), {
+              commitment: STATE_COMMITMENT,
+            });
+            if (!maybe.exists) {
+              await this.storage.delete(this.network, candidate.channelId);
+              continue;
+            }
+            if (maybe.data.status !== ChannelStatus.Distributed) continue;
+            liveBatch.push({
+              channelId: candidate.channelId,
+              rentPayer: maybe.data.rentPayer,
+            });
           }
-          if (maybe.data.status !== ChannelStatus.Distributed) continue;
-          liveBatch.push({
-            channelId: candidate.channelId,
-            rentPayer: maybe.data.rentPayer,
-          });
-        }
-        if (liveBatch.length === 0) continue;
+          if (liveBatch.length === 0) continue;
 
-        const instructions = liveBatch.map(candidate =>
-          buildReclaimInstruction({
-            channelId: candidate.channelId,
-            rentPayer: candidate.rentPayer,
-          }),
+          const instructions = liveBatch.map(candidate =>
+            buildReclaimInstruction({
+              channelId: candidate.channelId,
+              rentPayer: candidate.rentPayer,
+            }),
+          );
+          const signature = await submitChannelTransactionWithSigner(
+            feePayerSigner,
+            this.signer,
+            this.network,
+            instructions,
+            {
+              computeUnitLimit: reclaimComputeUnitLimit(liveBatch.length),
+              computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
+            },
+          );
+          opts.onReclaim?.({
+            channelIds: liveBatch.map(candidate => candidate.channelId),
+            transaction: signature,
+          });
+          for (const candidate of liveBatch) {
+            await this.storage.delete(this.network, candidate.channelId);
+          }
+        } catch (error) {
+          for (const candidate of batch) {
+            opts.onError?.(error, { channelId: candidate.channelId });
+          }
+        }
+      }
+      return;
+    }
+
+    // Refetch each account immediately before acting (stale -> skip).
+    const rpc = accountFetchRpc(this.signer, this.network);
+    const liveBatch: ReclaimCandidate[] = [];
+    const maxLive = budget.remaining * opts.maxReclaimsPerTx;
+    for (const candidate of group) {
+      if (liveBatch.length >= maxLive) break;
+      try {
+        const maybe = await fetchMaybeChannel(rpc, address(candidate.channelId), {
+          commitment: STATE_COMMITMENT,
+        });
+        if (!maybe.exists) {
+          await this.storage.delete(this.network, candidate.channelId);
+          continue;
+        }
+        if (maybe.data.status !== ChannelStatus.Distributed) continue;
+        liveBatch.push({ channelId: candidate.channelId, rentPayer: maybe.data.rentPayer });
+      } catch (error) {
+        opts.onError?.(error, { channelId: candidate.channelId });
+      }
+    }
+
+    let offset = 0;
+    while (offset < liveBatch.length) {
+      if (budget.remaining <= 0 || opts.abort.aborted()) return;
+
+      const packed: ReclaimCandidate[] = [];
+      for (const candidate of liveBatch.slice(offset)) {
+        const next = [...packed, candidate];
+        const nextInstructions = next.map(item =>
+          buildReclaimInstruction({ channelId: item.channelId, rentPayer: item.rentPayer }),
         );
+        if (
+          next.length > opts.maxReclaimsPerTx ||
+          !facilitatorV1TransactionFits(feePayerSigner, nextInstructions, {
+            computeUnitLimit: reclaimComputeUnitLimit(next.length),
+            loadedAccountsDataSizeLimit: reclaimLoadedAccountsDataSizeLimit(next.length),
+            computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
+          })
+        ) {
+          break;
+        }
+        packed.push(candidate);
+      }
+      if (packed.length === 0) {
+        opts.onError?.(new Error("single reclaim instruction exceeds transaction v1 limits"), {
+          channelId: liveBatch[offset]!.channelId,
+        });
+        offset += 1;
+        continue;
+      }
+
+      budget.remaining -= 1;
+      const instructions = packed.map(candidate =>
+        buildReclaimInstruction({
+          channelId: candidate.channelId,
+          rentPayer: candidate.rentPayer,
+        }),
+      );
+      try {
         const signature = await submitChannelTransactionWithSigner(
           feePayerSigner,
           this.signer,
           this.network,
           instructions,
           {
-            computeUnitLimit: reclaimComputeUnitLimit(liveBatch.length),
+            computeUnitLimit: reclaimComputeUnitLimit(packed.length),
+            loadedAccountsDataSizeLimit: reclaimLoadedAccountsDataSizeLimit(packed.length),
             computeUnitPriceMicroLamports: this.computeUnitPriceMicroLamports,
+            facilitatorTransactionVersion: this.facilitatorTransactionVersion,
           },
         );
         opts.onReclaim?.({
-          channelIds: liveBatch.map(c => c.channelId),
+          channelIds: packed.map(candidate => candidate.channelId),
           transaction: signature,
         });
-        for (const candidate of liveBatch) {
-          await this.storage.delete(this.network, candidate.channelId);
+        for (const candidate of packed) {
+          try {
+            await this.storage.delete(this.network, candidate.channelId);
+          } catch (error) {
+            opts.onError?.(error, { channelId: candidate.channelId });
+          }
         }
       } catch (error) {
-        // Every channel in the batch is stuck, not just the first.
-        for (const candidate of batch) {
+        for (const candidate of packed) {
           opts.onError?.(error, { channelId: candidate.channelId });
         }
       }
+      offset += packed.length;
     }
   }
 

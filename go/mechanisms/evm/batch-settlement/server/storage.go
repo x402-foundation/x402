@@ -1,214 +1,91 @@
 package server
 
 import (
-	"sync"
+	"context"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 )
 
-// PendingRequest reserves a channel against concurrent same-channel requests.
-// A request is allowed when no live (unexpired) pending entry exists. Cleanup
-// hooks clear the reservation; the bounded TTL guarantees release if cleanup
-// never runs.
-type PendingRequest struct {
-	PendingId          string `json:"pendingId"`
-	SignedMaxClaimable string `json:"signedMaxClaimable"`
-	ExpiresAt          int64  `json:"expiresAt"` // unix millis
-}
-
-// ChannelSession holds per-channel session state on the server side.
-type ChannelSession struct {
-	ChannelId               string                        `json:"channelId"`
-	ChannelConfig           batchsettlement.ChannelConfig `json:"channelConfig"`
-	ChargedCumulativeAmount string                        `json:"chargedCumulativeAmount"`
-	SignedMaxClaimable      string                        `json:"signedMaxClaimable"`
-	Signature               string                        `json:"signature"`
-	Balance                 string                        `json:"balance"`
-	TotalClaimed            string                        `json:"totalClaimed"`
-	WithdrawRequestedAt     int                           `json:"withdrawRequestedAt"`
-	RefundNonce             int                           `json:"refundNonce"`
-	LastRequestTimestamp    int64                         `json:"lastRequestTimestamp"`
-	// OnchainSyncedAt is the wall-clock time (unix millis) when balance/totalClaimed/
-	// withdrawRequestedAt/refundNonce were last refreshed from onchain state.
-	// Used by the local voucher verifier to decide whether to skip facilitator verify.
-	OnchainSyncedAt int64 `json:"onchainSyncedAt,omitempty"`
-	// PendingRequest is the in-flight reservation for this channel, if any.
-	PendingRequest *PendingRequest `json:"pendingRequest,omitempty"`
-}
-
-// ChannelUpdateStatus describes the outcome of an UpdateChannel call.
-type ChannelUpdateStatus string
+type (
+	ChannelSession             = storage.Channel
+	ChannelUpdateStatus        = storage.ChannelUpdateStatus
+	ChannelUpdateResult        = storage.ChannelUpdateResult[*storage.Channel]
+	SessionStorage             = storage.ChannelStorage[*storage.Channel]
+	ChannelLockStorage         = storage.ChannelLockStorage
+	InMemoryChannelStorage     = storage.InMemoryChannelStorage[*storage.Channel]
+	ChannelQuery               = storage.ChannelQuery
+	ChannelStoreOptions        = storage.ChannelStoreOptions
+	SettleQuery                = storage.SettleQuery
+	SettleTarget               = storage.SettleTarget
+	DelegatedAuthBinding       = storage.DelegatedAuthBinding
+	DelegatedAuthStore         = storage.DelegatedAuthStore
+	InMemoryDelegatedAuthStore = storage.InMemoryDelegatedAuthStore
+	VoucherStoreMode           = storage.VoucherStoreMode
+	SelectClaimableOptions     = storage.SelectClaimableOptions
+)
 
 const (
-	ChannelUpdated   ChannelUpdateStatus = "updated"
-	ChannelUnchanged ChannelUpdateStatus = "unchanged"
-	ChannelDeleted   ChannelUpdateStatus = "deleted"
+	ChannelUpdated              = storage.ChannelUpdated
+	ChannelUnchanged            = storage.ChannelUnchanged
+	ChannelDeleted              = storage.ChannelDeleted
+	ChannelConflict             = storage.ChannelConflict
+	VoucherStoreModeSelf        = storage.VoucherStoreModeSelf
+	VoucherStoreModeFacilitator = storage.VoucherStoreModeFacilitator
+	QueryKindClaimable          = storage.QueryKindClaimable
+	QueryKindIdleRefundable     = storage.QueryKindIdleRefundable
+	QueryKindWithdrawPending    = storage.QueryKindWithdrawPending
 )
-
-// ChannelUpdateResult is the result of an UpdateChannel call.
-type ChannelUpdateResult struct {
-	Channel *ChannelSession
-	Status  ChannelUpdateStatus
-}
-
-// SessionStorage is the interface for persisting server-side channel sessions.
-type SessionStorage interface {
-	Get(channelId string) (*ChannelSession, error)
-	Set(channelId string, session *ChannelSession) error
-	Delete(channelId string) error
-	List() ([]*ChannelSession, error)
-	// CompareAndSet atomically updates a session only if the current
-	// chargedCumulativeAmount matches expectedCharged. Returns true if the
-	// swap succeeded, false if the value changed underneath (concurrent request).
-	//
-	// Deprecated: prefer UpdateChannel for richer atomic mutations.
-	CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error)
-	// UpdateChannel atomically inspects and mutates a channel record.
-	// The update callback receives the current session (or nil) and returns
-	// the next session (or nil to delete). Returning the unchanged input is
-	// a no-op (status: unchanged). The implementation must guarantee no
-	// concurrent mutation can interleave between read and write.
-	UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error)
-}
-
-// InMemoryChannelStorage is a volatile in-memory implementation of SessionStorage.
-//
-// Note on unbounded growth: the per-channel lock map is allocated lazily and
-// dropped when Delete is called for that channel. For long-lived servers that
-// see an effectively unbounded set of distinct channelIds without ever calling
-// Delete, this map will grow over time. Production deployments backed by a
-// persistent store (e.g. FileChannelStorage) should prefer Delete-on-drain.
-type InMemoryChannelStorage struct {
-	mu       sync.Mutex
-	sessions map[string]*ChannelSession
-	locks    map[string]*sync.Mutex // per-channel locks for UpdateChannel
-}
 
 // NewInMemoryChannelStorage creates a new in-memory server session storage.
 func NewInMemoryChannelStorage() *InMemoryChannelStorage {
-	return &InMemoryChannelStorage{
-		sessions: make(map[string]*ChannelSession),
-		locks:    make(map[string]*sync.Mutex),
-	}
+	return storage.NewInMemoryChannelStorage[*storage.Channel]()
 }
 
-func (s *InMemoryChannelStorage) lockFor(channelId string) *sync.Mutex {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	lock, ok := s.locks[channelId]
-	if !ok {
-		lock = &sync.Mutex{}
-		s.locks[channelId] = lock
-	}
-	return lock
+// RethrowLockImplementationError returns err when it is a lock-store
+// implementation/parse failure so callers fail closed.
+func RethrowLockImplementationError(err error) error {
+	return storage.RethrowLockImplementationError(err)
 }
 
-func (s *InMemoryChannelStorage) Get(channelId string) (*ChannelSession, error) {
-	key, err := batchsettlement.NormalizeChannelId(channelId)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	session, ok := s.sessions[key]
-	if !ok {
-		return nil, nil
-	}
-	cp := *session
-	return &cp, nil
+// IsChannelLockStorage reports whether value implements ChannelLockStorage.
+func IsChannelLockStorage(value any) bool {
+	return storage.IsChannelLockStorage(value)
 }
 
-func (s *InMemoryChannelStorage) Set(channelId string, session *ChannelSession) error {
-	key, err := batchsettlement.NormalizeChannelId(channelId)
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := *session
-	s.sessions[key] = &cp
-	return nil
+// MatchesChannelQuery reports whether channel satisfies filter.
+func MatchesChannelQuery(channel *ChannelSession, filter ChannelQuery) bool {
+	return storage.MatchesChannelQuery(channel, filter)
 }
 
-func (s *InMemoryChannelStorage) Delete(channelId string) error {
-	key, err := batchsettlement.NormalizeChannelId(channelId)
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, key)
-	// NOTE: the per-channel lock entry is intentionally retained. Removing it
-	// would let a stale lockFor caller (already holding the old *sync.Mutex)
-	// race with a fresh caller (allocating a new *sync.Mutex) for the same
-	// channelId. The lock map grows monotonically with the channel-id set;
-	// see the type-level note.
-	return nil
+// SortChannels orders query matches. Claimable rows put withdraw-pending
+// channels first; other kinds preserve input order.
+func SortChannels(channels []*ChannelSession, filter ChannelQuery) []*ChannelSession {
+	return storage.SortChannels(channels, filter)
 }
 
-func (s *InMemoryChannelStorage) List() ([]*ChannelSession, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]*ChannelSession, 0, len(s.sessions))
-	for _, session := range s.sessions {
-		cp := *session
-		result = append(result, &cp)
-	}
-	return result, nil
+// QueryByScan dumps List(), filters, sorts, and slices.
+func QueryByScan(ctx context.Context, store SessionStorage, filter ChannelQuery) (*storage.QueryPage[*storage.Channel], error) {
+	return storage.QueryByScan(ctx, store, filter)
 }
 
-func (s *InMemoryChannelStorage) CompareAndSet(channelId string, expectedCharged string, session *ChannelSession) (bool, error) {
-	key, err := batchsettlement.NormalizeChannelId(channelId)
-	if err != nil {
-		return false, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.sessions[key]
-	if ok && current.ChargedCumulativeAmount != expectedCharged {
-		return false, nil
-	}
-	cp := *session
-	s.sessions[key] = &cp
-	return true, nil
+// QueryChannels runs a named worker query, using a native query when present.
+func QueryChannels(ctx context.Context, store SessionStorage, filter ChannelQuery, opts *ChannelStoreOptions) (*storage.QueryPage[*storage.Channel], error) {
+	return storage.QueryChannels(ctx, store, filter, opts)
 }
 
-func (s *InMemoryChannelStorage) UpdateChannel(channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
-	key, err := batchsettlement.NormalizeChannelId(channelId)
-	if err != nil {
-		return nil, err
-	}
-	lock := s.lockFor(key)
-	lock.Lock()
-	defer lock.Unlock()
+// NewInMemoryDelegatedAuthStore creates an empty in-memory binding store.
+func NewInMemoryDelegatedAuthStore() *InMemoryDelegatedAuthStore {
+	return storage.NewInMemoryDelegatedAuthStore()
+}
 
-	s.mu.Lock()
-	current, exists := s.sessions[key]
-	var currentCopy *ChannelSession
-	if exists {
-		cp := *current
-		currentCopy = &cp
-	}
-	s.mu.Unlock()
+// SelectClaimableVouchers collects vouchers whose charged watermark exceeds
+// onchain totalClaimed, optionally applying an idle window.
+func SelectClaimableVouchers(channels []*ChannelSession, opts *SelectClaimableOptions) []batchsettlement.BatchSettlementVoucherClaim {
+	return storage.SelectClaimableVouchers(channels, opts)
+}
 
-	next := update(currentCopy)
-
-	// "unchanged" means the callback returned the same pointer it received.
-	if next == currentCopy {
-		return &ChannelUpdateResult{Channel: currentCopy, Status: ChannelUnchanged}, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if next == nil {
-		if exists {
-			delete(s.sessions, key)
-			return &ChannelUpdateResult{Channel: nil, Status: ChannelDeleted}, nil
-		}
-		return &ChannelUpdateResult{Channel: nil, Status: ChannelUnchanged}, nil
-	}
-	cp := *next
-	s.sessions[key] = &cp
-	stored := cp
-	return &ChannelUpdateResult{Channel: &stored, Status: ChannelUpdated}, nil
+// ApplyClaimedTotals advances stored totalClaimed after a successful claim.
+func ApplyClaimedTotals(ctx context.Context, store SessionStorage, claims []batchsettlement.BatchSettlementVoucherClaim, network string) error {
+	return storage.ApplyClaimedTotals(ctx, store, claims, network)
 }

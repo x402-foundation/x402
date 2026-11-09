@@ -180,7 +180,7 @@ export function processPriceToAtomicAmount(
     const parsedAmount = moneySchema.safeParse(price);
     if (!parsedAmount.success) {
       return {
-        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error}`,
+        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error.issues.map(issue => issue.message).join("; ")}`,
       };
     }
     const parsedUsdAmount = parsedAmount.data;

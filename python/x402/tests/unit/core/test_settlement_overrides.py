@@ -27,6 +27,10 @@ def _requirements(amount: str = "2000") -> PaymentRequirements:
     )
 
 
+def _dollar_requirements() -> PaymentRequirements:
+    return _requirements(amount="10000000")
+
+
 class TestRawAtomicUnits:
     def test_passthrough(self):
         reqs = _requirements()
@@ -69,27 +73,27 @@ class TestPercentFormat:
 
 class TestDollarFormat:
     def test_one_dollar_default_decimals(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert x402HTTPServerBase.resolve_settlement_override_amount("$1.00", reqs, 6) == "1000000"
 
     def test_five_cents_default_decimals(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert x402HTTPServerBase.resolve_settlement_override_amount("$0.05", reqs, 6) == "50000"
 
     def test_five_cents_eight_decimals(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert x402HTTPServerBase.resolve_settlement_override_amount("$0.05", reqs, 8) == "5000000"
 
     def test_fractional_dollar(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert x402HTTPServerBase.resolve_settlement_override_amount("$0.001", reqs, 6) == "1000"
 
     def test_zero_dollars(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert x402HTTPServerBase.resolve_settlement_override_amount("$0", reqs, 6) == "0"
 
     def test_pads_and_truncates_toward_zero_without_rounding(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         assert (
             x402HTTPServerBase.resolve_settlement_override_amount("$1.0000005", reqs, 6)
             == "1000000"
@@ -98,9 +102,31 @@ class TestDollarFormat:
         assert x402HTTPServerBase.resolve_settlement_override_amount("$0.0000009", reqs, 6) == "0"
 
     def test_throws_when_decimals_are_unknown(self):
-        reqs = _requirements()
+        reqs = _dollar_requirements()
         with pytest.raises(ValueError, match="asset decimals are unknown"):
             x402HTTPServerBase.resolve_settlement_override_amount("$1.00", reqs)
+
+
+class TestAuthorizedMaximumEnforcement:
+    def test_throws_when_raw_atomic_unit_override_exceeds_requirements_amount(self):
+        reqs = _requirements()
+        with pytest.raises(ValueError, match="exceeds the authorized maximum"):
+            x402HTTPServerBase.resolve_settlement_override_amount("2001", reqs)
+
+    def test_throws_when_percent_override_resolves_above_100_percent(self):
+        reqs = _requirements()
+        with pytest.raises(ValueError, match="exceeds the authorized maximum"):
+            x402HTTPServerBase.resolve_settlement_override_amount("500%", reqs)
+
+    def test_throws_when_dollar_override_resolves_above_requirements_amount(self):
+        reqs = _requirements(amount="999999")
+        with pytest.raises(ValueError, match="exceeds the authorized maximum"):
+            x402HTTPServerBase.resolve_settlement_override_amount("$1.00", reqs, 6)
+
+    def test_does_not_throw_when_resolved_amount_equals_requirements_amount(self):
+        reqs = _requirements()
+        x402HTTPServerBase.resolve_settlement_override_amount("100%", reqs)
+        x402HTTPServerBase.resolve_settlement_override_amount(reqs.amount, reqs)
 
 
 class TestHttpSettlementOverrides:
@@ -210,7 +236,7 @@ class TestDollarOverrideDecimalsLookup:
             },
         )
         effective = http_server._apply_settlement_overrides(
-            _requirements(),
+            _dollar_requirements(),
             {"amount": "$0.05"},
         )
         assert effective.amount == "5000000"
