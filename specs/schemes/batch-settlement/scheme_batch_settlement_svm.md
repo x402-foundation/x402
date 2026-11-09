@@ -251,6 +251,9 @@ and `SettlementResponse` types are defined in
 | `recentSlot` | number | no | Recent slot the client MAY use as `channelConfig.openSlot` when it does not fetch its own slot. The program still enforces the open-slot window. |
 | `minDeposit` | string | no | Atomic deposit target. When present, MUST be a positive integer greater than or equal to `amount`. |
 | `maxIdleSecs` | number | no | Facilitator idle window in seconds, copied from the facilitator's `/supported` `extra`. After this long with no facilitator-visible lifecycle activity on an `Open` channel, the facilitator MAY abandon-close it at the onchain `settled` watermark (see Phase 4). Absent means the facilitator does not idle-close. |
+| `transactionVersions` | array | no | Transaction message versions the facilitator accepts, as an array of `0` and/or `1`, copied from the facilitator's `/supported` `extra`. Absent means `[0]`. See [Transaction versions](#transaction-versions). |
+| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
+| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. |
 | `channelState` | object | no | Corrective-only server channel snapshot for cumulative amount resynchronization. |
 | `voucherState` | object | no | Corrective-only signed voucher proof for cumulative amount resynchronization. |
 
@@ -492,7 +495,7 @@ current request:
 | `voucher` | `BatchVoucher` | REQUIRED in client mode and absent in server mode. Cumulative authorization for the current request. |
 | `authorization` | `BatchAuthorization` | REQUIRED in server mode and absent in client mode. Expiring payer proof. |
 | `deposit.amount` | string | Amount to deposit or top up in atomic units. |
-| `deposit.transaction` | string | Base64 client-signed `open` or `top_up` transaction for the facilitator to validate, co-sign, and broadcast. |
+| `deposit.transaction` | string | Base64 client-signed `open` or `top_up` transaction for the facilitator to validate, co-sign, and broadcast. Its message version MUST be one advertised in `extra.transactionVersions` (see [Transaction versions](#transaction-versions)). |
 
 ```json
 {
@@ -633,7 +636,7 @@ so the resource handler MUST be bypassed, and the payload MUST NOT contain an
 | `channelConfig` | `ChannelConfig` | Full channel configuration. |
 | `voucher` | `BatchVoucher` | REQUIRED in client mode. The server's accepted cumulative amount (`expiresAt` MUST be `0`). MUST be absent in server mode on the client-authored payload. |
 | `authorization` | `BatchAuthorization` | REQUIRED in server mode. `authorizedAmount` MUST be `"0"` (close intent). MUST be absent in client mode. |
-| `transaction` | string | Omitted unless retrying after `invalid_batch_settlement_svm_receiver_binding_unavailable` (section 3). Base64 payer-signed `request_close` with `extra.feePayer` as the Solana fee payer. |
+| `transaction` | string | Omitted unless retrying after `invalid_batch_settlement_svm_receiver_binding_unavailable` (section 3). Base64 payer-signed `request_close` with `extra.feePayer` as the Solana fee payer. Its message version MUST be one advertised in `extra.transactionVersions`. |
 
 ```json
 {
@@ -801,19 +804,20 @@ The `deposit` settle payload is the client variant from section 4.3. A `voucher`
 is stored and answered by the server without a facilitator settlement. Every
 server-authored payload identifies a channel by the same entry shape,
 `channelId` plus `channelConfig`, and carries vouchers as `BatchVoucher`
-objects; `claim` and `settle` wrap one to four such entries in an array, while
+objects; `claim` and `settle` wrap one or more such entries in an array (up to the
+facilitator's advertised capacity, four when it advertises none), while
 `seal` acts on one channel. The server-authored or server-enriched variants
 are:
 
 | Payload | Field | Type | Notes |
 |---|---|---|---|
 | Claim | `type` | string | `"claim"` |
-| Claim | `claims` | array | One to four channels to claim in one transaction. |
+| Claim | `claims` | array | One to `extra.maxClaimChannels` (four when absent) channels to claim in one transaction. |
 | Claim | `claims[].channelId` | string | Channel PDA. |
 | Claim | `claims[].channelConfig` | `ChannelConfig` | Full channel configuration. |
 | Claim | `claims[].voucher` | `BatchVoucher` | Latest accepted voucher; its `maxClaimableAmount` becomes the new onchain `settled` watermark. `expiresAt` MUST be `0`. |
 | Settle | `type` | string | `"settle"` |
-| Settle | `channels` | array | One to four channels to distribute in one transaction. |
+| Settle | `channels` | array | One to `extra.maxSettleChannels` (four when absent) channels to distribute in one transaction. |
 | Settle | `channels[].channelId` | string | Channel PDA. |
 | Settle | `channels[].channelConfig` | `ChannelConfig` | Full configuration used to derive accounts, validate the channel, and reconstruct the distribution. |
 | Seal | `type` | string | `"seal"` |
@@ -945,10 +949,12 @@ precompile instruction:
 }
 ```
 
-`claims[]` MUST contain between one and four entries so the instruction pairs
-fit in a legacy Solana transaction without address lookup tables. The
-facilitator MUST process every entry or fail the request; it MUST NOT silently
-truncate a batch. For each claim it emits an Ed25519
+`claims[]` MUST contain at least one entry and at most `extra.maxClaimChannels`
+entries, or four when the facilitator advertises no `maxClaimChannels`, so the
+instruction pairs fit in one transaction without address lookup tables. A
+facilitator MUST reject a `claims[]` longer than the capacity it advertises
+with `invalid_batch_settlement_svm_payload_type`. The facilitator MUST process
+every entry or fail the request; it MUST NOT silently truncate a batch. For each claim it emits an Ed25519
 precompile instruction immediately followed by the program `settle`
 instruction.
 
@@ -989,8 +995,10 @@ a `settle` payload:
 }
 ```
 
-`channels[]` MUST contain between one and four entries, the same
-transaction-size bound as `claims[]`. The facilitator invokes `distribute` for
+`channels[]` MUST contain at least one entry and at most `extra.maxSettleChannels`
+entries, or four when the facilitator advertises no `maxSettleChannels`. A
+facilitator MUST reject a longer `channels[]` with
+`invalid_batch_settlement_svm_payload_type`. The facilitator invokes `distribute` for
 every `channels[]` entry in one transaction and MUST process every entry or
 fail the request; it MUST NOT silently truncate a batch. It MUST confirm the
 transaction onchain before returning success.
@@ -1159,12 +1167,19 @@ A cooperative refund (section 3) instead returns the close signature and
 
 #### `GET /supported`
 
-The facilitator advertises its SVM transaction fee payer and, when it runs
+The facilitator advertises its SVM transaction fee payer, the transaction
+message versions it accepts, the most channels it redeems in one `claim` and
+one `settle` transaction (`maxClaimChannels`, `maxSettleChannels`; see
+[Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity)),
+and, when it runs
 idle rent cleanup, the idle window `maxIdleSecs` (a positive integer number of
 seconds; the reference implementation defaults to `604800`, seven days). A
 facilitator that accepts delegated closes also advertises
 `extra.receiverAuthorizer`, the key it binds into those channels. The server
-MUST copy `feePayer` and `maxIdleSecs` into `PaymentRequirements.extra`, then
+MUST copy `feePayer`, `transactionVersions`, `maxClaimChannels`,
+`maxSettleChannels`, and `maxIdleSecs` into `PaymentRequirements.extra`, MUST
+NOT author a `claim` or `settle` request with more entries than the copied
+capacity (four when absent), then
 set `extra.tokenProgram` from the selected asset's verified mint owner. A
 server SHOULD claim every channel well inside `maxIdleSecs`, because the
 facilitator may close an idle channel at its onchain `settled` watermark and
@@ -1184,6 +1199,9 @@ advertised key:
       "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
       "extra": {
         "feePayer": "<facilitator-fee-payer>",
+        "transactionVersions": [0, 1],
+        "maxClaimChannels": 18,
+        "maxSettleChannels": 13,
         "maxIdleSecs": 604800
       }
     }
@@ -1288,11 +1306,75 @@ not supported by this version of the scheme.
 
 #### Client-supplied transaction acceptance policy
 
+##### Transaction versions
+
+Solana defines three transaction message formats: legacy, version `0` (adds
+Address Lookup Tables), and version `1` ([SIMD-0385](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0385-transaction-v1.md): 4096-byte transactions that
+carry the compute budget in the message header). The facilitator advertises
+the versions it accepts as `extra.transactionVersions` in `/supported`, and the
+server MUST copy that value into `PaymentRequirements.extra.transactionVersions`.
+Entries MUST be the JSON integers `0` and `1` only. Unlike Wallet Standard
+`supportedTransactionVersions`, the field never contains `legacy`, and a
+string such as `"1"` is not a valid entry. A client or server MUST treat a field
+containing any non-integer entry (a string, `null`, or `"legacy"`) or any
+integer other than `0` or `1` as invalid and fail closed with
+`unsupported_transaction_version`. When the field is absent, the accepted set
+is `[0]`.
+
+Legacy (unversioned) messages are deprecated. They are never advertised in
+`extra.transactionVersions` and clients MUST NOT build them. A facilitator MAY
+keep accepting legacy messages from existing clients for backward
+compatibility; that tolerance will be removed in a future revision of this
+scheme.
+
+- The client MUST intersect the advertised versions (`[0]` when the field is
+  absent) with the versions it and its signer support, then build the highest
+  version in that intersection. It MUST fail with
+  `unsupported_transaction_version` when the intersection is empty.
+  The client MUST NOT use Address Lookup Tables.
+- The facilitator MUST reject a message whose version is outside the set it
+  accepts, before inspecting any instruction, with
+  `unsupported_transaction_version`. The facilitator enforces its own accepted
+  set; it does not read `PaymentRequirements.extra.transactionVersions`.
+- A legacy or version-0 transaction MUST NOT exceed 1232 serialized bytes; a version-1
+  transaction MUST NOT exceed 4096 serialized bytes.
+- A version-1 transaction carries its compute budget in the message's
+  `TransactionConfigMask` and the config values that follow it
+  ([SIMD-0385](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0385-transaction-v1.md#transactionconfigmask)).
+  This spec names the values by the bits that carry them:
+  - bits 0 and 1: `priorityFee`, the total priority fee in lamports (u64). The
+    two bits are set together; a transaction with only one set is invalid.
+  - bit 2: `computeUnitLimit` (u32).
+  - bit 3: `loadedAccountsDataSizeLimit` (u32).
+  - bit 4: the requested heap size (u32).
+
+  SDKs expose these as a config object (for example `config` on a
+  `@solana/kit` message or `TransactionConfig` in solana-go). An unset value
+  takes its minimum: an unset `priorityFee` is 0, an unset `computeUnitLimit`
+  requests 0 compute units, and an unset `loadedAccountsDataSizeLimit` requests
+  0 bytes of loaded account data. (The cost model still reserves 32 KiB of
+  loaded account data for scheduling, but the transaction's own budget is 0.)
+  A transaction that leaves bit 2 or bit 3 unset therefore cannot execute its
+  instructions, so a client-built version-1 transaction MUST set both.
+- The runtime ignores Compute Budget program instructions in a version-1
+  transaction: they configure nothing and execute as no-ops that still consume
+  compute units. As an x402 sponsor rule, a client-built version-1 transaction
+  MUST NOT contain them, and the sponsor MUST reject one that does.
+- A version-1 `priorityFee` is evaluated against a per-compute-unit cap as
+  `priorityFee * 1000000 <= maxPriorityFeeMicroLamports * computeUnitLimit`. Here `maxPriorityFeeMicroLamports` is the maximum
+  compute-unit price that applies to `SetComputeUnitPrice` in a legacy or
+  version-0 transaction: `5000000` microlamports per compute unit, or a
+  stricter local sponsor policy. Both sides of the inequality MUST be evaluated
+  with arbitrary-precision integers (or at least 128-bit unsigned integers), so
+  that an oversized `priorityFee` cannot wrap and pass the check.
+
 ##### Message and signer rules
 
-- The message MAY be legacy or version `0`, but it MUST NOT contain Address
-  Lookup Table lookups. The canonical `open` and `top_up` forms fit in static
-  account keys.
+- The message version MUST be one advertised in `extra.transactionVersions`
+  (`0` when the field is absent; see
+  [Transaction versions](#transaction-versions)), and the message MUST NOT
+  contain Address Lookup Table lookups. The canonical `open` and `top_up` forms
+  fit in static account keys.
 - The transaction fee payer MUST equal `extra.feePayer`.
 - The complete required-signer set MUST equal the distinct addresses in
   `{ channelConfig.payer, extra.feePayer }`. No other signature may be required.
@@ -1312,9 +1394,11 @@ not supported by this version of the scheme.
 
 The top-level instructions MUST consist only of the following ordered regions:
 
-1. An optional Compute Budget prefix containing at most one
-   `SetComputeUnitLimit` instruction and at most one `SetComputeUnitPrice`
-   instruction. If both are present, the limit MUST precede the price.
+1. In a legacy or version-0 transaction, an optional Compute Budget prefix
+   containing at most one `SetComputeUnitLimit` instruction and at most one
+   `SetComputeUnitPrice` instruction. If both are present, the limit MUST
+   precede the price. A version-1 transaction carries its compute budget in the
+   message config and MUST NOT contain this prefix.
 2. Exactly one canonical payment-channels `open` or `top_up` instruction,
    matching the payload form selected by the decoded channel state.
 3. A suffix containing exactly one SPL Memo instruction
@@ -1322,8 +1406,8 @@ The top-level instructions MUST consist only of the following ordered regions:
    instructions (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`). The Memo data
    MUST be `extra.memo` as UTF-8 when supplied, or otherwise a random nonce of
    at least 16 bytes encoded as hexadecimal text. An `open` suffix also carries
-   exactly one binding Memo from section 3. The signed `open` transaction MUST
-   be at most 1232 bytes.
+   exactly one binding Memo from section 3. The signed transaction is subject
+   to the version-specific size limit above.
 
 No other top-level instruction or program is allowed. In particular, a
 top-level associated-token-account instruction, arbitrary wallet program,
@@ -1342,6 +1426,15 @@ When present, Compute Budget instructions:
 
 A sponsor MAY apply stricter local compute-unit, priority-fee, or
 required-signature caps, but MUST NOT relax the absolute maxima above.
+
+In a version-1 transaction the same caps apply to the message config values
+instead (see [Transaction versions](#transaction-versions)): `computeUnitLimit`
+(bit 2) MUST be set and MUST NOT exceed `400000`, `loadedAccountsDataSizeLimit`
+(bit 3) MUST be set, and `priorityFee` (bits 0 and 1, total lamports) MUST
+satisfy `priorityFee * 1000000 <= 5000000 * computeUnitLimit`, evaluated without
+overflow. A version-1 transaction that contains a Compute Budget instruction
+MUST be rejected (an x402 sponsor rule; the runtime treats such instructions as
+no-ops).
 Lighthouse and Memo instructions are allowed only in the final suffix and
 MUST NOT reference `extra.feePayer` as an account or as the invoked program. If
 `extra.memo` is present, the facilitator MUST require exactly one Memo besides
@@ -1593,9 +1686,11 @@ the request path:
 
 - **Claim (`type: "claim"`).** For each channel, build an Ed25519 precompile
   instruction for the latest stored voucher followed by program `settle`. Pack
-  no more than four channels into one transaction and do not silently drop
-  channels from a full batch. Program `settle` advances onchain `settled` to
-  the voucher's exact `maxClaimableAmount`.
+  as many channels as the facilitator's advertised `maxClaimChannels` allows
+  (four in a legacy or version-0 transaction, eighteen in version 1, see
+  [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity))
+  and do not silently drop channels from a full batch. Program `settle`
+  advances onchain `settled` to the voucher's exact `maxClaimableAmount`.
 - **Settle (`type: "settle"`).** Call program `distribute` to pay the newly
   claimed delta to `payTo` and advance `payout_watermark`. The channel remains
   open.
@@ -1610,6 +1705,71 @@ the request path:
 - **Rent cleanup.** If final `distribute` leaves the channel in `Distributed`,
   anyone can later call `reclaim` after the open-slot window to return remaining
   PDA rent to `rent_payer`.
+
+#### Facilitator-built transactions and batching capacity
+
+`extra.transactionVersions` governs only the client-supplied `open`, `top_up`
+and `request_close` messages. The redemption transactions above are built and
+signed by the facilitator alone, so their message version is the facilitator's
+choice:
+
+- The facilitator MAY build any message version the network supports. A
+  version-1 transaction it builds MUST set both `computeUnitLimit` (bit 2) and
+  `loadedAccountsDataSizeLimit` (bit 3) of its `TransactionConfigMask` (an
+  unset value requests 0). It SHOULD set them to
+  values sized for the batch rather than the runtime maxima.
+- Batch size MUST be derived from the serialized transaction (1232 bytes for
+  legacy and version 0, 4096 bytes for version 1), the 64 static account keys
+  a message may carry, and the 64 top-level instruction limit, never from a
+  fixed count. A batch that does not fit is split, never truncated.
+- The facilitator advertises the `claim` and `settle` capacity of the message
+  version it builds redemptions in as `extra.maxClaimChannels` and
+  `extra.maxSettleChannels`: positive integers no greater than what fits that
+  version for every channel shape it accepts. A facilitator that builds
+  redemptions as legacy or version 0 MUST NOT advertise more than `4` (it MAY
+  omit the fields, which means `4`); one that builds them as version 1 MAY
+  advertise up to the version-1 capacities in the table below. The facilitator
+  checks a request's length against the capacity it advertises, not against
+  `PaymentRequirements.extra`. If a request within that capacity still does
+  not fit (an unusual channel shape), the facilitator MUST fail it rather than
+  truncate it.
+
+The table is informative. Per-channel costs are the bytes a further channel
+adds to the message once the shared accounts (fee payer, programs, sysvars,
+mint, payee and treasury token accounts) are already present; the shared
+overhead is about 230 bytes for the claim shape and about 400 bytes for
+`distribute`. Capacities are the binding limit of size, accounts and
+instruction count. The `distribute` capacity assumes every channel in a
+`settle` request pays the route's `payTo`, as the facilitator requires: 14 fit
+then, so 13 leaves a channel of margin. Were each channel to pay its own
+recipient, only 11 would fit.
+
+| Instruction | Per channel | Legacy / v0 (1232 B) | Version 1 (4096 B) | Binding limit for v1 |
+|---|---|---|---|---|
+| `settle` claim: Ed25519 precompile + `settle` | 1 account, 2 instructions, ~205 B | 4 | 18 | size |
+| `distribute` (open or sealed) | 3 accounts with the shared `payTo`, 1 instruction, ~143 B | 5 | 13 | 64 account keys |
+| `reclaim` | 1 account, 1 instruction, ~38 B | ~26 | 62 | 64 account keys |
+| `settle_and_seal` + sealed `distribute` (refund) | one channel per transaction | 1 | 1 | not batched |
+| `open`, `top_up`, `request_close` | client-built, one channel per transaction | 1 | 1 | not batched |
+
+In a devnet measurement, a four-channel claim serializes to 1,046 bytes as a
+legacy message and 1,070 bytes as version 1, executes in 1,696 compute units
+(Ed25519 verification is charged separately by the precompile), and costs
+25,000 lamports. The [base fee](https://solana.com/docs/core/fees/fee-structure#base-fee)
+includes both transaction signatures and Ed25519 precompile signatures, so
+each additional channel adds a signature fee.
+
+A read-only devnet `getFeeForMessage` check at slot `508336903` returned
+25,000 lamports for four-channel v0 and v1 claims (one transaction signature
+and four Ed25519 precompile signatures), and 95,000 lamports for an
+18-channel v1 claim (one transaction signature and 18 precompile signatures).
+These fee probes were not live settlement executions. At those full batch
+sizes, packing 18 channels instead of 4 reduces transaction count by a factor
+of 4.5, but reduces the base fee per channel from 6,250 to about 5,278
+lamports, roughly 15.6%, excluding priority fees. Larger batches reduce
+RPC/submission overhead and amortize the transaction-signature fee; the
+per-channel precompile-signature fee remains. A version-1 batch packed at
+4 channels has the same base fee as version 0.
 
 The close authorization does not remove the facilitator's independent
 permissionless lifecycle authority to finalize a forced close at the current

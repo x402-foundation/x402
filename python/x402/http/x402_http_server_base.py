@@ -725,18 +725,26 @@ class x402HTTPServerBase:
             dec_part = (parts[1] if len(parts) > 1 else "").ljust(2, "0")[:2]
             scaled_percent = int(int_part) * 100 + int(dec_part)
             base = int(requirements.amount)
-            return str(base * scaled_percent // 10000)
+            resolved = str(base * scaled_percent // 10000)
+        else:
+            dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
+            if dollar_match:
+                if decimals is None:
+                    raise ValueError(
+                        f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
+                        "asset decimals are unknown. Pass an atomic amount or register the asset."
+                    )
+                resolved = convert_to_token_amount(dollar_match.group(1), decimals)
+            else:
+                resolved = raw_amount
 
-        dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
-        if dollar_match:
-            if decimals is None:
-                raise ValueError(
-                    f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
-                    "asset decimals are unknown. Pass an atomic amount or register the asset."
-                )
-            return convert_to_token_amount(dollar_match.group(1), decimals)
+        if int(resolved) > int(requirements.amount):
+            raise ValueError(
+                f'Settlement override amount "{raw_amount}" resolves to {resolved} atomic units, '
+                f"which exceeds the authorized maximum of {requirements.amount} in PaymentRequirements."
+            )
 
-        return raw_amount
+        return resolved
 
     def _apply_settlement_overrides(
         self,
@@ -969,6 +977,8 @@ class x402HTTPServerBase:
         if unpaid_response:
             content_type = unpaid_response.content_type
             body = unpaid_response.body
+        elif payment_required.error:
+            body = {"error": payment_required.error}
 
         return HTTPResponseInstructions(
             status=402,

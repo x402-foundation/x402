@@ -1,8 +1,10 @@
 """Registration helpers for SVM exact payment schemes."""
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
-from ..constants import V1_NETWORKS
+from ....schemas.helpers import matches_network_pattern
+from ..constants import V1_NETWORKS, V1_TO_V2_NETWORK_MAP
 
 if TYPE_CHECKING:
     from x402 import (
@@ -33,7 +35,7 @@ def register_exact_svm_client(
 
     Registers:
     - V2: solana:* wildcard (or specific networks if provided)
-    - V1: All supported SVM networks
+    - V1: All supported SVM networks (or those matching networks if provided)
 
     Args:
         client: x402Client instance.
@@ -58,9 +60,19 @@ def register_exact_svm_client(
     else:
         client.register("solana:*", scheme)
 
-    # Register V1 for all legacy networks
+    v1_networks = V1_NETWORKS
+    if networks:
+        v1_networks = [
+            name
+            for name in V1_NETWORKS
+            if name in V1_TO_V2_NETWORK_MAP
+            and any(
+                matches_network_pattern(V1_TO_V2_NETWORK_MAP[name], pattern) for pattern in networks
+            )
+        ]
+
     v1_scheme = ExactSvmClientSchemeV1(signer, rpc_url)
-    for network in V1_NETWORKS:
+    for network in v1_networks:
         client.register_v1(network, v1_scheme)
 
     if policies:
@@ -106,6 +118,7 @@ def register_exact_svm_facilitator(
     facilitator: FacilitatorT,
     signer: "FacilitatorSvmSigner",
     networks: str | list[str],
+    transaction_versions: Sequence[int] | None = None,
 ) -> FacilitatorT:
     """Register SVM exact payment schemes to x402Facilitator.
 
@@ -120,6 +133,9 @@ def register_exact_svm_facilitator(
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
         networks: Network(s) to register.
+        transaction_versions: Transaction message versions to accept and
+            advertise, applied to both the V2 and V1 schemes. Defaults to
+            ``[0, 1]``.
 
     Returns:
         Facilitator for chaining.
@@ -130,14 +146,18 @@ def register_exact_svm_facilitator(
 
     settlement_cache = SettlementCache()
 
-    scheme = ExactSvmFacilitatorScheme(signer, settlement_cache)
+    scheme = ExactSvmFacilitatorScheme(
+        signer, settlement_cache, transaction_versions=transaction_versions
+    )
 
     if isinstance(networks, str):
         networks = [networks]
     facilitator.register(networks, scheme)
 
     # Register V1
-    v1_scheme = ExactSvmFacilitatorSchemeV1(signer, settlement_cache)
+    v1_scheme = ExactSvmFacilitatorSchemeV1(
+        signer, settlement_cache, transaction_versions=transaction_versions
+    )
     facilitator.register_v1(V1_NETWORKS, v1_scheme)
 
     return facilitator

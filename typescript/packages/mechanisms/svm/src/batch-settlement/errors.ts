@@ -1,3 +1,5 @@
+import { ErrUnsupportedTransactionVersion } from "../exact/facilitator/errors";
+
 const PREFIX = "invalid_batch_settlement_svm_";
 
 export const BatchError = {
@@ -29,3 +31,25 @@ export const BatchError = {
 } as const;
 
 export type BatchErrorReason = (typeof BatchError)[keyof typeof BatchError];
+
+/**
+ * Give a failed `open` or `top_up` verification its spec code (spec 7): the
+ * binding Memo naming another receiver authorizer is
+ * `receiver_authorizer_mismatch`, a grace period other than
+ * `extra.withdrawDelay` is `withdraw_delay_mismatch`, an unaccepted message
+ * version keeps `unsupported_transaction_version`, and every other sponsor
+ * safety check (layout, signers, budget, size) is `setup_transaction`.
+ *
+ * @param error - The error the setup-transaction verifier threw
+ * @returns Never; always throws the classified error
+ */
+export function rethrowSetupTransactionError(error: unknown): never {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (detail.startsWith(ErrUnsupportedTransactionVersion)) throw new Error(detail);
+  const reason = detail.includes("names another receiver authorizer")
+    ? BatchError.RECEIVER_AUTHORIZER_MISMATCH
+    : /gracePeriod \d+ != expected withdrawDelay/.test(detail)
+      ? BatchError.WITHDRAW_DELAY_MISMATCH
+      : BatchError.SETUP_TRANSACTION;
+  throw new Error(`${reason}: ${detail}`);
+}

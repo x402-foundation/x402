@@ -8,11 +8,18 @@ import {
   type RefundResult,
 } from "../../../src/batch-settlement/server/channelManager";
 import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/server/scheme";
-import { InMemoryChannelStorage, type Channel } from "../../../src/batch-settlement/server/storage";
+import {
+  InMemoryChannelStorage,
+  type Channel,
+  type ChannelLockStorage,
+} from "../../../src/batch-settlement/server/storage";
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import { EVM_NETWORK_CHAIN_ID_MAP } from "../../../src/constants";
 import type { ChannelConfig, AuthorizerSigner } from "../../../src/batch-settlement/types";
+import * as Errors from "../../../src/batch-settlement/errors";
 import type { FacilitatorClient } from "@x402/core/server";
 import type {
+  Network,
   PaymentPayload,
   PaymentRequirements,
   SettleResponse,
@@ -140,6 +147,232 @@ function buildManager(opts?: {
   return { manager, scheme, facilitator, storage };
 }
 
+async function buildNetworkFixture(stamped: boolean) {
+  const setup = buildManager();
+  const otherNetwork = `eip155:${EVM_NETWORK_CHAIN_ID_MAP.base}` as const;
+  const local = buildSession({
+    channelConfig: buildChannelConfig("01"),
+    lastRequestTimestamp: Date.now() - 120_000,
+    ...(stamped ? { network: NETWORK } : {}),
+  });
+  const otherConfig = buildChannelConfig("02");
+  const other = buildSession({
+    channelConfig: otherConfig,
+    channelId: computeChannelIdForNetwork(otherConfig, otherNetwork),
+    lastRequestTimestamp: Date.now() - 120_000,
+    ...(stamped ? { network: otherNetwork } : {}),
+  });
+  await storeChannel(setup.storage, local);
+  await storeChannel(setup.storage, other);
+  const otherFacilitator = buildFacilitator();
+  const otherManager = setup.scheme.createChannelManager(otherFacilitator, otherNetwork, TOKEN);
+  return { ...setup, otherNetwork, local, other, otherFacilitator, otherManager };
+}
+
+describe.each([true, false])("network-scoped selection (stamped: %s)", stamped => {
+  it("only passes local channels to the claim selector and filters its results", async () => {
+    const { manager, storage, local, other } = await buildNetworkFixture(stamped);
+    const selector = vi.fn(channels => [...channels, other]);
+
+    const results = await manager.claim({ selectClaimChannels: selector });
+
+    expect(selector).toHaveBeenCalledWith([local], expect.anything());
+    expect(results).toMatchObject([{ vouchers: 1 }]);
+    expect((await storage.get(other.channelId))?.totalClaimed).toBe("0");
+  });
+
+  it.each(["refund", "refundIdleChannels"] as const)("scopes %s to its network", async method => {
+    const { manager, storage, local, other, facilitator } = await buildNetworkFixture(stamped);
+
+    const results =
+      method === "refund"
+        ? await manager.refund()
+        : await manager.refundIdleChannels({ idleSecs: 60 });
+
+    expect(results).toEqual([{ channel: local.channelId, transaction: "0xtx" }]);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    expect(await storage.get(local.channelId)).toBeUndefined();
+    expect(await storage.get(other.channelId)).toEqual(other);
+  });
+
+  it("scopes pending withdrawals to its network", async () => {
+    const { manager, storage, local, other } = await buildNetworkFixture(stamped);
+    for (const channel of [local, other]) {
+      await storage.updateChannel(channel.channelId, current => ({
+        ...current!,
+        withdrawRequestedAt: 1,
+      }));
+    }
+
+    expect(await manager.getWithdrawalPendingSessions()).toEqual([
+      { ...local, withdrawRequestedAt: 1 },
+    ]);
+  });
+
+  it("scopes both automatic refund selector input and output", async () => {
+    vi.useFakeTimers();
+    const { manager, storage, local, other, facilitator } = await buildNetworkFixture(stamped);
+    const selector = vi.fn(channels => [...channels, other]);
+    const onRefund = vi.fn();
+    const onError = vi.fn();
+    try {
+      manager.start({ refundIntervalSecs: 1, selectRefundChannels: selector, onRefund, onError });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(selector).toHaveBeenCalledWith([local], expect.anything());
+      expect(onRefund).toHaveBeenCalledExactlyOnceWith({
+        channel: local.channelId,
+        transaction: "0xtx",
+      });
+      expect(onError).not.toHaveBeenCalled();
+      expect(facilitator.settle).toHaveBeenCalledTimes(1);
+      expect(await storage.get(other.channelId)).toEqual(other);
+    } finally {
+      await manager.stop();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("uses the persisted network before the channel-id binding", async () => {
+  const { manager, otherManager, storage, local, otherNetwork } = await buildNetworkFixture(true);
+  await storage.updateChannel(local.channelId, current => ({ ...current!, network: otherNetwork }));
+
+  expect(await manager.getClaimableVouchers()).toEqual([]);
+  expect(await otherManager.getClaimableVouchers()).toHaveLength(2);
+});
+
+it("falls back to channel-id binding when a persisted network is empty", async () => {
+  const { manager, storage, local, other } = await buildNetworkFixture(false);
+  for (const channel of [local, other]) {
+    await storage.updateChannel(channel.channelId, current => ({
+      ...current!,
+      network: "" as Network,
+    }));
+  }
+
+  expect(await manager.getClaimableVouchers()).toHaveLength(1);
+  expect(await manager.refund()).toEqual([{ channel: local.channelId, transaction: "0xtx" }]);
+  expect(await storage.get(other.channelId)).toBeDefined();
+});
+
+describe("independent claim batches", () => {
+  let setup: ReturnType<typeof buildManager>;
+  let channels: Channel[];
+  const failure = new Error("claim rejected");
+  const success: SettleResponse = { success: true, transaction: "0xtx", network: NETWORK };
+
+  beforeEach(async () => {
+    setup = buildManager();
+    channels = ["01", "02"].map(salt =>
+      buildSession({ channelConfig: buildChannelConfig(salt), network: NETWORK }),
+    );
+    for (const channel of channels) await storeChannel(setup.storage, channel);
+  });
+
+  it.each([0, 1])(
+    "continues after batch %s fails and keeps successful claims pending",
+    async failed => {
+      const { manager, facilitator, storage } = setup;
+      vi.useFakeTimers();
+      if (failed === 1) facilitator.settle.mockResolvedValueOnce(success);
+      facilitator.settle.mockRejectedValueOnce(failure);
+      const shouldSettle = vi.fn(() => true);
+      try {
+        await expect(manager.claim({ maxClaimsPerBatch: 1 })).rejects.toMatchObject({
+          name: "BatchClaimError",
+          errors: [failure],
+          results: [{ vouchers: 1, transaction: "0xtx" }],
+        });
+        expect(facilitator.settle).toHaveBeenCalledTimes(2);
+        expect((await storage.get(channels[failed].channelId))?.totalClaimed).toBe("0");
+        expect((await storage.get(channels[1 - failed].channelId))?.totalClaimed).toBe("1000");
+
+        manager.start({ settleIntervalSecs: 1, shouldSettle });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(shouldSettle).toHaveBeenCalledWith(expect.objectContaining({ pendingSettle: true }));
+        expect(facilitator.settle.mock.calls[2][0].payload.type).toBe("settle");
+
+        expect(await manager.claim()).toMatchObject([{ vouchers: 1 }]);
+        expect((await storage.get(channels[failed].channelId))?.totalClaimed).toBe("1000");
+      } finally {
+        await manager.stop();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("preserves all batch errors without marking failed claims as settled", async () => {
+    const { manager, facilitator, storage } = setup;
+    const second = new Error("second rejected");
+    facilitator.settle.mockRejectedValueOnce(failure).mockRejectedValueOnce(second);
+
+    await expect(manager.claim({ maxClaimsPerBatch: 1 })).rejects.toMatchObject({
+      errors: [failure, second],
+      results: [],
+    });
+    for (const channel of channels) {
+      expect((await storage.get(channel.channelId))?.totalClaimed).toBe("0");
+    }
+    const selector = vi.fn(() => []);
+    await manager.claim({ selectClaimChannels: selector });
+    expect(selector).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pendingSettle: false, lastClaimTime: 0 }),
+    );
+  });
+
+  it("settles successful batches while exposing the partial claim failure", async () => {
+    const { manager, facilitator } = setup;
+    facilitator.settle.mockRejectedValueOnce(failure);
+
+    await expect(manager.claimAndSettle({ maxClaimsPerBatch: 1 })).rejects.toMatchObject({
+      errors: [failure],
+      results: [{ vouchers: 1, transaction: "0xtx" }],
+      settle: { transaction: "0xtx" },
+    });
+    expect(facilitator.settle.mock.calls.map(([payload]) => payload.payload.type)).toEqual([
+      "claim",
+      "claim",
+      "settle",
+    ]);
+  });
+
+  it("reports both claim and settlement failures", async () => {
+    const { manager, facilitator } = setup;
+    const settleFailure = new Error("settle rejected");
+    facilitator.settle
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce(success)
+      .mockRejectedValueOnce(settleFailure);
+
+    await expect(manager.claimAndSettle({ maxClaimsPerBatch: 1 })).rejects.toMatchObject({
+      errors: [failure, settleFailure],
+      results: [{ vouchers: 1, transaction: "0xtx" }],
+    });
+  });
+
+  it("reports automatic claim successes as well as batch failures", async () => {
+    const { manager, facilitator } = setup;
+    vi.useFakeTimers();
+    const onClaim = vi.fn();
+    const onError = vi.fn();
+    facilitator.settle.mockRejectedValueOnce(failure);
+    try {
+      manager.start({ claimIntervalSecs: 1, maxClaimsPerBatch: 1, onClaim, onError });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(onClaim).toHaveBeenCalledExactlyOnceWith({ vouchers: 1, transaction: "0xtx" });
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ errors: [failure] }),
+      );
+    } finally {
+      await manager.stop();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("BatchSettlementChannelManager — claim()", () => {
   it("returns no results when there are no claimable vouchers", async () => {
     const { manager, facilitator } = buildManager();
@@ -163,6 +396,40 @@ describe("BatchSettlementChannelManager — claim()", () => {
     const payload = paymentPayload.payload as Record<string, unknown>;
     expect(payload.type).toBe("claim");
     expect(payload.claims).toHaveLength(1);
+  });
+
+  it.each([true, false])("scopes claims to the manager's network (stamped: %s)", async stamped => {
+    const { manager, storage, facilitator, local, other, otherManager, otherFacilitator } =
+      await buildNetworkFixture(stamped);
+
+    for (const [claimManager, channel] of [
+      [manager, local],
+      [otherManager, other],
+    ] as const) {
+      expect(await claimManager.getClaimableVouchers()).toEqual([
+        {
+          voucher: {
+            channel: channel.channelConfig,
+            maxClaimableAmount: channel.signedMaxClaimable,
+          },
+          signature: channel.signature,
+          totalClaimed: channel.chargedCumulativeAmount,
+        },
+      ]);
+    }
+
+    const results = await manager.claim();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].vouchers).toBe(1);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    expect((await storage.get(local.channelId))?.totalClaimed).toBe(local.chargedCumulativeAmount);
+    expect((await storage.get(other.channelId))?.totalClaimed).toBe("0");
+
+    await otherManager.claim();
+
+    expect(otherFacilitator.settle).toHaveBeenCalledTimes(1);
+    expect((await storage.get(other.channelId))?.totalClaimed).toBe(other.chargedCumulativeAmount);
   });
 
   it("splits claims across multiple batches respecting maxClaimsPerBatch", async () => {
@@ -324,6 +591,18 @@ describe("BatchSettlementChannelManager — settle()", () => {
     const { manager } = buildManager({ facilitator });
     await expect(manager.settle()).rejects.toThrow(/Settle failed/);
   });
+
+  it("treats ErrNothingToSettle as a no-op instead of throwing", async () => {
+    const facilitator = buildFacilitator(async () => ({
+      success: false,
+      errorReason: Errors.ErrNothingToSettle,
+      errorMessage: "nothing to settle for receiver and token",
+      transaction: "",
+      network: NETWORK,
+    }));
+    const { manager } = buildManager({ facilitator });
+    await expect(manager.settle()).resolves.toEqual({ transaction: "" });
+  });
 });
 
 describe("BatchSettlementChannelManager — claimAndSettle()", () => {
@@ -363,6 +642,55 @@ describe("BatchSettlementChannelManager — claimAndSettle()", () => {
 });
 
 describe("BatchSettlementChannelManager — refund()", () => {
+  it("still refunds when the lock store throws", async () => {
+    const storage = new InMemoryChannelStorage();
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw new Error("lock down");
+      },
+    };
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const facilitator = buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
+    await storeChannel(storage, session);
+
+    const result = await manager.refund();
+    expect(result).toEqual([{ channel: session.channelId, transaction: "0xtx" }]);
+  });
+
+  it("rejects refund when isHeld throws a TypeError", async () => {
+    const storage = new InMemoryChannelStorage();
+    const lockStorage: ChannelLockStorage = {
+      acquire: async () => true,
+      release: async () => undefined,
+      isHeld: async () => {
+        throw new TypeError("corrupt hold");
+      },
+    };
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, { storage, lockStorage });
+    const facilitator = buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
+    await storeChannel(storage, session);
+
+    await expect(manager.refund()).rejects.toThrow(TypeError);
+  });
+
   it("returns no channels when storage is empty", async () => {
     const { manager, facilitator } = buildManager();
     const result = await manager.refund();
@@ -370,13 +698,12 @@ describe("BatchSettlementChannelManager — refund()", () => {
     expect(facilitator.settle).not.toHaveBeenCalled();
   });
 
-  it("filters by provided channel ids (case-insensitive)", async () => {
+  it("refunds remaining escrow", async () => {
     const { manager, storage, facilitator } = buildManager();
     const session = buildSession({ chargedCumulativeAmount: "1000", balance: "10000" });
     await storeChannel(storage, session);
 
-    const idUpper = session.channelId.toUpperCase().replace("0X", "0x");
-    const result = await manager.refund([idUpper]);
+    const result = await manager.refund();
 
     expect(result).toEqual([{ channel: session.channelId, transaction: "0xtx" }]);
     expect(facilitator.settle).toHaveBeenCalledTimes(1);
@@ -424,6 +751,22 @@ describe("BatchSettlementChannelManager — refund()", () => {
     for (const { channel } of result) {
       expect(await storage.get(channel)).toBeUndefined();
     }
+  });
+
+  it("refundIdleChannels skips channels whose escrow balance is already zero", async () => {
+    const { manager, storage } = buildManager();
+    await storeChannel(
+      storage,
+      buildSession({
+        balance: "0",
+        chargedCumulativeAmount: "0",
+        totalClaimed: "0",
+        lastRequestTimestamp: Date.now() - 120_000,
+      }),
+    );
+
+    const results = await manager.refundIdleChannels({ idleSecs: 60 });
+    expect(results).toEqual([]);
   });
 
   it("refundIdleChannels only refunds channels idle long enough", async () => {
@@ -788,5 +1131,68 @@ describe("BatchSettlementChannelManager — auto-loop tick policies", () => {
 
     await manager.stop();
     expect(onError).toHaveBeenCalled();
+  });
+});
+
+describe("BatchSettlementChannelManager — facilitator-managed mode", () => {
+  function buildManagedManager(opts?: { facilitator?: FakeFacilitator }): {
+    manager: BatchSettlementChannelManager;
+    facilitator: FakeFacilitator;
+    storage: InMemoryChannelStorage;
+  } {
+    const storage = new InMemoryChannelStorage();
+    const scheme = new BatchSettlementEvmScheme(RECEIVER, {
+      voucherStoreMode: "facilitator",
+      storage,
+    });
+    const facilitator = opts?.facilitator ?? buildFacilitator();
+    const manager = new BatchSettlementChannelManager({
+      scheme,
+      facilitator,
+      receiver: RECEIVER,
+      token: TOKEN,
+      network: NETWORK,
+    });
+    return { manager, facilitator, storage };
+  }
+
+  it("allows claim from the replica", async () => {
+    const { manager, storage, facilitator } = buildManagedManager();
+    const session = buildSession({ chargedCumulativeAmount: "5000", totalClaimed: "0" });
+    await storeChannel(storage, session);
+
+    const results = await manager.claim();
+    expect(results).toHaveLength(1);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    const [paymentPayload] = facilitator.settle.mock.calls[0];
+    expect((paymentPayload.payload as Record<string, unknown>).type).toBe("claim");
+  });
+
+  it("throws on refund()", async () => {
+    const { manager } = buildManagedManager();
+    await expect(manager.refund()).rejects.toThrow(
+      "cooperative refunds are client-initiated in facilitator-managed mode",
+    );
+  });
+
+  it("throws on refundIdleChannels()", async () => {
+    const { manager } = buildManagedManager();
+    await expect(manager.refundIdleChannels({ idleSecs: 60 })).rejects.toThrow(
+      "cooperative refunds are client-initiated in facilitator-managed mode",
+    );
+  });
+
+  it("does not start a refund interval timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const setIntervalSpy = vi.spyOn(global, "setInterval");
+      const { manager } = buildManagedManager();
+
+      manager.start({ claimIntervalSecs: 1, settleIntervalSecs: 2, refundIntervalSecs: 3 });
+      expect(setIntervalSpy).toHaveBeenCalledTimes(2);
+      await manager.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

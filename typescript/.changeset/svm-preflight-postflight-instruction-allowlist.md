@@ -1,0 +1,7 @@
+---
+"@x402/svm": minor
+---
+
+Added an optional preflight/postflight instruction-tuple allowlist to the exact SVM facilitator's Path 1 (static layout) verification. `ExactSvmSchemeOptions.preflightInstructionAllowlist`/`postflightInstructionAllowlist` each accept a list of instruction tuples (program address + discriminator identities) that may match as a contiguous block immediately before/after the required protocol instructions - e.g. atomically channeling funds from an out-of-band mechanism into the same transaction as the merchant transfer. Guard (Lighthouse) instructions may be interspersed within a matched block. A matched block is fee-payer-isolation-checked before being accepted, reusing the same isolation check as Path 2 smart-wallet verification.
+
+An empty tuple or empty discriminator never matches (fail closed). Both allowlists default to empty, which is a strict no-op: existing behavior is unchanged unless explicitly configured.

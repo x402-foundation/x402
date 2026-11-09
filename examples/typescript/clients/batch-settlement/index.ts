@@ -19,8 +19,12 @@ const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
 const endpointPath = process.env.ENDPOINT_PATH || "/weather";
 const url = `${baseURL}${endpointPath}`;
 const storageDir = process.env.STORAGE_DIR;
-const channelSalt = (process.env.CHANNEL_SALT ??
-  "0x0000000000000000000000000000000000000000000000000000000000000000") as `0x${string}`;
+const channelSaltRaw = (
+  process.env.CHANNEL_SALT ?? "0x0000000000000000000000000000000000000000000000000000000000000000"
+).trim();
+const channelSalt = /^\d+$/.test(channelSaltRaw)
+  ? Number(channelSaltRaw)
+  : (channelSaltRaw as `0x${string}`);
 const svmChannelSalt = process.env.SVM_CHANNEL_SALT?.trim() || "0";
 const numberOfRequests = Number(process.env.NUMBER_OF_REQUESTS ?? "3");
 const refundAfterRequests = process.env.REFUND_AFTER_REQUESTS === "true";

@@ -2,7 +2,22 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 )
+
+var networkV2Pattern = regexp.MustCompile(`^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`)
+
+// requirementsFields has PaymentRequirements' fields and none of its methods,
+// so an envelope can decode nested requirements and then choose the network rule.
+type requirementsFields PaymentRequirements
+
+func checkNetworkV2(network string) error {
+	if networkV2Pattern.MatchString(network) {
+		return nil
+	}
+	return fmt.Errorf("network %q must be in CAIP-2 format (e.g., 'eip155:84532')", network)
+}
 
 // PaymentPayload represents a v2 payment payload structure
 // V2 has accepted field with nested scheme/network/requirements
@@ -40,6 +55,47 @@ func (r PaymentRequirements) GetPayTo() string                 { return r.PayTo 
 func (r PaymentRequirements) GetMaxTimeoutSeconds() int        { return r.MaxTimeoutSeconds }
 func (r PaymentRequirements) GetExtra() map[string]interface{} { return r.Extra }
 
+// UnmarshalJSON rejects a V2 network that is not a CAIP-2 identifier.
+func (r *PaymentRequirements) UnmarshalJSON(data []byte) error {
+	var decoded requirementsFields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := checkNetworkV2(decoded.Network); err != nil {
+		return err
+	}
+	*r = PaymentRequirements(decoded)
+	return nil
+}
+
+// UnmarshalJSON rejects a V2 accepted network that is not a CAIP-2 identifier.
+// A payload with x402Version 1 keeps the network it was given.
+func (p *PaymentPayload) UnmarshalJSON(data []byte) error {
+	type payloadFields PaymentPayload
+	var decoded payloadFields
+	var accepted requirementsFields
+	raw := struct {
+		*payloadFields
+		Accepted *requirementsFields `json:"accepted"`
+	}{
+		payloadFields: &decoded,
+		Accepted:      &accepted,
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Accepted != nil {
+		decoded.Accepted = PaymentRequirements(*raw.Accepted)
+	}
+	if decoded.X402Version != 1 {
+		if err := checkNetworkV2(decoded.Accepted.Network); err != nil {
+			return err
+		}
+	}
+	*p = PaymentPayload(decoded)
+	return nil
+}
+
 // PaymentRequired represents a v2 402 response structure
 type PaymentRequired struct {
 	X402Version int                    `json:"x402Version"`
@@ -47,6 +103,35 @@ type PaymentRequired struct {
 	Resource    *ResourceInfo          `json:"resource,omitempty"`
 	Accepts     []PaymentRequirements  `json:"accepts"`
 	Extensions  map[string]interface{} `json:"extensions,omitempty"`
+}
+
+// UnmarshalJSON rejects each V2 accepts network that is not a CAIP-2 identifier.
+// A response with x402Version 1 keeps the networks it was given.
+func (p *PaymentRequired) UnmarshalJSON(data []byte) error {
+	type requiredFields PaymentRequired
+	var decoded requiredFields
+	raw := struct {
+		*requiredFields
+		Accepts []requirementsFields `json:"accepts"`
+	}{requiredFields: &decoded}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Accepts != nil {
+		decoded.Accepts = make([]PaymentRequirements, len(raw.Accepts))
+		for i := range raw.Accepts {
+			decoded.Accepts[i] = PaymentRequirements(raw.Accepts[i])
+		}
+	}
+	if decoded.X402Version != 1 {
+		for i := range decoded.Accepts {
+			if err := checkNetworkV2(decoded.Accepts[i].Network); err != nil {
+				return err
+			}
+		}
+	}
+	*p = PaymentRequired(decoded)
+	return nil
 }
 
 // ResourceInfo describes the resource being accessed.

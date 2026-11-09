@@ -1,0 +1,3 @@
+kind: fixed
+body: 'A failed cancel facilitator call returns ErrCancellationOutcomeUnknown instead of a failed receipt, so MCP reports "Payment cancellation outcome unknown".'
+time: 2026-11-06T08:50:00Z

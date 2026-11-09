@@ -16,7 +16,11 @@ import {
 import { processCorrectivePaymentRequired } from "../../../src/batch-settlement/client/recovery";
 import { InMemoryClientChannelStorage } from "../../../src/batch-settlement/client/storage";
 import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
-import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
+import {
+  computeChannelId as computeChannelIdForNetwork,
+  packRefundAuthorizerSalt,
+  unpackRefundAuthorizer,
+} from "../../../src/batch-settlement/utils";
 import { PERMIT2_ADDRESS } from "../../../src/constants";
 import { PERMIT2_DEPOSIT_COLLECTOR_ADDRESS } from "../../../src/batch-settlement/constants";
 import {
@@ -24,6 +28,15 @@ import {
   isBatchSettlementVoucherPayload,
 } from "../../../src/batch-settlement/types";
 import { createBatchSettlementClientHooks } from "../../../src/batch-settlement/client/hooks";
+import {
+  applyMaxDeposit,
+  depositAmountForRequest,
+  maxDepositFromSpendCap,
+  parseAnnouncedMinDeposit,
+  resolveClientOptions,
+  validateDepositPolicy,
+} from "../../../src/batch-settlement/client/config";
+import type { BatchSettlementDepositPolicy } from "../../../src/batch-settlement/client/config";
 import type { ClientEvmSigner } from "../../../src/signer";
 import type {
   PaymentPayload,
@@ -32,12 +45,6 @@ import type {
   PaymentRequired,
 } from "@x402/core/types";
 import * as Errors from "../../../src/batch-settlement/errors";
-import {
-  applyMaxDeposit,
-  depositAmountForRequest,
-  maxDepositFromSpendCap,
-  parseAnnouncedMinDeposit,
-} from "../../../src/batch-settlement/client/config";
 
 const PAYER_PRIVATE_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 const VOUCHER_PRIVATE_KEY = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a";
@@ -337,6 +344,73 @@ describe("buildChannelConfig", () => {
       "0xabc1230000000000000000000000000000000000000000000000000000000099" as `0x${string}`;
     const cfg = buildChannelConfig(makeDeps({ signer, salt }), makeRequirements());
     expect(cfg.salt).toBe(salt);
+  });
+
+  it("packs extra.refundAuthorizer into salt for facilitator-managed 402s", () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const salt =
+      "0xabc1230000000000000000000000000000000000000000000000000000000099" as `0x${string}`;
+    const refundAuthorizer = "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd" as `0x${string}`;
+    const cfg = buildChannelConfig(
+      makeDeps({ signer, salt }),
+      makeRequirements({
+        extra: {
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          withdrawDelay: 900,
+          voucherManager: "facilitator",
+          refundAuthorizer,
+        },
+      }),
+    );
+    expect(cfg.salt).toBe(packRefundAuthorizerSalt(salt, refundAuthorizer));
+    expect(unpackRefundAuthorizer(cfg.salt)).toBe(getAddress(refundAuthorizer));
+  });
+
+  it("never packs the salt for self-managed 402s, keeping the channelId stable", () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const salt =
+      "0xabc1230000000000000000000000000000000000000000000000000000000099" as `0x${string}`;
+    const refundAuthorizer = "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd" as `0x${string}`;
+    const base = buildChannelConfig(
+      makeDeps({ signer, salt }),
+      makeRequirements({ extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, withdrawDelay: 900 } }),
+    );
+    const extras: Record<string, unknown>[] = [
+      { refundAuthorizer },
+      { voucherManager: "server", refundAuthorizer },
+      { voucherManager: "facilitator" },
+    ];
+    for (const extra of extras) {
+      const cfg = buildChannelConfig(
+        makeDeps({ signer, salt }),
+        makeRequirements({
+          extra: { receiverAuthorizer: RECEIVER_AUTHORIZER, withdrawDelay: 900, ...extra },
+        }),
+      );
+      expect(cfg.salt).toBe(salt);
+      expect(computeChannelId(cfg)).toBe(computeChannelId(base));
+    }
+  });
+
+  it("packs increment-style salts to distinct channel ids when refundAuthorizer is set", () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const refundAuthorizer = "0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd" as `0x${string}`;
+    const requirements = makeRequirements({
+      extra: {
+        receiverAuthorizer: RECEIVER_AUTHORIZER,
+        withdrawDelay: 900,
+        voucherManager: "facilitator",
+        refundAuthorizer,
+      },
+    });
+    const saltA =
+      "0x0000000000000000000000000000000000000000000000000000000000000011" as `0x${string}`;
+    const saltB =
+      "0x0000000000000000000000000000000000000000000000000000000000000012" as `0x${string}`;
+    const a = buildChannelConfig(makeDeps({ signer, salt: saltA }), requirements);
+    const b = buildChannelConfig(makeDeps({ signer, salt: saltB }), requirements);
+    expect(a.salt).not.toBe(b.salt);
+    expect(computeChannelId(a)).not.toBe(computeChannelId(b));
   });
 });
 
@@ -895,6 +969,27 @@ describe("updateChannelFromSettle / schemeHooks", () => {
     );
 
     expect(await storage.get(channelId)).toBeUndefined();
+  });
+
+  it("does not reconcile local state after a failed voucher settle in hooks", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const storage = new InMemoryClientChannelStorage();
+    const deps = makeDeps({ signer, storage });
+    const requirements = makeRequirements({ amount: "1000" });
+    const channelId = computeChannelId(buildChannelConfig(deps, requirements));
+    const previous = {
+      chargedCumulativeAmount: "500",
+      balance: "9000",
+      totalClaimed: "0",
+    };
+    await storage.set(channelId.toLowerCase(), previous);
+    const hooks = createBatchSettlementClientHooks(deps);
+    await hooks.onPaymentResponse!({
+      paymentPayload: makePaymentPayload({ type: "voucher" }),
+      requirements,
+      settleResponse: makeFailedSettle(signer.address, { chargedAmount: "1000" }),
+    });
+    expect(await storage.get(channelId.toLowerCase())).toEqual(previous);
   });
 
   it("does nothing when PAYMENT-RESPONSE is absent", async () => {
@@ -1787,6 +1882,17 @@ describe("BatchSettlementEvmScheme — refund()", () => {
     );
   });
 
+  it("throws when no fetch implementation is available", async () => {
+    const signer = buildSigner(PAYER_PRIVATE_KEY);
+    const client = new BatchSettlementEvmScheme(signer);
+    const originalFetch = globalThis.fetch;
+    Object.defineProperty(globalThis, "fetch", { value: undefined, configurable: true });
+
+    await expect(client.refund(REFUND_URL)).rejects.toThrow(/fetch implementation/);
+
+    Object.defineProperty(globalThis, "fetch", { value: originalFetch, configurable: true });
+  });
+
   it("fails fast (no retry) when server returns 402 with refund no balance error", async () => {
     const signer = buildSigner(PAYER_PRIVATE_KEY);
     const storage = new InMemoryClientChannelStorage();
@@ -1946,6 +2052,79 @@ describe("BatchSettlementEvmScheme — refund()", () => {
     ]);
     await expect(client.refund(REFUND_URL, { fetch: fetchImpl })).rejects.toThrow(
       /missing PAYMENT-RESPONSE/,
+    );
+  });
+});
+
+describe("resolveClientOptions", () => {
+  it("maps rpcUrl to extensionRpcOptions for gas sponsoring reads", () => {
+    const opts = resolveClientOptions({ rpcUrl: "https://rpc.example" });
+    expect(opts.extensionRpcOptions).toEqual({ rpcUrl: "https://rpc.example" });
+  });
+
+  it("leaves extensionRpcOptions undefined when rpcUrl is omitted", () => {
+    expect(resolveClientOptions({}).extensionRpcOptions).toBeUndefined();
+  });
+
+  it("defaults storage and salt when options are omitted", () => {
+    const opts = resolveClientOptions(undefined);
+    expect(opts.storage).toBeDefined();
+    expect(opts.salt).toMatch(/^0x[a-fA-F0-9]{64}$/);
+  });
+
+  it("accepts a deposit policy as the second constructor argument", () => {
+    const policy = { minimumBalance: "100" } as BatchSettlementDepositPolicy;
+    const opts = resolveClientOptions(policy);
+    expect(opts.depositPolicy).toBe(policy);
+    expect(opts.storage).toBeDefined();
+  });
+
+  it("coerces numeric and short-hex salt to the same left-padded bytes32", () => {
+    const padded =
+      "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`;
+    expect(resolveClientOptions({ salt: 1 }).salt).toBe(padded);
+    expect(resolveClientOptions({ salt: 1n }).salt).toBe(padded);
+    expect(resolveClientOptions({ salt: "0x1" }).salt).toBe(padded);
+    expect(resolveClientOptions({ salt: padded }).salt).toBe(padded);
+  });
+});
+
+describe("deposit policy helpers", () => {
+  it("validateDepositPolicy rejects multipliers below 3", () => {
+    expect(() => validateDepositPolicy({ depositMultiplier: 2 })).toThrow(/depositMultiplier/);
+  });
+
+  it("parseAnnouncedMinDeposit ignores targets below the request amount", () => {
+    expect(parseAnnouncedMinDeposit("500", 1000n)).toBeUndefined();
+  });
+
+  it("parseAnnouncedMinDeposit accepts a valid target above the request amount", () => {
+    expect(parseAnnouncedMinDeposit("5000", 1000n)).toBe(5000n);
+  });
+
+  it("parseAnnouncedMinDeposit rejects non-numeric wire values", () => {
+    expect(parseAnnouncedMinDeposit("10.5", 1n)).toBeUndefined();
+  });
+
+  it("maxDepositFromSpendCap returns undefined for invalid spend caps", () => {
+    expect(maxDepositFromSpendCap("0")).toBeUndefined();
+    expect(maxDepositFromSpendCap("not-a-number")).toBeUndefined();
+    expect(maxDepositFromSpendCap("2000", 4)).toBe(8000n);
+  });
+
+  it("applyMaxDeposit clamps deposits and rejects gaps above the ceiling", () => {
+    expect(applyMaxDeposit(10_000n, 5000n, 8000n)).toBe("8000");
+    expect(applyMaxDeposit(9000n, 5000n)).toBe("9000");
+    expect(() => applyMaxDeposit(10_000n, 9000n, 8000n)).toThrow(/exceeds depositMultiplier/);
+  });
+
+  it("depositAmountForRequest prefers the voucher gap when it exceeds the policy target", () => {
+    expect(depositAmountForRequest(undefined, 1000n, 8000n, undefined, 50_000n)).toBe("8000");
+  });
+
+  it("depositAmountForRequest honors server minDeposit hints", () => {
+    expect(depositAmountForRequest(undefined, 1000n, 2000n, { minDeposit: "6000" }, 50_000n)).toBe(
+      "6000",
     );
   });
 });

@@ -2,7 +2,6 @@ package facilitator
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"strconv"
 	"testing"
@@ -88,6 +87,35 @@ func TestVerifyAcceptsAWellFormedOpen(t *testing.T) {
 	assert.Equal(t, fixture.payerKey.PublicKey().String(), response.Payer)
 	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
 	assert.Zero(t, stub.simulations(), "verify does not simulate")
+}
+
+// Phase 3 step 4: the read-only verify refuses an open whose channel already
+// exists, as the deposit settle does.
+func TestVerifyRejectsAChannelThatAlreadyExists(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, nil)
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Verify(context.Background(), fixture.payload, fixture.requirements, nil)
+	assert.Equal(t, ErrChannelAlreadyOpen, verifyErrorReason(t, err))
+	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
+}
+
+// The scheme types openSlot as a JSON number; the decimal string clients emit
+// and the number both verify.
+func TestVerifyAcceptsANumericOpenSlot(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, newStubRPC(t), nil)
+	slot, err := strconv.ParseUint(fixture.payload.Payload["openSlot"].(string), 10, 64)
+	require.NoError(t, err)
+
+	payload := fixture.withPayload(map[string]interface{}{"openSlot": float64(slot)})
+	response, err := scheme.Verify(context.Background(), payload, fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
 }
 
 func TestVerifyRejections(t *testing.T) {
@@ -719,9 +747,70 @@ func TestClaimSettleDistributesTheMeteredAmount(t *testing.T) {
 	require.Len(t, sent, 1)
 	programs := instructionPrograms(t, sent[0])
 	assert.Equal(t, []solana.PublicKey{
-		solana.ComputeBudget, solana.ComputeBudget,
 		paymentchannels.Ed25519ProgramID, paymentchannels.ProgramID, paymentchannels.ProgramID,
 	}, programs, "the voucher precompile must immediately precede settle_and_seal")
+	assert.Equal(t, solana.MessageVersionV1, sent[0].Message.GetVersion())
+}
+
+func intPtr(v int) *int { return &v }
+
+func TestResolveFacilitatorTransactionVersion(t *testing.T) {
+	assert.Equal(t, DefaultFacilitatorTransactionVersion, resolveFacilitatorTransactionVersion(nil))
+	assert.Equal(t, 0, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion0)))
+	assert.Equal(t, 1, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion1)))
+}
+
+func TestInvalidFacilitatorTransactionVersionPanicsAtConstruction(t *testing.T) {
+	for _, version := range []int{-1, 2, 3} {
+		assert.Panics(t, func() {
+			NewUptoSvmScheme(newMockSigner(t, 1), &Config{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+		assert.Panics(t, func() {
+			NewRentCleanupManager(RentCleanupConfig{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+	}
+}
+
+func TestClaimSettleHonoursTheConfiguredFacilitatorTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *int
+		wantVersion solana.MessageVersion
+		wantBudget  bool
+	}{
+		{"unset defaults to v1", nil, solana.MessageVersionV1, false},
+		{"explicit v1", intPtr(paymentchannels.FacilitatorTransactionVersion1), solana.MessageVersionV1, false},
+		{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0, true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			signer := newMockSigner(t, 1)
+			stub := newStubRPC(t)
+			fixture := newPaymentFixture(t, signer)
+			scheme := newScheme(signer, stub, &Config{FacilitatorTransactionVersion: test.version})
+			stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+			response, err := scheme.Settle(
+				context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
+			)
+			require.NoError(t, err)
+			require.True(t, response.Success)
+
+			sent := signer.sentTransactions()
+			require.Len(t, sent, 1)
+			assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+
+			hasBudget := false
+			for _, program := range instructionPrograms(t, sent[0]) {
+				if program.Equals(solana.ComputeBudget) {
+					hasBudget = true
+				}
+			}
+			assert.Equal(t, test.wantBudget, hasBudget,
+				"v0 carries ComputeBudget instructions; v1 carries the budget inline")
+		})
+	}
 }
 
 func TestClaimSettleSealsAZeroChargeWithoutAPrecompile(t *testing.T) {
@@ -742,27 +831,20 @@ func TestClaimSettleSealsAZeroChargeWithoutAPrecompile(t *testing.T) {
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
 	assert.Equal(t, []solana.PublicKey{
-		solana.ComputeBudget, solana.ComputeBudget, paymentchannels.ProgramID, paymentchannels.ProgramID,
+		paymentchannels.ProgramID, paymentchannels.ProgramID,
 	}, instructionPrograms(t, sent[0]),
 		"a zero charge seals at the watermark, which the program rejects with a voucher")
 }
 
-// computeBudgetData extracts the SetComputeUnitLimit/SetComputeUnitPrice
-// instruction data from a sent transaction's leading ComputeBudget prefix.
-func computeBudgetData(t *testing.T, tx *solana.Transaction) (limit uint32, price uint64) {
+// transactionConfigData extracts the mandatory v1 config from a settlement.
+func transactionConfigData(t *testing.T, tx *solana.Transaction) (limit uint32, price uint64) {
 	t.Helper()
-	for _, instruction := range tx.Message.Instructions {
-		program, err := tx.Message.Program(instruction.ProgramIDIndex)
-		require.NoError(t, err)
-		if !program.Equals(solana.ComputeBudget) {
-			continue
-		}
-		switch instruction.Data[0] {
-		case paymentchannels.ComputeBudgetSetUnitLimit:
-			limit = binary.LittleEndian.Uint32(instruction.Data[1:5])
-		case paymentchannels.ComputeBudgetSetUnitPrice:
-			price = binary.LittleEndian.Uint64(instruction.Data[1:9])
-		}
+	require.Equal(t, solana.MessageVersionV1, tx.Message.GetVersion())
+	require.NotNil(t, tx.Message.TransactionConfig.ComputeUnitLimit)
+	require.NotNil(t, tx.Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	limit = *tx.Message.TransactionConfig.ComputeUnitLimit
+	if tx.Message.TransactionConfig.PriorityFee != nil {
+		price = *tx.Message.TransactionConfig.PriorityFee
 	}
 	return limit, price
 }
@@ -784,9 +866,28 @@ func TestClaimSettleUsesTheConfiguredComputeBudget(t *testing.T) {
 
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
-	limit, gotPrice := computeBudgetData(t, sent[0])
+	limit, gotPrice := transactionConfigData(t, sent[0])
 	assert.Equal(t, settleLimit, limit)
-	assert.Equal(t, price, gotPrice)
+	assert.Equal(t, uint64(1), gotPrice)
+	require.NotNil(t, sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, paymentchannels.DefaultSettleLoadedAccountsDataSizeLimit, *sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+}
+
+func TestClaimSettleUsesTheConfiguredLoadedAccountsDataBudget(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	loadedLimit := uint32(2_097_152)
+	scheme := newScheme(signer, stub, &Config{SettleLoadedAccountsDataSizeLimit: &loadedLimit})
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Settle(context.Background(), fixture.claimPayload(t, 0), fixture.claimRequirements(0), nil)
+	require.NoError(t, err)
+
+	sent := signer.sentTransactions()
+	require.Len(t, sent, 1)
+	require.NotNil(t, sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, loadedLimit, *sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
 }
 
 func TestClaimSettleOmitsComputeUnitPriceWhenZero(t *testing.T) {
@@ -802,8 +903,9 @@ func TestClaimSettleOmitsComputeUnitPriceWhenZero(t *testing.T) {
 
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
-	assert.Equal(t, []solana.PublicKey{solana.ComputeBudget, paymentchannels.ProgramID, paymentchannels.ProgramID},
-		instructionPrograms(t, sent[0]), "a zero price omits SetComputeUnitPrice but SetComputeUnitLimit is always emitted")
+	assert.Equal(t, []solana.PublicKey{paymentchannels.ProgramID, paymentchannels.ProgramID},
+		instructionPrograms(t, sent[0]), "v1 settlement has no ComputeBudget instructions")
+	assert.Nil(t, sent[0].Message.TransactionConfig.PriorityFee)
 }
 
 // Rent cleanup reads the index written at open; a claim on an already-open

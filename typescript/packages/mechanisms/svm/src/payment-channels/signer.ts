@@ -126,7 +126,7 @@ export function channelHistoryReads(
         .getTransaction(signature as Signature, {
           commitment: "confirmed",
           encoding: "base64",
-          maxSupportedTransactionVersion: 0,
+          maxSupportedTransactionVersion: 1,
         })
         .send();
       if (!result) return null;

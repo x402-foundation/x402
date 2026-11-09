@@ -27,6 +27,7 @@ from ..facilitator_client_base import FacilitatorResponseError
 from ..types import (
     HTTPAdapter,
     HTTPRequestContext,
+    HTTPResponseInstructions,
     HTTPTransportContext,
     PaywallConfig,
     RoutesConfig,
@@ -163,6 +164,16 @@ def _facilitator_error_response(error: FacilitatorResponseError) -> JSONResponse
         content={"error": str(error)},
         status_code=502,
     )
+
+
+def _declared_plain_text_body(response: HTTPResponseInstructions) -> str | None:
+    content_type = (
+        response.headers.get("Content-Type") or response.headers.get("content-type") or ""
+    )
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "text/plain" and isinstance(response.body, str):
+        return response.body
+    return None
 
 
 def _decoded_route_path(request: Request) -> str:
@@ -322,18 +333,25 @@ def payment_middleware(
                     status_code=402,
                 )
 
+            plain_text = _declared_plain_text_body(response)
             if response.is_html:
                 return HTMLResponse(
                     content=response.body,
                     status_code=response.status,
                     headers=response.headers,
                 )
-            else:
-                return JSONResponse(
-                    content=response.body or {},
+            if plain_text is not None:
+                return Response(
+                    content=plain_text,
                     status_code=response.status,
                     headers=response.headers,
+                    media_type="text/plain",
                 )
+            return JSONResponse(
+                content=response.body or {},
+                status_code=response.status,
+                headers=response.headers,
+            )
 
         if result.type == "payment-verified":
             # Store payment info in request state
@@ -418,12 +436,20 @@ def payment_middleware(
                     resp = settle_result.response
                     if resp is None:
                         return JSONResponse(content={}, status_code=402)
+                    plain_text = _declared_plain_text_body(resp)
                     if resp.is_html:
                         return Response(
                             content=resp.body,
                             status_code=resp.status,
                             headers=resp.headers,
                             media_type="text/html",
+                        )
+                    if plain_text is not None:
+                        return Response(
+                            content=plain_text,
+                            status_code=resp.status,
+                            headers=resp.headers,
+                            media_type="text/plain",
                         )
                     return JSONResponse(
                         content=resp.body or {},
@@ -464,7 +490,7 @@ def payment_middleware(
                     settle_response, result.payment_requirements
                 )
                 return JSONResponse(
-                    content={},
+                    content={"error": "settlement_failed"},
                     status_code=402,
                     headers={
                         "Content-Type": "application/json",
