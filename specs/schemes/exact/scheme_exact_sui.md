@@ -295,8 +295,10 @@ fetches the transaction by digest. If they're still missing, it returns `transac
 
 If submitting or waiting for finality fails, the facilitator SHOULD look the transaction up by
 digest and report what actually happened. If the lookup also fails, it releases the claim and
-returns `transaction_failed` with the digest in `transaction`, so the resource server can follow
-up.
+returns the digest in `transaction` so the resource server can follow up. When submission was
+acknowledged but finality could not be established, it MUST return `settlement_pending`, enabling
+the resource server's single automatic retry of the same signed transaction. When submission
+itself failed without an acknowledgement, it returns `transaction_failed`.
 
 On success the facilitator returns a `SettlementResponse` (core spec
 [§5.3](../../x402-specification-v2.md)) with the digest as `transaction`, the `network`, and the
@@ -365,5 +367,6 @@ Replay and repeat settlement are covered in [Expiration](#expiration) and
 | `invalid_payment_requirements`                               | verify / settle | `amount` is not a positive integer.                                                         |
 | `sponsor_rejected`                                           | settle          | The sponsor declined the transaction.                                                       |
 | `duplicate_settlement`                                       | settle          | The transaction has already settled successfully, or a settle for it is in progress.        |
+| `settlement_pending`                                         | settle          | Submission was acknowledged, but finality could not be established and the lookup failed.   |
 | `transaction_failed`                                         | settle          | Execution failed or outcome unknown, balance changes missing, or a signature check errored. |
 | `settlement_effects_mismatch`                                | settle          | Executed effects do not credit `payTo` with exactly `amount`.                               |
