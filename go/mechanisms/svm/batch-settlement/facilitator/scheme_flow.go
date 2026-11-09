@@ -774,11 +774,7 @@ func (f *BatchSvmScheme) distributeCurrent(ctx context.Context, payload batchset
 	}
 	if len(instructions) == 0 {
 		if hasPrevious {
-			var stored x402.SettleResponse
-			if err := json.Unmarshal([]byte(previous), &stored); err != nil {
-				return nil, err
-			}
-			return &stored, nil
+			return decodeDistributionResult(previous)
 		}
 		return SettleFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "", ""), nil
 	}
@@ -843,12 +839,12 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 	if cached, ok, err := f.pendingStore.Get(ctx, cachedKey); err != nil {
 		return nil, err
 	} else if ok {
-		var stored x402.SettleResponse
-		if err := json.Unmarshal([]byte(cached), &stored); err != nil {
+		stored, err := decodeDistributionResult(cached)
+		if err != nil {
 			return nil, err
 		}
 		if f.config.OnDistributionConfirmed != nil {
-			if err := f.config.OnDistributionConfirmed(ctx, &stored, requirements); err != nil {
+			if err := f.config.OnDistributionConfirmed(ctx, stored, requirements); err != nil {
 				return nil, err
 			}
 		}
@@ -862,7 +858,7 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 		if err := f.completeBroadcast(ctx, key, signature, requirements.Network); err != nil {
 			return nil, err
 		}
-		return &stored, nil
+		return stored, nil
 	}
 	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
 	if !ok {
@@ -1383,6 +1379,42 @@ func tokenBalance(balances []svm.FacilitatorTokenBalance, accountIndex int, requ
 		return paymentchannels.ParseU64(balance.UITokenAmount.Amount, "payout balance")
 	}
 	return 0, nil
+}
+
+type distributionExtra struct {
+	Channels []string `json:"channels"`
+}
+
+type storedDistribution struct {
+	Success      bool               `json:"success"`
+	ErrorReason  string             `json:"errorReason,omitempty"`
+	ErrorMessage string             `json:"errorMessage,omitempty"`
+	Payer        string             `json:"payer,omitempty"`
+	Transaction  string             `json:"transaction"`
+	Network      x402.Network       `json:"network"`
+	Amount       string             `json:"amount,omitempty"`
+	Extra        *distributionExtra `json:"extra,omitempty"`
+}
+
+func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
+	var stored storedDistribution
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil, err
+	}
+	response := &x402.SettleResponse{
+		Success:      stored.Success,
+		ErrorReason:  stored.ErrorReason,
+		ErrorMessage: stored.ErrorMessage,
+		Payer:        stored.Payer,
+		Transaction:  stored.Transaction,
+		Network:      stored.Network,
+		Amount:       stored.Amount,
+	}
+	if stored.Extra == nil {
+		return response, nil
+	}
+	response.Extra = map[string]any{"channels": stored.Extra.Channels}
+	return response, nil
 }
 
 func channelIDs(prepared []PreparedDistribution) []string {
