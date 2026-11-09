@@ -1267,7 +1267,21 @@ func TestBatchServerLifecycleBoundaries(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, before)
 		require.True(t, before.Abort)
-		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, before.Reason)
+		require.Equal(t, batchsettlement.ErrCloseState, before.Reason)
+	})
+
+	t.Run("refuses a paid request on a channel the payer is closing", func(t *testing.T) {
+		store := NewMemoryChannelStore()
+		require.NoError(t, store.Put(f.state(func(st *ChannelState) {
+			st.Status = ChannelStatusClosing
+			st.CloseRequestedAt = 1_785_000_000
+		})))
+		server := NewBatchSvmScheme(&Config{ReceiverAuthorizer: f.receiverAuthorizer, Store: store})
+		before, err := server.BeforeVerifyHook()(f.verifyCtx(f.payment(f.voucherMap()), f.requirements()))
+		require.NoError(t, err)
+		require.NotNil(t, before)
+		require.True(t, before.Abort)
+		require.Equal(t, batchsettlement.ErrChannelClosing, before.Reason)
 	})
 
 	t.Run("refuses a first deposit whose open binds a different receiver authorizer", func(t *testing.T) {

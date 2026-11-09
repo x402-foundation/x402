@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -341,8 +342,17 @@ func handlePaymentError(c echo.Context, response *x402http.HTTPResponseInstructi
 	}
 
 	// Send response body
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
 	if response.IsHTML {
 		return c.HTMLBlob(response.Status, []byte(response.Body.(string)))
+	}
+	if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		return c.Blob(response.Status, contentType, []byte(text))
 	}
 	return c.JSON(response.Status, response.Body)
 }
@@ -497,7 +507,7 @@ func handlePaymentVerified(c echo.Context, next echo.HandlerFunc, server *x402ht
 		case settleResult.Response != nil:
 			return handlePaymentError(c, settleResult.Response)
 		default:
-			return c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
+			return c.JSON(http.StatusPaymentRequired, map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return nil
 	}

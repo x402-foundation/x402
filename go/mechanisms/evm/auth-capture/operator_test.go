@@ -39,6 +39,21 @@ func TestOperatorDomain(t *testing.T) {
 	assert.Equal(t, evm.NormalizeAddress(testCaptureAuthorizer), domain.VerifyingContract)
 }
 
+func TestOperatorTypesIncludeEIP712Domain(t *testing.T) {
+	for name, types := range map[string]map[string][]evm.TypedDataField{
+		"capture v1.0": CaptureTypesV1_0,
+		"capture v1.1": CaptureTypesV1_1,
+		"charge v1.0":  ChargeTypesV1_0,
+		"charge v1.1":  ChargeTypesV1_1,
+		"void":         VoidTypes,
+		"refund":       RefundTypes,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, evm.EIP712DomainTypesWithVersion, types["EIP712Domain"])
+		})
+	}
+}
+
 func TestDefaultCaptureFee(t *testing.T) {
 	amount := big.NewInt(1_000_000)
 

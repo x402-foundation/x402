@@ -100,6 +100,11 @@ func (s *BatchSvmScheme) CreatePaymentPayload(
 	requirements types.PaymentRequirements,
 	payloadCtx x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
+	// Fail closed before any channel work when the facilitator accepts no
+	// transaction version this client can build (deposit, top-up, close).
+	if _, err := s.transactionVersion(requirements); err != nil {
+		return types.PaymentPayload{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.creationContexts[requirementsFingerprint(requirements)] = payloadCtx
@@ -118,6 +123,11 @@ func (s *BatchSvmScheme) CreateRefundPayload(
 	requirements types.PaymentRequirements,
 	options RefundPayloadOptions,
 ) (types.PaymentPayload, error) {
+	// Fail closed before any channel work when the facilitator accepts no
+	// transaction version this client can build (deposit, top-up, close).
+	if _, err := s.transactionVersion(requirements); err != nil {
+		return types.PaymentPayload{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.createRefundPayload(ctx, x402Version, requirements, options)
@@ -193,6 +203,13 @@ func (s *BatchSvmScheme) OnPaymentResponse(
 	return x402.PaymentResponseResult{Recovered: recovered}, nil
 }
 
+// transactionVersion is the message version this client builds for
+// requirements: the highest one shared by extra.transactionVersions and the
+// client's supported set.
+func (s *BatchSvmScheme) transactionVersion(requirements types.PaymentRequirements) (solana.MessageVersion, error) {
+	return svm.ResolveTransactionVersionFor(requirements.Extra, s.config.TransactionVersions)
+}
+
 func (s *BatchSvmScheme) createPaymentPayload(
 	ctx context.Context,
 	requirements types.PaymentRequirements,
@@ -260,6 +277,10 @@ func (s *BatchSvmScheme) createPaymentPayload(
 		if err != nil {
 			return types.PaymentPayload{}, err
 		}
+		transactionVersion, err := s.transactionVersion(requirements)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
 		rpcClient, err := s.rpcClient(requirements.Network)
 		if err != nil {
 			return types.PaymentPayload{}, err
@@ -285,14 +306,15 @@ func (s *BatchSvmScheme) createPaymentPayload(
 			return types.PaymentPayload{}, err
 		}
 		topUp, err := paymentchannels.BuildTopUpPaymentChannelTransaction(paymentchannels.BuildTopUpArgs{
-			Payer:        s.signer.Address(),
-			ChannelID:    channelID,
-			Mint:         mint,
-			TokenProgram: tokenProgram,
-			FeePayer:     feePayer,
-			Amount:       topUpAmount,
-			Blockhash:    blockhash,
-			Memo:         terms.memo,
+			Payer:              s.signer.Address(),
+			ChannelID:          channelID,
+			Mint:               mint,
+			TokenProgram:       tokenProgram,
+			FeePayer:           feePayer,
+			Amount:             topUpAmount,
+			Blockhash:          blockhash,
+			Memo:               terms.memo,
+			TransactionVersion: transactionVersion,
 		})
 		if err != nil {
 			return types.PaymentPayload{}, err
@@ -387,6 +409,10 @@ func (s *BatchSvmScheme) createPaymentPayload(
 		expires = &authorizationExpiresAt
 		operator = terms.operator
 	}
+	transactionVersion, err := s.transactionVersion(requirements)
+	if err != nil {
+		return types.PaymentPayload{}, err
+	}
 	built, err := BuildDepositPayload(ctx, BuildDepositArgs{
 		Payer:                  s.signer,
 		Receiver:               requirements.PayTo,
@@ -404,6 +430,7 @@ func (s *BatchSvmScheme) createPaymentPayload(
 		VoucherSigner:          terms.voucherSigner,
 		Operator:               operator,
 		AuthorizationExpiresAt: expires,
+		TransactionVersion:     transactionVersion,
 	})
 	if err != nil {
 		return types.PaymentPayload{}, err

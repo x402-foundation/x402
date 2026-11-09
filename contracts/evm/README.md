@@ -61,6 +61,7 @@ Both contracts:
 | Linea Mainnet | [Deployed](https://lineascan.build/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://lineascan.build/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://lineascan.build/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Unichain Mainnet | [Deployed](https://uniscan.xyz/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://uniscan.xyz/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://uniscan.xyz/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 | Monad Mainnet | [Deployed](https://monadscan.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://monadscan.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://monadscan.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
+| Monad Testnet | [Deployed](https://testnet.monadvision.com/address/0x4020074e9dF2ce1deE5A9C1b5c3f541D02a10003) | [Deployed](https://testnet.monadvision.com/address/0x4020806089470a89826cB9fB1f4059150b550004) | [Deployed](https://testnet.monadvision.com/address/0x4020425FAf3B746C082C2f942b4E5159887B0005) |
 
 > \*Older testnet deployments may use prior vanity salts; the canonical **Upto** address for
 > CREATE2 deployments from this tree is `0x4020A4f3…C240002` (see `forge script script/ComputeAddress.s.sol`).

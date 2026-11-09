@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -20,7 +21,7 @@ func VerifyVoucher(
 	requirements types.PaymentRequirements,
 	channelConfig batchsettlement.ChannelConfig,
 ) (*x402.VerifyResponse, error) {
-	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, false)
+	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, false, eoaSignatureClearance{})
 }
 
 // VerifyRefundVoucher verifies a cooperative-refund payload's voucher.
@@ -33,7 +34,55 @@ func VerifyRefundVoucher(
 	requirements types.PaymentRequirements,
 	channelConfig batchsettlement.ChannelConfig,
 ) (*x402.VerifyResponse, error) {
-	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, true)
+	return verifyVoucherFields(ctx, signer, &payload.Voucher, channelConfig, requirements, true, eoaSignatureClearance{})
+}
+
+// eoaSignatureClearance is a voucher whose payerAuthorizer ECDSA signature already passed.
+// The zero value allows nothing.
+type eoaSignatureClearance struct {
+	channelId    string
+	maxClaimable string
+	signature    string
+}
+
+func (c eoaSignatureClearance) allows(voucher *batchsettlement.BatchSettlementVoucherFields) bool {
+	return c.signature != "" &&
+		c.channelId == voucher.ChannelId &&
+		c.maxClaimable == voucher.MaxClaimableAmount &&
+		c.signature == voucher.Signature
+}
+
+// parseVoucherOrRefund returns the voucher and channel config of a voucher or refund payload,
+// or nil for a deposit.
+func parseVoucherOrRefund(raw map[string]interface{}) (*batchsettlement.BatchSettlementVoucherPayload, error) {
+	switch {
+	case batchsettlement.IsVoucherPayload(raw):
+		return batchsettlement.VoucherPayloadFromMap(raw)
+	case batchsettlement.IsRefundPayload(raw):
+		refund, err := batchsettlement.RefundPayloadFromMap(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &batchsettlement.BatchSettlementVoucherPayload{ChannelConfig: refund.ChannelConfig, Voucher: refund.Voucher}, nil
+	default:
+		return nil, nil
+	}
+}
+
+// eoaClearance verifies a voucher's EOA signature without state. A nil payload (deposit) or a
+// zero-address authorizer returns the zero clearance; a bad signature returns a reason.
+func eoaClearance(vp *batchsettlement.BatchSettlementVoucherPayload, network string) (eoaSignatureClearance, string) {
+	if vp == nil || strings.EqualFold(vp.ChannelConfig.PayerAuthorizer, zeroAddress) {
+		return eoaSignatureClearance{}, ""
+	}
+	if !batchsettlement.VerifyEoaVoucherSignature(vp, network) {
+		return eoaSignatureClearance{}, ErrVoucherSignatureInvalid
+	}
+	return eoaSignatureClearance{
+		channelId:    vp.Voucher.ChannelId,
+		maxClaimable: vp.Voucher.MaxClaimableAmount,
+		signature:    vp.Voucher.Signature,
+	}, ""
 }
 
 func verifyVoucherFields(
@@ -43,6 +92,7 @@ func verifyVoucherFields(
 	channelConfig batchsettlement.ChannelConfig,
 	requirements types.PaymentRequirements,
 	isRefund bool,
+	clearance eoaSignatureClearance,
 ) (*x402.VerifyResponse, error) {
 	if err := ValidateChannelConfig(channelConfig, voucher.ChannelId, requirements); err != nil {
 		return nil, err
@@ -59,27 +109,29 @@ func verifyVoucherFields(
 		}
 	}
 
-	chainId, err := signer.GetChainID(ctx)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrChannelStateReadFailed, "", fmt.Sprintf("failed to get chain ID: %s", err))
-	}
+	if !clearance.allows(voucher) {
+		chainId, err := signer.GetChainID(ctx)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrChannelStateReadFailed, "", fmt.Sprintf("failed to get chain ID: %s", err))
+		}
 
-	valid, err := VerifyBatchedVoucherTypedData(
-		ctx, signer,
-		voucher.ChannelId,
-		voucher.MaxClaimableAmount,
-		channelConfig.PayerAuthorizer,
-		channelConfig.Payer,
-		voucher.Signature,
-		chainId,
-	)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrVoucherSignatureInvalid, channelConfig.Payer,
-			fmt.Sprintf("voucher signature verification failed: %s", err))
-	}
-	if !valid {
-		return nil, x402.NewVerifyError(ErrVoucherSignatureInvalid, channelConfig.Payer,
-			"voucher signature is invalid")
+		valid, err := VerifyBatchedVoucherTypedData(
+			ctx, signer,
+			voucher.ChannelId,
+			voucher.MaxClaimableAmount,
+			channelConfig.PayerAuthorizer,
+			channelConfig.Payer,
+			voucher.Signature,
+			chainId,
+		)
+		if err != nil {
+			return nil, x402.NewVerifyError(ErrVoucherSignatureInvalid, channelConfig.Payer,
+				fmt.Sprintf("voucher signature verification failed: %s", err))
+		}
+		if !valid {
+			return nil, x402.NewVerifyError(ErrVoucherSignatureInvalid, channelConfig.Payer,
+				"voucher signature is invalid")
+		}
 	}
 
 	state, err := ReadChannelState(ctx, signer, voucher.ChannelId)

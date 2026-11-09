@@ -1,9 +1,19 @@
 """Tests for SVM signer implementations."""
 
-import pytest
-from solders.keypair import Keypair
+import base64
+from unittest.mock import MagicMock, patch
 
-from x402.mechanisms.svm import SOLANA_DEVNET_CAIP2
+import pytest
+from solders.hash import Hash
+from solders.instruction import AccountMeta, Instruction
+from solders.keypair import Keypair
+from solders.message import Message, MessageV0, MessageV1, TransactionConfig, to_bytes_versioned
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+from solders.transaction import VersionedTransaction
+
+from x402.mechanisms.svm import MEMO_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2
+from x402.mechanisms.svm.rpc import CONFIRMED
 from x402.mechanisms.svm.signers import FacilitatorKeypairSigner, KeypairSigner
 
 
@@ -100,45 +110,41 @@ class TestFacilitatorKeypairSigner:
                 tx_base64, "UnknownAddress11111111111111111111", SOLANA_DEVNET_CAIP2
             )
 
-    def test_is_versioned_transaction_should_detect_legacy(self):
-        """_is_versioned_transaction should detect legacy transactions."""
-        keypair = Keypair()
-        signer = FacilitatorKeypairSigner(keypair)
+    @pytest.mark.parametrize("version", ["legacy", 0, 1])
+    def test_sign_transaction_signs_behind_the_version_prefix(self, version):
+        """The fee-payer signature must verify for legacy, version 0 and version 1."""
+        fee_payer = Keypair()
+        client = Keypair()
+        signer = FacilitatorKeypairSigner(fee_payer)
+        memo_ix = Instruction(
+            Pubkey.from_string(MEMO_PROGRAM_ADDRESS),
+            b"x402",
+            [AccountMeta(client.pubkey(), is_signer=True, is_writable=False)],
+        )
+        blockhash = Hash.new_unique()
+        if version == "legacy":
+            message = Message.new_with_blockhash([memo_ix], fee_payer.pubkey(), blockhash)
+        elif version == 0:
+            message = MessageV0.try_compile(fee_payer.pubkey(), [memo_ix], [], blockhash)
+        else:
+            message = MessageV1.try_compile(
+                fee_payer.pubkey(),
+                [memo_ix],
+                blockhash,
+                TransactionConfig(compute_unit_limit=1_000, loaded_accounts_data_size_limit=1),
+            )
+        client_signature = client.sign_message(to_bytes_versioned(message))
+        partial = VersionedTransaction.populate(message, [Signature.default(), client_signature])
 
-        # Legacy transaction: first byte of message < 128 (numRequiredSignatures = 1)
-        # Format: [sig_count_compact_u16] [signatures...] [message...]
-        # This is a minimal legacy transaction with 1 signature slot
-        # CompactU16(1) = 0x01, then 64 zero bytes for signature, then legacy message header
-        legacy_tx_bytes = bytes([0x01])  # 1 signature
-        legacy_tx_bytes += bytes(64)  # Empty signature
-        legacy_tx_bytes += bytes(
-            [0x01, 0x00, 0x00]
-        )  # Legacy header: numReqSigs=1, numReadonlySigned=0, numReadonlyUnsigned=0
-        legacy_tx_bytes += bytes([0x01])  # 1 account key
-        legacy_tx_bytes += bytes(32)  # Account key
-        legacy_tx_bytes += bytes(32)  # Recent blockhash
-        legacy_tx_bytes += bytes([0x00])  # 0 instructions
+        signed_b64 = signer.sign_transaction(
+            base64.b64encode(bytes(partial)).decode(), str(fee_payer.pubkey()), SOLANA_DEVNET_CAIP2
+        )
 
-        assert signer._is_versioned_transaction(legacy_tx_bytes) is False
-
-    def test_is_versioned_transaction_should_detect_versioned(self):
-        """_is_versioned_transaction should detect versioned (v0) transactions."""
-        keypair = Keypair()
-        signer = FacilitatorKeypairSigner(keypair)
-
-        # Versioned transaction: first byte of message >= 128 (0x80 for v0)
-        # Format: [sig_count_compact_u16] [signatures...] [version_byte] [message...]
-        versioned_tx_bytes = bytes([0x01])  # 1 signature
-        versioned_tx_bytes += bytes(64)  # Empty signature
-        versioned_tx_bytes += bytes([0x80])  # Version byte for v0 (128)
-        versioned_tx_bytes += bytes([0x01, 0x00, 0x00])  # Header
-        versioned_tx_bytes += bytes([0x01])  # 1 account key
-        versioned_tx_bytes += bytes(32)  # Account key
-        versioned_tx_bytes += bytes(32)  # Recent blockhash
-        versioned_tx_bytes += bytes([0x00])  # 0 instructions
-        versioned_tx_bytes += bytes([0x00])  # 0 address table lookups
-
-        assert signer._is_versioned_transaction(versioned_tx_bytes) is True
+        signed = VersionedTransaction.from_bytes(base64.b64decode(signed_b64))
+        signed_bytes = to_bytes_versioned(signed.message)
+        assert signed.signatures[0].verify(fee_payer.pubkey(), signed_bytes)
+        assert signed.signatures[1].verify(client.pubkey(), signed_bytes)
+        signed.verify_with_results()
 
     def test_from_base58_with_single_key(self):
         """from_base58 should create signer from single base58 key."""
@@ -196,6 +202,57 @@ class TestFacilitatorKeypairSigner:
         assert callable(signer.simulate_transaction)
         assert callable(signer.send_transaction)
         assert callable(signer.confirm_transaction)
+
+    def test_get_account_info_returns_none_when_account_is_missing(self):
+        signer = FacilitatorKeypairSigner(Keypair())
+        address = str(Keypair().pubkey())
+        client = MagicMock()
+        client.get_account_info.return_value = MagicMock(value=None)
+
+        with patch.object(signer, "_get_client", return_value=client) as get_client:
+            assert signer.get_account_info(address, SOLANA_DEVNET_CAIP2) is None
+
+        get_client.assert_called_once_with(SOLANA_DEVNET_CAIP2)
+        client.get_account_info.assert_called_once_with(
+            Pubkey.from_string(address),
+            commitment=CONFIRMED,
+        )
+
+    def test_get_account_info_returns_owner_base58(self):
+        signer = FacilitatorKeypairSigner(Keypair())
+        address = str(Keypair().pubkey())
+        owner = Keypair().pubkey()
+        account = MagicMock()
+        account.owner = owner
+        client = MagicMock()
+        client.get_account_info.return_value = MagicMock(value=account)
+
+        with patch.object(signer, "_get_client", return_value=client) as get_client:
+            assert signer.get_account_info(address, SOLANA_DEVNET_CAIP2) == str(owner)
+
+        get_client.assert_called_once_with(SOLANA_DEVNET_CAIP2)
+        client.get_account_info.assert_called_once_with(
+            Pubkey.from_string(address),
+            commitment=CONFIRMED,
+        )
+
+    def test_get_account_info_propagates_rpc_errors(self):
+        signer = FacilitatorKeypairSigner(Keypair())
+        address = str(Keypair().pubkey())
+        client = MagicMock()
+        client.get_account_info.side_effect = RuntimeError("rpc unavailable")
+
+        with (
+            patch.object(signer, "_get_client", return_value=client) as get_client,
+            pytest.raises(RuntimeError, match="rpc unavailable"),
+        ):
+            signer.get_account_info(address, SOLANA_DEVNET_CAIP2)
+
+        get_client.assert_called_once_with(SOLANA_DEVNET_CAIP2)
+        client.get_account_info.assert_called_once_with(
+            Pubkey.from_string(address),
+            commitment=CONFIRMED,
+        )
 
 
 class TestSignerProtocols:

@@ -102,7 +102,7 @@ def create_siwx_request_hook(options: CreateSIWxRequestHookOptions):
     configured_origin = normalize_configured_origin(options.origin)
     storage = options.storage
     has_used_nonce = callable(getattr(storage, "has_used_nonce", None))
-    has_record_nonce = callable(getattr(storage, "has_record_nonce", None))
+    has_record_nonce = callable(getattr(storage, "record_nonce", None))
     if has_used_nonce != has_record_nonce:
         raise ValueError(
             "SIWxStorage nonce tracking requires both has_used_nonce and record_nonce "

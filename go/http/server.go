@@ -136,7 +136,7 @@ type RouteConfig struct {
 
 	// UnpaidResponseBody is an optional callback to generate a custom response for unpaid API requests.
 	// For browser requests (Accept: text/html), the paywall HTML takes precedence.
-	// If not provided, defaults to { ContentType: "application/json", Body: nil }.
+	// If not provided, the JSON body is {"error": paymentRequired.Error} when that error is set, otherwise {}.
 	UnpaidResponseBody UnpaidResponseBodyFunc `json:"-"`
 }
 
@@ -1111,10 +1111,10 @@ func (s *x402HTTPResourceServer) CreateFailurePathSettlementHeaders(
 	return nil
 }
 
-// sanitizedFailureTransaction returns the broadcast transaction hash for a failed
-// settlement only when the failure is settlement_pending. Every other terminal reason
-// must not surface a transaction value, regardless of whether the failure arrived as
-// an error or as a direct SettleResponse (e.g. from a remote facilitator client).
+// sanitizedFailureTransaction returns the broadcast transaction hash for a thrown
+// settle error only when the failure is settlement_pending. Every other terminal reason
+// must not surface a transaction value. Failed SettleResponses returned by the
+// facilitator are forwarded as-is.
 func sanitizedFailureTransaction(errorReason, transaction string) string {
 	if errorReason == settlementPendingReason {
 		return transaction
@@ -1136,7 +1136,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResultFromError(err error
 			Success:      false,
 			ErrorReason:  se.ErrorReason,
 			ErrorMessage: se.ErrorMessage,
-			Transaction:  se.Transaction,
+			Transaction:  sanitizedFailureTransaction(se.ErrorReason, se.Transaction),
 			Network:      network,
 			Payer:        se.Payer,
 		})
@@ -1144,9 +1144,8 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResultFromError(err error
 	return s.buildSettlementFailureResult(err.Error(), fallbackNetwork, "", nil)
 }
 
-// buildSettlementFailureResult creates a ProcessSettleResult for settlement failure.
-// It includes PAYMENT-RESPONSE header and empty body by default.
 func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string, network x402.Network, payer string, settleResult *x402.SettleResponse) *ProcessSettleResult {
+	failureBody := map[string]string{"error": x402.ErrCodeSettlementFailed}
 	failureResponse := x402.SettleResponse{
 		Success:     false,
 		ErrorReason: errorReason,
@@ -1158,7 +1157,9 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		failureResponse.Network = settleResult.Network
 		failureResponse.Payer = settleResult.Payer
 		failureResponse.ErrorMessage = settleResult.ErrorMessage
-		failureResponse.Transaction = sanitizedFailureTransaction(errorReason, settleResult.Transaction)
+		failureResponse.Transaction = settleResult.Transaction
+		failureResponse.Amount = settleResult.Amount
+		failureResponse.Extra = settleResult.Extra
 	}
 
 	headers, err := s.CreateSettlementHeaders(&failureResponse)
@@ -1172,7 +1173,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 				Headers: map[string]string{
 					"Cache-Control": PaymentRequiredCacheControl,
 				},
-				Body: map[string]interface{}{},
+				Body: failureBody,
 			},
 		}
 	}
@@ -1193,7 +1194,7 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 		Response: &HTTPResponseInstructions{
 			Status:  402,
 			Headers: responseHeaders,
-			Body:    map[string]interface{}{},
+			Body:    failureBody,
 		},
 	}
 }
@@ -1208,13 +1209,26 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 // so a route can't be bypassed via either representation.
 func (s *x402HTTPResourceServer) getRouteConfig(path, method, decodedPath string) (*RouteConfig, string) {
 	upperMethod := strings.ToUpper(method)
+	// A method-less route must not gate the CORS preflight: the browser sends
+	// OPTIONS without a payment and only sends the paid request if it succeeds.
+	// An explicit "OPTIONS /path" route still matches.
+	verbMatches := func(verb string) bool {
+		return verb == upperMethod || (verb == "*" && upperMethod != "OPTIONS")
+	}
 
 	findMatch := func(candidate string) (*RouteConfig, string) {
 		for _, route := range s.compiledRoutes {
-			if route.Regex.MatchString(candidate) &&
-				(route.Verb == "*" || route.Verb == upperMethod) {
+			if route.Regex.MatchString(candidate) && verbMatches(route.Verb) {
 				config := route.Config // Make a copy
 				return &config, route.Pattern
+			}
+		}
+		if upperMethod == http.MethodHead {
+			for _, route := range s.compiledRoutes {
+				if route.Regex.MatchString(candidate) && route.Verb == http.MethodGet {
+					config := route.Config // Make a copy
+					return &config, route.Pattern
+				}
 			}
 		}
 		return nil, ""
@@ -1310,13 +1324,16 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		}, nil
 	}
 
-	// Use custom unpaid response if provided, otherwise default to JSON with no body
 	contentType := "application/json"
 	var body interface{}
-
-	if unpaidResponse != nil {
+	switch {
+	case unpaidResponse != nil:
 		contentType = unpaidResponse.ContentType
 		body = unpaidResponse.Body
+	case paymentRequired.Error != "":
+		body = map[string]string{"error": paymentRequired.Error}
+	default:
+		body = map[string]string{}
 	}
 
 	return &HTTPResponseInstructions{

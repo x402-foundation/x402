@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
@@ -19,7 +20,7 @@ from x402.mechanisms.evm.batch_settlement.client import (
     InMemoryClientChannelStorage,
 )
 from x402.mechanisms.svm import KeypairSigner
-from x402.mechanisms.svm.exact import register_exact_svm_client
+from x402.mechanisms.svm.exact import ExactSvmClientScheme, register_exact_svm_client
 from x402.mechanisms.tvm import (
     TVM_MAINNET,
     TVM_PROVIDER_TONAPI,
@@ -41,17 +42,28 @@ class ClientContext:
     batch_settlement_phase: Optional[str]
 
 
-def create_e2e_client(*, sync: bool = False) -> ClientContext:
+def create_e2e_client(
+    *,
+    sync: bool = False,
+    svm_only: bool = False,
+    svm_transaction_versions: Sequence[int] | None = None,
+) -> ClientContext:
     """Build a configured x402Client (or x402ClientSync) with e2e scheme registrations.
 
     Args:
         sync: If True, build an x402ClientSync for use with sync HTTP clients
             (e.g. requests). Defaults to False, building an async x402Client
             for use with async HTTP clients (e.g. httpx).
+        svm_only: If True, register only SVM schemes even when other
+            families' credentials are set.
+        svm_transaction_versions: Solana transaction message versions the SVM
+            exact scheme may build. None keeps the SDK default (``[0, 1]``);
+            ``[0]`` keeps the client on version 0 even when the facilitator
+            advertises version 1.
     """
-    evm_private_key = os.getenv("CLIENT_EVM_PRIVATE_KEY")
+    evm_private_key = None if svm_only else os.getenv("CLIENT_EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("CLIENT_SVM_PRIVATE_KEY")
-    tvm_private_key = os.getenv("CLIENT_TVM_PRIVATE_KEY")
+    tvm_private_key = None if svm_only else os.getenv("CLIENT_TVM_PRIVATE_KEY")
     evm_rpc_url = os.getenv("EVM_RPC_URL", "https://sepolia.base.org")
     svm_rpc_url = os.getenv("SVM_RPC_URL")
     tvm_provider = (os.getenv("TVM_PROVIDER") or "").strip().lower()
@@ -106,9 +118,18 @@ def create_e2e_client(*, sync: bool = False) -> ClientContext:
 
     if svm_private_key:
         svm_signer = KeypairSigner.from_base58(svm_private_key)
-        register_exact_svm_client(
-            client, svm_signer, networks=network_caip2_pattern("svm"), rpc_url=svm_rpc_url
-        )
+        if svm_transaction_versions is None:
+            register_exact_svm_client(
+                client, svm_signer, networks=network_caip2_pattern("svm"), rpc_url=svm_rpc_url
+            )
+        else:
+            # v2 only: the v1 exact scheme has no transaction-version option.
+            client.register(
+                network_caip2_pattern("svm"),
+                ExactSvmClientScheme(
+                    svm_signer, svm_rpc_url, transaction_versions=svm_transaction_versions
+                ),
+            )
 
     if tvm_private_key:
         if tvm_network not in {TVM_TESTNET, TVM_MAINNET}:

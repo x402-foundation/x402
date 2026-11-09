@@ -237,6 +237,58 @@ func TestExactSvmScheme_SmartWalletComputeUnitsTooHigh(t *testing.T) {
 	assert.Contains(t, ve.InvalidReason, ErrSmartWalletComputeUnitsTooHigh)
 }
 
+func TestExactSvmScheme_SmartWalletAboveDefaultStaticCapReachesPath2(t *testing.T) {
+	f := buildSmartWalletFixture(t, squadsV4, 500_000)
+	signer := &mockSmartWalletSigner{
+		mockExactSvmSigner: mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}},
+		inner:              []rpc.InnerInstruction{f.inner},
+	}
+	smartWalletCap := uint32(1_000_000)
+	scheme := NewExactSvmScheme(signer, &Config{EnableSmartWalletVerification: true, SmartWalletMaxComputeUnits: &smartWalletCap})
+
+	resp, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, resp.IsValid)
+	assert.Equal(t, f.owner.String(), resp.Payer)
+}
+
+func TestExactSvmScheme_ExplicitStaticCapBoundsSmartWallets(t *testing.T) {
+	f := buildSmartWalletFixture(t, squadsV4, 500_000)
+	signer := &mockSmartWalletSigner{
+		mockExactSvmSigner: mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}},
+		inner:              []rpc.InnerInstruction{f.inner},
+	}
+	staticCap := uint32(400_000)
+	smartWalletCap := uint32(1_000_000)
+	scheme := NewExactSvmScheme(signer, &Config{
+		EnableSmartWalletVerification: true,
+		MaxComputeUnits:               &staticCap,
+		SmartWalletMaxComputeUnits:    &smartWalletCap,
+	})
+
+	_, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
+	var ve *x402.VerifyError
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrComputeLimitInstructionTooHigh, ve.InvalidReason)
+}
+
+func TestExactSvmScheme_DefaultStaticCapKeptForDisallowedProgram(t *testing.T) {
+	f := buildSmartWalletFixture(t, solana.SystemProgramID, 500_000)
+	signer := &mockSmartWalletSigner{
+		mockExactSvmSigner: mockExactSvmSigner{addresses: []solana.PublicKey{f.facilitatorAddr}},
+		inner:              []rpc.InnerInstruction{f.inner},
+	}
+	smartWalletCap := uint32(1_000_000)
+	scheme := NewExactSvmScheme(signer, &Config{EnableSmartWalletVerification: true, SmartWalletMaxComputeUnits: &smartWalletCap})
+
+	_, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
+	var ve *x402.VerifyError
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ve))
+	assert.Equal(t, ErrComputeLimitInstructionTooHigh, ve.InvalidReason)
+}
+
 func TestExactSvmScheme_SmartWalletFeePayerIsolationRebuilt(t *testing.T) {
 	facilitatorAddr := solana.NewWallet().PublicKey()
 	ownerWallet := solana.NewWallet()

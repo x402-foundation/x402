@@ -41,17 +41,18 @@ async function buildTestResourceServer(): Promise<x402ResourceServer> {
 }
 
 /**
- * Issue a single HTTP GET to the given port + raw path and return the
+ * Issue a single HTTP request to the given port + raw path and return the
  * response status. The path is sent verbatim — Node does not re-encode
  * it — which is exactly what an attacker on the wire could do.
  *
  * @param port - The local server port.
  * @param rawPath - The raw HTTP path (already percent-encoded as desired).
+ * @param method - The HTTP method to issue.
  * @returns The response status code.
  */
-async function statusFor(port: number, rawPath: string): Promise<number> {
+async function statusFor(port: number, rawPath: string, method: string = "GET"): Promise<number> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port, method: "GET", path: rawPath }, res => {
+    const req = http.request({ host: "127.0.0.1", port, method, path: rawPath }, res => {
       res.resume();
       res.on("end", () => resolve(res.statusCode ?? 0));
     });
@@ -166,6 +167,10 @@ describe("fastify end-to-end: literal route percent-encoded separator", () => {
 
   it("returns 402 for the baseline literal route", async () => {
     expect(await statusFor(port, "/api/premium")).toBe(402);
+  });
+
+  it("returns 402 for HEAD when Fastify dispatches it to the GET handler", async () => {
+    expect(await statusFor(port, "/api/premium", "HEAD")).toBe(402);
   });
 
   it.each([["/api%2Fpremium"], ["/api%2fpremium"], ["/%61pi%2Fpremium"]])(
