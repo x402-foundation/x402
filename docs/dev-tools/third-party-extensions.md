@@ -17,7 +17,6 @@ Packages that **read or write** the `extensions` property on x402 payloads (`Pay
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | TypeScript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk) |
-| [spendctl](https://spendctl.dev) | Buyer-side spend policy sidecar: budgets, allowlists, approvals, receipt ledger; writes `payment-identifier` with the ledger's attempt id | TypeScript | [GitHub](https://github.com/miraistudio/spendctl-sdk) · [npm](https://www.npmjs.com/package/spendctl) |
 
 ## Third-party utilities
 
@@ -31,3 +30,4 @@ Tools that **never touch** `extensions` on x402 payloads—pre-payment guards, f
 | [Hosannaith](https://hosannaith.com) | Reliability oracle for x402 endpoints — verified uptime, correct-402, and latency scores on Algorand | TypeScript | [GitHub](https://github.com/cameron4316/x402-oracle-server) · [npm](https://www.npmjs.com/package/hosannaith-client) |
 | [Elara](https://navigatorbuilds.github.io/elara-mesh/) | Post-quantum (ML-DSA-65) record verification; attestation bound to the x402 payment id | Rust | [GitHub](https://github.com/navigatorbuilds/elara-mesh) · [crates.io](https://crates.io/crates/elara-verify) |
 | [Teppi](https://teppi.xyz) | Check a seller's paid delivery record before signing, and verify signed receipts | TypeScript | [GitHub](https://github.com/teppi-xyz/teppi-client) · [Docs](https://api.teppi.xyz/docs/integrations) · [npm](https://www.npmjs.com/package/teppi-client) |
+| [spendctl](https://spendctl.dev) | Buyer-side spend policy sidecar: budgets, allowlists, approvals, receipt ledger | TypeScript | [GitHub](https://github.com/miraistudio/spendctl-sdk) · [npm](https://www.npmjs.com/package/spendctl) |
