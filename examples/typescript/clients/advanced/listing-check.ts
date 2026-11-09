@@ -27,7 +27,9 @@ export async function runListingCheckExample(
 
   const client = x402Client
     .fromConfig({
-      schemes: [{ network: "eip155:*", client: new ExactEvmScheme(privateKeyToAccount(evmPrivateKey)) }],
+      schemes: [
+        { network: "eip155:*", client: new ExactEvmScheme(privateKeyToAccount(evmPrivateKey)) },
+      ],
       spendControls: { maxAmountPerPayment: "$1" },
     })
     .onBeforePaymentCreation(async ({ paymentRequired, selectedRequirements }) => {
@@ -37,7 +39,9 @@ export async function runListingCheckExample(
         console.log(`🛑 [listing-check] refusing: ${mismatch}`);
         return { abort: true, reason: `listing mismatch: ${mismatch}` };
       }
-      console.log(`✅ [listing-check] ${listing ? "matches the listing" : "no listing, proceeding"}`);
+      console.log(
+        `✅ [listing-check] ${listing ? "matches the listing" : "no listing, proceeding"}`,
+      );
     });
 
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
@@ -65,7 +69,11 @@ export function listingMismatch(req: PaymentRequirements, listing: Listing): str
     if (listing.payTo && req.payTo.toLowerCase() !== listing.payTo.toLowerCase()) {
       return `payTo ${req.payTo}, expected ${listing.payTo}`;
     }
-    if (listing.maxAmount && /^\d+$/.test(req.amount) && BigInt(req.amount) > BigInt(listing.maxAmount)) {
+    if (
+      listing.maxAmount &&
+      /^\d+$/.test(req.amount) &&
+      BigInt(req.amount) > BigInt(listing.maxAmount)
+    ) {
       return `amount ${req.amount}, expected at most ${listing.maxAmount}`;
     }
     return null;
