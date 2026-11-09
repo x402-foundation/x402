@@ -556,7 +556,7 @@ export class x402HTTPResourceServer {
     if (!routeMatch) {
       return { type: "no-payment-required" }; // No payment required for this route
     }
-    const { config: routeConfig, pattern: routePattern } = routeMatch;
+    const { config: routeConfig, pattern: routePattern, verb: routeVerb } = routeMatch;
     const enrichedContext: HTTPRequestContext = { ...context, routePattern };
 
     // Execute request hooks before any payment processing
@@ -585,11 +585,14 @@ export class x402HTTPResourceServer {
 
     // A HEAD response carries no content (RFC 9110 9.3.2), so settling on one
     // charges for a result that cannot be delivered. HEAD still reaches this
-    // point because route matching falls back to the GET rule, which is what
+    // point through a method-less route or the GET fallback, which is what
     // closes the bypass; this stops the other half, where the buyer pays and
     // receives an empty body. The challenge is still served, so the price
-    // stays discoverable with HEAD and only the settlement is refused.
-    const headCannotSettle = method.toUpperCase() === "HEAD" && !!paymentPayload;
+    // stays discoverable with HEAD and only the settlement is refused. A route
+    // declared as "HEAD /path" is the seller saying HEAD is the product, so it
+    // settles as declared, the same split the OPTIONS preflight rule makes.
+    const headCannotSettle =
+      method.toUpperCase() === "HEAD" && routeVerb !== "HEAD" && !!paymentPayload;
 
     // Create resource info, using config override if provided
     const resourceInfo = {
@@ -1271,13 +1274,13 @@ export class x402HTTPResourceServer {
    * @param path - Request path
    * @param method - HTTP method
    * @param decodedPath - Framework decoded routing view, if distinct from path
-   * @returns Route configuration and pattern, or undefined if no match
+   * @returns Route configuration, pattern and the matched route's verb, or undefined if no match
    */
   private getRouteConfig(
     path: string,
     method: string,
     decodedPath?: string,
-  ): { config: RouteConfig; pattern: string } | undefined {
+  ): { config: RouteConfig; pattern: string; verb: string } | undefined {
     const upperMethod = method.toUpperCase();
     // A method-less route must not gate the CORS preflight: the browser sends
     // OPTIONS without a payment and only sends the paid request if it succeeds.
@@ -1285,7 +1288,9 @@ export class x402HTTPResourceServer {
     const matchesVerb = (verb: string): boolean =>
       verb === upperMethod || (verb === "*" && upperMethod !== "OPTIONS");
 
-    const findMatch = (candidate: string): { config: RouteConfig; pattern: string } | undefined => {
+    const findMatch = (
+      candidate: string,
+    ): { config: RouteConfig; pattern: string; verb: string } | undefined => {
       let matchingRoute = this.compiledRoutes.find(
         route => route.regex.test(candidate) && matchesVerb(route.verb),
       );
@@ -1295,7 +1300,11 @@ export class x402HTTPResourceServer {
         );
       }
       if (!matchingRoute) return undefined;
-      return { config: matchingRoute.config, pattern: matchingRoute.pattern };
+      return {
+        config: matchingRoute.config,
+        pattern: matchingRoute.pattern,
+        verb: matchingRoute.verb,
+      };
     };
 
     const match = findMatch(this.normalizePath(path));

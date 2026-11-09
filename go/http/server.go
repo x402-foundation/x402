@@ -574,7 +574,7 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 	}
 
 	// Find matching route
-	routeConfig, routePattern := s.getRouteConfig(reqCtx.Path, reqCtx.Method, reqCtx.DecodedPath)
+	routeConfig, routePattern, routeVerb := s.matchRoute(reqCtx.Path, reqCtx.Method, reqCtx.DecodedPath)
 	if routeConfig == nil {
 		return HTTPProcessResult{Type: ResultNoPaymentRequired}
 	}
@@ -612,11 +612,14 @@ func (s *x402HTTPResourceServer) ProcessHTTPRequest(ctx context.Context, reqCtx 
 
 	// A HEAD response carries no content (RFC 9110 9.3.2), so settling on one
 	// charges for a result that cannot be delivered. HEAD reaches a paid route
-	// because getRouteConfig falls back to the GET rule, which is what closes
+	// through a method-less route or the GET fallback, which is what closes
 	// the bypass; this stops the other half, where the buyer pays and receives
 	// an empty body. The challenge is still served, so the price stays
-	// discoverable over HEAD and only the settlement is refused.
-	headCannotSettle := strings.EqualFold(reqCtx.Method, http.MethodHead) && typedPayload != nil
+	// discoverable over HEAD and only the settlement is refused. A route
+	// declared as "HEAD /path" is the seller saying HEAD is the product, so it
+	// settles as declared, the same split the OPTIONS preflight rule makes.
+	headCannotSettle := strings.EqualFold(reqCtx.Method, http.MethodHead) &&
+		routeVerb != http.MethodHead && typedPayload != nil
 
 	// Build requirements from all payment options (resolves dynamic values inline)
 	requirements, err := s.BuildPaymentRequirementsFromOptions(ctx, paymentOptions, reqCtx)
@@ -1220,6 +1223,14 @@ func (s *x402HTTPResourceServer) buildSettlementFailureResult(errorReason string
 // Checks the escaped path first, then the framework's decodedPath (if distinct),
 // so a route can't be bypassed via either representation.
 func (s *x402HTTPResourceServer) getRouteConfig(path, method, decodedPath string) (*RouteConfig, string) {
+	config, pattern, _ := s.matchRoute(path, method, decodedPath)
+	return config, pattern
+}
+
+// matchRoute is getRouteConfig that also returns the verb of the route that
+// matched: the method itself, "*" for a method-less route, or GET when HEAD
+// reached the route through the GET fallback.
+func (s *x402HTTPResourceServer) matchRoute(path, method, decodedPath string) (*RouteConfig, string, string) {
 	upperMethod := strings.ToUpper(method)
 	// A method-less route must not gate the CORS preflight: the browser sends
 	// OPTIONS without a payment and only sends the paid request if it succeeds.
@@ -1228,33 +1239,33 @@ func (s *x402HTTPResourceServer) getRouteConfig(path, method, decodedPath string
 		return verb == upperMethod || (verb == "*" && upperMethod != "OPTIONS")
 	}
 
-	findMatch := func(candidate string) (*RouteConfig, string) {
+	findMatch := func(candidate string) (*RouteConfig, string, string) {
 		for _, route := range s.compiledRoutes {
 			if route.Regex.MatchString(candidate) && verbMatches(route.Verb) {
 				config := route.Config // Make a copy
-				return &config, route.Pattern
+				return &config, route.Pattern, route.Verb
 			}
 		}
 		if upperMethod == http.MethodHead {
 			for _, route := range s.compiledRoutes {
 				if route.Regex.MatchString(candidate) && route.Verb == http.MethodGet {
 					config := route.Config // Make a copy
-					return &config, route.Pattern
+					return &config, route.Pattern, route.Verb
 				}
 			}
 		}
-		return nil, ""
+		return nil, "", ""
 	}
 
-	if config, pattern := findMatch(normalizePath(path)); config != nil {
-		return config, pattern
+	if config, pattern, verb := findMatch(normalizePath(path)); config != nil {
+		return config, pattern, verb
 	}
 
 	if decodedPath != "" && decodedPath != path {
 		return findMatch(normalizeDecodedPath(decodedPath))
 	}
 
-	return nil, ""
+	return nil, "", ""
 }
 
 // extractPaymentV2 extracts V2 payment from headers (V2 only)

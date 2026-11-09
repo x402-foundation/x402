@@ -15,11 +15,13 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "../..
  * A HEAD response carries no content (RFC 9110 9.3.2), so settling a payment
  * on one charges for a result that cannot be delivered.
  *
- * HEAD reaches a paid route at all because route matching falls back to the
- * GET rule. That fallback is deliberate and closes a bypass where HEAD
- * reached paid GET handlers unpaid. These tests cover the other half: the
- * challenge must still be served over HEAD, so the price stays discoverable,
- * while a HEAD that carries a payment must be refused before settlement.
+ * HEAD reaches a paid route at all through a method-less route or because
+ * route matching falls back to the GET rule. That fallback is deliberate and
+ * closes a bypass where HEAD reached paid GET handlers unpaid. These tests
+ * cover the other half: the challenge must still be served over HEAD, so the
+ * price stays discoverable, while a HEAD that carries a payment must be
+ * refused before settlement. A route declared as "HEAD /path" is the seller
+ * saying HEAD is the product, and settles as declared.
  *
  * The failure this guards against is invisible from both ends - the server
  * records a settlement and the client records an empty success - so it has
@@ -56,20 +58,23 @@ describe("a HEAD request cannot settle a payment", () => {
   let facilitator: MockFacilitatorClient;
   let httpServer: x402HTTPResourceServer;
 
-  beforeEach(async () => {
+  const serverFor = async (routeKey: string) => {
     facilitator = new MockFacilitatorClient(
       buildSupportedResponse({ kinds: [{ x402Version: 2, scheme: "exact", network }] }),
     );
     const resourceServer = new x402ResourceServer(facilitator);
     resourceServer.register(network, new MockSchemeNetworkServer("exact"));
     await resourceServer.initialize();
-
-    // Configured for GET only. HEAD matches it through the GET fallback.
-    httpServer = new x402HTTPResourceServer(resourceServer, {
-      "GET /api/test": {
+    return new x402HTTPResourceServer(resourceServer, {
+      [routeKey]: {
         accepts: { scheme: "exact", payTo: "0xabc", price: "$1.00", network },
       },
     });
+  };
+
+  beforeEach(async () => {
+    // Configured for GET only. HEAD matches it through the GET fallback.
+    httpServer = await serverFor("GET /api/test");
   });
 
   const paidHead = () => {
@@ -80,9 +85,7 @@ describe("a HEAD request cannot settle a payment", () => {
       asset: "USDC",
       amount: "1000000",
     });
-    const header = encodePaymentSignatureHeader(
-      buildPaymentPayload({ x402Version: 2, accepted }),
-    );
+    const header = encodePaymentSignatureHeader(buildPaymentPayload({ x402Version: 2, accepted }));
     return httpServer.processHTTPRequest({
       adapter: new MockHTTPAdapter({ "payment-signature": header }, "HEAD"),
       path: "/api/test",
@@ -103,12 +106,25 @@ describe("a HEAD request cannot settle a payment", () => {
     expect(result.response.status).toBe(402);
   });
 
-  it("refuses a paid HEAD without settling", async () => {
+  it.each(["GET /api/test", "/api/test"])(
+    "refuses a paid HEAD without settling when it matched %s implicitly",
+    async routeKey => {
+      httpServer = await serverFor(routeKey);
+      const result = await paidHead();
+
+      expect(result.type).toBe("payment-error");
+      if (result.type !== "payment-error") return;
+      expect(result.response.status).toBe(402);
+      expect(facilitator.settleCalls?.length ?? 0).toBe(0);
+    },
+  );
+
+  it("settles a paid HEAD on a route declared as HEAD, as before", async () => {
+    httpServer = await serverFor("HEAD /api/test");
     const result = await paidHead();
 
-    expect(result.type).toBe("payment-error");
-    if (result.type !== "payment-error") return;
-    expect(result.response.status).toBe(402);
+    expect(result.type).toBe("payment-verified");
+    expect(facilitator.verifyCalls.length).toBe(1);
   });
 
   it("names the method to retry with, rather than failing opaquely", async () => {
@@ -142,9 +158,7 @@ describe("a HEAD request cannot settle a payment", () => {
       asset: "USDC",
       amount: "1000000",
     });
-    const header = encodePaymentSignatureHeader(
-      buildPaymentPayload({ x402Version: 2, accepted }),
-    );
+    const header = encodePaymentSignatureHeader(buildPaymentPayload({ x402Version: 2, accepted }));
 
     const result = await httpServer.processHTTPRequest({
       adapter: new MockHTTPAdapter({ "payment-signature": header }, "GET"),
