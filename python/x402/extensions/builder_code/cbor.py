@@ -47,16 +47,14 @@ class _CborCursor:
         self.data = data
         self.offset = 0
 
-    def _remaining(self) -> int:
-        return len(self.data) - self.offset
-
     def peek_major(self) -> int:
         if self.offset >= len(self.data):
             raise _CborDecodeError("Unexpected end of CBOR data")
         return self.data[self.offset] >> 5
 
     def read_argument(self) -> int:
-        self.peek_major()
+        if self.offset >= len(self.data):
+            raise _CborDecodeError("Unexpected end of CBOR data")
         info = self.data[self.offset] & 0x1F
         self.offset += 1
         if info <= 23:
@@ -72,7 +70,7 @@ class _CborCursor:
 
     def read_length(self) -> int:
         length = self.read_argument()
-        if length > self._remaining():
+        if length > len(self.data) - self.offset:
             raise _CborDecodeError("CBOR length exceeds available data")
         return length
 
@@ -158,8 +156,6 @@ def _encode_cbor_value(value: object) -> bytes:
     if isinstance(value, str):
         return _encode_string(value)
     if isinstance(value, int):
-        if value < 0 or value > _MAX_UINT64:
-            raise ValueError(f"CBOR value out of range: {value}")
         return _encode_major_type(_MAJOR_UNSIGNED, value)
     if isinstance(value, dict):
         return _encode_cbor_value_map(value)
@@ -276,25 +272,21 @@ def _parse_cbor_map(data: bytes) -> BuilderCodeSuffixData:
     result = BuilderCodeSuffixData()
     for _ in range(map_size):
         key = _read_text(cursor)
-        if key in ("a", "w"):
-            value = _read_text(cursor)
-            if key == "a":
-                result.a = value
-            else:
-                result.w = value
-            continue
-        if key == "s":
+        if key == "a":
+            result.a = _read_text(cursor)
+        elif key == "w":
+            result.w = _read_text(cursor)
+        elif key == "s":
             if cursor.peek_major() != _MAJOR_ARRAY:
                 raise _CborDecodeError("Expected CBOR array")
             array_size = cursor.read_length()
             codes = [_read_text(cursor) for _ in range(array_size)]
             if codes:
                 result.s = codes
-            continue
-        if key == "m":
+        elif key == "m":
             result.m = _read_map(cursor)
-            continue
-        raise _CborDecodeError(f"Unknown builder-code key: {key}")
+        else:
+            raise _CborDecodeError(f"Unknown builder-code key: {key}")
     return result
 
 

@@ -30,7 +30,7 @@ app.use(
 ```shell
 # All available reference sdks
 npm install @x402/core \
-  @x402/evm @x402/svm @x402/avm @x402/aptos @x402/casper @x402/stellar @x402/tvm @x402/hedera @x402/keeta \
+  @x402/evm @x402/svm @x402/avm @x402/aptos @x402/casper @x402/stellar @x402/tvm @x402/hedera @x402/keeta @x402/canton \
   @x402/axios @x402/fastify @x402/fetch @x402/express @x402/hono @x402/next @x402/paywall @x402/extensions @x402/mcp
 ```
 
@@ -87,8 +87,6 @@ go get github.com/x402-foundation/x402/go/v2
 **Community:** join the [x402 Slack](http://slack.x402.org/) to ask questions, discuss ideas, and share what you're building.
 
 Curated third-party SDKs, extensions, and facilitators are listed in the [Developer Tools docs](https://docs.x402.org/dev-tools/overview). For broader discovery of x402 services and integrations, see community-maintained directories such as [x402scan.com](https://x402scan.com), [Agentic.Market](https://agentic.market), [Pay.sh](https://pay.sh), [app.ampersend.ai/discover](https://app.ampersend.ai/discover), and [x402-list.com](https://x402-list.com).
-
-**Roadmap:** see [ROADMAP.md](https://github.com/x402-foundation/x402/blob/main/ROADMAP.md)
 
 **Documentation:** see [`docs/`](./docs/) for the published documentation source (Mintlify). Payment **schemes** include **`exact`**, **`upto`**, and **`batch-settlement`**; specifications live under [`specs/schemes/`](./specs/schemes/).
 

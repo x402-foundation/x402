@@ -3,6 +3,8 @@ package facilitator
 import (
 	"context"
 
+	solana "github.com/gagliardetto/solana-go"
+
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
@@ -36,12 +38,22 @@ type StartConfig = paymentchannels.RentCleanupStartConfig
 
 // RentCleanupConfig configures a rent cleanup manager for one network.
 type RentCleanupConfig struct {
-	Signer                        svm.FacilitatorSvmSigner
-	Storage                       paymentchannels.PaymentChannelStorage
-	Network                       string
+	Signer  svm.FacilitatorSvmSigner
+	Storage paymentchannels.PaymentChannelStorage
+	Network string
+	// TreasuryOwner overrides the program's treasury owner for close/distribute
+	// cleanup; the zero key uses the network's.
+	TreasuryOwner                 solana.PublicKey
 	MaxIdleSecs                   *int64
 	ComputeUnitPriceMicroLamports *uint64
 	SettleComputeUnitLimit        *uint32
+	// FacilitatorTransactionVersion is the message version (0 or 1) of the
+	// cleanup transactions the facilitator builds itself; see
+	// Config.FacilitatorTransactionVersion. Unset defaults to
+	// DefaultFacilitatorTransactionVersion (v1 packs up to
+	// paymentchannels.DefaultMaxReclaimsPerTxV1 reclaims); v0 caps reclaim
+	// batches at paymentchannels.MaxSafeReclaimsPerTx. Any other value panics.
+	FacilitatorTransactionVersion *int
 }
 
 // BatchSvmRentCleanupManager recovers rent a facilitator fronts for batch channels.
@@ -59,10 +71,12 @@ func NewBatchSvmRentCleanupManager(config RentCleanupConfig) *BatchSvmRentCleanu
 			Signer:                        config.Signer,
 			Storage:                       config.Storage,
 			Network:                       config.Network,
+			TreasuryOwner:                 config.TreasuryOwner,
 			ComputeUnitPriceMicroLamports: config.ComputeUnitPriceMicroLamports,
 			SettleComputeUnitLimit:        config.SettleComputeUnitLimit,
 			MaxIdleSecs:                   config.MaxIdleSecs,
 			AbandonPolicy:                 paymentchannels.OpenAbandonPolicyIdle,
+			FacilitatorTransactionVersion: resolveFacilitatorTransactionVersion(config.FacilitatorTransactionVersion),
 			Label:                         "BatchSvmRentCleanupManager",
 		}),
 	}

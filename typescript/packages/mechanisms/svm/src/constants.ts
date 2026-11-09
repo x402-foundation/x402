@@ -9,11 +9,15 @@ export const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
 
 /**
  * Phantom/Solflare Lighthouse program address
- * Phantom and Solflare wallets inject Lighthouse instructions for user protection on mainnet transactions.
- * - Phantom adds 1 Lighthouse instruction (4th instruction)
- * - Solflare adds 2 Lighthouse instructions (4th and 5th instructions)
- * We allow these as optional instructions to support these wallets.
+ * Phantom and Solflare wallets inject Lighthouse assertion instructions for
+ * user protection on mainnet transactions. The facilitator treats only
+ * assertion variants as guards; other Lighthouse variants can mutate state.
+ * Guards are allowed anywhere in the instruction list (before, after, or
+ * interspersed among the protocol instructions), rather than assuming a
+ * fixed count or position. Wallets do not guarantee a stable instruction
+ * count or position for these; treat any such assumption as unsupported.
  * See: https://github.com/x402-foundation/x402/issues/828
+ *  and: https://github.com/x402-foundation/x402/issues/2097
  */
 export const LIGHTHOUSE_PROGRAM_ADDRESS = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
 
@@ -34,7 +38,44 @@ export const MAINNET_WS_URL = "wss://api.mainnet-beta.solana.com";
 export const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
 export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
 export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
+
+/**
+ * Reference default ceiling on the compute unit limit a sponsor pays for
+ * (scheme_exact_svm.md §2.2.1), applied to a version-0 `SetComputeUnitLimit`
+ * and a version-1 header `computeUnitLimit` alike.
+ */
+export const DEFAULT_MAX_COMPUTE_UNITS = 400_000;
+
+/**
+ * Default ceiling on a sponsored transaction's required signatures: the client
+ * and the fee payer. Any other required signer is a base fee the sponsor pays
+ * for a party outside the payment (scheme_exact_svm.md §2.1.4).
+ */
+export const DEFAULT_MAX_REQUIRED_SIGNATURES = 2;
 export const MAX_MEMO_BYTES = 256;
+
+/**
+ * Transaction message versions the SVM verifiers accept. Version 0 carries its
+ * compute budget as ComputeBudget instructions and version 1 (SIMD-0385) in
+ * the message config; the verifiers model both, and reject any other version
+ * before its instructions are inspected. Legacy is tolerated for backward
+ * compatibility but deprecated and never advertised; see
+ * {@link ADVERTISED_TRANSACTION_VERSIONS}.
+ */
+export const ACCEPTED_TRANSACTION_VERSIONS: readonly (number | string)[] = ["legacy", 0, 1];
+
+/**
+ * Transaction message versions a facilitator advertises as
+ * `extra.transactionVersions` in `/supported`. Clients build one of these.
+ */
+export const ADVERTISED_TRANSACTION_VERSIONS: readonly number[] = [0, 1];
+
+/**
+ * Transaction versions this client implementation can construct. A client
+ * whose signer cannot sign version 1 narrows this with its
+ * `transactionVersions` option.
+ */
+export const CLIENT_SUPPORTED_TRANSACTION_VERSIONS: readonly (0 | 1)[] = [0, 1];
 
 /**
  * How long a transaction is held in the duplicate settlement cache (ms).

@@ -8,12 +8,13 @@
     "dev:mcp": "tsx mcp/index.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.14.0",
-    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@hono/node-server": "^1.19.15",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/canton": "workspace:*",
+    "@x402/cardano": "workspace:*",
     "@x402/casper": "workspace:*",
-    "@x402/cardano": "workspace:*",    
     "@x402/concordium": "workspace:*",
     "@x402/core": "workspace:*",
     "@x402/evm": "workspace:*",
@@ -29,9 +30,9 @@
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
     "@x402/xrpl": "workspace:*",
-    "express": "^4.18.2",
-    "fastify": "^5.3.3",
-    "hono": "^4.7.1",
+    "express": "^4.22.3",
+    "fastify": "^5.12.5",
+    "hono": "^4.13.7",
     "viem": "^2.48.11"
   },
   "devDependencies": {

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from eth_keys.constants import SECPK1_N
+
 from ..constants import (
     AUTHORIZATION_STATE_ABI,
     BALANCE_OF_ABI,
@@ -29,7 +31,7 @@ from ..multicall import MulticallCall, encode_contract_call, multicall
 from ..signer import FacilitatorEvmSigner
 from ..types import ERC6492SignatureData, ExactEIP3009Authorization
 from ..utils import bytes_to_hex, hex_to_bytes, normalize_address
-from ..verify import verify_universal_signature
+from ..verify import verify_universal_signature_with_code
 
 # keccak256("Transfer(address,address,uint256)")
 ERC20_TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -55,6 +57,24 @@ class EIP3009SignatureClassification:
     is_smart_wallet: bool
     is_undeployed: bool
     sig_data: ERC6492SignatureData
+
+
+def is_canonical_ecdsa_signature(signature: bytes) -> bool:
+    """Return whether a 65-byte signature has a low s value (s <= n/2, EIP-2)."""
+    if len(signature) != 65:
+        return False
+    s = int.from_bytes(signature[32:64], "big")
+    return s <= SECPK1_N // 2
+
+
+def is_plain_non_canonical_ecdsa_signature(signature: bytes, payer_deployed: bool) -> bool:
+    """Return whether signature is a high-s plain EOA signature.
+
+    Only a 65-byte signature from a payer with no bytecode qualifies.
+    """
+    if len(signature) != 65 or is_canonical_ecdsa_signature(signature):
+        return False
+    return not payer_deployed
 
 
 def parse_eip3009_authorization(
@@ -83,6 +103,7 @@ def classify_eip3009_signature(
     token_address: str,
     token_name: str,
     token_version: str,
+    payer_code: bytes,
 ) -> EIP3009SignatureClassification:
     """Classify the signature before deciding whether simulation may rescue it."""
     digest = hash_eip3009_authorization(
@@ -92,11 +113,12 @@ def classify_eip3009_signature(
         token_name,
         token_version,
     )
-    valid, sig_data = verify_universal_signature(
+    valid, sig_data = verify_universal_signature_with_code(
         signer,
         authorization.from_address,
         digest,
         signature,
+        payer_code,
         allow_undeployed=True,
     )
 
@@ -109,7 +131,6 @@ def classify_eip3009_signature(
             sig_data=sig_data,
         )
 
-    # Reuse the get_code result verify_universal_signature already fetched.
     if sig_data.code_deployed:
         return EIP3009SignatureClassification(
             valid=False,

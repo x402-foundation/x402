@@ -1,14 +1,26 @@
 """SVM utility functions for network, address, and amount handling."""
 
 import base64
+import binascii
 import hashlib
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 try:
     from solders.hash import Hash, ParseHashError
+    from solders.instruction import Instruction
+    from solders.keypair import Keypair
+    from solders.message import (
+        Message,
+        MessageV0,
+        MessageV1,
+        TransactionConfig,
+        to_bytes_versioned,
+    )
     from solders.pubkey import Pubkey
+    from solders.signature import Signature
     from solders.transaction import VersionedTransaction
 except ImportError as e:
     raise ImportError(
@@ -17,6 +29,25 @@ except ImportError as e:
 
 from ...schemas.helpers import convert_to_token_amount
 from .constants import (
+    ACCEPTED_TRANSACTION_VERSIONS,
+    ADVERTISED_TRANSACTION_VERSIONS,
+    CLIENT_SUPPORTED_TRANSACTION_VERSIONS,
+    COMPUTE_BUDGET_PROGRAM_ADDRESS,
+    DEFAULT_COMPUTE_UNIT_LIMIT,
+    DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+    DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+    ERR_COMPUTE_LIMIT_TOO_HIGH,
+    ERR_COMPUTE_PRICE_TOO_HIGH,
+    ERR_INVALID_COMPUTE_LIMIT,
+    ERR_INVALID_COMPUTE_PRICE,
+    ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
+    ERR_V1_COMPUTE_BUDGET_INSTRUCTION,
+    ERR_V1_HEAP_SIZE,
+    MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+    MAX_TRANSACTION_SIZE_V0,
+    MAX_TRANSACTION_SIZE_V1,
     NETWORK_CONFIGS,
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
@@ -34,10 +65,10 @@ from .constants import (
 from .types import ExactSvmPayload, TransactionInfo
 
 if TYPE_CHECKING:
-    from solana.rpc.api import Client as SolanaClient
+    from .rpc import SvmRpcClient
 
 
-def resolve_blockhash(client: "SolanaClient", recent_blockhash: object = None) -> Hash:
+def resolve_blockhash(client: "SvmRpcClient", recent_blockhash: object = None) -> Hash:
     """Use a valid supplied blockhash, falling back to the latest blockhash from RPC."""
     if isinstance(recent_blockhash, str) and recent_blockhash:
         try:
@@ -217,6 +248,454 @@ def decode_transaction_from_payload(payload: ExactSvmPayload) -> VersionedTransa
         raise ValueError("invalid_exact_svm_payload_transaction") from e
 
 
+def peek_wire_transaction_version(transaction_b64: str) -> int | str | None:
+    """Read a wire transaction's message version from its raw bytes.
+
+    Legacy and version-0 transactions start with the compact-u16 signature
+    count (always below ``0x80`` within the size limit), then the signatures,
+    then the message, whose first byte carries the version prefix when its
+    high bit is set. Version 1 (SIMD-0385) puts the message first, so its first
+    byte is the version byte itself (``0x81``).
+
+    Verifiers call this before decoding so a newer format is reported as
+    ``unsupported_transaction_version`` whether the installed solders rejects
+    it, misreads it, or decodes it.
+
+    Args:
+        transaction_b64: The base64-encoded wire transaction.
+
+    Returns:
+        The message version (``"legacy"`` or an int), or None when the bytes
+        cannot be read or are too short to tell.
+    """
+    try:
+        raw = base64.b64decode(transaction_b64, validate=True)
+    except (ValueError, TypeError):
+        return None
+    if not raw:
+        return None
+    if raw[0] & 0x80:
+        return raw[0] & 0x7F
+    prefix_offset = 1 + 64 * raw[0]
+    if prefix_offset >= len(raw):
+        return None
+    prefix = raw[prefix_offset]
+    return prefix & 0x7F if prefix & 0x80 else "legacy"
+
+
+def priority_fee_lamports(compute_unit_limit: int, micro_lamports_per_cu: int) -> int:
+    """Convert a per-compute-unit price into version 1's total lamport fee.
+
+    Rounds up, matching how the runtime charges a version 0
+    ``SetComputeUnitPrice`` on the requested limit.
+
+    Args:
+        compute_unit_limit: Requested compute units.
+        micro_lamports_per_cu: Price in microlamports per compute unit.
+
+    Returns:
+        The total priority fee in lamports.
+    """
+    return -(-(compute_unit_limit * micro_lamports_per_cu) // 1_000_000)
+
+
+def compile_payment_message(
+    version: int,
+    payer: Pubkey,
+    instructions: list[Instruction],
+    recent_blockhash: Hash,
+    compute_unit_limit: int = DEFAULT_COMPUTE_UNIT_LIMIT,
+    compute_unit_price_micro_lamports: int = DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+) -> MessageV0 | MessageV1:
+    """Compile a client payment message in the negotiated transaction version.
+
+    ``instructions`` are the payment instructions only; this function adds the
+    compute budget in the form the version uses. Version 0 gets a
+    ``SetComputeUnitLimit`` + ``SetComputeUnitPrice`` prefix. Version 1 gets
+    no ComputeBudget instructions (the runtime ignores them there) and sets
+    ``compute_unit_limit``, ``loaded_accounts_data_size_limit`` and the total
+    ``priority_fee`` in the message config instead.
+
+    Args:
+        version: Version returned by ``resolve_transaction_version``.
+        payer: Fee payer for the message.
+        instructions: Payment instructions to compile.
+        recent_blockhash: Transaction lifetime.
+        compute_unit_limit: Requested compute units.
+        compute_unit_price_micro_lamports: Priority price per compute unit.
+
+    Returns:
+        The compiled message.
+
+    Raises:
+        ValueError: If this client has no builder for ``version``.
+    """
+    if version == 0:
+        compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
+        set_cu_limit_ix = Instruction(
+            program_id=compute_budget_program,
+            accounts=[],
+            data=bytes([2]) + compute_unit_limit.to_bytes(4, "little"),
+        )
+        set_cu_price_ix = Instruction(
+            program_id=compute_budget_program,
+            accounts=[],
+            data=bytes([3]) + compute_unit_price_micro_lamports.to_bytes(8, "little"),
+        )
+        return MessageV0.try_compile(
+            payer=payer,
+            instructions=[set_cu_limit_ix, set_cu_price_ix, *instructions],
+            address_lookup_table_accounts=[],
+            recent_blockhash=recent_blockhash,
+        )
+    if version == 1:
+        fee = priority_fee_lamports(compute_unit_limit, compute_unit_price_micro_lamports)
+        config = TransactionConfig(
+            priority_fee=fee if fee > 0 else None,
+            compute_unit_limit=compute_unit_limit,
+            loaded_accounts_data_size_limit=DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+        )
+        return MessageV1.try_compile(payer, instructions, recent_blockhash, config)
+    raise ValueError(
+        f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: this client cannot build transaction "
+        f"version {version!r}"
+    )
+
+
+def max_transaction_size(version: int | str) -> int:
+    """Return the serialized size limit for a transaction message version.
+
+    Args:
+        version: Version reported by ``get_transaction_version``.
+
+    Returns:
+        4096 bytes for version 1, 1232 bytes for legacy and version 0.
+    """
+    return MAX_TRANSACTION_SIZE_V1 if version == 1 else MAX_TRANSACTION_SIZE_V0
+
+
+def transaction_size_exceeded(transaction_b64: str, version: int | str) -> bool:
+    """Whether a wire transaction exceeds its message version's size limit.
+
+    Verifiers call this after the version gate: the decoder accepts an
+    oversized transaction, but the network would drop it after the sponsor
+    co-signed it. Legacy is policed as version 0.
+
+    Args:
+        transaction_b64: The base64-encoded wire transaction.
+        version: Its message version, as ``get_transaction_version`` reports it.
+
+    Returns:
+        True when the serialized transaction is larger than the limit.
+    """
+    try:
+        size = len(base64.b64decode(transaction_b64, validate=True))
+    except (binascii.Error, ValueError):
+        return True
+    return size > max_transaction_size(version)
+
+
+def encode_partially_signed_transaction(message: MessageV0 | MessageV1, keypair: Keypair) -> str:
+    """Sign a payment message as the token authority and encode it for the wire.
+
+    The facilitator's fee-payer slot (index 0) is left empty for it to fill
+    at settlement. The signed bytes are the message behind its version prefix
+    (0x80 for version 0, 0x81 for version 1), as ``to_bytes_versioned``
+    serializes them.
+
+    Args:
+        message: Compiled payment message whose fee payer is the facilitator.
+        keypair: Client keypair, the only other required signer.
+
+    Returns:
+        The base64-encoded wire transaction.
+
+    Raises:
+        ValueError: If the transaction exceeds its version's size limit.
+    """
+    client_signature = keypair.sign_message(to_bytes_versioned(message))
+    tx = VersionedTransaction.populate(message, [Signature.default(), client_signature])
+    raw = bytes(tx)
+    limit = max_transaction_size(get_transaction_version(message))
+    if len(raw) > limit:
+        raise ValueError(f"payment transaction is {len(raw)} bytes, above the {limit}-byte limit")
+    return base64.b64encode(raw).decode("utf-8")
+
+
+def check_transaction_v1_config(
+    config: TransactionConfig,
+    max_compute_unit_price_micro_lamports: int,
+    max_compute_units: int | None = None,
+) -> str | None:
+    """Apply the sponsor's compute budget caps to a version-1 message config.
+
+    solders rejects a config mask that sets only one of the two priority-fee
+    bits at decode, so a decoded config already has both or neither. An unset
+    value takes its minimum (SIMD-0385): an unset compute unit limit or
+    loaded-account-data limit requests 0, so both must be set for the
+    instructions to run. The fee is a total in lamports, compared against the
+    per-compute-unit cap as ``priority_fee * 1_000_000 <= cap * limit`` (Python
+    integers cannot overflow).
+
+    Args:
+        config: ``message.config`` of a decoded version-1 message.
+        max_compute_unit_price_micro_lamports: Price cap in microlamports per CU.
+        max_compute_units: Compute unit cap, or None for no cap.
+
+    Returns:
+        The invalid reason, or None when the config is within policy.
+    """
+    if config.heap_size is not None:
+        return ERR_V1_HEAP_SIZE
+    compute_unit_limit = config.compute_unit_limit
+    if compute_unit_limit is None:
+        return ERR_INVALID_COMPUTE_LIMIT
+    if max_compute_units is not None and compute_unit_limit > max_compute_units:
+        return ERR_COMPUTE_LIMIT_TOO_HIGH
+    if config.loaded_accounts_data_size_limit is None:
+        return ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING
+    priority_fee = config.priority_fee or 0
+    if priority_fee * 1_000_000 > max_compute_unit_price_micro_lamports * compute_unit_limit:
+        return ERR_COMPUTE_PRICE_TOO_HIGH
+    return None
+
+
+# Lighthouse/Memo slots allowed after the TransferChecked. Version 1 follows
+# the spec's four slots (Phantom can inject three Lighthouse instructions plus
+# the memo); legacy and version 0 keep this verifier's existing three.
+MAX_OPTIONAL_INSTRUCTIONS_V0 = 3
+MAX_OPTIONAL_INSTRUCTIONS_V1 = 4
+
+
+def check_exact_compute_budget(
+    message: Message | MessageV0 | MessageV1,
+    max_compute_unit_price_micro_lamports: int = MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+) -> tuple[str | None, int]:
+    """Check an exact payment's instruction count and compute budget.
+
+    Legacy and version 0 carry the budget as a ``SetComputeUnitLimit`` +
+    ``SetComputeUnitPrice`` prefix, so the TransferChecked is at index 2.
+    Version 1 carries it in ``message.config``, so the transfer comes first and
+    no ComputeBudget instruction may appear anywhere in the message.
+
+    Args:
+        message: Decoded message of an accepted version.
+        max_compute_unit_price_micro_lamports: Price cap in microlamports per CU.
+
+    Returns:
+        ``(invalid_reason, transfer_index)``; the reason is None when the
+        layout and budget are within policy.
+    """
+    instructions = message.instructions
+    static_accounts = list(message.account_keys)
+    compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
+
+    if isinstance(message, MessageV1):
+        if not 1 <= len(instructions) <= 1 + MAX_OPTIONAL_INSTRUCTIONS_V1:
+            return ERR_INVALID_INSTRUCTION_COUNT, 0
+        if any(
+            static_accounts[ix.program_id_index] == compute_budget_program for ix in instructions
+        ):
+            return ERR_V1_COMPUTE_BUDGET_INSTRUCTION, 0
+        return (
+            check_transaction_v1_config(message.config, max_compute_unit_price_micro_lamports),
+            0,
+        )
+
+    if not 3 <= len(instructions) <= 3 + MAX_OPTIONAL_INSTRUCTIONS_V0:
+        return ERR_INVALID_INSTRUCTION_COUNT, 2
+
+    cu_limit_ix = instructions[0]
+    cu_limit_data = bytes(cu_limit_ix.data)
+    if (
+        static_accounts[cu_limit_ix.program_id_index] != compute_budget_program
+        or len(cu_limit_data) < 1
+        or cu_limit_data[0] != 2  # SetComputeUnitLimit discriminator
+    ):
+        return ERR_INVALID_COMPUTE_LIMIT, 2
+
+    cu_price_ix = instructions[1]
+    cu_price_data = bytes(cu_price_ix.data)
+    if (
+        static_accounts[cu_price_ix.program_id_index] != compute_budget_program
+        or len(cu_price_data) < 9
+        or cu_price_data[0] != 3  # SetComputeUnitPrice discriminator
+    ):
+        return ERR_INVALID_COMPUTE_PRICE, 2
+
+    # microLamports is a u64, little-endian
+    micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
+    if micro_lamports > max_compute_unit_price_micro_lamports:
+        return ERR_COMPUTE_PRICE_TOO_HIGH, 2
+    return None, 2
+
+
+def get_transaction_version(message: object) -> int | str:
+    """Return the version of a decoded transaction message.
+
+    Legacy messages have no version prefix; versioned messages are serialized
+    behind a single byte of ``0x80 | version``.
+
+    Args:
+        message: Decoded transaction message (``tx.message``).
+
+    Returns:
+        ``"legacy"`` for an unversioned message, ``0`` for a v0 message,
+        otherwise the version number read from the serialized prefix, or ``-1``
+        when it cannot be determined.
+    """
+    if isinstance(message, Message):
+        return "legacy"
+    if isinstance(message, MessageV0):
+        return 0
+    if isinstance(message, MessageV1):
+        return 1
+    try:
+        return to_bytes_versioned(message)[0] & 0x7F  # type: ignore[arg-type]
+    except Exception:
+        return -1
+
+
+def is_accepted_transaction_version(
+    version: int | str, accepted: Sequence[int] | None = None
+) -> bool:
+    """Return whether a transaction version is one the SVM verifiers police.
+
+    This is an allowlist (see ``ACCEPTED_TRANSACTION_VERSIONS``), not a denylist:
+    the fee-policy checks read ComputeBudget instructions, which a newer message
+    version may relocate, so anything unmodelled must be rejected outright.
+
+    Args:
+        version: Version reported by ``get_transaction_version``.
+        accepted: A facilitator's configured versions (see
+            ``normalize_accepted_transaction_versions``); legacy is accepted
+            exactly when 0 is. None means every modelled version.
+
+    Returns:
+        True if the version is accepted, False otherwise.
+    """
+    if isinstance(version, bool):
+        return False
+    if version not in ACCEPTED_TRANSACTION_VERSIONS:
+        return False
+    if accepted is None:
+        return True
+    return (0 if version == "legacy" else version) in accepted
+
+
+def normalize_accepted_transaction_versions(versions: Sequence[int] | None) -> list[int]:
+    """Validate a facilitator's ``transaction_versions`` option.
+
+    These are the message versions it accepts and advertises as
+    ``extra.transactionVersions``.
+
+    Args:
+        versions: The configured versions, or None for
+            ``ADVERTISED_TRANSACTION_VERSIONS``.
+
+    Returns:
+        The accepted versions, deduplicated and ascending.
+
+    Raises:
+        ValueError: If ``versions`` is empty or holds anything but 0 and 1.
+    """
+    if versions is None:
+        return [int(version) for version in ADVERTISED_TRANSACTION_VERSIONS]
+    checked = _check_transaction_version_entries(versions, "transaction_versions")
+    if not checked:
+        raise ValueError(
+            f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: transaction_versions must not be empty"
+        )
+    return sorted(set(checked))
+
+
+def _check_transaction_version_entries(versions: object, field: str) -> list[int]:
+    """Validate a list holding only the integers 0 and 1.
+
+    Any other entry, including Wallet Standard's "legacy" or a stringified
+    version, invalidates the whole list rather than being skipped.
+
+    Args:
+        versions: The value to validate.
+        field: Name used in the error message.
+
+    Returns:
+        The validated list.
+
+    Raises:
+        ValueError: If ``versions`` is not a list of 0/1 integers.
+    """
+    if not isinstance(versions, list | tuple):
+        raise ValueError(f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: {field} must be a list")
+    for offered in versions:
+        if isinstance(offered, bool) or not isinstance(offered, int) or offered not in (0, 1):
+            raise ValueError(
+                f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: {field} entries must be "
+                f"the integers 0 or 1, got {offered!r}"
+            )
+    return list(versions)
+
+
+def normalize_client_transaction_versions(versions: Sequence[int] | None) -> list[int]:
+    """Validate a client's own supported-version restriction.
+
+    Args:
+        versions: Versions the client (and its signer) can build, or None for
+            every version this implementation builds.
+
+    Returns:
+        The supported versions.
+
+    Raises:
+        ValueError: If ``versions`` is empty or holds anything but 0 and 1.
+    """
+    if versions is None:
+        return list(CLIENT_SUPPORTED_TRANSACTION_VERSIONS)
+    checked = _check_transaction_version_entries(versions, "transaction_versions")
+    if not checked:
+        raise ValueError(
+            f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: transaction_versions must not be empty"
+        )
+    return checked
+
+
+def resolve_transaction_version(extra: dict | None, supported: Sequence[int] | None = None) -> int:
+    """Pick the transaction message version a client should build.
+
+    Reads ``extra.transactionVersions`` (copied by the server from the
+    facilitator's ``/supported`` extra; absent means ``[0]``) and selects the
+    highest version it shares with ``supported``. Legacy is deprecated and
+    never built.
+
+    Args:
+        extra: ``PaymentRequirements.extra`` (may be None).
+        supported: Versions this client and its signer can build; defaults to
+            ``CLIENT_SUPPORTED_TRANSACTION_VERSIONS``.
+
+    Returns:
+        The highest mutually supported version.
+
+    Raises:
+        ValueError: If the advertised field is invalid or the sets do not intersect.
+    """
+    advertised = (
+        [0] if extra is None or "transactionVersions" not in extra else extra["transactionVersions"]
+    )
+    if not isinstance(advertised, list):
+        raise ValueError(
+            f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: transactionVersions must be a list"
+        )
+    advertised = _check_transaction_version_entries(advertised, "transactionVersions")
+    client_versions = normalize_client_transaction_versions(supported)
+    mutually_supported = [version for version in client_versions if version in advertised]
+    if mutually_supported:
+        return max(mutually_supported)
+    raise ValueError(
+        f"{ERR_UNSUPPORTED_TRANSACTION_VERSION}: facilitator accepts {advertised!r}, "
+        f"but this client builds only {client_versions!r}"
+    )
+
+
 def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:
     """Extract the token sender (owner of source token account) from a TransferChecked instruction.
 
@@ -252,7 +731,8 @@ def get_token_payer_from_transaction(tx: VersionedTransaction) -> str:
 def extract_transaction_info(tx: VersionedTransaction) -> TransactionInfo | None:
     """Extract transfer information from a parsed Solana transaction.
 
-    Expects a transaction with compute budget + TransferChecked instructions.
+    Finds the first TransferChecked whatever the layout, so it reads legacy,
+    version 0 (compute budget prefix) and version 1 (no prefix) alike.
 
     Args:
         tx: The decoded versioned transaction.

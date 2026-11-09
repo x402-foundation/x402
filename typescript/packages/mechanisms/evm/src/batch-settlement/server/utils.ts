@@ -51,7 +51,10 @@ export function readExtraNumber(
 ): number {
   const value = extra?.[key];
   if (typeof value === "number") return value;
-  if (typeof value === "string") return parseInt(value, 10) || fallback;
+  if (typeof value === "string") {
+    const n = parseInt(value, 10);
+    return Number.isNaN(n) ? fallback : n;
+  }
   return fallback;
 }
 

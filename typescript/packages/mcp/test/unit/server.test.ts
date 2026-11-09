@@ -2,14 +2,20 @@
  * Unit tests for createPaymentWrapper
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createPaymentWrapper } from "../../src/server";
-import { MCP_PAYMENT_RESPONSE_META_KEY } from "../../src/types";
+import {
+  x402ResourceServer,
+  AfterSettleAbortError,
+  type FacilitatorClient,
+} from "@x402/core/server";
 import type {
   PaymentPayload,
   PaymentRequirements,
+  SchemeNetworkServer,
   SettleResponse,
   VerifyResponse,
 } from "@x402/core/types";
+import { createPaymentWrapper } from "../../src/server";
+import { MCP_PAYMENT_META_KEY, MCP_PAYMENT_RESPONSE_META_KEY } from "../../src/types";
 
 // ============================================================================
 // Mock Types
@@ -719,16 +725,14 @@ describe("createPaymentWrapper", () => {
       expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(cancelReceipt);
     });
 
-    it("returns internal error with cancel receipt when handler throws without before-handler settle", async () => {
-      const cancelReceipt: SettleResponse = {
+    it("cancels without before-handler settle and rethrows when handler throws", async () => {
+      const cancel = vi.fn().mockResolvedValue({
         success: true,
         amount: "0",
-        transaction: "0xrefund",
+        transaction: "0xcancel",
         network: "eip155:84532",
-      };
-      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({
-        cancel: vi.fn().mockResolvedValue(cancelReceipt),
-      });
+      } satisfies SettleResponse);
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
 
       const paid = createPaymentWrapper(
         mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
@@ -736,7 +740,28 @@ describe("createPaymentWrapper", () => {
           accepts: [mockPaymentRequirements],
         },
       );
-      const handler = vi.fn().mockRejectedValue(new Error("handler failed"));
+      const handlerError = new Error("handler failed");
+      const wrappedHandler = paid(vi.fn().mockRejectedValue(handlerError));
+
+      await expect(
+        wrappedHandler({ test: "arg" }, { _meta: { "x402/payment": mockPaymentPayload } }),
+      ).rejects.toBe(handlerError);
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("should settle skipHandler under upfront without re-settling when handler is skipped", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("upfront");
+      mockResourceServer.verifyPayment.mockResolvedValueOnce({
+        isValid: true,
+        skipHandler: { body: { refunded: true } },
+      });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
       const wrappedHandler = paid(handler);
 
       const result = await wrappedHandler(
@@ -744,9 +769,37 @@ describe("createPaymentWrapper", () => {
         { _meta: { "x402/payment": mockPaymentPayload } },
       );
 
-      expect(result.isError).toBe(true);
-      expect(result.content).toEqual([{ type: "text", text: "Internal Server Error" }]);
-      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(cancelReceipt);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+    });
+
+    it("should call onAfterSettlement after a successful upfront payment", async () => {
+      mockResourceServer.getPaymentFlow.mockReturnValue("upfront");
+      const settlementHook = vi.fn();
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: { onAfterSettlement: settlementHook },
+        },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+        _meta: { traceId: "upfront_ok" },
+      });
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result._meta?.traceId).toBe("upfront_ok");
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toEqual(mockSettleResponse);
+      expect(settlementHook).toHaveBeenCalledWith(
+        expect.objectContaining({ settlement: mockSettleResponse }),
+      );
     });
 
     it("should settle skipHandler responses without executing the tool", async () => {
@@ -1067,6 +1120,53 @@ describe("createPaymentWrapper", () => {
     });
   });
 
+  describe("payment matching", () => {
+    it("should return 402 when no payment requirement matches the payload", async () => {
+      mockResourceServer.findMatchingRequirements.mockReturnValueOnce(null);
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.verifyPayment).not.toHaveBeenCalled();
+    });
+
+    it("should return 402 when extension validation fails", async () => {
+      mockResourceServer.validateExtensions.mockReturnValueOnce({
+        valid: false,
+        invalidReason: "bazaar extension mismatch",
+      });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+        },
+      );
+      const handler = vi.fn();
+      const wrappedHandler = paid(handler);
+
+      const result = await wrappedHandler(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockResourceServer.verifyPayment).not.toHaveBeenCalled();
+    });
+  });
+
   describe("multiple payment requirements", () => {
     it("should use first payment requirement from accepts array", async () => {
       const alternateRequirements: PaymentRequirements = {
@@ -1287,6 +1387,131 @@ describe("createPaymentWrapper", () => {
       );
       expect(settlementHook).not.toHaveBeenCalled();
     });
+
+    it("attaches the onchain receipt when an afterSettle abort fails the settle closed", async () => {
+      const mockFacilitator: FacilitatorClient = {
+        verify: async () => ({ isValid: true, payer: "test-payer" }),
+        settle: async () => ({
+          success: true,
+          transaction: "0xdeposit",
+          amount: "1000",
+          network: "x402:cash",
+          payer: "test-payer",
+        }),
+        getSupported: async () => ({
+          kinds: [{ x402Version: 2, scheme: "cash", network: "x402:cash" }],
+          extensions: [],
+          signers: {},
+        }),
+      };
+      const scheme: SchemeNetworkServer = {
+        scheme: "cash",
+        defaultAssetTransferMethod: "default",
+        paymentFlows: {
+          default: { supported: ["authorization"], default: "authorization" },
+        },
+        parsePrice: async () => ({ amount: "1000", asset: "USD", extra: {} }),
+        enhancePaymentRequirements: async requirements => requirements,
+      };
+      const server = new x402ResourceServer(mockFacilitator);
+      server.register("x402:cash", scheme);
+      await server.initialize();
+      server.onAfterSettle(async () => {
+        throw new AfterSettleAbortError("voucher_store_unavailable", "store down");
+      });
+
+      const cashRequirements: PaymentRequirements = {
+        scheme: "cash",
+        network: "x402:cash",
+        amount: "1000",
+        payTo: "test-recipient",
+        asset: "",
+        maxTimeoutSeconds: 0,
+        extra: {},
+      };
+      const paid = createPaymentWrapper(server, { accepts: [cashRequirements] });
+      const wrappedHandler = paid(async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: cashRequirements,
+        payload: { signature: "~test-payer" },
+      };
+
+      const result = await wrappedHandler({}, { _meta: { [MCP_PAYMENT_META_KEY]: payload } });
+
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toMatchObject({
+        success: false,
+        transaction: "0xdeposit",
+        errorReason: "voucher_store_unavailable",
+      });
+    });
+
+    it("attaches the receipt when the server and abort come from another bundled copy of core", async () => {
+      const mockFacilitator: FacilitatorClient = {
+        verify: async () => ({ isValid: true, payer: "test-payer" }),
+        settle: async () => ({
+          success: true,
+          transaction: "0xdeposit",
+          amount: "1000",
+          network: "x402:cash",
+          payer: "test-payer",
+        }),
+        getSupported: async () => ({
+          kinds: [{ x402Version: 2, scheme: "cash", network: "x402:cash" }],
+          extensions: [],
+          signers: {},
+        }),
+      };
+      const scheme: SchemeNetworkServer = {
+        scheme: "cash",
+        defaultAssetTransferMethod: "default",
+        paymentFlows: {
+          default: { supported: ["authorization"], default: "authorization" },
+        },
+        parsePrice: async () => ({ amount: "1000", asset: "USD", extra: {} }),
+        enhancePaymentRequirements: async requirements => requirements,
+      };
+      vi.resetModules();
+      const otherCopy = await import("@x402/core/server");
+      expect(otherCopy.x402ResourceServer).not.toBe(x402ResourceServer);
+      const server = new otherCopy.x402ResourceServer(mockFacilitator);
+      server.register("x402:cash", scheme);
+      await server.initialize();
+      server.onAfterSettle(async () => {
+        throw new otherCopy.AfterSettleAbortError("voucher_store_unavailable", "store down");
+      });
+
+      const cashRequirements: PaymentRequirements = {
+        scheme: "cash",
+        network: "x402:cash",
+        amount: "1000",
+        payTo: "test-recipient",
+        asset: "",
+        maxTimeoutSeconds: 0,
+        extra: {},
+      };
+      const paid = createPaymentWrapper(server, { accepts: [cashRequirements] });
+      const wrappedHandler = paid(async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: cashRequirements,
+        payload: { signature: "~test-payer" },
+      };
+
+      const result = await wrappedHandler({}, { _meta: { [MCP_PAYMENT_META_KEY]: payload } });
+
+      expect(result.isError).toBe(true);
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toMatchObject({
+        success: false,
+        transaction: "0xdeposit",
+        errorReason: "voucher_store_unavailable",
+      });
+    });
   });
 
   describe("unexpected errors", () => {
@@ -1314,6 +1539,374 @@ describe("createPaymentWrapper", () => {
       expect(JSON.stringify(result)).not.toContain("does not support paymentFlow");
       expect(consoleError).toHaveBeenCalled();
       consoleError.mockRestore();
+    });
+  });
+
+  describe("corrective 402 accept snapshot", () => {
+    it("does not mutate config accepts when a 402 enricher writes extra in place", async () => {
+      mockResourceServer.createPaymentRequiredResponse.mockImplementation(async accepts => {
+        for (const requirement of accepts) {
+          requirement.extra.channelState = { chargedCumulativeAmount: "2000" };
+        }
+        return mockPaymentRequired;
+      });
+      const accepts: PaymentRequirements[] = [{ ...mockPaymentRequirements, extra: {} }];
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        { accepts },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "success" }],
+      });
+
+      await paid(handler)({ test: "arg" }, {});
+
+      expect(accepts[0].extra).toEqual({});
+    });
+
+    it("does not mutate wrapper config accepts when building a corrective 402", async () => {
+      const reason = "invalid_batch_settlement_evm_cumulative_amount_mismatch";
+      let verifyCalls = 0;
+      let abortOnce = true;
+      const mockFacilitator: FacilitatorClient = {
+        verify: async () => {
+          verifyCalls += 1;
+          return { isValid: true, payer: "test-payer" };
+        },
+        settle: async () => ({
+          success: true,
+          transaction: "0xtx",
+          network: "x402:cash",
+          payer: "test-payer",
+        }),
+        getSupported: async () => ({
+          kinds: [{ x402Version: 2, scheme: "cash", network: "x402:cash" }],
+          extensions: [],
+          signers: {},
+        }),
+      };
+
+      let enricherCalls = 0;
+      const scheme: SchemeNetworkServer = {
+        scheme: "cash",
+        defaultAssetTransferMethod: "default",
+        paymentFlows: {
+          default: { supported: ["authorization"], default: "authorization" },
+        },
+        parsePrice: async () => ({ amount: "1000", asset: "USD", extra: {} }),
+        enhancePaymentRequirements: async requirements => requirements,
+        enrichPaymentRequiredResponse: async ctx => {
+          if (ctx.error !== reason || !ctx.paymentPayload) {
+            return;
+          }
+          enricherCalls += 1;
+          for (const requirement of ctx.requirements) {
+            if (!requirement.extra) {
+              requirement.extra = {};
+            }
+            requirement.extra.channelState = { chargedCumulativeAmount: "2000" };
+          }
+        },
+      };
+
+      const server = new x402ResourceServer(mockFacilitator);
+      server.register("x402:cash", scheme);
+      await server.initialize();
+      server.onBeforeVerify(async () => {
+        if (!abortOnce) {
+          return;
+        }
+        abortOnce = false;
+        return {
+          abort: true,
+          reason,
+          message: "Client voucher base does not match server state",
+        };
+      });
+
+      const cashRequirements = (): PaymentRequirements => ({
+        scheme: "cash",
+        network: "x402:cash",
+        amount: "1000",
+        payTo: "test-recipient",
+        asset: "",
+        maxTimeoutSeconds: 0,
+        extra: {},
+      });
+      const config = { accepts: [cashRequirements()] };
+      const paid = createPaymentWrapper(server, config);
+      const wrappedHandler = paid(async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        accepted: cashRequirements(),
+        payload: { signature: "~test-payer" },
+      };
+      const extra = { _meta: { [MCP_PAYMENT_META_KEY]: payload } };
+
+      const first = await wrappedHandler({}, extra);
+      expect(first.isError).toBe(true);
+      expect(enricherCalls).toBe(1);
+      expect(config.accepts[0].extra).toEqual({});
+
+      const second = await wrappedHandler({}, extra);
+      expect(second.isError).toBeFalsy();
+      expect(verifyCalls).toBe(1);
+    });
+  });
+
+  describe("cancellation outcome unknown", () => {
+    const unknownText = "Payment cancellation outcome unknown";
+    const meteringFailedText = "Payment metering failed";
+
+    const textsOf = (result: { content: Array<{ text?: string }> }): string[] =>
+      result.content.map(item => item.text ?? "");
+
+    const setAmount = (requirements: PaymentRequirements, amount: unknown): void => {
+      (requirements as { amount: unknown }).amount = amount;
+    };
+
+    it.each(["onBeforeExecution", "onAfterExecution", "handlerFailed"] as const)(
+      "returns the tool error without a new offer when cancellation outcome is unknown (%s)",
+      async failure => {
+        const cancel = vi.fn().mockRejectedValue(new Error("cancellation outcome unknown"));
+        mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
+        const meter = (context: { paymentRequirements: PaymentRequirements }): boolean => {
+          setAmount(context.paymentRequirements, "1001");
+          return true;
+        };
+        const handler =
+          failure === "handlerFailed"
+            ? vi.fn().mockResolvedValue({
+                content: [{ type: "text", text: "tool failed" }],
+                isError: true,
+              })
+            : vi.fn().mockResolvedValue({
+                content: [{ type: "text", text: "ok" }],
+              });
+        const paid = createPaymentWrapper(
+          mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+          {
+            accepts: [mockPaymentRequirements],
+            hooks:
+              failure === "onBeforeExecution"
+                ? { onBeforeExecution: meter }
+                : failure === "onAfterExecution"
+                  ? { onAfterExecution: meter }
+                  : undefined,
+          },
+        );
+        const result = await paid(handler)(
+          { test: "arg" },
+          { _meta: { "x402/payment": mockPaymentPayload } },
+        );
+
+        const texts = textsOf(result);
+        expect(result.isError).toBe(true);
+        expect(texts).toContain(unknownText);
+        if (failure === "handlerFailed") {
+          expect(texts.some(text => text.includes("tool failed"))).toBe(true);
+        } else {
+          expect(texts).toContain(meteringFailedText);
+        }
+        expect(result.structuredContent).toBeUndefined();
+        expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+        expect(handler).toHaveBeenCalledTimes(failure === "onBeforeExecution" ? 0 : 1);
+        expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(cancel).toHaveBeenCalledWith(
+          failure === "handlerFailed"
+            ? { reason: "handler_failed" }
+            : expect.objectContaining({ reason: "after_verify_aborted" }),
+        );
+      },
+    );
+
+    it("treats a throwing onAfterExecution hook as a metering failure", async () => {
+      const cancel = vi.fn().mockRejectedValue(new Error("cancellation outcome unknown"));
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: {
+            onAfterExecution: () => {
+              throw new Error("meter failed");
+            },
+          },
+        },
+      );
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const result = await paid(handler)(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(textsOf(result)).toEqual([meteringFailedText, unknownText]);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeUndefined();
+      expect(handler).toHaveBeenCalledOnce();
+      expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "after_verify_aborted" }),
+      );
+    });
+
+    it("settles a nonnegative integer amount and ignores other hook edits", async () => {
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks: {
+            onAfterExecution: context => {
+              setAmount(context.paymentRequirements, 200);
+              context.paymentRequirements.payTo = "unrelated-payee";
+            },
+          },
+        },
+      );
+      const result = await paid(
+        vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] }),
+      )({ test: "arg" }, { _meta: { "x402/payment": mockPaymentPayload } });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockResourceServer.settlePayment).toHaveBeenCalledWith(
+        mockPaymentPayload,
+        expect.objectContaining({
+          amount: "200",
+          payTo: mockPaymentRequirements.payTo,
+          asset: mockPaymentRequirements.asset,
+        }),
+        expect.anything(),
+        expect.anything(),
+        undefined,
+        "after-handler",
+      );
+    });
+
+    it.each([true, false, -1, 1.5, "1.0", "", " 1"])(
+      "cancels instead of settling when the metered amount is %s",
+      async amount => {
+        const cancel = vi.fn().mockResolvedValue(undefined);
+        mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
+        const paid = createPaymentWrapper(
+          mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+          {
+            accepts: [mockPaymentRequirements],
+            hooks: {
+              onBeforeExecution: context => {
+                setAmount(context.paymentRequirements, amount);
+                return true;
+              },
+            },
+          },
+        );
+        const handler = vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "ok" }],
+        });
+        const result = await paid(handler)(
+          { test: "arg" },
+          { _meta: { "x402/payment": mockPaymentPayload } },
+        );
+        const bodyReceipt = (result.structuredContent as Record<string, unknown> | undefined)?.[
+          MCP_PAYMENT_RESPONSE_META_KEY
+        ];
+
+        expect(result.isError).toBe(true);
+        expect(handler).not.toHaveBeenCalled();
+        expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(bodyReceipt).toMatchObject({
+          success: false,
+          errorReason: meteringFailedText,
+          transaction: "",
+        });
+      },
+    );
+
+    it.each([
+      ["onBeforeExecution", "released"],
+      ["onBeforeExecution", "upfront"],
+      ["onBeforeExecution", "unknown"],
+      ["onBeforeExecution", "upfront-unknown"],
+      ["onAfterExecution", "released"],
+      ["onAfterExecution", "upfront"],
+      ["onAfterExecution", "unknown"],
+      ["onAfterExecution", "upfront-unknown"],
+    ] as const)("reports only known cancellation outcomes for %s (%s)", async (hook, outcome) => {
+      if (outcome === "upfront" || outcome === "upfront-unknown") {
+        mockResourceServer.getPaymentFlow.mockReturnValue("upfront");
+      }
+      const cancel =
+        outcome === "unknown" || outcome === "upfront-unknown"
+          ? vi.fn().mockRejectedValue(new Error("cancellation outcome unknown"))
+          : vi.fn().mockResolvedValue(undefined);
+      mockResourceServer.createPaymentCancellationDispatcher.mockReturnValue({ cancel });
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+      });
+      const meter = (context: { paymentRequirements: PaymentRequirements }): boolean => {
+        setAmount(context.paymentRequirements, "1001");
+        return true;
+      };
+      const paid = createPaymentWrapper(
+        mockResourceServer as unknown as Parameters<typeof createPaymentWrapper>[0],
+        {
+          accepts: [mockPaymentRequirements],
+          hooks:
+            hook === "onBeforeExecution"
+              ? { onBeforeExecution: meter }
+              : { onAfterExecution: meter },
+        },
+      );
+      const result = await paid(handler)(
+        { test: "arg" },
+        { _meta: { "x402/payment": mockPaymentPayload } },
+      );
+      const receipt = result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY] as SettleResponse | undefined;
+      const bodyReceipt = (result.structuredContent as Record<string, unknown> | undefined)?.[
+        MCP_PAYMENT_RESPONSE_META_KEY
+      ] as SettleResponse | undefined;
+
+      expect(result.isError).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(hook === "onAfterExecution" ? 1 : 0);
+      if (outcome === "released") {
+        expect(bodyReceipt).toMatchObject({
+          success: false,
+          transaction: "",
+          errorReason: meteringFailedText,
+        });
+        expect(result.structuredContent).toEqual(
+          expect.objectContaining({ accepts: mockPaymentRequired.accepts }),
+        );
+        expect(receipt).toBeUndefined();
+        expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      } else if (outcome === "upfront" || outcome === "upfront-unknown") {
+        expect(receipt).toEqual(mockSettleResponse);
+        expect(receipt?.success).toBe(true);
+        expect(mockResourceServer.settlePayment).toHaveBeenCalledOnce();
+        expect(mockResourceServer.settlePayment).toHaveBeenCalledWith(
+          mockPaymentPayload,
+          mockPaymentRequirements,
+          expect.anything(),
+          expect.anything(),
+          undefined,
+          "before-handler",
+        );
+        if (outcome === "upfront-unknown") {
+          expect(textsOf(result)).toContain(unknownText);
+        }
+      } else {
+        expect(receipt).toBeUndefined();
+        expect(bodyReceipt).toBeUndefined();
+        expect(result.structuredContent).toBeUndefined();
+        expect(mockResourceServer.settlePayment).not.toHaveBeenCalled();
+      }
     });
   });
 });

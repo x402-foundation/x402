@@ -707,6 +707,16 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, state.Reservations, 2)
 
+		repricedRequirements := requirements()
+		repricedRequirements.Amount = "100"
+		_, repriced := reserve(t, payment(t, "concurrent-2", repricedRequirements), repricedRequirements)
+		require.NotNil(t, repriced)
+		require.True(t, repriced.Abort)
+		require.Equal(t, batchsettlement.ErrOperationCeilingChanged, repriced.Reason)
+		state, err = store.Get(channelID)
+		require.NoError(t, err)
+		require.Len(t, state.Reservations, 2)
+
 		exhaustedRequirements := requirements()
 		exhaustedRequirements.Amount = "2000"
 		exhaustedPayment := payment(t, "concurrent-3", exhaustedRequirements)
@@ -802,6 +812,10 @@ func TestBatchServerVoucherSignerBoundaries(t *testing.T) {
 		require.NotNil(t, replay)
 		require.True(t, replay.Abort)
 		require.Equal(t, ChannelBusy, replay.Reason)
+		_, repricedReplay := reserve(t, payment(t, "concurrent-4", ceiling), ceiling)
+		require.NotNil(t, repricedReplay)
+		require.True(t, repricedReplay.Abort)
+		require.Equal(t, batchsettlement.ErrOperationCeilingChanged, repricedReplay.Reason)
 	})
 
 	t.Run("enriches server-mode refunds with the stored operator voucher", func(t *testing.T) {

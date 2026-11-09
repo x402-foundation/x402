@@ -8,7 +8,13 @@ import {
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
-import { UptoPermit2Payload, isUptoPermit2Payload } from "../../types";
+import {
+  UptoPermit2Payload,
+  getExactEvmPayloadPayer,
+  isUptoPermit2Payload,
+  validateUptoPermit2Payload,
+} from "../../types";
+import { ErrUptoInvalidPayload } from "./errors";
 import { verifyUptoPermit2, settleUptoPermit2 } from "./permit2";
 
 /** Optional configuration for {@link UptoEvmScheme}. */
@@ -88,7 +94,21 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
   ): Promise<VerifyResponse> {
     const rawPayload = payload.payload as Record<string, unknown>;
     if (!isUptoPermit2Payload(rawPayload)) {
-      return { isValid: false, invalidReason: "unsupported_payload_type", payer: "" };
+      return {
+        isValid: false,
+        invalidReason: ErrUptoInvalidPayload,
+        invalidMessage: "unsupported payload type: expected upto permit2 payload",
+        payer: "",
+      };
+    }
+    const payloadError = validateUptoPermit2Payload(rawPayload);
+    if (payloadError) {
+      return {
+        isValid: false,
+        invalidReason: ErrUptoInvalidPayload,
+        invalidMessage: payloadError,
+        payer: getExactEvmPayloadPayer(rawPayload),
+      };
     }
     return verifyUptoPermit2(
       this.signer,
@@ -118,8 +138,20 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
         success: false,
         network: payload.accepted.network,
         transaction: "",
-        errorReason: "unsupported_payload_type",
+        errorReason: ErrUptoInvalidPayload,
+        errorMessage: "unsupported payload type: expected upto permit2 payload",
         payer: "",
+      };
+    }
+    const payloadError = validateUptoPermit2Payload(rawPayload);
+    if (payloadError) {
+      return {
+        success: false,
+        network: payload.accepted.network,
+        transaction: "",
+        errorReason: ErrUptoInvalidPayload,
+        errorMessage: payloadError,
+        payer: getExactEvmPayloadPayer(rawPayload),
       };
     }
     return settleUptoPermit2(

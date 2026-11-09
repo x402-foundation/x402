@@ -20,20 +20,26 @@ export class FacilitatorManager {
   private readyPromise: Promise<string | null>;
   private url: string | null = null;
 
-  constructor(facilitator: Facilitator, port: number, networks: NetworkSet) {
+  constructor(
+    facilitator: Facilitator,
+    port: number,
+    networks: NetworkSet,
+    options?: { voucherStore?: boolean },
+  ) {
     this.facilitator = facilitator;
     this.port = port;
 
     // Start facilitator and health checks asynchronously
-    this.readyPromise = this.startAndWaitForHealth(networks);
+    this.readyPromise = this.startAndWaitForHealth(networks, options?.voucherStore ?? false);
   }
 
-  private async startAndWaitForHealth(networks: NetworkSet): Promise<string | null> {
+  private async startAndWaitForHealth(networks: NetworkSet, voucherStore: boolean): Promise<string | null> {
     verboseLog(`  🏛️ Starting facilitator on port ${this.port}...`);
 
     await this.facilitator.start({
       port: this.port,
       networks,
+      voucherStore,
     });
 
     const healthy = await waitForHealth(
