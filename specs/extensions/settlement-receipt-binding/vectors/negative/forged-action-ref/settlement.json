@@ -1,0 +1,22 @@
+{
+  "actionRef": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "actionType": "purchase.fulfill",
+  "agentId": "agent:sui-gasless-crosscheck",
+  "schema": "x402.settlement.sui/v0",
+  "scope": "x402:sui-exact-gasless/asset:USDC/amount:10000/payTo:0xf0dab0db",
+  "seq": 1,
+  "settlement": {
+    "amount": "10000",
+    "assertedFrom": "net-balance-change-to-payTo",
+    "asset": "0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC",
+    "decimals": 6,
+    "network": "sui:testnet",
+    "payTo": "0xf0dab0dbd3011967b8a986abe16d0a7e580e408e972b6dc8473532815b898d86",
+    "rail": "sui",
+    "scheme": "exact",
+    "txDigest": "FVejSg9ddPYXwWtxjk58TjkZg6aawJFyynZEsTmsxRQ6",
+    "verifiedBy": "facilitator://sui-exact-gasless#settle"
+  },
+  "terminal": true,
+  "timestampMs": 1782987830704
+}

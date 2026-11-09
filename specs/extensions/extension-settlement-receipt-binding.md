@@ -6,11 +6,11 @@ This extension binds an x402 **settlement** to a server-side **signed execution 
 
 It composes with the [Offer and Receipt Extension](./extension-offer-and-receipt.md): Offer and Receipt proves *the server asserted X*; this extension proves *X is what settled*, recomputably, through a content-addressed join. That is the half the auditability and dispute-evidence use cases are missing.
 
-The receipt format is defined externally by the IETF Internet-Draft [**`draft-sirkkavaara-vaara-receipt`**](https://datatracker.ietf.org/doc/draft-sirkkavaara-vaara-receipt/), *"The Vaara Receipt: A Recomputable Receipt Format for Decisions About Agent Actions,"* profile identifier **`vaara.receipt/v1`** — the maintained home of the format originally circulated as MCP SEP-2828. This extension does **not** redefine the receipt. It specifies the **x402 settlement record** a receipt commits to, the **content-addressed join key** (`action_ref`), and the **`exact`-scheme settlement semantics**, so the two sides bind cleanly and verify offline.
+The receipt format is defined externally by the IETF Internet-Draft [**`draft-sirkkavaara-vaara-receipt`**](https://datatracker.ietf.org/doc/draft-sirkkavaara-vaara-receipt/), *"The Vaara Receipt: A Recomputable Receipt Format for Decisions About Autonomous Actions,"* profile identifier **`vaara.receipt/v1`** — the maintained home of the format originally circulated as MCP SEP-2828. This extension does **not** redefine the receipt. It specifies the **x402 settlement record** a receipt commits to, the **content-addressed join key** (`action_ref`), and the **`exact`-scheme settlement semantics**, so the two sides bind cleanly and verify offline.
 
 The join is **rail-agnostic by construction**: the join key is computed only from the authorized-action tuple and never reaches into settlement internals, so the same receipt binds to a settlement on an EVM token or a non-EVM facilitator alike.
 
-A reference conformance suite — committed `generic` and `sui` vectors plus an independent checker that imports neither x402 nor the receipt framework (standard library + RFC 8785 JCS + ES256) — is the normative gate. **The recompute is the test.**
+A conformance kit in this repository, [`settlement-receipt-binding/`](./settlement-receipt-binding/) (Apache-2.0): committed `generic` and `sui` vectors, negative cases, and a checker that imports neither x402 nor the receipt framework (standard library + RFC 8785 JCS + ES256). It is the normative gate. **The recompute is the test.**
 
 **2. Status, Evolution, and Forward Compatibility**
 
@@ -24,6 +24,7 @@ Canonicalization is load-bearing and normative:
 
 - The record is canonicalized with **RFC 8785 (JCS)** — identical to the receipt side, so one JCS implementation serves both.
 - All digests are encoded as the string `sha256:<lowercase-hex>`.
+- The canonicalization label is `"jcs-rfc8785"`. Producers SHOULD emit it; consumers MUST also accept the aliases `"JCS"` and `"jcs-json-v1"`, as the receipt format requires.
 - **No IEEE-754 floats** appear anywhere in the canonical body. Monetary amounts are **atomic-integer strings** with an explicit integer `decimals`; any other non-integer is a decimal string.
 - `timestampMs` is an integer (milliseconds since the Unix epoch).
 - Conformance REQUIRES a genuine RFC 8785 implementation. A `sort_keys`-style approximation (e.g. `json.dumps(obj, sort_keys=True, separators=(",", ":"))`) is byte-identical only for ASCII-string and integer field sets; it diverges on non-ASCII strings (Python's default `ensure_ascii` emits `\uXXXX` where JCS emits UTF-8) and on non-integer numbers (ECMAScript number canonicalization), and MUST NOT be relied on for the join.
@@ -63,18 +64,20 @@ The action tuple is **exactly** those six fields. **Amount, asset, rail, and cha
 
 For the `exact` scheme on on-chain rails, the record carries a `settlement` object. Three properties — forced by the Sui `exact` rail and generalizing to any chain where "the transaction" and "what actually moved" are different objects (gas, change outputs, non-transparent settlement) — are normative:
 
-1. **Bind the facilitator's verified net-balance result, not a re-derivation from the transaction.** `settlement.assertedFrom` MUST be `"net-balance-change-to-payTo"`: value and recipient are asserted from the net balance change credited to `payTo`, and that verified result is what the record binds — not a parse of transaction structure.
+1. **Bind the facilitator's verified net-balance result, not a re-derivation from the transaction.** `settlement.assertedFrom` MUST be `"net-balance-change-to-payTo"`: value and recipient are asserted from the net balance change credited to `payTo`, and that verified result is what the record binds — not a parse of transaction structure. This applies to the terminal record. A non-terminal record (§6) is written before anything has executed, so its `assertedFrom` names what was verified instead (the conformance kit's step 0 uses `"verify:digest-recomputed-from-signed-bytes"`).
 2. **Atomic-integer `amount` + explicit `decimals`, with amount out of the join key.** `settlement.amount` is an atomic-integer string; `settlement.decimals` is an explicit integer. Amount MUST NOT appear in the action tuple (§3.2).
-3. **Settlement id is the executed id.** `settlement.txDigest` is the executed on-chain transaction id the facilitator returns in `PAYMENT-RESPONSE` — never a pre-execution intent or command id.
+3. **Settlement id is the executed id.** `settlement.txDigest` is the executed on-chain transaction id the facilitator returns in `PAYMENT-RESPONSE`, and MUST equal that `SettlementResponse`'s `transaction` — never a pre-execution intent or command id.
+
+`settlement.network` MUST equal the `SettlementResponse`'s `network`, which is a CAIP-2 identifier (e.g. `sui:testnet`, `eip155:137`).
 
 | Field          | Type    | Required | Description                                                                       |
 | -------------- | ------- | -------- | --------------------------------------------------------------------------------- |
-| `txDigest`     | string  | yes      | The executed on-chain settlement id (as returned in `PAYMENT-RESPONSE`).          |
+| `txDigest`     | string  | yes      | The executed on-chain settlement id (`SettlementResponse.transaction`).           |
 | `payTo`        | string  | yes      | Recipient whose net balance change is asserted.                                   |
 | `asset`        | string  | yes      | Asset identifier (e.g. a Move coin type or token address).                        |
 | `amount`       | string  | yes      | Atomic-integer amount (string).                                                   |
 | `decimals`     | integer | yes      | Decimals of `asset`.                                                              |
-| `network`      | string  | yes      | Network identifier.                                                               |
+| `network`      | string  | yes      | CAIP-2 network identifier (`SettlementResponse.network`).                         |
 | `scheme`       | string  | yes      | `exact`.                                                                          |
 | `assertedFrom` | string  | yes      | `net-balance-change-to-payTo`.                                                    |
 | `verifiedBy`   | string  | yes      | Identifier of the verifying facilitator.                                          |
@@ -84,36 +87,36 @@ For the `exact` scheme on on-chain rails, the record carries a `settlement` obje
 
 ```json
 {
-  "actionRef": "sha256:42f279db7f430127d682f1ccf6acdf90e679086b3c78b38fa30085cd6addc2f3",
+  "actionRef": "sha256:8dbf7695750975ac7aa702fccad8f7c5f15b71e97828cf484c8934b657fa301d",
   "actionType": "purchase.fulfill",
-  "agentId": "agent:checkout-bot",
+  "agentId": "agent:sui-gasless-crosscheck",
   "schema": "x402.settlement.sui/v0",
-  "scope": "merchant:acme/order:INV-1/amount:42.00USDC",
+  "scope": "x402:sui-exact-gasless/asset:USDC/amount:10000/payTo:0xf0dab0db",
   "seq": 1,
   "settlement": {
-    "amount": "1000000",
+    "amount": "10000",
     "assertedFrom": "net-balance-change-to-payTo",
-    "asset": "0x2::sui::SUI",
-    "decimals": 9,
-    "network": "testnet",
+    "asset": "0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC",
+    "decimals": 6,
+    "network": "sui:testnet",
     "payTo": "0xf0dab0dbd3011967b8a986abe16d0a7e580e408e972b6dc8473532815b898d86",
     "rail": "sui",
     "scheme": "exact",
-    "txDigest": "7eGzqT3xijsWJKw5aJRA8c6EtmB8ZbfXuDfMe4LJsGEW",
-    "verifiedBy": "facilitator://sui-exact"
+    "txDigest": "FVejSg9ddPYXwWtxjk58TjkZg6aawJFyynZEsTmsxRQ6",
+    "verifiedBy": "facilitator://sui-exact-gasless#settle"
   },
   "terminal": true,
-  "timestampMs": 1779200000000
+  "timestampMs": 1782987830704
 }
 ```
 
-This is a real `exact`-scheme settlement from a live Sui facilitator; its on-chain `balanceChanges` independently show a net `+1000000` of `0x2::sui::SUI` to `payTo`, matching `settlement.amount` under `assertedFrom: net-balance-change-to-payTo`.
+This is `vectors/sui/step1/settlement.json` from the conformance kit: a real gasless `exact`-scheme settlement on Sui testnet. The transaction's on-chain `balanceChanges` show a net `+10000` of Circle testnet USDC to `payTo`, matching `settlement.amount` under `assertedFrom: net-balance-change-to-payTo`.
 
-**3.5 Multi-Recipient Settlements (Per-Role Record Set)**
+**3.6 Multi-Recipient Settlements (Per-Role Record Set)**
 
 A single `exact` settlement may atomically credit more than one recipient — fee-splitting and gas-recovery facilitators land the merchant leg and the fee leg in one transaction. The settlement object deliberately binds a single `payTo` (§3.4), and the multi-recipient case does not weaken that discipline: the shape is **one record per recipient leg**, each binding that leg's payout under `assertedFrom: net-balance-change-to-payTo` with `payTo` set to that leg's recipient. Every leg of one authorized action carries the **identical action tuple** — the authorized action is the purchase, not the division — so their `actionRef`s are identical, and the records of one settlement MAY share a `txDigest`. The division is the set of records, not a field in any one of them; a party verifying its own leg needs only the record naming its address and is never required to recompute the division.
 
-Worked example (informative; not part of the §5 pinned gate). These two records bind the two legs of a real fee-split `exact` settlement on Polygon mainnet: transaction `0xa9e6c6a9ce10fd26ec2fab0d367de31d7fb0918c79d5e932b8566816ecda3249` (block 90308815), in which one signed payer authorization moved 2.0 JPYC through a split forwarder — 1.0 to the merchant, 1.0 to a fee recipient. Both records derive the identical `actionRef` from exactly these JCS bytes (`timestampMs` is the settlement block's timestamp):
+Worked example (informative; not part of the §5 gate). These two records bind the two legs of a real fee-split `exact` settlement on Polygon mainnet: transaction `0xa9e6c6a9ce10fd26ec2fab0d367de31d7fb0918c79d5e932b8566816ecda3249` (block 90308815), in which one signed payer authorization moved 2.0 JPYC through a split forwarder — 1.0 to the merchant, 1.0 to a fee recipient. Both records derive the identical `actionRef` from exactly these JCS bytes (`timestampMs` is the settlement block's timestamp):
 
 ```
 {"actionType":"purchase.fulfill","agentId":"agent:claude/openpay-x402-mcp","scope":"merchant:0x52d4901142e2B5680027da5EB47C86CB02a3cA81/resource:coo-icp-agent-consult/amount:2.00JPYC","seq":1,"terminal":true,"timestampMs":1784168218000}
@@ -181,12 +184,12 @@ A `vaara.receipt/v1` receipt commits to the settlement record through a content-
 
 | `evidenceRef` field | Value                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------- |
-| `canonicalization`  | `"JCS"`                                                                                |
+| `canonicalization`  | `"jcs-rfc8785"` (consumers also accept `"JCS"` and `"jcs-json-v1"`; §3)            |
 | `digest`            | `sha256:<hex>` over the **JCS-canonical settlement record** (the whole object of §3).  |
 | `ref`               | `x402:action_ref/<actionRef>` — a stable, human-legible pointer to the join key.      |
 | `schema`            | Echoes the settlement record's `schema`.                                               |
 
-The **`digest` is the binding; `ref` is advisory.** Under the per-role record set of §3.5, one `actionRef` — and therefore one `ref` — names more than one settlement record, so a consumer MUST resolve the binding by `digest` and MUST NOT treat `ref` alone as naming a unique settlement record. `settlement_binding_resolves` (§5) is what enforces this: the merchant-leg and fee-leg records share an `actionRef` but differ under the digest because `payTo` differs, so a fee-leg record presented against a merchant-leg receipt fails the digest check.
+The **`digest` is the binding; `ref` is advisory.** Under the per-role record set of §3.6, one `actionRef` — and therefore one `ref` — names more than one settlement record, so a consumer MUST resolve the binding by `digest` and MUST NOT treat `ref` alone as naming a unique settlement record. `settlement_binding_resolves` (§5) is what enforces this: the merchant-leg and fee-leg records share an `actionRef` but differ under the digest because `payTo` differs, so a fee-leg record presented against a merchant-leg receipt fails the digest check.
 
 The receipt is signed per `vaara.receipt/v1` (ES256/RS256/HS256, detached signature over the JCS body excluding `signature`). This extension defines only what the receipt's evidence reference points at and how its digest is computed; the receipt's decision/outcome structure and pairing are the receipt format's.
 
@@ -195,11 +198,12 @@ The receipt is signed per `vaara.receipt/v1` (ES256/RS256/HS256, detached signat
 An independent party holding only the settlement record and the receipt MUST be able to confirm, offline and with no operator trust:
 
 - **`action_ref_recomputes`** — `sha256(JCS(action tuple))` equals `settlement.actionRef`.
-- **`settlement_binding_resolves`** — `sha256(JCS(settlement record))` equals `receipt.decisionDerived.evidenceRef.digest`, and `evidenceRef.canonicalization == "JCS"`.
-- **`receipt_signature_ok`** — the receipt's signature verifies over its canonical signed blocks (`vaara.receipt/v1`).
+- **`settlement_binding_resolves`** — `sha256(JCS(settlement record))` equals `receipt.decisionDerived.evidenceRef.digest`, and `evidenceRef.canonicalization` is one of the labels in §3.
+- **`receipt_signature_ok`** — the receipt satisfies the receipt format's closed schema, its envelope `alg` equals its `issuerAsserted.alg`, and its signature verifies over the signed payload (`vaara.receipt/v1`).
 - **`lifecycle_distinguishes_terminal`** — the in-progress (`terminal=false`) and terminal (`terminal=true`) steps have distinct `actionRef`s, and the in-progress receipt does not resolve against the terminal settlement (§6).
+- **`join_is_rail_agnostic`** — at each lifecycle step, the `generic` and `sui` records carry the same `actionRef` (§7).
 
-A normative reference suite implements these verdicts across two rails (`generic`, `sui`) and two lifecycle steps (in-progress, terminal), with a checker that imports neither x402 nor the receipt framework — standard library plus a JCS library and an ES256 verifier. A conformant implementation reproduces every verdict against the committed vectors byte-for-byte.
+The conformance kit in [`settlement-receipt-binding/`](./settlement-receipt-binding/) implements these verdicts across two rails (`generic`, `sui`) and two lifecycle steps (in-progress, terminal), plus six negative cases that each break one property: a tampered amount, a forged `actionRef`, a mid-task receipt, a wrong key, an `alg` mismatch, and an undefined receipt member. Its `check.py` imports the standard library, `rfc8785` and `cryptography`, and no x402 or receipt-framework code, and exits `0` only when every verdict matches `expected.json`. A conformant implementation reproduces every verdict against the committed vectors.
 
 **Scope of the gate (non-goals).** Passing these verdicts proves the receipt *shape* recomputes and binds: the `action_ref` derives, the settlement digest resolves, the signature verifies, and the lifecycle steps are distinct. It does **not** prove that `backLink` resolves to a live attestation instance — the checker treats `backLink` and `issuerAsserted` as issuer-populated and does not dereference them. Binding a receipt to an actual upstream execution-attestation instance is a separate property, out of scope for this gate and not implied by a green result.
 
@@ -212,23 +216,12 @@ A normative reference suite implements these verdicts across two rails (`generic
 
 These are presentation constraints on the gate result, not schema requirements: they add no field and change no byte of the committed vectors.
 
-The conformance vectors and checker are pinned **by content**. Git refs are mutable; the pin below names the objects themselves, so a re-tag, a history rewrite, or a repository move cannot silently change what "conformant" means:
+The kit lives in this repository under its Apache-2.0 licence, so implementers can copy it into their own code, and its history is this repository's history. A change to any vector or to `expected.json` comes with a schema version bump (§2).
 
-- Repository: `vaaraio/vaara`, tag `v1.1.1` (commit `719827ce35544ee7d702c1402613d28d0e5a2552`)
-- Path: `tests/vectors/x402_settlement_v0/` (rails `generic` + `sui`, steps `step0` + `step1`, plus `_check_independent.py` and `expected.json`)
-- **Content pin (normative).** The vector directory tree `0907322631fec65dcce6fb8d3bec2de277e8dee2`, within which the checker is blob `06697860273c7e585b75550856ca31193b8a1e3d` and `expected.json` is blob `3bd08232559030171949d03ba59bc7c568b85992`. These object identifiers — not the tag and not the commit — define the gate.
-- Permalink: <https://github.com/vaaraio/vaara/tree/719827ce35544ee7d702c1402613d28d0e5a2552/tests/vectors/x402_settlement_v0>
+**Independent implementations.** The gate has been reproduced by code that shares nothing with `check.py`:
 
-`_check_independent.py` imports only the standard library plus a JCS library (`rfc8785`) and an ES256 verifier (`cryptography`) — no x402 and no receipt-framework import — and exits `0` only when every verdict matches `expected.json`. *(A vector update is a change to the object identifiers above, and is accompanied by a schema version bump per §2. Where the vectors are hosted, and who controls that update path, is a venue decision for the maintainers; the content pin makes the gate checkable independent of that choice.)*
-
-*Pin history.* An earlier revision of this section pinned commit `088a869d20fe577719175251588ae66b871d1cef`. The `v1.1.1` tag was subsequently re-created at `719827ce…` — same commit message, same committer timestamp, same root tree `c25f5fcac8d965d0a90021ce97fca54468961fe7` — which left `088a869…` off the repository's live history. Every object named in the content pin above is byte-identical across both commits, so no vector, verdict, or digest in this specification changed; only the ref did. The content pin is the response.
-
-**Independent reproductions.** The gate has been reproduced green by independent receipt issuers — distinct codebases that import neither `vaaraio/vaara` nor each other — issuing their own signed receipts over the committed `generic` and `sui` settlement records and running the unmodified `_check_independent.py` against the pinned `v1.1.1` vectors. This is what makes the producer-agnostic property (§7) demonstrated rather than asserted:
-
-- **agent-guard** — a standalone Rust execution-control runtime. Issued SEP-2828 receipts signed with its own ES256 key and reproduced every verdict to a full pass (exit `0`). It computes the `evidenceRef` digest with an independent Rust RFC 8785 implementation (`serde_jcs`) and reproduces the committed `sui/step1` digest byte-for-byte, confirming canonicalization is portable across languages and JCS implementations. Runnable artifact: <https://github.com/XuebinMa/agent-guard/tree/spike/sep2828-x402-recompute> (`spikes/sep2828-x402-recompute/`).
-- **nobulex** — issued SEP-2828 receipts (`issuer://nobulex`, ES256, `rfc8785` end-to-end) over the same committed records and reproduced every verdict on both rails — `action_ref_recomputes`, `settlement_binding_resolves`, `receipt_signature_ok`, and `lifecycle_distinguishes_terminal` — against the unmodified checker with no `vaara` imports. Runnable artifact: <https://github.com/arian-gogani/nobulex/tree/64eb2c866ca5b331c43eadaf23d215cb1edbd509/tests/conformance/x402_settlement_v0> (ES256 keypair, all four receipts, settlement records unchanged from the `v1.1.1` pin, `expected.json`, and the checker — whose blob hash is byte-identical to the pinned `vaaraio/vaara` `_check_independent.py` — reproducible with `python3 _check_independent.py`).
-
-**Reproduction against a live settlement.** Beyond the pinned fixtures, the gate has also been run against a *real* gasless Sui `exact` settlement produced end-to-end. An independent non-custodial facilitator (#2619) settled the `@x402/sui` gasless Address-Balance mechanism (#2616) on testnet (verify → settle), and the settled result was recomputed from on-chain `balanceChanges` alone: net `+10000` USDC to `payTo`, gasless (`gasData.price = 0`, empty `payment`, gas fully rebated), no gas noise in the asset delta. That settlement is packaged as a two-rail vector (`generic` + `sui`, in-progress → terminal) carrying the byte-identical `_check_independent.py` (blob `0669786…`); `python3 _check_independent.py` exits `0`. Runnable artifact: <https://github.com/DrVelvetFog/sui-x402-facilitator/tree/087df5232206ea8c5105ce58f6f42063315ca744/conformance/x402_settlement_v0_sui_gasless> (settlement digest `FVejSg9ddPYXwWtxjk58TjkZg6aawJFyynZEsTmsxRQ6`; fresh ES256 demo issuer key — per the non-goals a green result proves the receipt shape + binding over a real settlement record, not a live attestation instance).
+- **Vaara's checker** — `tests/vectors/x402_settlement_v0/_check_independent.py` in `vaaraio/vaara` `v1.1.1` (commit `719827ce35544ee7d702c1402613d28d0e5a2552`), a separate Python implementation. Run unmodified against this kit's `generic` and `sui` vectors, it agrees on 12 of the 14 verdicts it computes. The other two are the `sui` rail's `settlement_binding_resolves`: those receipts use the label `"jcs-rfc8785"`, which that release does not accept and the current receipt format requires consumers to accept (§3).
+- **agent-guard** — a standalone Rust execution-control runtime. Against the earlier `vaaraio/vaara` `v1.1.1` vectors, it issued SEP-2828 receipts with its own ES256 key and reproduced every verdict, computing the `evidenceRef` digest with an independent Rust RFC 8785 implementation (`serde_jcs`). That shows the canonicalization is portable across languages and JCS implementations. Runnable artifact: <https://github.com/XuebinMa/agent-guard/tree/spike/sep2828-x402-recompute> (`spikes/sep2828-x402-recompute/`).
 
 Per the non-goals above, a green reproduction proves the receipt *shape* recomputes and binds; it does not bind `backLink` to a live attestation instance.
 
@@ -238,7 +231,7 @@ The action tuple carries `seq` (monotonic) and `terminal` (boolean). Because bot
 
 **7. Rail-Agnostic Composition**
 
-The join key is identical across rails — it is computed only from the action tuple (§3.2). Only the settlement-binding bytes differ (`paymentHash` for `generic`; the `settlement` object for `exact`). The committed vectors demonstrate this directly: the **same `actionRef`** appears on both the `generic` and `sui` rails at each lifecycle step; only the settlement bytes and the receipt's `evidenceRef.digest` change. For the receipt half, the producer-agnostic property is likewise a recompute — conformance is defined against the **`vaara.receipt/v1` conformance vectors** (pinned at `v1.1.1`; §5): an issuer is conformant when it reproduces the pinned `action_ref` bytes against those vectors, independent of implementation. Both properties are shown as tests, not asserted.
+The join key is identical across rails — it is computed only from the action tuple (§3.2). Only the settlement-binding bytes differ (`paymentHash` for `generic`; the `settlement` object for `exact`). The committed vectors demonstrate this directly: the **same `actionRef`** appears on both the `generic` and `sui` rails at each lifecycle step; only the settlement bytes and the receipt's `evidenceRef.digest` change. For the receipt half, the producer-agnostic property is likewise a recompute — conformance is defined against this extension's kit (§5): an issuer is conformant when receipts it issues over the committed settlement records pass every verdict, independent of implementation. `join_is_rail_agnostic` is the test for the join key. Both properties are shown as tests, not asserted.
 
 **8. Composition with Offer and Receipt**
 
@@ -250,7 +243,7 @@ The Offer and Receipt Extension proves the server cryptographically committed to
 - **Signature authority is trusted, not recomputed.** `receipt_signature_ok` proves the receipt was signed by the key it names and that its signed bytes are intact — not that the signer was honest or authorized to issue it. Unlike `action_ref_recomputes` and `settlement_binding_resolves`, which a verifier reconstructs from committed public bytes, this verdict rests on trusting the issuer's key. For actions whose `action_ref` recomputes entirely from committed public data, that residual trust MAY be replaced by a proof the verifier recomputes (e.g. an on-chain-enforced commitment opening) — binding to such an enforcing anchor is a separate, out-of-scope extension, not implied here.
 - **Not an independent finding.** Every signature in the bound pair is from a party to the transaction, so a green result is co-interested self-attestation that recomputes, not an outside audit. It MUST NOT be read as an independent finding about any party's conduct; an independent finding requires a signer that is not a party to the transaction (§5).
 - **Assertion of time, not a bound on it.** `timestampMs` is issuer-asserted and lives inside the signed claim, so a green result does not establish when the record existed. Where "the record existed no later than T" is required, bind an outside-verifiable time the verifier resolves without trusting the issuer — the on-chain settlement time, or an RFC 3161-style timestamp token — rather than relying on `timestampMs` (§5).
-- **Verification scope on privacy rails.** Net-balance assertion is only as sound as the facilitator's visibility. State who must be a stakeholder/observer for `verifiedBy` to be meaningful, and what a non-stakeholder verifier can independently check.
+- **Verification scope on privacy rails.** Net-balance assertion is only as sound as the facilitator's visibility. The `exact` binding of §3.4 assumes a ledger where anyone can read the net balance change. On a rail where balances are not public, `verifiedBy` means something only if the named facilitator could see that change, and a verifier who could not see it can confirm only that the record and receipt bind (§5), not the amount. A record for such a rail SHOULD say so.
 - **Canonicalization is the trust root.** Two producers MUST canonicalize identically (RFC 8785 over the normative field set) or the recompute fails closed. The reference vectors are the gate against drift.
 
 **10. Privacy Considerations**
@@ -261,3 +254,4 @@ The Offer and Receipt Extension proves the server cryptographically committed to
 **11. Version History**
 
 - `v0` — initial draft. `generic` and `sui` (`exact`) rails, in-progress + terminal lifecycle steps, with a committed recompute suite as the conformance gate. Co-authored; receipt format per IETF `draft-sirkkavaara-vaara-receipt` (`vaara.receipt/v1`).
+  - Conformance kit moved into this repository (Apache-2.0), with negative cases and a `join_is_rail_agnostic` verdict; canonicalization label and aliases per the receipt format; `txDigest` and `network` tied to `SettlementResponse.transaction` and its CAIP-2 `network`.
