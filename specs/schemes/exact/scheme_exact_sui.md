@@ -253,7 +253,11 @@ The facilitator returns a `VerifyResponse` (core spec [§5.4](../../x402-specifi
    it as missing. See [deduplication](#settlement-deduplication).
 7. **Simulate.** The facilitator simulates the signed transaction unchanged, with transaction checks
    on and without letting the node pick gas (`invalid_exact_sui_payload_simulation_failed`). This
-   catches an expired transaction.
+   catches an expired transaction. The facilitator MUST reject a simulation that uses mocked gas
+   (`gasPaymentMocked: true`), including for sponsored payments. Mock gas can fund a `GasCoin`
+   transfer and bypass gas funding checks even when the payment itself uses real funds. A valid
+   simulation MUST use the gas owner's actual funds, accounting for both gas and the transaction's
+   withdrawals, or execute as an eligible gasless transaction.
 8. **Effects.** The simulated `balanceChanges` MUST pass the [effects check](#effects-check).
 
 Any other error during verification returns `invalid_exact_sui_payload_verification_error`.
