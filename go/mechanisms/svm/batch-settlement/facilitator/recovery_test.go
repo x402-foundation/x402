@@ -551,7 +551,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		}
 		replay, err := restarted.settleDistributions(context.Background(), payload, requirements)
 		require.NoError(t, err)
-		require.Equal(t, asMap(t, response), asMap(t, replay))
+		require.Equal(t, response, replay)
 		require.Zero(t, restartedSubmits.Load())
 
 		restarted.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
