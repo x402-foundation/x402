@@ -75,7 +75,12 @@ type settlementAccountsRead struct {
 	done    chan struct{}
 }
 
-// startSettlementAccountsRead issues the three ATA reads and returns without
+// startSettlementAccountsRead starts the settlement-account preflight: before
+// the sponsor co-signs a deposit, each payout destination (payer return,
+// receiver, treasury) must be a usable token account for the mint (an unusable
+// one fails distribute only after the escrow is locked and the request served),
+// and the payer's must hold the deposit ("It MUST confirm the payer has
+// sufficient tokens"). It issues the three ATA reads and returns without
 // waiting. Address-parsing failures are held and returned by result, after the
 // caller's own checks. Cancelling ctx abandons the reads.
 func (f *BatchSvmScheme) startSettlementAccountsRead(ctx context.Context, requirements types.PaymentRequirements, payer, tokenProgram string) *settlementAccountsRead {
@@ -170,18 +175,6 @@ func (r *settlementAccountsRead) result(ctx context.Context, deposit uint64) err
 		}
 	}
 	return nil
-}
-
-// assertSettlementAccounts ensures a deposit can land and the channel can later
-// distribute before the sponsor co-signs it: each payout destination (payer
-// return, receiver, treasury) must be a usable token account for the mint
-// (an unusable one fails distribute only after the escrow is locked and the
-// request served), and the payer's must hold the deposit ("It MUST confirm the
-// payer has sufficient tokens"). The three reads run concurrently.
-func (f *BatchSvmScheme) assertSettlementAccounts(ctx context.Context, requirements types.PaymentRequirements, payer, tokenProgram string, deposit uint64) error {
-	readCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	return f.startSettlementAccountsRead(readCtx, requirements, payer, tokenProgram).result(ctx, deposit)
 }
 
 // clusterSlotRead is an in-flight cluster slot read.

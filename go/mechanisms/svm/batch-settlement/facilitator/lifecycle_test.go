@@ -190,6 +190,13 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		})
 	})
 
+	// assertAccounts runs the settlement-account preflight for the test payer.
+	assertAccounts := func(ctx context.Context, scheme *BatchSvmScheme, deposit uint64) error {
+		readCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		return scheme.startSettlementAccountsRead(readCtx, requirements(), payer.Address().String(), svm.TokenProgramAddress).result(ctx, deposit)
+	}
+
 	// settlementATA is the settlement token account of owner for the test mint.
 	settlementATA := func(t *testing.T, owner solana.PublicKey) solana.PublicKey {
 		t.Helper()
@@ -232,7 +239,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			signer := newSigner(t)
 			missingATAs(t, signer, settlementOwners()[missingIndex])
 			scheme := newScheme(t, signer, nil)
-			err := scheme.assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+			err := assertAccounts(ctx, scheme, 1)
 			require.ErrorContains(t, err, "missing "+label+" ATA")
 			require.Len(t, signer.accountCalls(), 3, "the three ATAs are read concurrently")
 		})
@@ -260,14 +267,14 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 				}
 				return inner(account)
 			}
-			err := newScheme(t, signer, nil).assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+			err := assertAccounts(ctx, newScheme(t, signer, nil), 1)
 			require.ErrorContains(t, err, tc.want)
 		}
 	})
 
 	t.Run("reads the settlement ATAs at the same time", func(t *testing.T) {
 		signer := &gatedAccountSigner{lifecycleSigner: newSigner(t), want: 3, all: make(chan struct{})}
-		err := newScheme(t, signer, nil).assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+		err := assertAccounts(ctx, newScheme(t, signer, nil), 1)
 		require.NoError(t, err)
 		require.True(t, signer.released.Load(), "all three reads were in flight together")
 	})
@@ -279,7 +286,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			cancelCtx, cancel := context.WithCancel(ctx)
 			errs := make(chan error, 1)
 			go func() {
-				errs <- scheme.assertSettlementAccounts(cancelCtx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+				errs <- assertAccounts(cancelCtx, scheme, 1)
 			}()
 			require.Eventually(t, func() bool { return stuck.started.Load() == 3 }, 2*time.Second, 5*time.Millisecond)
 			cancel()
@@ -396,7 +403,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			s.owner = solana.Token2022ProgramID
 		})
 		scheme := newScheme(t, signer, nil)
-		err := scheme.assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+		err := assertAccounts(ctx, scheme, 1)
 		require.ErrorContains(t, err, "is not owned by "+svm.TokenProgramAddress)
 		require.ErrorContains(t, err, "payer ATA ")
 	})
@@ -1181,7 +1188,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 				return &rpc.GetAccountInfoResult{Value: healthyTokenAccount(account, signer.ataMint, solana.TokenProgramID, signer.ataOwners...)}
 			}
 			scheme := newScheme(t, signer, nil)
-			err = scheme.assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 10_000)
+			err = assertAccounts(ctx, scheme, 10_000)
 			require.ErrorContains(t, err, batchsettlement.ErrSettlementSimulation)
 			require.ErrorContains(t, err, message)
 		})
