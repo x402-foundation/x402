@@ -101,6 +101,69 @@ describe("computeRequestFingerprint", () => {
     const b = computeRequestFingerprint(basePayload(), {});
     expect(a).toBe(b);
   });
+
+  it("changes when accepted.extra differs", () => {
+    const changed = basePayload();
+    changed.accepted.extra = { feeBps: 500 };
+    expect(computeRequestFingerprint(changed)).not.toBe(computeRequestFingerprint(basePayload()));
+  });
+
+  it("is unaffected by key order inside accepted.extra", () => {
+    const a = basePayload();
+    a.accepted.extra = { feeBps: 500, splitTo: "0xA" };
+    const b = basePayload();
+    b.accepted.extra = { splitTo: "0xA", feeBps: 500 };
+    expect(computeRequestFingerprint(a)).toBe(computeRequestFingerprint(b));
+  });
+
+  it("ignores a changed extra field listed in dynamicExtraFields", () => {
+    const a = basePayload();
+    a.accepted.extra = { nonce: "111", feeBps: 500 };
+    const b = basePayload();
+    b.accepted.extra = { nonce: "222", feeBps: 500 };
+    const fpA = computeRequestFingerprint(a, { dynamicExtraFields: ["nonce"] });
+    const fpB = computeRequestFingerprint(b, { dynamicExtraFields: ["nonce"] });
+    expect(fpA).toBe(fpB);
+  });
+
+  it("still catches a changed non-dynamic extra field when dynamicExtraFields is set", () => {
+    const a = basePayload();
+    a.accepted.extra = { nonce: "111", feeBps: 0 };
+    const b = basePayload();
+    b.accepted.extra = { nonce: "111", feeBps: 500 };
+    const fpA = computeRequestFingerprint(a, { dynamicExtraFields: ["nonce"] });
+    const fpB = computeRequestFingerprint(b, { dynamicExtraFields: ["nonce"] });
+    expect(fpA).not.toBe(fpB);
+  });
+
+  it("treats payTo as the same hex address regardless of checksum casing", () => {
+    const a = basePayload();
+    a.accepted.payTo = "0xAbCdEf0000000000000000000000000000dEaD";
+    const b = basePayload();
+    b.accepted.payTo = "0xabcdef0000000000000000000000000000dead";
+    expect(computeRequestFingerprint(a)).toBe(computeRequestFingerprint(b));
+  });
+
+  it("treats asset as the same hex address regardless of casing", () => {
+    const a = basePayload();
+    a.accepted.asset = "0xAbCdEf0000000000000000000000000000dEaD";
+    const b = basePayload();
+    b.accepted.asset = "0xabcdef0000000000000000000000000000dead";
+    expect(computeRequestFingerprint(a)).toBe(computeRequestFingerprint(b));
+  });
+
+  it("does not case-fold a non-hex payTo (e.g. a case-sensitive address format)", () => {
+    const a = basePayload();
+    a.accepted.payTo = "AbCdEf0000000000000000000000000000dEaD";
+    const b = basePayload();
+    b.accepted.payTo = "abcdef0000000000000000000000000000dead";
+    expect(computeRequestFingerprint(a)).not.toBe(computeRequestFingerprint(b));
+  });
+
+  it("throws a clear error when accepted is missing", () => {
+    const malformed = { x402Version: 2, payload: {} } as unknown as PaymentPayload;
+    expect(() => computeRequestFingerprint(malformed)).toThrow(/payload.accepted is required/);
+  });
 });
 
 describe("isRequestBindingConflict", () => {
