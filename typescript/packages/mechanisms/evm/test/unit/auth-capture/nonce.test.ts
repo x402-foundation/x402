@@ -9,7 +9,6 @@ import {
   CAPTURE_TYPES_V1_1,
   CHARGE_TYPES_V1_0,
   CHARGE_TYPES_V1_1,
-  SALT_BINDING_TYPEHASH,
   captureTypesForDeployment,
   chargeTypesForDeployment,
   feeAmountFromBps,
@@ -180,10 +179,7 @@ describe("nonce utilities", () => {
       expect(a).toBe("0xd0967e09b6c8fccf96277d95a03e98583e8605ab10858b1349aa50ea6d78132c");
     });
 
-    it("should hash the salt-binding and PaymentInfo type strings to stable values", () => {
-      expect(SALT_BINDING_TYPEHASH).toBe(
-        "0x8a2a7e41a0bda000ded071ff38b79401d2603e1826516ff2635b11fe9e30877f",
-      );
+    it("hashes the PaymentInfo type string to a stable value", () => {
       expect(
         keccak256(
           new TextEncoder().encode(

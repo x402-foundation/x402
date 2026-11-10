@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 )
 
 func decimalGreaterThan(amount string, n int64) bool {
@@ -13,8 +14,7 @@ func decimalGreaterThan(amount string, n int64) bool {
 	return ok && rat.Cmp(big.NewRat(n, 1)) > 0
 }
 
-// Base mainnet USDC address
-const baseMainnetUSDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+var baseMainnetUSDC = evm.DefaultAssets["eip155:8453"][0].Asset
 
 // TestRegisterMoneyParser_SingleCustomParser tests a single custom money parser
 func TestRegisterMoneyParser_SingleCustomParser(t *testing.T) {

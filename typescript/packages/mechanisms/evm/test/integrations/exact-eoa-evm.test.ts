@@ -16,7 +16,11 @@ import {
   SettleResponse,
   SupportedResponse,
 } from "@x402/core/types";
-import { ExactEvmScheme as ExactEvmClient, toFacilitatorEvmSigner } from "../../src";
+import {
+  DEFAULT_ASSETS,
+  ExactEvmScheme as ExactEvmClient,
+  toFacilitatorEvmSigner,
+} from "../../src";
 import { ExactEvmScheme as ExactEvmServer } from "../../src/exact/server/scheme";
 import { ExactEvmScheme as ExactEvmFacilitator } from "../../src/exact/facilitator/scheme";
 import type { ExactEvmPayloadV2 } from "../../src/types";
@@ -453,7 +457,7 @@ describe("EVM Integration Tests", () => {
 
         expect(requirements).toHaveLength(1);
         expect(requirements[0].amount).toBe(testCase.expectedAmount);
-        expect(requirements[0].asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e"); // Base Sepolia USDC
+        expect(requirements[0].asset).toBe(DEFAULT_ASSETS["eip155:84532"]![0]!.asset);
       }
     });
 
@@ -512,7 +516,7 @@ describe("EVM Integration Tests", () => {
       });
 
       expect(smallRequirements[0].amount).toBe("50000000"); // 50 * 1e6 (USDC)
-      expect(smallRequirements[0].asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e"); // Base Sepolia USDC
+      expect(smallRequirements[0].asset).toBe(DEFAULT_ASSETS["eip155:84532"]![0]!.asset);
     });
 
     it("should support multiple MoneyParser in chain", async () => {
@@ -566,7 +570,7 @@ describe("EVM Integration Tests", () => {
         price: 50,
         network: "eip155:84532" as Network,
       });
-      expect(standardReq[0].asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e"); // Default USDC
+      expect(standardReq[0].asset).toBe(DEFAULT_ASSETS["eip155:84532"]![0]!.asset);
     });
 
     it("should work with async MoneyParser (e.g., exchange rate lookup)", async () => {
@@ -617,7 +621,7 @@ describe("EVM Integration Tests", () => {
 
         expect(requirements).toHaveLength(1);
         expect(requirements[0].amount).toBe(testCase.expectedAmount);
-        expect(requirements[0].asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e"); // Base Sepolia USDC
+        expect(requirements[0].asset).toBe(DEFAULT_ASSETS["eip155:84532"]![0]!.asset);
       }
     });
   });

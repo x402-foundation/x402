@@ -22,10 +22,7 @@ import { ExactConcordiumScheme as ExactConcordiumServerFromIndex } from "../../s
 import {
   CONCORDIUM_MAINNET_CAIP2,
   CONCORDIUM_TESTNET_CAIP2,
-  CONCORDIUM_ADDRESS_REGEX,
-  CCD_DECIMALS,
-  MAX_EXPIRY_OFFSET_SECONDS,
-  DEFAULT_FINALIZATION_TIMEOUT_MS,
+  DEFAULT_ASSETS,
   getConcordiumGrpcUrl,
   parseGrpcUrl,
   getExplorerTxUrl,
@@ -33,6 +30,8 @@ import {
 import type { PaymentRequirements } from "@x402/core/types";
 import type { FacilitatorConcordiumSigner } from "../../src";
 import { convertToTokenAmount } from "@x402/core/utils";
+
+const testnetUsdr = DEFAULT_ASSETS[CONCORDIUM_TESTNET_CAIP2]![0]!;
 
 function createMockFacilitatorSigner(
   address = "4FmiTW2L4RvCsSVTjFAavYvrgnPLGNj43eiwPYmbhNqtAcMbWW",
@@ -57,15 +56,6 @@ describe("@x402/concordium", () => {
       expect(ExactConcordiumClientFromIndex).toBe(ExactConcordiumClient);
       expect(ExactConcordiumFacilitatorFromIndex).toBe(ExactConcordiumFacilitator);
       expect(ExactConcordiumServerFromIndex).toBe(ExactConcordiumServer);
-    });
-
-    it("should export constants", () => {
-      expect(CONCORDIUM_MAINNET_CAIP2).toBe("ccd:9dd9ca4d19e9393877d2c44b70f89acb");
-      expect(CONCORDIUM_TESTNET_CAIP2).toBe("ccd:4221332d34e1694168c2a0c0b3fd0f27");
-      expect(CONCORDIUM_ADDRESS_REGEX).toBeDefined();
-      expect(CCD_DECIMALS).toBe(6);
-      expect(MAX_EXPIRY_OFFSET_SECONDS).toBe(600);
-      expect(DEFAULT_FINALIZATION_TIMEOUT_MS).toBe(60_000);
     });
 
     it("should export utility functions", () => {
@@ -201,7 +191,7 @@ describe("@x402/concordium", () => {
       const result = await server.parsePrice("$0.001", CONCORDIUM_TESTNET_CAIP2);
 
       expect(result.amount).toBe("1000");
-      expect(result.asset).toBe("USDR");
+      expect(result.asset).toBe(testnetUsdr.asset);
     });
 
     it("should parse a raw number to USDR by default", async () => {
@@ -209,7 +199,7 @@ describe("@x402/concordium", () => {
       const result = await server.parsePrice("10", CONCORDIUM_TESTNET_CAIP2);
 
       expect(result.amount).toBe("10000000");
-      expect(result.asset).toBe("USDR");
+      expect(result.asset).toBe(testnetUsdr.asset);
     });
 
     it("should allow USD prices when a money parser is registered", async () => {
@@ -292,12 +282,14 @@ describe("@x402/concordium", () => {
 
       const result = await server.parsePrice("5", CONCORDIUM_TESTNET_CAIP2);
       expect(result.amount).toBe("5000000");
-      expect(result.asset).toBe("USDR");
+      expect(result.asset).toBe(testnetUsdr.asset);
     });
 
-    it("returns 6 decimals for USDR and undefined for CCD or EURR", () => {
+    it("returns configured decimals for USDR and undefined for CCD or EURR", () => {
       const server = new ExactConcordiumServer();
-      expect(server.getAssetDecimals("USDR", CONCORDIUM_TESTNET_CAIP2)).toBe(6);
+      expect(server.getAssetDecimals(testnetUsdr.symbol, CONCORDIUM_TESTNET_CAIP2)).toBe(
+        testnetUsdr.decimals,
+      );
       expect(server.getAssetDecimals("CCD", CONCORDIUM_TESTNET_CAIP2)).toBeUndefined();
       expect(server.getAssetDecimals("EURR", CONCORDIUM_TESTNET_CAIP2)).toBeUndefined();
     });

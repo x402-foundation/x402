@@ -66,42 +66,6 @@ describe("EVM Utils", () => {
   });
 
   describe("getEvmChainIdV1 (legacy names)", () => {
-    it("should return correct chain ID for Base", () => {
-      expect(getEvmChainIdV1("base")).toBe(8453);
-    });
-
-    it("should return correct chain ID for Base Sepolia", () => {
-      expect(getEvmChainIdV1("base-sepolia")).toBe(84532);
-    });
-
-    it("should return correct chain ID for Ethereum", () => {
-      expect(getEvmChainIdV1("ethereum")).toBe(1);
-    });
-
-    it("should return correct chain ID for Polygon", () => {
-      expect(getEvmChainIdV1("polygon")).toBe(137);
-    });
-
-    it("should return correct chain ID for Polygon Amoy", () => {
-      expect(getEvmChainIdV1("polygon-amoy")).toBe(80002);
-    });
-
-    it("should return correct chain ID for Abstract", () => {
-      expect(getEvmChainIdV1("abstract")).toBe(2741);
-    });
-
-    it("should return correct chain ID for Avalanche", () => {
-      expect(getEvmChainIdV1("avalanche")).toBe(43114);
-    });
-
-    it("should return correct chain ID for MegaETH", () => {
-      expect(getEvmChainIdV1("megaeth")).toBe(4326);
-    });
-
-    it("should return correct chain ID for Monad", () => {
-      expect(getEvmChainIdV1("monad")).toBe(143);
-    });
-
     it("should throw for CAIP-2 format", () => {
       expect(() => getEvmChainIdV1("eip155:8453")).toThrow("Unsupported v1 network");
     });

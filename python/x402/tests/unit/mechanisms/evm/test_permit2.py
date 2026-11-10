@@ -881,7 +881,7 @@ class TestClientPermit2Routing:
         assert "nonce" in p2
         assert "deadline" in p2
         assert "permitted" in p2
-        assert p2["permitted"]["token"] == "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        assert p2["permitted"]["token"] == TOKEN_ADDRESS
         assert p2["permitted"]["amount"] == AMOUNT
 
 

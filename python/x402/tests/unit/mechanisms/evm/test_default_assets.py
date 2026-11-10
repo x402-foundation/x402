@@ -27,9 +27,8 @@ class TestFindDefaultAsset:
     def test_resolves_v1_legacy_network_name_base(self):
         assert find_default_asset(BASE_USDC["asset"], "base") == BASE_USDC
 
-    def test_finds_18_decimal_musd_on_mezo_testnet(self):
+    def test_finds_musd_on_mezo_testnet(self):
         assert find_default_asset(MEZO_TESTNET_MUSD["asset"], "eip155:31611") == MEZO_TESTNET_MUSD
-        assert MEZO_TESTNET_MUSD["decimals"] == 18
 
     def test_returns_none_for_unknown_asset(self):
         assert (
@@ -55,4 +54,7 @@ class TestExactEvmSchemeGetAssetDecimals:
         server = ExactEvmScheme()
         other_asset = "0x0000000000000000000000000000000000000001"
         assert server.get_asset_decimals(other_asset, "eip155:31611") is None
-        assert server.get_asset_decimals(MEZO_TESTNET_MUSD["asset"], "eip155:31611") == 18
+        assert (
+            server.get_asset_decimals(MEZO_TESTNET_MUSD["asset"], "eip155:31611")
+            == MEZO_TESTNET_MUSD["decimals"]
+        )

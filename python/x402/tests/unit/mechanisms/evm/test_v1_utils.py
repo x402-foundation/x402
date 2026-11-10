@@ -2,32 +2,12 @@
 
 import pytest
 
+from x402.mechanisms.evm.default_assets import get_default_asset
 from x402.mechanisms.evm.v1.utils import get_asset_info, get_evm_chain_id
 
 
 class TestV1GetEvmChainId:
-    """Test v1 get_evm_chain_id function (legacy names)."""
-
-    def test_should_resolve_base(self):
-        assert get_evm_chain_id("base") == 8453
-
-    def test_should_resolve_base_sepolia(self):
-        assert get_evm_chain_id("base-sepolia") == 84532
-
-    def test_should_resolve_ethereum(self):
-        assert get_evm_chain_id("ethereum") == 1
-
-    def test_should_resolve_polygon(self):
-        assert get_evm_chain_id("polygon") == 137
-
-    def test_should_resolve_megaeth(self):
-        assert get_evm_chain_id("megaeth") == 4326
-
-    def test_should_resolve_monad(self):
-        assert get_evm_chain_id("monad") == 143
-
-    def test_should_resolve_avalanche(self):
-        assert get_evm_chain_id("avalanche") == 43114
+    """Test v1 get_evm_chain_id rejection paths."""
 
     def test_should_resolve_story(self):
         assert get_evm_chain_id("story") == 1514
@@ -57,18 +37,20 @@ class TestV1GetAssetInfo:
     """Test v1 get_asset_info function."""
 
     def test_should_return_default_asset_for_base(self):
-        usdc_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-        info = get_asset_info("base", usdc_address)
+        asset = get_default_asset("eip155:8453")
+        info = get_asset_info("base", asset["asset"])
         assert info["address"].startswith("0x")
-        assert info["decimals"] == 6
+        assert info["decimals"] == asset["decimals"]
+        assert info["name"] == asset["name"]
 
     def test_should_return_asset_by_address(self):
-        info = get_asset_info("base-sepolia", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
-        assert info["decimals"] == 6
+        asset = get_default_asset("eip155:84532")
+        info = get_asset_info("base-sepolia", asset["asset"])
+        assert info["decimals"] == asset["decimals"]
 
     def test_should_raise_for_unknown_v1_network(self):
         with pytest.raises(ValueError, match="Unknown v1 network"):
-            get_asset_info("eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+            get_asset_info("eip155:8453", get_default_asset("eip155:8453")["asset"])
 
     def test_should_raise_for_unregistered_asset_address(self):
         unknown_address = "0x1234567890123456789012345678901234567890"

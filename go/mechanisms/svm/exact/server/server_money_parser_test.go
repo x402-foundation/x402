@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 func decimalGreaterThan(amount string, n int64) bool {
@@ -66,7 +67,7 @@ func TestRegisterMoneyParser_SingleCustomParser(t *testing.T) {
 	}
 
 	// Mainnet USDC mint
-	if result2.Asset != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" {
+	if result2.Asset != svm.USDCMainnetAddress {
 		t.Errorf("Expected USDC mint, got %s", result2.Asset)
 	}
 }
@@ -131,7 +132,7 @@ func TestRegisterMoneyParser_MultipleInChain(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 	// Should use default USDC
-	if result3.Asset != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" {
+	if result3.Asset != svm.USDCMainnetAddress {
 		t.Errorf("Expected USDC, got %s", result3.Asset)
 	}
 }
@@ -159,10 +160,10 @@ func TestRegisterMoneyParser_StringPrices(t *testing.T) {
 		price         string
 		expectedAsset string
 	}{
-		{"Dollar format", "$100", "CustomMint111111111111111111111111"},            // > 50
-		{"Plain decimal", "25.50", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"}, // <= 50 (USDC)
-		{"Large amount", "75", "CustomMint111111111111111111111111"},               // > 50
-		{"Small amount", "10", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"},     // <= 50
+		{"Dollar format", "$100", "CustomMint111111111111111111111111"}, // > 50
+		{"Plain decimal", "25.50", svm.USDCMainnetAddress},              // <= 50 (USDC)
+		{"Large amount", "75", "CustomMint111111111111111111111111"},    // > 50
+		{"Small amount", "10", svm.USDCMainnetAddress},                  // <= 50
 	}
 
 	for _, tt := range tests {
@@ -206,7 +207,7 @@ func TestRegisterMoneyParser_NoCustomParsers(t *testing.T) {
 	}
 
 	// Should use default USDC
-	if result.Asset != "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" {
+	if result.Asset != svm.USDCMainnetAddress {
 		t.Errorf("Expected default USDC, got %s", result.Asset)
 	}
 

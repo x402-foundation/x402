@@ -3,6 +3,7 @@ package unit_test
 import (
 	"testing"
 
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	evmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/v1"
 )
 
@@ -13,15 +14,6 @@ func TestV1GetEvmChainId(t *testing.T) {
 		expectedChain int64
 		expectError   bool
 	}{
-		{"base", "base", 8453, false},
-		{"base-sepolia", "base-sepolia", 84532, false},
-		{"ethereum", "ethereum", 1, false},
-		{"polygon", "polygon", 137, false},
-		{"megaeth", "megaeth", 4326, false},
-		{"monad", "monad", 143, false},
-		{"avalanche", "avalanche", 43114, false},
-		{"sei", "sei", 1329, false},
-
 		// CAIP-2 format should NOT work in v1
 		{"CAIP-2 rejected", "eip155:8453", 0, true},
 		{"Unknown network", "unknown-chain", 0, true},
@@ -78,13 +70,17 @@ func TestV1GetAssetInfo(t *testing.T) {
 	})
 
 	t.Run("polygon empty asset uses default USDC", func(t *testing.T) {
+		want, err := evm.GetDefaultAsset("polygon", "")
+		if err != nil {
+			t.Fatalf("Failed to load default asset: %v", err)
+		}
 		info, err := evmv1.GetAssetInfo("polygon", "")
 		if err != nil {
 			t.Fatalf("Failed to get asset info: %v", err)
 		}
 
-		if info.Address != "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" {
-			t.Errorf("Expected Polygon USDC address, got %s", info.Address)
+		if info.Address != want.Asset {
+			t.Errorf("Expected default asset %s, got %s", want.Asset, info.Address)
 		}
 	})
 

@@ -37,10 +37,11 @@ class TestParsePrice:
             network = "eip155:8453"
 
             result = server.parse_price("$0.10", network)
+            asset = get_default_asset(network)
 
             assert result.amount == "100000"  # 0.10 USDC = 100000 smallest units
-            assert result.asset == get_default_asset(network)["asset"]
-            assert result.extra == {"name": "USD Coin", "version": "2"}
+            assert result.asset == asset["asset"]
+            assert result.extra == {"name": asset["name"], "version": asset["version"]}
 
         def test_should_parse_simple_number_string_prices(self):
             """Should parse simple number string prices."""

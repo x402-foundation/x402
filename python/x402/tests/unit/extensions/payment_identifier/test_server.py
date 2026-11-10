@@ -1,6 +1,8 @@
 """Tests for Payment-Identifier server extension."""
 
 from x402.extensions.payment_identifier import (
+    PAYMENT_ID_MAX_LENGTH,
+    PAYMENT_ID_MIN_LENGTH,
     PAYMENT_IDENTIFIER,
     declare_payment_identifier_extension,
     payment_identifier_resource_server_extension,
@@ -29,8 +31,8 @@ class TestDeclarePaymentIdentifierExtension:
         assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
         assert schema["type"] == "object"
         assert schema["properties"]["required"]["type"] == "boolean"
-        assert schema["properties"]["id"]["minLength"] == 16
-        assert schema["properties"]["id"]["maxLength"] == 128
+        assert schema["properties"]["id"]["minLength"] == PAYMENT_ID_MIN_LENGTH
+        assert schema["properties"]["id"]["maxLength"] == PAYMENT_ID_MAX_LENGTH
 
     def test_declare_schema_required_field(self) -> None:
         """Test that schema requires 'required' field."""

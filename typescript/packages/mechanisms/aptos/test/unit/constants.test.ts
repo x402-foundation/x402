@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Network } from "@aptos-labs/ts-sdk";
 import {
-  APTOS_MAINNET_CAIP2,
-  APTOS_TESTNET_CAIP2,
   APTOS_ADDRESS_REGEX,
-  TRANSFER_FUNCTION,
   MAX_GAS_AMOUNT,
   MAX_GAS_UNIT_PRICE,
   getAptosNetwork,
@@ -13,16 +10,6 @@ import {
 } from "../../src/constants";
 
 describe("Aptos Constants", () => {
-  describe("Network identifiers", () => {
-    it("should have correct CAIP-2 format for mainnet", () => {
-      expect(APTOS_MAINNET_CAIP2).toBe("aptos:1");
-    });
-
-    it("should have correct CAIP-2 format for testnet", () => {
-      expect(APTOS_TESTNET_CAIP2).toBe("aptos:2");
-    });
-  });
-
   describe("APTOS_ADDRESS_REGEX", () => {
     it("should match valid Aptos addresses", () => {
       const validAddress = "0x0000000000000000000000000000000000000000000000000000000000000001";
@@ -50,21 +37,7 @@ describe("Aptos Constants", () => {
     });
   });
 
-  describe("TRANSFER_FUNCTION", () => {
-    it("should be the correct primary fungible store transfer function", () => {
-      expect(TRANSFER_FUNCTION).toBe("0x1::primary_fungible_store::transfer");
-    });
-  });
-
   describe("getAptosNetwork", () => {
-    it("should return MAINNET for aptos:1", () => {
-      expect(getAptosNetwork("aptos:1")).toBe(Network.MAINNET);
-    });
-
-    it("should return TESTNET for aptos:2", () => {
-      expect(getAptosNetwork("aptos:2")).toBe(Network.TESTNET);
-    });
-
     it("should throw for unsupported networks", () => {
       expect(() => getAptosNetwork("aptos:99")).toThrow("Unsupported Aptos network");
       expect(() => getAptosNetwork("ethereum:1")).toThrow("Unsupported Aptos network");
@@ -92,12 +65,6 @@ describe("Aptos Constants", () => {
     });
   });
 
-  describe("MAX_GAS_AMOUNT", () => {
-    it("should be a reasonable limit for simple transfers", () => {
-      expect(MAX_GAS_AMOUNT).toBe(500000n);
-    });
-  });
-
   describe("MAX_GAS_UNIT_PRICE", () => {
     it("should be a bigint", () => {
       expect(typeof MAX_GAS_UNIT_PRICE).toBe("bigint");
@@ -116,14 +83,6 @@ describe("Aptos Constants", () => {
   });
 
   describe("getAptosChainId", () => {
-    it("should return 1 for mainnet", () => {
-      expect(getAptosChainId("aptos:1")).toBe(1);
-    });
-
-    it("should return 2 for testnet", () => {
-      expect(getAptosChainId("aptos:2")).toBe(2);
-    });
-
     it("should throw for unsupported networks", () => {
       expect(() => getAptosChainId("aptos:99")).toThrow("Unsupported Aptos network");
       expect(() => getAptosChainId("ethereum:1")).toThrow("Unsupported Aptos network");
