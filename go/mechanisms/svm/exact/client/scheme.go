@@ -9,7 +9,6 @@ import (
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
-	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
@@ -63,6 +62,10 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	if !svm.IsValidNetwork(networkStr) {
 		return types.PaymentPayload{}, fmt.Errorf(ErrUnsupportedNetwork+": %s", requirements.Network)
 	}
+	version, err := svm.ResolveTransactionVersionFor(requirements.Extra, c.config.ClientTransactionVersions())
+	if err != nil {
+		return types.PaymentPayload{}, err
+	}
 
 	// Get network configuration
 	config, err := svm.GetNetworkConfig(networkStr)
@@ -107,13 +110,13 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	}
 
 	// Find source ATA (client's token account)
-	sourceATA, _, err := solana.FindAssociatedTokenAddress(c.signer.Address(), mintPubkey)
+	sourceATA, err := findAssociatedTokenAddress(c.signer.Address(), tokenProgramID, mintPubkey)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveSourceATA+": %w", err)
 	}
 
 	// Find destination ATA (recipient's token account)
-	destinationATA, _, err := solana.FindAssociatedTokenAddress(payToPubkey, mintPubkey)
+	destinationATA, err := findAssociatedTokenAddress(payToPubkey, tokenProgramID, mintPubkey)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveDestinationATA+": %w", err)
 	}
@@ -140,20 +143,6 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	cuLimit, err := computebudget.NewSetComputeUnitLimitInstructionBuilder().
-		SetUnits(svm.DefaultComputeUnitLimit).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildComputeLimitIx+": %w", err)
-	}
-
-	cuPrice, err := computebudget.NewSetComputeUnitPriceInstructionBuilder().
-		SetMicroLamports(svm.DefaultComputeUnitPriceMicrolamports).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildComputePriceIx+": %w", err)
-	}
-
 	// Build final transfer instruction
 	transferIx, err := token.NewTransferCheckedInstructionBuilder().
 		SetAmount(amount).
@@ -166,6 +155,12 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
 	}
+	transferData, err := transferIx.Data()
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
+	}
+	// Bind the mint's program to this instruction without changing token.ProgramID globally.
+	transferInstruction := solana.NewInstruction(tokenProgramID, transferIx.Accounts(), transferData)
 
 	// Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
 	var memoPayload []byte
@@ -187,23 +182,20 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		memoPayload,
 	)
 
-	// Create final transaction
-	tx, err := solana.NewTransactionBuilder().
-		AddInstruction(cuLimit).
-		AddInstruction(cuPrice).
-		AddInstruction(transferIx).
-		AddInstruction(memoIx).
-		SetRecentBlockHash(recentBlockhash).
-		SetFeePayer(feePayer).
-		Build()
+	// Build the highest message version shared with extra.transactionVersions
+	// (version 0 when absent). Version 0 carries the compute budget as
+	// ComputeBudget instructions; version 1 carries it in the message config.
+	tx, err := svm.BuildClientTransaction(
+		version,
+		feePayer,
+		recentBlockhash,
+		[]solana.Instruction{transferInstruction, memoIx},
+		svm.DefaultComputeUnitLimit,
+		svm.DefaultComputeUnitPriceMicrolamports,
+	)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToCreateTransaction+": %w", err)
 	}
-
-	// Set message version to V0 (versioned transaction) for cross-platform compatibility
-	// This ensures the transaction can be correctly signed by facilitators in all languages
-	// (TypeScript, Python, Go) as they all expect versioned transactions
-	tx.Message.SetVersion(solana.MessageVersionV0)
 
 	// Partially sign with client's key
 	if err := c.signer.SignTransaction(ctx, tx); err != nil {
@@ -226,6 +218,14 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		X402Version: 2,
 		Payload:     svmPayload.ToMap(),
 	}, nil
+}
+
+func findAssociatedTokenAddress(owner, tokenProgram, mint solana.PublicKey) (solana.PublicKey, error) {
+	account, _, err := solana.FindProgramAddress(
+		[][]byte{owner.Bytes(), tokenProgram.Bytes(), mint.Bytes()},
+		solana.SPLAssociatedTokenAccountProgramID,
+	)
+	return account, err
 }
 
 func (c *ExactSvmScheme) resolveRecentBlockhash(

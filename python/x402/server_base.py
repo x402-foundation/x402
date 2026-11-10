@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -38,6 +38,7 @@ from .pending_settlement_store import ERR_SETTLEMENT_PENDING
 from .schemas import (
     X402_VERSION,
     AbortResult,
+    AfterSettleAbortError,
     FacilitatorCapabilityError,
     Network,
     PaymentCancellationDispatcher,
@@ -54,6 +55,7 @@ from .schemas import (
     SchemeNotFoundError,
     ServerPaymentRequiredContext,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettlePhase,
     SettleResponse,
@@ -75,8 +77,10 @@ from .schemas import (
 
 logger = logging.getLogger("x402")
 
-if TYPE_CHECKING:
+
+class _SyncServerAsyncHookError(TypeError):
     pass
+
 
 # Invalid reason returned when a client's echoed extension info drops or changes a
 # server-advertised (non-dynamic) field.
@@ -430,6 +434,15 @@ SyncOnVerifiedPaymentCanceledHook = Callable[[VerifiedPaymentCanceledContext], N
 # Hook command type for generator-based implementation
 HookPhase = Literal["before", "after", "failure", "call_facilitator", "dispatch_cancel"]
 HookCommand = tuple[HookPhase, Any, Any]  # (phase, hook|client|options, context)
+
+
+def _apply_after_settle_abort(result: SettleResponse, abort: AfterSettleAbortError) -> None:
+    """Flip an onchain successful settle to success=False, keeping its receipt fields."""
+    result.success = False
+    result.error_reason = abort.reason
+    result.error_message = abort.message
+    result.after_settle_aborted = True
+
 
 # Type alias for facilitator clients (either async or sync)
 _AnyFacilitatorClient = FacilitatorClient | FacilitatorClientSync
@@ -1343,8 +1356,26 @@ class x402ResourceServerBase:
             reason=options.reason,
             error=options.error,
             response_status=options.response_status,
+            verify_result=options.verify_result,
             settled_phases=tuple(settled_phases or ()),
         )
+
+    def _should_cancel_unsettled_payment(
+        self,
+        payload: PaymentPayload | PaymentPayloadV1,
+        requirements: PaymentRequirements | PaymentRequirementsV1,
+        phase: SettlePhase,
+    ) -> bool:
+        """Whether a settle that failed before the facilitator leaves a verified payment to cancel."""
+        if not self._initialized or phase == "cancel":
+            return False
+        if phase == "before-handler":
+            return True
+        try:
+            flow = self.get_payment_flow(payload, requirements)  # type: ignore[arg-type]
+            return not resolve_payment_flow_phases(flow).settle_before_handler
+        except ValueError:
+            return False
 
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
@@ -1383,13 +1414,25 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_verify",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except _SyncServerAsyncHookError:
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeVerify", label, error)
+                return ResourceVerifyResponse(
+                    verify=VerifyResponse(
+                        is_valid=False,
+                        invalid_reason="before_verify_hook_error",
+                        invalid_message="before verify hook failed",
+                    )
+                )
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1432,40 +1475,6 @@ class x402ResourceServerBase:
                 client,
                 ("verify", payload, requirements),
             )
-
-            # Check if verification failed
-            if not verify_result.is_valid:
-                failure_context = VerifyFailureContext(
-                    payment_payload=payload,
-                    requirements=requirements,
-                    payload_bytes=payload_bytes,
-                    requirements_bytes=requirements_bytes,
-                    declared_extensions=declared_extensions or {},
-                    transport_context=transport_context,
-                    error=Exception(verify_result.invalid_reason or "Verification failed"),
-                )
-                for _label, hook in get_labeled_server_hooks(
-                    "on_verify_failure",
-                    self,
-                    extension_keys,
-                    matched_scheme,
-                ):
-                    result = yield ("failure", hook, failure_context)
-                    if isinstance(result, RecoveredVerifyResult):
-                        verify_response = yield from self._run_after_verify_hooks(
-                            payload,
-                            requirements,
-                            payload_bytes,
-                            requirements_bytes,
-                            declared_extensions,
-                            transport_context,
-                            result.result,
-                            matched_scheme,
-                            extension_keys,
-                        )
-                        return verify_response
-
-                return ResourceVerifyResponse(verify=verify_result)
 
             verify_response = yield from self._run_after_verify_hooks(
                 payload,
@@ -1556,7 +1565,9 @@ class x402ResourceServerBase:
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",
-                    VerifiedPaymentCancelOptions(reason="after_verify_aborted"),
+                    VerifiedPaymentCancelOptions(
+                        reason="after_verify_aborted", verify_result=verify_result
+                    ),
                     (payload, requirements, declared_extensions, transport_context),
                 )
                 return ResourceVerifyResponse(
@@ -1585,10 +1596,12 @@ class x402ResourceServerBase:
 
         Yields (phase, hook, context) tuples for hook execution.
         Also yields ("call_facilitator", client, (payload, requirements)) for the actual call.
+        Failures before the facilitator is reached skip on_settle_failure hooks.
         """
         if not self._initialized:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
+        facilitator_called = False
         declared = declared_extensions or {}
         context = SettleContext(
             payment_payload=payload,
@@ -1606,13 +1619,23 @@ class x402ResourceServerBase:
         extension_keys = list(declared.keys())
 
         # Execute before hooks
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "before_settle",
             self,
             extension_keys,
             matched_scheme,
         ):
-            result = yield ("before", hook, context)
+            try:
+                result = yield ("before", hook, context)
+            except (_SyncServerAsyncHookError, SettleError):
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("beforeSettle", label, error)
+                raise SettleError(
+                    "before_settle_hook_error",
+                    "before settle hook failed",
+                    transaction="",
+                ) from None
             if isinstance(result, AbortResult):
                 from .schemas import PaymentAbortedError
 
@@ -1634,7 +1657,10 @@ class x402ResourceServerBase:
                     extension_keys,
                     matched_scheme,
                 ):
-                    yield ("after", after_hook, result_context)
+                    after_result = yield ("after", after_hook, result_context)
+                    if isinstance(after_result, AfterSettleAbortError):
+                        _apply_after_settle_abort(result.result, after_result)
+                        break
                 return result.result
 
         try:
@@ -1663,6 +1689,7 @@ class x402ResourceServerBase:
                 raise SchemeNotFoundError(scheme, network)
 
             # Yield for facilitator call (caller handles sync/async)
+            facilitator_called = True
             settle_result: SettleResponse = yield (
                 "call_facilitator",
                 client,
@@ -1705,7 +1732,10 @@ class x402ResourceServerBase:
                             extension_keys,
                             matched_scheme,
                         ):
-                            yield ("after", after_hook, result_context)
+                            after_result = yield ("after", after_hook, result_context)
+                            if isinstance(after_result, AfterSettleAbortError):
+                                _apply_after_settle_abort(result.result, after_result)
+                                break
                         return result.result
 
                 return settle_result
@@ -1727,11 +1757,17 @@ class x402ResourceServerBase:
                 extension_keys,
                 matched_scheme,
             ):
-                yield ("after", hook, result_context)
+                after_result = yield ("after", hook, result_context)
+                if isinstance(after_result, AfterSettleAbortError):
+                    _apply_after_settle_abort(settle_result, after_result)
+                    return settle_result
 
             return settle_result
 
         except Exception as e:
+            if not facilitator_called:
+                raise
+
             failure_context = SettleFailureContext(
                 payment_payload=payload,
                 requirements=requirements,

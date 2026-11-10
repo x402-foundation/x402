@@ -16,6 +16,7 @@
     "permit2:approve": "tsx scripts/permit2-approval.ts approve",
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke",
     "swig:setup": "tsx scripts/swig-setup.ts",
+    "canton:setup": "tsx scripts/canton-setup.ts",
     "xrpl:iou:setup": "tsx scripts/xrpl-iou-setup.ts",
     "wallet:status": "tsx scripts/print-wallet-status.ts",
     "results:summary": "tsx scripts/print-e2e-summary.ts"
@@ -24,14 +25,15 @@
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@concordium/web-sdk": "^12.0.0",
     "@keetanetwork/keetanet-client": "^0.18.1",
-    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@scure/base": "^1.2.6",
-    "@solana-program/token-2022": "^0.6.1",
-    "@solana/kit": "^6.1.0",
+    "@solana-program/token-2022": "^0.16.0",
+    "@solana/kit": "^8.5.0",
     "@swig-wallet/kit": "^2.0.0",
     "@swig-wallet/lib": "^2.0.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/canton": "workspace:*",
     "@x402/cardano": "workspace:*",
     "@x402/casper": "workspace:*",
     "casper-js-sdk": "5.1.1",
@@ -54,7 +56,7 @@
     "@types/node": "^22.13.4",
     "@types/prompts": "^2.4.9",
     "typescript": "^5.7.3",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.12"
   },
   "engines": {
     "node": ">=22.0.0"

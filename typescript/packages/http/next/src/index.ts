@@ -33,6 +33,23 @@ export function setSettlementOverrides(res: NextResponse, overrides: SettlementO
   res.headers.set(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
 }
 
+const prepareBazaar = (httpServer: x402HTTPResourceServer): Promise<void> | null => {
+  if (!checkIfBazaarNeeded(httpServer.routes)) {
+    return null;
+  }
+
+  return import("@x402/extensions/bazaar")
+    .then(({ bazaarResourceServerExtension, validateBazaarRouteExtensions }) => {
+      if (!httpServer.server.hasExtension("bazaar")) {
+        httpServer.server.registerExtension(bazaarResourceServerExtension);
+      }
+      validateBazaarRouteExtensions(httpServer.routes);
+    })
+    .catch((err: unknown) => {
+      console.error("Failed to load bazaar extension:", err);
+    });
+};
+
 /**
  * Configuration for registering a payment scheme with a specific network
  */
@@ -79,25 +96,7 @@ export function paymentProxyFromHTTPServer(
   syncFacilitatorOnStart: boolean = true,
 ) {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
-
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = prepareBazaar(httpServer);
 
   return async (req: NextRequest) => {
     const context = createRequestContext(req);
@@ -107,7 +106,6 @@ export function paymentProxyFromHTTPServer(
       return NextResponse.next();
     }
 
-    // Only initialize when processing a protected route
     try {
       await init();
     } catch (error) {
@@ -118,13 +116,11 @@ export function paymentProxyFromHTTPServer(
       return createInternalErrorResponse(error);
     }
 
-    // Await bazaar extension loading if needed
     if (bazaarPromise) {
       await bazaarPromise;
       bazaarPromise = null;
     }
 
-    // Process payment requirement check
     let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
     try {
       result = await httpServer.processHTTPRequest(context, paywallConfig);
@@ -135,18 +131,14 @@ export function paymentProxyFromHTTPServer(
       return createInternalErrorResponse(error);
     }
 
-    // Handle the different result types
     switch (result.type) {
       case "no-payment-required":
-        // No payment needed, proceed directly to the route handler
         return NextResponse.next();
 
       case "payment-error":
         return handlePaymentError(result.response);
 
       case "payment-verified": {
-        // Payment is valid, need to wrap response for settlement
-        // Proceed to the next proxy or route handler
         const nextResponse = NextResponse.next();
         return handleSettlement(
           httpServer,
@@ -194,7 +186,6 @@ export function paymentProxy(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ) {
-  // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
   return paymentProxyFromHTTPServer(httpServer, paywallConfig, paywall, syncFacilitatorOnStart);
@@ -242,7 +233,6 @@ export function paymentProxyFromConfig(
     });
   }
 
-  // Use the direct paymentProxy with the configured server
   // Note: paymentProxy handles dynamic bazaar registration
   return paymentProxy(routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
 }
@@ -285,30 +275,11 @@ export function withX402FromHTTPServer<T = unknown>(
   syncFacilitatorOnStart: boolean = true,
 ): (request: NextRequest) => Promise<NextResponse<T>> {
   const { init } = prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
-
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import(/* webpackIgnore: true */ "@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import(/* webpackIgnore: true */ "@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = prepareBazaar(httpServer);
 
   let warnedNoMatch = false;
 
   return async (request: NextRequest): Promise<NextResponse<T>> => {
-    // Only initialize when processing a protected route
     try {
       await init();
     } catch (error) {
@@ -319,7 +290,6 @@ export function withX402FromHTTPServer<T = unknown>(
       return createInternalErrorResponse(error) as NextResponse<T>;
     }
 
-    // Await bazaar extension loading if needed
     if (bazaarPromise) {
       await bazaarPromise;
       bazaarPromise = null;
@@ -327,7 +297,6 @@ export function withX402FromHTTPServer<T = unknown>(
 
     const context = createRequestContext(request);
 
-    // Process payment requirement check
     let result: Awaited<ReturnType<x402HTTPResourceServer["processHTTPRequest"]>>;
     try {
       result = await httpServer.processHTTPRequest(context, paywallConfig);
@@ -338,7 +307,6 @@ export function withX402FromHTTPServer<T = unknown>(
       return createInternalErrorResponse(error) as NextResponse<T>;
     }
 
-    // Handle the different result types
     switch (result.type) {
       case "no-payment-required":
         // This wrapper protects a single handler, so with pattern-keyed routes every
@@ -358,14 +326,12 @@ export function withX402FromHTTPServer<T = unknown>(
               `the handler ran without payment. Check the route patterns passed to withX402.`,
           );
         }
-        // No payment needed, proceed directly to the route handler
         return routeHandler(request);
 
       case "payment-error":
         return handlePaymentError(result.response) as NextResponse<T>;
 
       case "payment-verified": {
-        // Payment is valid, need to wrap response for settlement
         let handlerResponse: NextResponse<T>;
         try {
           handlerResponse = await routeHandler(request);
@@ -463,7 +429,6 @@ export function withX402<T = unknown>(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): (request: NextRequest) => Promise<NextResponse<T>> {
-  // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
   return withX402FromHTTPServer(

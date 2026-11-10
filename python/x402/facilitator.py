@@ -138,16 +138,12 @@ class x402Facilitator(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            VerifyError: If a before hook aborts.
         """
-        gen = self._verify_core(payload, requirements, payload_bytes, requirements_bytes)
-        result = None
-        try:
-            while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
-        except StopIteration as e:
-            return e.value
+        return await self._drive_hooks(
+            self._verify_core(payload, requirements, payload_bytes, requirements_bytes),
+            "verify",
+        )
 
     # ========================================================================
     # Settle (Async)
@@ -175,16 +171,27 @@ class x402Facilitator(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            SettleError: If a before hook aborts.
         """
-        gen = self._settle_core(payload, requirements, payload_bytes, requirements_bytes)
+        return await self._drive_hooks(
+            self._settle_core(payload, requirements, payload_bytes, requirements_bytes),
+            "settle",
+        )
+
+    async def _drive_hooks(self, gen: Any, operation: str) -> Any:
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = await self._execute_hook(hook, ctx)
-        except StopIteration as e:
-            return e.value
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = await self._execute_hook(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure(operation, phase, e)
+                    result = None
+        except StopIteration as stop:
+            return stop.value
 
     async def _execute_hook(self, hook: Any, context: Any) -> Any:
         """Execute hook, auto-detecting sync/async."""
@@ -292,16 +299,12 @@ class x402FacilitatorSync(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            VerifyError: If a before hook aborts.
         """
-        gen = self._verify_core(payload, requirements, payload_bytes, requirements_bytes)
-        result = None
-        try:
-            while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
-        except StopIteration as e:
-            return e.value
+        return self._drive_hooks_sync(
+            self._verify_core(payload, requirements, payload_bytes, requirements_bytes),
+            "verify",
+        )
 
     # ========================================================================
     # Settle (Sync)
@@ -329,16 +332,27 @@ class x402FacilitatorSync(x402FacilitatorBase):
 
         Raises:
             SchemeNotFoundError: If no facilitator registered for scheme/network.
-            PaymentAbortedError: If a before hook aborts.
+            SettleError: If a before hook aborts.
         """
-        gen = self._settle_core(payload, requirements, payload_bytes, requirements_bytes)
+        return self._drive_hooks_sync(
+            self._settle_core(payload, requirements, payload_bytes, requirements_bytes),
+            "settle",
+        )
+
+    def _drive_hooks_sync(self, gen: Any, operation: str) -> Any:
         result = None
         try:
             while True:
-                _, hook, ctx = gen.send(result)
-                result = self._execute_hook_sync(hook, ctx)
-        except StopIteration as e:
-            return e.value
+                phase, hook, ctx = gen.send(result)
+                try:
+                    result = self._execute_hook_sync(hook, ctx)
+                except Exception as e:
+                    if phase == "before":
+                        raise
+                    self._warn_hook_failure(operation, phase, e)
+                    result = None
+        except StopIteration as stop:
+            return stop.value
 
     def _execute_hook_sync(self, hook: Any, context: Any) -> Any:
         """Execute hook synchronously. Raises if async hook detected."""

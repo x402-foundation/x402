@@ -231,6 +231,7 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 
 	facilitatorFor := func(storage paymentchannels.PaymentChannelStorage, history ReceiverBindingHistoryReader) *openFacilitator {
 		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
 		cfg := &Config{}
 		if storage != nil {
 			cfg.ChannelStorage = storage
@@ -342,7 +343,7 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 		require.NoError(t, err)
 		_, err = verifyOpen(t, signAndEncode(t, other), &expected)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "found 0")
+		require.Contains(t, err.Error(), "names another receiver authorizer")
 
 		both, err := paymentchannels.BuildOpenTransaction(openArgs(func(args *paymentchannels.BuildOpenArgs) {
 			args.Memo = &payerBinding
@@ -375,6 +376,7 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 	t.Run("refuses a channel the payer bound to its own key when the server's key is advertised", func(t *testing.T) {
 		store := &countingGetStore{inner: paymentchannels.NewInMemoryPaymentChannelStorage()}
 		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
 		scheme := NewBatchSvmScheme(ctx, signer, &Config{ChannelStorage: store})
 		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			return nil, nil

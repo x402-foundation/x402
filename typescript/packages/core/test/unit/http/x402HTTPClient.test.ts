@@ -1,12 +1,34 @@
 import { describe, it, expect, vi } from "vitest";
 import { x402Client } from "../../../src/client/x402Client";
 import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
 } from "../../../src/http";
 import { x402HTTPClient } from "../../../src/http/x402HTTPClient";
+import { safeBase64Encode } from "../../../src/utils";
 import { buildPaymentPayload, buildPaymentRequired, buildSettleResponse } from "../../mocks";
+
+const nonObjectJson = ["[]", '"s"', "1", "null", "true", "false"] as const;
+
+describe.each([
+  ["signature", decodePaymentSignatureHeader],
+  ["required", decodePaymentRequiredHeader],
+  ["response", decodePaymentResponseHeader],
+] as const)("decode payment %s header", (_kind, decodeHeader) => {
+  it.each(nonObjectJson)("rejects non-object JSON %s", jsonValue => {
+    expect(() => decodeHeader(safeBase64Encode(jsonValue))).toThrow(/must decode to a JSON object/);
+  });
+});
+
+it("decodes an object payment signature header", () => {
+  const payload = buildPaymentPayload();
+
+  expect(decodePaymentSignatureHeader(encodePaymentSignatureHeader(payload))).toEqual(payload);
+});
 
 describe("x402HTTPClient", () => {
   describe("encodePaymentSignatureHeader", () => {
@@ -73,6 +95,17 @@ describe("x402HTTPClient", () => {
         "Invalid payment required response",
       );
     });
+
+    it.each([[null], [[]], ["s"], [1], [true], [false]])(
+      "rejects non-object JSON body %j",
+      body => {
+        const httpClient = new x402HTTPClient(new x402Client());
+
+        expect(() => httpClient.getPaymentRequiredResponse(() => null, body)).toThrow(
+          "Invalid payment required response",
+        );
+      },
+    );
   });
 
   describe("getPaymentSettleResponse", () => {

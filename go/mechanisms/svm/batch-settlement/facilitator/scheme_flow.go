@@ -190,19 +190,9 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 			return ValidatedDeposit{}, err
 		}
 		expected := existing.Deposit + deposit
-		switch proof.Signer {
-		case batchsettlement.VoucherSignerServer:
-			if charge > expected {
-				return ValidatedDeposit{}, fmt.Errorf("%s: charge exceeds topped-up ceiling", batchsettlement.ErrCumulativeAmountMismatch)
-			}
-		case batchsettlement.VoucherSignerClient:
-			// Cover settled + price, and stay strictly above settled even when the price is zero.
-			minimum, ok := batchsettlement.AddU64(existing.Settlement.Settled, charge)
-			if !ok || proofAmount < minimum || proofAmount <= existing.Settlement.Settled || proofAmount > expected {
-				return ValidatedDeposit{}, fmt.Errorf("%s: voucher exceeds topped-up ceiling", batchsettlement.ErrCumulativeAmountMismatch)
-			}
-		default:
-			return ValidatedDeposit{}, fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
+		settled := existing.Settlement.Settled
+		if err := AssertDepositProof(proof.Signer, proofAmount, charge, expected, &settled); err != nil {
+			return ValidatedDeposit{}, err
 		}
 		feePayer, err := solana.PublicKeyFromBase58(terms.FeePayer)
 		if err != nil {
@@ -234,32 +224,24 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 			Memo:                        terms.Memo,
 			MaxComputeUnits:             f.config.MaxComputeUnits,
 			MaxPriorityFeeMicroLamports: f.config.MaxPriorityFeeMicroLamports,
+			AcceptedTransactionVersions: f.transactionVersions,
 		}); err != nil {
-			return ValidatedDeposit{}, err
+			return ValidatedDeposit{}, batchsettlement.SetupTransactionError(err)
 		}
-		if err := f.assertSettlementAccounts(ctx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram); err != nil {
+		if err := f.assertSettlementAccounts(ctx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram, deposit); err != nil {
 			return ValidatedDeposit{}, err
 		}
 		validated.ExpectedDeposit = expected
 		validated.IsTopUp = true
 		return validated, nil
 	}
-	switch proof.Signer {
-	case batchsettlement.VoucherSignerServer:
-		if charge > deposit {
-			return ValidatedDeposit{}, fmt.Errorf("%s: invalid first voucher amount", batchsettlement.ErrCumulativeAmountMismatch)
-		}
-	case batchsettlement.VoucherSignerClient:
-		if proofAmount != charge || charge > deposit {
-			return ValidatedDeposit{}, fmt.Errorf("%s: invalid first voucher amount", batchsettlement.ErrCumulativeAmountMismatch)
-		}
-	default:
-		return ValidatedDeposit{}, fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
+	if err := AssertDepositProof(proof.Signer, proofAmount, charge, deposit, nil); err != nil {
+		return ValidatedDeposit{}, err
 	}
 	if err := f.verifyOpen(ctx, payload, requirements, terms, channelID, deposit); err != nil {
 		return ValidatedDeposit{}, err
 	}
-	if err := f.assertSettlementAccounts(ctx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram); err != nil {
+	if err := f.assertSettlementAccounts(ctx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram, deposit); err != nil {
 		return ValidatedDeposit{}, err
 	}
 	validated.ExpectedDeposit = deposit
@@ -298,6 +280,16 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if err != nil {
 		return err
 	}
+	// The program accepts an open only within its slot window of the cluster
+	// slot it lands at, so the window is judged against the challenge's
+	// recentSlot or, without one, the cluster's own slot.
+	if recent == nil {
+		slot, err := f.signer.GetSlot(ctx, requirements.Network, paymentchannels.SlotCommitment)
+		if err != nil {
+			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
+		}
+		recent = &slot
+	}
 	binding := batchsettlement.EncodeReceiverBindingMemo(terms.ReceiverAuthorizer)
 	open, err := paymentchannels.VerifyOpenTransaction(payload.Deposit.Transaction, paymentchannels.VerifyOpenExpected{
 		AuthorizedSigner:            authorizer,
@@ -316,9 +308,10 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 		MaxComputeUnits:             f.config.MaxComputeUnits,
 		MaxPriorityFeeMicroLamports: f.config.MaxPriorityFeeMicroLamports,
 		MaxRequiredSignatures:       f.config.MaxRequiredSignatures,
+		AcceptedTransactionVersions: f.transactionVersions,
 	})
 	if err != nil {
-		return err
+		return batchsettlement.SetupTransactionError(err)
 	}
 	if open.ChannelID.String() != channelID {
 		return fmt.Errorf("%s: setup transaction channel mismatch", batchsettlement.ErrChannelIDMismatch)
@@ -483,18 +476,22 @@ func (f *BatchSvmScheme) simulateOpen(ctx context.Context, validated ValidatedDe
 		return err
 	}
 	return paymentchannels.SimulateOpenSettleDistribute(ctx, f.signer, feePayer, validated.Payload.Deposit.Transaction, paymentchannels.SettlementSimChannel{
-		ChannelID:    channelID,
-		Mint:         mint,
-		Network:      requirements.Network,
-		Payee:        feePayer,
-		Payer:        payer,
-		RentPayer:    feePayer,
-		Splits:       []paymentchannels.Split{{Recipient: requirements.PayTo, BPS: batchsettlement.FullSplitBPS}},
-		TokenProgram: tokenProgram,
+		ChannelID:     channelID,
+		Mint:          mint,
+		Network:       requirements.Network,
+		Payee:         feePayer,
+		Payer:         payer,
+		RentPayer:     feePayer,
+		Splits:        []paymentchannels.Split{{Recipient: requirements.PayTo, BPS: batchsettlement.FullSplitBPS}},
+		TokenProgram:  tokenProgram,
+		TreasuryOwner: f.config.PaymentChannelsTreasuryOwner,
 	})
 }
 
 func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettlement.BatchClaimPayload, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+	if len(payload.Claims) == 0 || len(payload.Claims) > f.maxClaimChannels() {
+		return nil, fmt.Errorf("%s: claims exceed the facilitator's maxClaimChannels %d", batchsettlement.ErrPayloadType, f.maxClaimChannels())
+	}
 	prepared := make([]PreparedClaim, 0, len(payload.Claims))
 	var instructions []solana.Instruction
 	for _, claim := range payload.Claims {
@@ -654,7 +651,7 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 }
 
 func (f *BatchSvmScheme) settleDistributions(ctx context.Context, payload batchsettlement.BatchSettlePayload, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
-	if len(payload.Channels) == 0 || len(payload.Channels) > MaxChannelsPerSettleTx {
+	if len(payload.Channels) == 0 || len(payload.Channels) > f.maxSettleChannels() {
 		return nil, fmt.Errorf("%s: invalid channel batch", batchsettlement.ErrPayloadType)
 	}
 	seen := map[string]struct{}{}
@@ -777,11 +774,7 @@ func (f *BatchSvmScheme) distributeCurrent(ctx context.Context, payload batchset
 	}
 	if len(instructions) == 0 {
 		if hasPrevious {
-			var stored x402.SettleResponse
-			if err := json.Unmarshal([]byte(previous), &stored); err != nil {
-				return nil, err
-			}
-			return &stored, nil
+			return decodeDistributionResult(previous)
 		}
 		return SettleFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "", ""), nil
 	}
@@ -846,12 +839,12 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 	if cached, ok, err := f.pendingStore.Get(ctx, cachedKey); err != nil {
 		return nil, err
 	} else if ok {
-		var stored x402.SettleResponse
-		if err := json.Unmarshal([]byte(cached), &stored); err != nil {
+		stored, err := decodeDistributionResult(cached)
+		if err != nil {
 			return nil, err
 		}
 		if f.config.OnDistributionConfirmed != nil {
-			if err := f.config.OnDistributionConfirmed(ctx, &stored, requirements); err != nil {
+			if err := f.config.OnDistributionConfirmed(ctx, stored, requirements); err != nil {
 				return nil, err
 			}
 		}
@@ -865,7 +858,7 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 		if err := f.completeBroadcast(ctx, key, signature, requirements.Network); err != nil {
 			return nil, err
 		}
-		return &stored, nil
+		return stored, nil
 	}
 	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
 	if !ok {
@@ -931,7 +924,7 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, key, signatu
 			continue
 		}
 		if !balanceHasAccount(evidence.Meta.PostTokenBalances, escrowIndex) &&
-			(item.ChannelConfig.Payer == requirements.PayTo || paymentchannels.TreasuryOwner(requirements.Network).String() == requirements.PayTo) {
+			(item.ChannelConfig.Payer == requirements.PayTo || paymentchannels.ResolveTreasuryOwner(f.config.PaymentChannelsTreasuryOwner, requirements.Network).String() == requirements.PayTo) {
 			return nil, &PayoutAttributionAmbiguousError{}
 		}
 	}
@@ -979,6 +972,7 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 	limits := RefundLimits{
 		MaxComputeUnits:             f.config.MaxComputeUnits,
 		MaxPriorityFeeMicroLamports: f.config.MaxPriorityFeeMicroLamports,
+		TransactionVersions:         f.transactionVersions,
 	}
 	var prepared PreparedRefund
 	var err error
@@ -1018,6 +1012,9 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 		beforeSend: func() (*x402.SettleResponse, error) {
 			channel, err := f.fetchChannel(ctx, requirements.Network, prepared.ChannelID)
 			if err != nil {
+				return nil, err
+			}
+			if err := AssertRefundable(channel, prepared.ChannelID); err != nil {
 				return nil, err
 			}
 			if err := f.assertClaimChannel(channel, payload.ChannelConfig, prepared.Terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open, generated.ChannelStatus_Closing}); err != nil {
@@ -1113,6 +1110,9 @@ func (f *BatchSvmScheme) verifyRefund(ctx context.Context, payload batchsettleme
 		if err := AssertNotClosing(channel, channelID); err != nil {
 			return nil, err
 		}
+		if err := AssertRefundable(channel, channelID); err != nil {
+			return nil, err
+		}
 		if err := f.assertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open, generated.ChannelStatus_Closing}); err != nil {
 			return nil, err
 		}
@@ -1131,6 +1131,7 @@ func (f *BatchSvmScheme) verifyRefund(ctx context.Context, payload batchsettleme
 	channel, id, _, err := ValidateRefund(ctx, f.sealDependencies(), refund, requirements, RefundLimits{
 		MaxComputeUnits:             f.config.MaxComputeUnits,
 		MaxPriorityFeeMicroLamports: f.config.MaxPriorityFeeMicroLamports,
+		TransactionVersions:         f.transactionVersions,
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -1197,7 +1198,13 @@ func (f *BatchSvmScheme) assertDepositChannel(channel *generated.Channel, valida
 	return nil
 }
 
-func (f *BatchSvmScheme) assertSettlementAccounts(ctx context.Context, requirements types.PaymentRequirements, payer, tokenProgram string) error {
+// assertSettlementAccounts ensures a deposit can land and the channel can later
+// distribute before the sponsor co-signs it: each payout destination (payer
+// return, receiver, treasury) must be a usable token account for the mint
+// (an unusable one fails distribute only after the escrow is locked and the
+// request served), and the payer's must hold the deposit ("It MUST confirm the
+// payer has sufficient tokens").
+func (f *BatchSvmScheme) assertSettlementAccounts(ctx context.Context, requirements types.PaymentRequirements, payer, tokenProgram string, deposit uint64) error {
 	mint, err := solana.PublicKeyFromBase58(requirements.Asset)
 	if err != nil {
 		return err
@@ -1216,7 +1223,7 @@ func (f *BatchSvmScheme) assertSettlementAccounts(ctx context.Context, requireme
 	}{
 		{"payer", payer},
 		{"recipient", requirements.PayTo},
-		{"payment-channel treasury", paymentchannels.TreasuryOwner(requirements.Network).String()},
+		{"payment-channel treasury", paymentchannels.ResolveTreasuryOwner(f.config.PaymentChannelsTreasuryOwner, requirements.Network).String()},
 	} {
 		owner, err := solana.PublicKeyFromBase58(item.value)
 		if err != nil {
@@ -1239,8 +1246,18 @@ func (f *BatchSvmScheme) assertSettlementAccounts(ctx context.Context, requireme
 		if err != nil || account == nil || account.Value == nil {
 			return fmt.Errorf("%s: missing %s ATA: %s", batchsettlement.ErrSettlementSimulation, item.label, ata)
 		}
-		if account.Value.Owner.String() != tokenProgram {
-			return fmt.Errorf("%s: %s ATA is not owned by %s: %s", batchsettlement.ErrSettlementSimulation, item.label, tokenProgram, ata)
+		var data []byte
+		if account.Value.Data != nil {
+			data = account.Value.Data.GetBinary()
+		}
+		if problem := paymentchannels.UnusableSettlementAccount(account.Value.Owner, data, item.owner, mint, program); problem != "" {
+			return fmt.Errorf("%s: %s ATA %s %s", batchsettlement.ErrSettlementSimulation, item.label, ata, problem)
+		}
+		if item.label == "payer" {
+			decoded, _ := paymentchannels.DecodeTokenAccount(data)
+			if decoded.Amount < deposit {
+				return fmt.Errorf("%s: payer ATA %s holds %d, less than the %d deposit", batchsettlement.ErrSettlementSimulation, ata, decoded.Amount, deposit)
+			}
 		}
 	}
 	return nil
@@ -1362,6 +1379,27 @@ func tokenBalance(balances []svm.FacilitatorTokenBalance, accountIndex int, requ
 		return paymentchannels.ParseU64(balance.UITokenAmount.Amount, "payout balance")
 	}
 	return 0, nil
+}
+
+type distributionExtra struct {
+	Channels []string `json:"channels"`
+}
+
+type storedDistribution struct {
+	x402.SettleResponse
+	Extra *distributionExtra `json:"extra,omitempty"`
+}
+
+func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
+	var stored storedDistribution
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil, err
+	}
+	response := stored.SettleResponse
+	if stored.Extra != nil {
+		response.Extra = map[string]any{"channels": stored.Extra.Channels}
+	}
+	return &response, nil
 }
 
 func channelIDs(prepared []PreparedDistribution) []string {
