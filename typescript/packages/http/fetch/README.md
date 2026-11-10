@@ -194,3 +194,7 @@ const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
 });
 ```
 
+### Response header limits
+
+In Node.js, response-header overflow errors include a diagnostic suggesting that an oversized `PAYMENT-REQUIRED` header may be responsible. The original transport error is retained as `error.cause`. Ask the server operator to reduce response headers, such as large Bazaar examples. The wrapper does not increase transport limits or retry overflow failures automatically.
+
