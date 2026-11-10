@@ -1107,8 +1107,6 @@ func bigOrZero(value string) *big.Int {
 	return new(big.Int)
 }
 
-// Helper functions
-
 func defaultMoneyConversion(amount string, network x402.Network, symbol string) (x402.AssetAmount, error) {
 	assetInfo, tokenAmount, err := evm.ConvertDefaultMoney(amount, string(network), symbol)
 	if err != nil {

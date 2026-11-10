@@ -138,7 +138,6 @@ export async function verifyUptoPermit2(
     };
   }
 
-  // Verify the facilitator address in the witness matches our own address
   const facilitatorAddresses = signer.getAddresses();
   const witnessFacilitator = getAddress(permit2Payload.permit2Authorization.witness.facilitator);
   const isFacilitatorMatch = facilitatorAddresses.some(
@@ -245,7 +244,6 @@ export async function verifyUptoPermit2(
     };
   }
 
-  // If simulation is disabled, return early
   if (options?.simulate === false) {
     return { isValid: true, invalidReason: undefined, payer };
   }
