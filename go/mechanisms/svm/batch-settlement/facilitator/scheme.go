@@ -103,6 +103,9 @@ type BatchSvmScheme struct {
 	// Config.FacilitatorTransactionVersion.
 	facilitatorTransactionVersion int
 
+	// mintOwners caches positive mint-owner checks made by resolveTerms.
+	mintOwners mintOwnerCache
+
 	mu                sync.Mutex
 	confirmationSlots map[string]uint64
 	hooks             schemeHooks
@@ -543,12 +546,16 @@ func (f *BatchSvmScheme) resolveTerms(ctx context.Context, config batchsettlemen
 	if err != nil {
 		return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
 	}
-	account, err := f.signer.GetAccountInfo(ctx, mint, requirements.Network, &rpc.GetAccountInfoOpts{
-		Encoding:   solana.EncodingBase64,
-		Commitment: paymentchannels.StateCommitment,
-	})
-	if err != nil || account == nil || account.Value == nil || account.Value.Owner.String() != tokenProgram.String() {
-		return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
+	mintKey := mintOwnerCacheKey(requirements.Network, mint, tokenProgram)
+	if !f.mintOwners.fresh(mintKey, f.now()) {
+		account, err := f.signer.GetAccountInfo(ctx, mint, requirements.Network, &rpc.GetAccountInfoOpts{
+			Encoding:   solana.EncodingBase64,
+			Commitment: paymentchannels.StateCommitment,
+		})
+		if err != nil || account == nil || account.Value == nil || account.Value.Owner.String() != tokenProgram.String() {
+			return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
+		}
+		f.mintOwners.remember(mintKey, f.now())
 	}
 	terms := BatchTerms{
 		FeePayer:           feePayer,

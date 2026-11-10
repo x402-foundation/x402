@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,6 +190,35 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		})
 	})
 
+	// settlementATA is the settlement token account of owner for the test mint.
+	settlementATA := func(t *testing.T, owner solana.PublicKey) solana.PublicKey {
+		t.Helper()
+		ata, err := paymentchannels.FindATA(owner, solana.MustPublicKeyFromBase58(mint), solana.TokenProgramID)
+		require.NoError(t, err)
+		return ata
+	}
+	settlementOwners := func() []solana.PublicKey {
+		return []solana.PublicKey{
+			payer.Address(),
+			solana.MustPublicKeyFromBase58(receiver),
+			paymentchannels.ResolveTreasuryOwner(solana.PublicKey{}, network),
+		}
+	}
+	// missingATAs serves every settlement ATA as healthy except the listed owners'.
+	missingATAs := func(t *testing.T, signer *lifecycleSigner, missing ...solana.PublicKey) {
+		t.Helper()
+		gone := map[solana.PublicKey]bool{}
+		for _, owner := range missing {
+			gone[settlementATA(t, owner)] = true
+		}
+		signer.accountFn = func(account solana.PublicKey) *rpc.GetAccountInfoResult {
+			if gone[account] {
+				return &rpc.GetAccountInfoResult{}
+			}
+			return &rpc.GetAccountInfoResult{Value: healthyTokenAccount(account, signer.ataMint, solana.TokenProgramID, signer.ataOwners...)}
+		}
+	}
+
 	for _, tc := range []struct {
 		label string
 		index int
@@ -199,22 +229,167 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 	} {
 		label, missingIndex := tc.label, tc.index
 		t.Run(fmt.Sprintf("identifies a missing %s settlement ATA", label), func(t *testing.T) {
-			var readIndex int
 			signer := newSigner(t)
-			signer.accountFn = func(account solana.PublicKey) *rpc.GetAccountInfoResult {
-				exists := readIndex != missingIndex
-				readIndex++
-				if !exists {
-					return &rpc.GetAccountInfoResult{}
-				}
-				return &rpc.GetAccountInfoResult{Value: healthyTokenAccount(account, signer.ataMint, solana.TokenProgramID, signer.ataOwners...)}
-			}
+			missingATAs(t, signer, settlementOwners()[missingIndex])
 			scheme := newScheme(t, signer, nil)
 			err := scheme.assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
 			require.ErrorContains(t, err, "missing "+label+" ATA")
-			require.Equal(t, missingIndex+1, len(signer.accountCalls()))
+			require.Len(t, signer.accountCalls(), 3, "the three ATAs are read concurrently")
 		})
 	}
+
+	t.Run("reports settlement ATA failures in payer, recipient, treasury order", func(t *testing.T) {
+		owners := settlementOwners()
+		for _, tc := range []struct {
+			missing []solana.PublicKey
+			want    string
+		}{
+			{owners, "missing payer ATA"},
+			{owners[1:], "missing recipient ATA"},
+			{owners[2:], "missing payment-channel treasury ATA"},
+		} {
+			signer := newSigner(t)
+			missingATAs(t, signer, tc.missing...)
+			// The earlier owners answer last, so a first-finished-wins join would report the wrong one.
+			inner := signer.accountFn
+			signer.accountFn = func(account solana.PublicKey) *rpc.GetAccountInfoResult {
+				for i, owner := range owners {
+					if account.Equals(settlementATA(t, owner)) {
+						time.Sleep(time.Duration(len(owners)-i) * 30 * time.Millisecond)
+					}
+				}
+				return inner(account)
+			}
+			err := newScheme(t, signer, nil).assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+			require.ErrorContains(t, err, tc.want)
+		}
+	})
+
+	t.Run("reads the settlement ATAs at the same time", func(t *testing.T) {
+		signer := &gatedAccountSigner{lifecycleSigner: newSigner(t), want: 3, all: make(chan struct{})}
+		err := newScheme(t, signer, nil).assertSettlementAccounts(ctx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+		require.NoError(t, err)
+		require.True(t, signer.released.Load(), "all three reads were in flight together")
+	})
+
+	t.Run("returns promptly when the context is cancelled mid-read", func(t *testing.T) {
+		for _, honorsContext := range []bool{true, false} {
+			stuck := &stuckAccountSigner{lifecycleSigner: newSigner(t), honorsContext: honorsContext, release: make(chan struct{})}
+			scheme := newScheme(t, stuck, nil)
+			cancelCtx, cancel := context.WithCancel(ctx)
+			errs := make(chan error, 1)
+			go func() {
+				errs <- scheme.assertSettlementAccounts(cancelCtx, requirements(), payer.Address().String(), svm.TokenProgramAddress, 1)
+			}()
+			require.Eventually(t, func() bool { return stuck.started.Load() == 3 }, 2*time.Second, 5*time.Millisecond)
+			cancel()
+			select {
+			case err := <-errs:
+				require.ErrorContains(t, err, batchsettlement.ErrSettlementSimulation)
+			case <-time.After(2 * time.Second):
+				t.Fatalf("assertSettlementAccounts did not return after cancel (honorsContext=%v)", honorsContext)
+			}
+			close(stuck.release)
+		}
+	})
+
+	t.Run("overlaps the settlement ATA reads with the channel read", func(t *testing.T) {
+		signer := newSigner(t)
+		scheme := newScheme(t, signer, nil)
+		var overlapped bool
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			// One mint read from resolveTerms plus the three settlement ATAs.
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if len(signer.accountCalls()) >= 4 {
+					overlapped = true
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			return nil, nil
+		}
+		req := requirements()
+		result, err := scheme.Verify(ctx, payment(actualDeposit, req), req, nil)
+		require.NoError(t, err)
+		require.True(t, overlapped, "settlement ATA reads must start before the channel read returns")
+		require.True(t, result.IsValid, "message=%s", result.InvalidMessage)
+	})
+
+	t.Run("does not read settlement accounts for a request rejected locally", func(t *testing.T) {
+		signer := newSigner(t)
+		scheme := newScheme(t, signer, nil)
+		req := requirements()
+		bad := payment(actualDeposit, req)
+		delete(bad.Payload, "voucher")
+		result, err := scheme.Verify(ctx, bad, req, nil)
+		require.NoError(t, err)
+		require.False(t, result.IsValid)
+		for _, call := range signer.accountCalls() {
+			for _, owner := range settlementOwners() {
+				require.False(t, call.account.Equals(settlementATA(t, owner)), "no ATA read before local checks pass")
+			}
+		}
+	})
+
+	t.Run("caches only a positive mint owner match", func(t *testing.T) {
+		mintKey := solana.MustPublicKeyFromBase58(mint)
+		mintReads := func(signer *lifecycleSigner) int {
+			count := 0
+			for _, call := range signer.accountCalls() {
+				if call.account.Equals(mintKey) {
+					count++
+				}
+			}
+			return count
+		}
+		resolve := func(scheme *BatchSvmScheme) error {
+			_, err := scheme.resolveTerms(ctx, channelConfig, requirements(), VoucherModeRequirements)
+			return err
+		}
+
+		signer := newSigner(t)
+		scheme := newScheme(t, signer, nil)
+		now := int64(1_000)
+		scheme.now = func() int64 { return now }
+
+		require.NoError(t, resolve(scheme))
+		require.NoError(t, resolve(scheme))
+		require.Equal(t, 1, mintReads(signer), "warm path makes no mint read")
+
+		now += mintOwnerTTLSeconds - 1
+		require.NoError(t, resolve(scheme))
+		require.Equal(t, 1, mintReads(signer), "still cached just inside the TTL")
+
+		now += 1
+		require.NoError(t, resolve(scheme))
+		require.Equal(t, 2, mintReads(signer), "an expired entry is re-read")
+
+		// A different token program hint is a different cache key.
+		token2022 := requirements(func(r *types.PaymentRequirements) {
+			r.Extra = map[string]any{
+				batchsettlement.ExtraFeePayer:           feePayerKey.PublicKey().String(),
+				batchsettlement.ExtraReceiverAuthorizer: receiverAuthorizerAddr,
+				batchsettlement.ExtraTokenProgram:       solana.Token2022ProgramID.String(),
+				batchsettlement.ExtraWithdrawDelay:      900,
+			}
+		})
+		_, err := scheme.resolveTerms(ctx, channelConfig, token2022, VoucherModeRequirements)
+		require.ErrorContains(t, err, batchsettlement.ErrTokenProgram)
+		_, err = scheme.resolveTerms(ctx, channelConfig, token2022, VoucherModeRequirements)
+		require.ErrorContains(t, err, batchsettlement.ErrTokenProgram)
+		require.Equal(t, 4, mintReads(signer), "a mismatch is never cached")
+
+		failing := newSigner(t)
+		failing.exist = false
+		failScheme := newScheme(t, failing, nil)
+		require.ErrorContains(t, resolve(failScheme), batchsettlement.ErrTokenProgram)
+		require.ErrorContains(t, resolve(failScheme), batchsettlement.ErrTokenProgram)
+		require.Equal(t, 2, mintReads(failing), "a failed read is never cached")
+		failing.exist = true
+		require.NoError(t, resolve(failScheme))
+		require.Equal(t, 3, mintReads(failing))
+	})
 
 	t.Run("identifies a settlement ATA owned by the wrong token program", func(t *testing.T) {
 		signer := newSigner(t, func(s *lifecycleSigner) {
@@ -233,19 +408,15 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 	})
 
 	t.Run("rejects a deposit during verify when its settlement path is unavailable", func(t *testing.T) {
-		var ataReads int
 		signer := newSigner(t)
+		missingATAs(t, signer, settlementOwners()[1])
+		ataFn := signer.accountFn
 		mintKey := solana.MustPublicKeyFromBase58(mint)
 		signer.accountFn = func(account solana.PublicKey) *rpc.GetAccountInfoResult {
 			if account.Equals(mintKey) {
 				return &rpc.GetAccountInfoResult{Value: &rpc.Account{Owner: solana.TokenProgramID}}
 			}
-			// Settlement ATA preflight: first present, second missing (same as the TS mock sequence).
-			ataReads++
-			if ataReads == 1 {
-				return &rpc.GetAccountInfoResult{Value: &rpc.Account{Owner: solana.TokenProgramID}}
-			}
-			return &rpc.GetAccountInfoResult{}
+			return ataFn(account)
 		}
 		scheme := newScheme(t, signer, nil)
 		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
@@ -1886,6 +2057,57 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		_, err = CalculateDistributionAmount([]struct{ PayoutWatermark, Settled uint64 }{{PayoutWatermark: 2, Settled: 1}})
 		require.ErrorContains(t, err, "payout watermark exceeds")
 	})
+}
+
+// gatedAccountSigner holds each settlement ATA read until `want` of them are in
+// flight, so the reads only finish if they were issued concurrently.
+type gatedAccountSigner struct {
+	*lifecycleSigner
+	want     int32
+	arrived  atomic.Int32
+	released atomic.Bool
+	all      chan struct{}
+	once     sync.Once
+}
+
+func (s *gatedAccountSigner) GetAccountInfo(ctx context.Context, account solana.PublicKey, network string, opts *rpc.GetAccountInfoOpts) (*rpc.GetAccountInfoResult, error) {
+	if healthyTokenAccount(account, s.ataMint, s.owner, s.ataOwners...) != nil {
+		if s.arrived.Add(1) == s.want {
+			s.released.Store(true)
+			s.once.Do(func() { close(s.all) })
+		}
+		select {
+		case <-s.all:
+		case <-time.After(2 * time.Second):
+			return nil, errors.New("settlement ATA reads were not concurrent")
+		}
+	}
+	return s.lifecycleSigner.GetAccountInfo(ctx, account, network, opts)
+}
+
+// stuckAccountSigner never answers settlement ATA reads until released.
+type stuckAccountSigner struct {
+	*lifecycleSigner
+	honorsContext bool
+	release       chan struct{}
+	started       atomic.Int32
+}
+
+func (s *stuckAccountSigner) GetAccountInfo(ctx context.Context, account solana.PublicKey, network string, opts *rpc.GetAccountInfoOpts) (*rpc.GetAccountInfoResult, error) {
+	if healthyTokenAccount(account, s.ataMint, s.owner, s.ataOwners...) == nil {
+		return s.lifecycleSigner.GetAccountInfo(ctx, account, network, opts)
+	}
+	s.started.Add(1)
+	if s.honorsContext {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.release:
+		}
+	} else {
+		<-s.release
+	}
+	return nil, errors.New("released")
 }
 
 type lifecycleSigner struct {
