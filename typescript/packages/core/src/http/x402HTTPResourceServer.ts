@@ -30,6 +30,80 @@ export const SETTLEMENT_OVERRIDES_HEADER = "Settlement-Overrides";
 
 export const PAYMENT_REQUIRED_CACHE_CONTROL = "no-store";
 
+export const ACCESS_CONTROL_EXPOSE_HEADERS = "Access-Control-Expose-Headers";
+
+const PAYMENT_PROTOCOL_EXPOSE_HEADERS = ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"] as const;
+
+/**
+ * Names PAYMENT-REQUIRED and PAYMENT-RESPONSE on Access-Control-Expose-Headers.
+ * Browsers hide non-safelisted response headers from cross-origin fetch unless
+ * they are listed here. An existing expose list is merged, not replaced.
+ *
+ * @param headers - Header map that already carries a payment protocol header
+ * @param existingExposeHeaders - Expose list already on the response, if any
+ * @returns Header map with both payment header names exposed exactly once
+ */
+export function withPaymentCorsExposeHeaders(
+  headers: Record<string, string>,
+  existingExposeHeaders?: string | null,
+): Record<string, string> {
+  const exposeKey =
+    Object.keys(headers).find(
+      key => key.toLowerCase() === ACCESS_CONTROL_EXPOSE_HEADERS.toLowerCase(),
+    ) ?? ACCESS_CONTROL_EXPOSE_HEADERS;
+  const names: string[] = [];
+  const seen = new Set<string>();
+  // Existing names stay first so the app's expose list is unchanged. Payment
+  // protocol names are appended only when missing, matching the Python/Go
+  // helpers.
+  const append = (source: string | undefined | null) => {
+    for (const name of (source ?? "").split(",")) {
+      const trimmed = name.trim();
+      if (!trimmed || seen.has(trimmed.toLowerCase())) {
+        continue;
+      }
+      names.push(trimmed);
+      seen.add(trimmed.toLowerCase());
+    }
+  };
+  append(existingExposeHeaders);
+  append(headers[exposeKey]);
+  append(PAYMENT_PROTOCOL_EXPOSE_HEADERS.join(", "));
+
+  return {
+    ...headers,
+    [exposeKey]: names.join(", "),
+  };
+}
+
+/**
+ * Copy payment response headers onto a framework response.
+ * Access-Control-Expose-Headers is merged with any value already set so an
+ * app CORS list is not replaced by setHeader.
+ *
+ * @param headers - Headers produced by the x402 HTTP resource server
+ * @param getHeader - Read a header already on the response
+ * @param setHeader - Write a header on the response
+ */
+export function applyPaymentResponseHeaders(
+  headers: Record<string, string>,
+  getHeader: (name: string) => string | number | string[] | undefined | null,
+  setHeader: (name: string, value: string) => void,
+): void {
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== ACCESS_CONTROL_EXPOSE_HEADERS.toLowerCase()) {
+      setHeader(key, value);
+      continue;
+    }
+    const existing = getHeader(key) ?? getHeader(ACCESS_CONTROL_EXPOSE_HEADERS);
+    const merged = withPaymentCorsExposeHeaders(
+      { [ACCESS_CONTROL_EXPOSE_HEADERS]: value },
+      existing == null ? null : String(existing),
+    );
+    setHeader(ACCESS_CONTROL_EXPOSE_HEADERS, merged[ACCESS_CONTROL_EXPOSE_HEADERS]);
+  }
+}
+
 /**
  * Appends the `private` directive to an existing Cache-Control header value.
  * Shared caches must not store responses with user-specific settlement metadata.
@@ -944,11 +1018,15 @@ export class x402HTTPResourceServer {
    * Create settlement response headers
    *
    * @param settleResponse - Settlement response
+   * @param existingExposeHeaders - Existing Access-Control-Expose-Headers value, if any
    * @returns Headers to add to response
    */
-  createSettlementHeaders(settleResponse: SettleResponse): Record<string, string> {
+  createSettlementHeaders(
+    settleResponse: SettleResponse,
+    existingExposeHeaders?: string | null,
+  ): Record<string, string> {
     const encoded = encodePaymentResponseHeader(settleResponse);
-    return { "PAYMENT-RESPONSE": encoded };
+    return withPaymentCorsExposeHeaders({ "PAYMENT-RESPONSE": encoded }, existingExposeHeaders);
   }
 
   /**
@@ -1396,10 +1474,10 @@ export class x402HTTPResourceServer {
     headers: Record<string, string>;
   } {
     return {
-      headers: {
+      headers: withPaymentCorsExposeHeaders({
         "PAYMENT-REQUIRED": encodePaymentRequiredHeader(paymentRequired),
         "Cache-Control": PAYMENT_REQUIRED_CACHE_CONTROL,
-      },
+      }),
     };
   }
 
