@@ -1506,4 +1506,38 @@ describe("paymentMiddleware()", () => {
       );
     });
   });
+
+  describe("a paid HEAD cannot settle unless the route declares HEAD", () => {
+    const paidHead = async (verb: string) => {
+      (mockContext.req as { method: string }).method = "HEAD";
+      (mockContext.req.header as ReturnType<typeof vi.fn>).mockImplementation((name: string) =>
+        name === "X-PAYMENT" ? encodedValidPayment : undefined,
+      );
+      (findMatchingRoute as ReturnType<typeof vi.fn>).mockReturnValue({
+        pattern: /^\/weather$/,
+        verb,
+        config: { price: "$0.001", network: "base-sepolia", config: middlewareConfig },
+      });
+      await middleware(mockContext, mockNext);
+    };
+
+    it.each(["GET", "*"])("refuses a paid HEAD that matched a %s route", async verb => {
+      await paidHead(verb);
+
+      expect(mockContext.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringMatching(/HEAD/) }),
+        402,
+      );
+      expect(exact.evm.decodePayment).not.toHaveBeenCalled();
+      expect(mockVerify).not.toHaveBeenCalled();
+      expect(mockSettle).not.toHaveBeenCalled();
+      expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it("lets a paid HEAD on a route declared as HEAD proceed, as before", async () => {
+      await paidHead("HEAD");
+
+      expect(exact.evm.decodePayment).toHaveBeenCalledWith(encodedValidPayment);
+    });
+  });
 });
