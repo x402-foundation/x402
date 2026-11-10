@@ -69,6 +69,8 @@ export {
   getFacilitatorResponseError,
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "../http/backgroundInit";
+export { prepareHttpServer } from "../http/prepareHttpServer";
+export type { PreparedHttpServer } from "../http/prepareHttpServer";
 
 export {
   x402HTTPResourceServer,
