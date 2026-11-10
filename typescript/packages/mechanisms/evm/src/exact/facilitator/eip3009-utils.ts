@@ -8,7 +8,6 @@ import {
   parseEventLogs,
   parseSignature,
   type Log,
-  type Signature,
 } from "viem";
 import { eip3009ABI } from "../../constants";
 import { multicall, ContractCall, RawContractCall } from "../../multicall";
@@ -41,18 +40,6 @@ export interface Eip6492Deployment {
 export interface SimulateEip3009Result {
   ok: boolean;
   error?: unknown;
-}
-
-/**
- * Returns the ECDSA recovery byte in the 27/28 form expected by `ecrecover`-based
- * `transferWithAuthorization(..., v, r, s)` implementations such as USDC.
- * Some signers encode it as the raw y-parity (0/1), which those contracts reject.
- *
- * @param parsedSig - Signature parsed with viem's `parseSignature`
- * @returns The recovery byte as 27 or 28
- */
-function ecdsaRecoveryByte(parsedSig: Signature): number {
-  return parsedSig.v !== undefined ? Number(parsedSig.v) : (parsedSig.yParity ?? 0) + 27;
 }
 
 /**
@@ -138,7 +125,12 @@ export async function simulateEip3009TransferResult(
         address: erc20Address,
         abi: eip3009ABI,
         functionName: "transferWithAuthorization",
-        args: [...transferArgs, ecdsaRecoveryByte(parsedSig), parsedSig.r, parsedSig.s],
+        args: [
+          ...transferArgs,
+          parsedSig.v !== undefined ? Number(parsedSig.v) : parsedSig.yParity + 27,
+          parsedSig.r,
+          parsedSig.s,
+        ],
       });
     } else {
       await signer.readContract({
@@ -337,7 +329,11 @@ export async function executeTransferWithAuthorization(
   let signatureArgs: readonly unknown[];
   if (isECDSA) {
     const parsedSig = parseSignature(signature);
-    signatureArgs = [ecdsaRecoveryByte(parsedSig), parsedSig.r, parsedSig.s];
+    signatureArgs = [
+      parsedSig.v !== undefined ? Number(parsedSig.v) : parsedSig.yParity + 27,
+      parsedSig.r,
+      parsedSig.s,
+    ];
   } else {
     signatureArgs = [signature];
   }
