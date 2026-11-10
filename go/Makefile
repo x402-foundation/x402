@@ -4,7 +4,7 @@
 GOPATH := $(shell go env GOPATH)
 GOBIN := $(GOPATH)/bin
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
-GOLANGCI_LINT_VERSION := v2.7.2
+GOLANGCI_LINT_VERSION := v2.15.0
 MOCKGEN := $(GOBIN)/mockgen
 GOIMPORTS := $(GOBIN)/goimports
 CHANGIE := $(GOBIN)/changie

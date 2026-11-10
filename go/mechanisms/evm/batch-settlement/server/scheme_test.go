@@ -44,6 +44,10 @@ func TestNewBatchSettlementEvmScheme_NilConfigDefaults(t *testing.T) {
 	if s.GetEnforceMinDeposit() {
 		t.Fatal("enforceMinDeposit should default to false")
 	}
+	lock, ok := s.GetStorage().(ChannelLockStorage)
+	if !ok || s.GetLockStorage() != lock {
+		t.Fatal("expected default lock store to be the in-memory storage")
+	}
 	if s.Scheme() != batchsettlement.SchemeBatched {
 		t.Fatalf("scheme = %s", s.Scheme())
 	}
@@ -66,6 +70,35 @@ func TestNewBatchSettlementEvmScheme_OverridesApplied(t *testing.T) {
 	if s.GetStorage() != storage {
 		t.Fatalf("expected provided storage")
 	}
+	if s.GetLockStorage() != storage {
+		t.Fatal("expected lock store inferred from storage")
+	}
+}
+
+func TestNewBatchSettlementEvmScheme_SeparateLockStoreWhenStorageHasNoLockMethods(t *testing.T) {
+	inner := NewInMemoryChannelStorage()
+	storage := storageOnly{inner: inner}
+	s := NewBatchSettlementEvmScheme("0xreceiver", &BatchSettlementEvmSchemeServerConfig{Storage: storage})
+	if s.GetStorage() != storage {
+		t.Fatal("expected wrapped storage")
+	}
+	if _, ok := s.GetLockStorage().(*InMemoryChannelStorage); !ok {
+		t.Fatalf("expected a separate in-memory lock store, got %T", s.GetLockStorage())
+	}
+}
+
+type storageOnly struct {
+	inner SessionStorage
+}
+
+func (s storageOnly) Get(ctx context.Context, channelId string) (*ChannelSession, error) {
+	return s.inner.Get(ctx, channelId)
+}
+func (s storageOnly) List(ctx context.Context) ([]*ChannelSession, error) {
+	return s.inner.List(ctx)
+}
+func (s storageOnly) UpdateChannel(ctx context.Context, channelId string, update func(current *ChannelSession) *ChannelSession) (*ChannelUpdateResult, error) {
+	return s.inner.UpdateChannel(ctx, channelId, update)
 }
 
 func TestNewBatchSettlementEvmScheme_EnforceMinDepositEnabled(t *testing.T) {
@@ -491,7 +524,7 @@ func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	upper := "0x" + strings.ToUpper(strings.TrimPrefix(testChA, "0x"))
 	in := sampleSession(upper, "10")
-	if err := s.UpdateSession(upper, in); err != nil {
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return in.Clone() }); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err := s.GetSession(testChA)
@@ -501,7 +534,7 @@ func TestSession_RoundTrip_CaseInsensitive(t *testing.T) {
 	if got == nil || got.ChannelId != upper {
 		t.Fatalf("got %+v", got)
 	}
-	if err := s.DeleteSession(upper); err != nil {
+	if _, err := s.GetStorage().UpdateChannel(context.Background(), upper, func(*ChannelSession) *ChannelSession { return nil }); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if got2, _ := s.GetSession(testChA); got2 != nil {
@@ -689,7 +722,7 @@ func TestEnrichPaymentRequiredResponse_FallsBackToStorage(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id := testChannelId(t)
 	pp := makeBatchedPayload(id)
-	_ = s.UpdateSession(id, sampleSession(id, "77"))
+	seedSession(t, s, id, sampleSession(id, "77"))
 
 	reqs := enrich(s, pp, batchsettlement.ErrCumulativeAmountMismatch,
 		[]types.PaymentRequirements{{Scheme: batchsettlement.SchemeBatched, Network: "eip155:8453"}})

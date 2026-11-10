@@ -127,6 +127,14 @@ type PaymentResponseResult struct {
 	Recovered bool
 }
 
+// PaymentCreationFailureHandler is an optional interface that SchemeNetworkClient
+// implementations satisfy to recover from a failed payload build. The client
+// invokes it after user-registered creation-failure hooks. The first recovered
+// payload wins.
+type PaymentCreationFailureHandler interface {
+	OnPaymentCreationFailure(ctx context.Context, failure PaymentCreationFailureContext) (*PaymentCreationFailureHookResult, error)
+}
+
 // PaymentResponseHandler is an optional interface that SchemeNetworkClient
 // implementations satisfy to reconcile local state after a paid response.
 // HTTP (PaymentRoundTripper) and MCP (X402MCPClient) invoke this hook
@@ -251,6 +259,10 @@ type AssetDecimalsProvider interface {
 // verified payment is canceled (handler failure/throw or post-verify abort).
 // Core calls SettlePayment with the returned requirements and SettlePhaseCancel.
 // Return nil, nil to skip cancel settle.
+//
+// ctx.SettledPhases lists the settle phases already completed for this payment
+// and may be empty. Only return requirements when cancel settle is appropriate
+// for the completed phases.
 type SettleOnCancelProvider interface {
 	SettleOnCancel(ctx VerifiedPaymentCanceledContext) (*types.PaymentRequirements, error)
 }

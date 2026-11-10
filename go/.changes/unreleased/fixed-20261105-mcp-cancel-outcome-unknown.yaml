@@ -1,0 +1,3 @@
+kind: fixed
+body: 'MCP: report "Payment cancellation outcome unknown" when cancellation does not produce a receipt, and do not offer another payment.'
+time: 2026-11-05T08:10:00Z

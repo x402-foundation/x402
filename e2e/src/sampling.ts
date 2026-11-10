@@ -1,4 +1,10 @@
-import { TestScenario, endpointAssetTransferMethod, endpointPaymentScheme } from './types';
+import {
+  TestScenario,
+  endpointAssetTransferMethod,
+  endpointAuthCaptureCoverageBranch,
+  endpointPathForCoverageMinimization,
+  endpointPaymentScheme,
+} from './types';
 import { log, verboseLog } from './logger';
 
 /**
@@ -38,6 +44,8 @@ export class CoverageTracker {
   private serversCovered = new Set<string>();
   private facilitatorsCovered = new Set<string>();
   private endpointsCovered = new Set<string>();
+  /** Each auth-capture catalog branch (self-sync, deferred, etc.) at least once per --min run. */
+  private authCaptureBranchesCovered = new Set<string>();
 
   /**
    * Generate a coverage key for a component
@@ -74,6 +82,10 @@ export class CoverageTracker {
       protocolFamily === 'evm'
         ? `${scheme}-${endpointAssetTransferMethod(scenario.endpoint) ?? 'eip3009'}`
         : scheme;
+    // One auth-capture permit2 scenario is enough to exercise the route across servers.
+    if (scheme === 'auth-capture' && endpointAssetTransferMethod(scenario.endpoint) === 'permit2') {
+      return `global-${endpointPath}-${protocolFamily}-${method}-v${version}`;
+    }
     return `${serverName}-${endpointPath}-${protocolFamily}-${method}-v${version}`;
   }
 
@@ -110,7 +122,7 @@ export class CoverageTracker {
     );
     const endpointKey = this.getEndpointCoverageKey(
       scenario.server.name,
-      scenario.endpoint.path,
+      endpointPathForCoverageMinimization(scenario.endpoint),
       protocolFamily,
       version,
       scenario,
@@ -122,10 +134,20 @@ export class CoverageTracker {
     const facilitatorNew = !this.facilitatorsCovered.has(facilitatorKey);
     const endpointNew = !this.endpointsCovered.has(endpointKey);
 
-    const isNew = clientNew || serverNew || facilitatorNew || endpointNew;
+    const authCaptureBranch = endpointPaymentScheme(scenario.endpoint) === 'auth-capture'
+      ? endpointAuthCaptureCoverageBranch(scenario.endpoint)
+      : undefined;
+    const branchNew =
+      authCaptureBranch !== undefined &&
+      authCaptureBranch !== 'other' &&
+      !this.authCaptureBranchesCovered.has(authCaptureBranch);
+
+    const isNew = clientNew || serverNew || facilitatorNew || endpointNew || branchNew;
 
     if (isNew) {
-      verboseLog(`  📊 New coverage: ${clientNew ? `client(${clientKey})` : ''} ${serverNew ? `server(${serverKey})` : ''} ${facilitatorNew ? `facilitator(${facilitatorKey})` : ''} ${endpointNew ? `endpoint(${endpointKey})` : ''}`);
+      verboseLog(
+        `  📊 New coverage: ${clientNew ? `client(${clientKey})` : ''} ${serverNew ? `server(${serverKey})` : ''} ${facilitatorNew ? `facilitator(${facilitatorKey})` : ''} ${endpointNew ? `endpoint(${endpointKey})` : ''} ${branchNew ? `authCaptureBranch(${authCaptureBranch})` : ''}`,
+      );
     }
 
     return isNew;
@@ -158,7 +180,7 @@ export class CoverageTracker {
     );
     const endpointKey = this.getEndpointCoverageKey(
       scenario.server.name,
-      scenario.endpoint.path,
+      endpointPathForCoverageMinimization(scenario.endpoint),
       protocolFamily,
       version,
       scenario,
@@ -168,6 +190,13 @@ export class CoverageTracker {
     this.serversCovered.add(serverKey);
     this.facilitatorsCovered.add(facilitatorKey);
     this.endpointsCovered.add(endpointKey);
+
+    const authCaptureBranch = endpointPaymentScheme(scenario.endpoint) === 'auth-capture'
+      ? endpointAuthCaptureCoverageBranch(scenario.endpoint)
+      : undefined;
+    if (authCaptureBranch !== undefined && authCaptureBranch !== 'other') {
+      this.authCaptureBranchesCovered.add(authCaptureBranch);
+    }
   }
 
   /**
@@ -176,12 +205,19 @@ export class CoverageTracker {
    * Returns:
    *   Object containing coverage counts for each component type
    */
-  getStats(): { clients: number; servers: number; facilitators: number; endpoints: number } {
+  getStats(): {
+    clients: number;
+    servers: number;
+    facilitators: number;
+    endpoints: number;
+    authCaptureBranches: number;
+  } {
     return {
       clients: this.clientsCovered.size,
       servers: this.serversCovered.size,
       facilitators: this.facilitatorsCovered.size,
       endpoints: this.endpointsCovered.size,
+      authCaptureBranches: this.authCaptureBranchesCovered.size,
     };
   }
 }
@@ -193,6 +229,11 @@ export class CoverageTracker {
  * implementations (e.g. go / python / typescript facilitators, or
  * express / flask / gin servers) are distributed evenly rather than the
  * first alphabetical entry always being chosen for every coverage slot.
+ *
+ * Auth-capture EIP-3009 catalog paths share one endpoint slot per server
+ * (`auth-capture~eip3009`), but each {@link endpointAuthCaptureCoverageBranch}
+ * must run at least once. Permit2 uses a single global endpoint slot across
+ * servers (`auth-capture~permit2`).
  *
  * Pass a numeric `seed` for a reproducible shuffle; omit it (default) for a
  * fresh random distribution on every run.
@@ -239,6 +280,9 @@ export function minimizeScenarios(scenarios: TestScenario[], seed?: number): Tes
   log(`  • Servers: ${stats.servers} unique combinations`);
   log(`  • Facilitators: ${stats.facilitators} unique combinations`);
   log(`  • Endpoints: ${stats.endpoints} unique combinations`);
+  if (stats.authCaptureBranches > 0) {
+    log(`  • Auth-capture branches: ${stats.authCaptureBranches}`);
+  }
   log('');
 
   return minimized;

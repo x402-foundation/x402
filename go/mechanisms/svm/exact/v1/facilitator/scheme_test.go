@@ -31,7 +31,7 @@ func (m *mockV1Signer) SignTransaction(_ context.Context, _ *solana.Transaction,
 	m.signCalls++
 	return nil
 }
-func (m *mockV1Signer) SimulateTransaction(_ context.Context, _ *solana.Transaction, _ string) error {
+func (m *mockV1Signer) SimulateTransaction(_ context.Context, _ *solana.Transaction, _ string, _ *svm.FacilitatorSimulateTransactionOptions) error {
 	m.simulateCalls++
 	return nil
 }

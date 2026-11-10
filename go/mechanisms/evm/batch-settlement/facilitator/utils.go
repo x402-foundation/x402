@@ -131,6 +131,22 @@ func ReadChannelState(
 	return state, nil
 }
 
+// parseRequirementsAmount parses the server-supplied requirements.Amount as a non-negative
+// base-10 integer. The amount comes from the resource server, so the facilitator must not trust
+// it: signs, whitespace, and other non-digit forms are rejected (a negative value would lower
+// the minimum-advance floor).
+func parseRequirementsAmount(amount string) (*big.Int, bool) {
+	if amount == "" {
+		return nil, false
+	}
+	for i := 0; i < len(amount); i++ {
+		if amount[i] < '0' || amount[i] > '9' {
+			return nil, false
+		}
+	}
+	return new(big.Int).SetString(amount, 10)
+}
+
 // ValidateChannelConfig validates a ChannelConfig against payment requirements.
 func ValidateChannelConfig(
 	config batchsettlement.ChannelConfig,

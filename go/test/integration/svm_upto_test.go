@@ -19,6 +19,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto"
 	uptosvmclient "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
 	uptosvmfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
@@ -269,8 +270,8 @@ func (s *uptoSvmStack) assertEscrowedChannel(
 	}
 
 	channel := fetchChannel(t, ctx, payload)
-	if channel.Status != paymentchannels.StatusOpen {
-		t.Errorf("Expected an open channel, got %s", channel.Status)
+	if generated.ChannelStatus(channel.Status) != generated.ChannelStatus_Open {
+		t.Errorf("Expected an open channel, got %s", paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 	}
 	if channel.Deposit != authorized {
 		t.Errorf("Expected %d escrowed, got %d", authorized, channel.Deposit)
@@ -308,7 +309,7 @@ func (s *uptoSvmStack) assertEscrowedChannel(
 }
 
 // fetchChannel reads the live onchain channel account behind a payload.
-func fetchChannel(t *testing.T, ctx context.Context, payload types.PaymentPayload) *paymentchannels.Channel {
+func fetchChannel(t *testing.T, ctx context.Context, payload types.PaymentPayload) *generated.Channel {
 	t.Helper()
 
 	decoded, err := svm.UptoPayloadFromMap(payload.Payload)
@@ -463,8 +464,8 @@ func TestSVMIntegrationV2Upto(t *testing.T) {
 		if settle.Payer != stack.payer.String() {
 			t.Errorf("Expected payer %s, got %s", stack.payer, settle.Payer)
 		}
-		if channel := fetchChannel(t, ctx, payload); channel.Status != paymentchannels.StatusDistributed {
-			t.Errorf("Expected a distributed channel, got %s", channel.Status)
+		if channel := fetchChannel(t, ctx, payload); generated.ChannelStatus(channel.Status) != generated.ChannelStatus_Distributed {
+			t.Errorf("Expected a distributed channel, got %s", paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 		}
 		charged, err := strconv.ParseUint(requirements.Amount, 10, 64)
 		if err != nil {
@@ -499,8 +500,8 @@ func TestSVMIntegrationV2Upto(t *testing.T) {
 		if settle.Transaction == "" {
 			t.Error("Expected the distribute signature for a metered settlement")
 		}
-		if channel := fetchChannel(t, ctx, payload); channel.Status != paymentchannels.StatusDistributed {
-			t.Errorf("Expected a distributed channel, got %s", channel.Status)
+		if channel := fetchChannel(t, ctx, payload); generated.ChannelStatus(channel.Status) != generated.ChannelStatus_Distributed {
+			t.Errorf("Expected a distributed channel, got %s", paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 		}
 		// The unmetered half must come back to the payer, not stay escrowed.
 		stack.assertSettled(t, ctx, requirements, before, maxAmount/2)
@@ -529,8 +530,8 @@ func TestSVMIntegrationV2Upto(t *testing.T) {
 		if settle.Transaction == "" {
 			t.Error("Expected a distribute signature for a zero settlement")
 		}
-		if channel := fetchChannel(t, ctx, payload); channel.Status != paymentchannels.StatusDistributed {
-			t.Errorf("Expected a distributed channel, got %s", channel.Status)
+		if channel := fetchChannel(t, ctx, payload); generated.ChannelStatus(channel.Status) != generated.ChannelStatus_Distributed {
+			t.Errorf("Expected a distributed channel, got %s", paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 		}
 		stack.assertSettled(t, ctx, requirements, before, 0)
 	})
@@ -545,7 +546,7 @@ func TestSVMIntegrationV2Upto(t *testing.T) {
 			t.Fatalf("Failed to settle payment: %v", err)
 		}
 
-		records, err := stack.facilitator.ChannelStorage().List(ctx)
+		records, err := stack.facilitator.ChannelStorage().List(ctx, string(svm.SolanaDevnetCAIP2))
 		if err != nil {
 			t.Fatalf("Failed to list stored channels: %v", err)
 		}
@@ -568,7 +569,7 @@ func TestSVMIntegrationV2Upto(t *testing.T) {
 			t.Fatalf("Rent cleanup failed: %v", err)
 		}
 
-		after, err := stack.facilitator.ChannelStorage().List(ctx)
+		after, err := stack.facilitator.ChannelStorage().List(ctx, string(svm.SolanaDevnetCAIP2))
 		if err != nil {
 			t.Fatalf("Failed to list stored channels: %v", err)
 		}
@@ -624,7 +625,7 @@ func newUptoSvmStackWithForcedPendingSigner(t *testing.T, ctx context.Context) (
 	if err != nil {
 		t.Fatalf("Failed to create facilitator signer: %v", err)
 	}
-	facilitatorSigner := &forcedPendingConfirmSigner{FacilitatorSvmSigner: realFacilitatorSigner}
+	facilitatorSigner := &forcedPendingConfirmSigner{PaymentChannelFacilitatorSigner: realFacilitatorSigner}
 	uptoFacilitator := uptosvmfacilitator.NewUptoSvmScheme(facilitatorSigner, nil)
 	facilitator := x402.Newx402Facilitator()
 	facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, uptoFacilitator)
@@ -809,8 +810,8 @@ func TestSVMIntegrationV2Upto_ClaimSettlementPendingReconciliation(t *testing.T)
 		t.Fatalf("Reconciliation must reuse the already-broadcast distribute transaction (channel can only be distributed once): first=%s second=%s",
 			firstSignature, settleResponse.Transaction)
 	}
-	if channel := fetchChannel(t, ctx, payload); channel.Status != paymentchannels.StatusDistributed {
-		t.Errorf("Expected a distributed channel, got %s", channel.Status)
+	if channel := fetchChannel(t, ctx, payload); generated.ChannelStatus(channel.Status) != generated.ChannelStatus_Distributed {
+		t.Errorf("Expected a distributed channel, got %s", paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 	}
 	charged, err := strconv.ParseUint(requirements.Amount, 10, 64)
 	if err != nil {

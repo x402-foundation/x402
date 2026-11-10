@@ -5,11 +5,9 @@ package upto
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/rpc"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -22,21 +20,22 @@ const (
 	// StateCommitment reads account state the caller must act on. Opens are
 	// confirmed at this level, and the RPC default (`finalized`) lags a fresh
 	// open by seconds, reporting a live channel as missing.
-	StateCommitment = rpc.CommitmentConfirmed
+	StateCommitment = paymentchannels.StateCommitment
 
 	// SlotCommitment reads the slot used as an `openSlot` anchor. Clients pin
 	// `openSlot` at this level to keep `openSlot <= clock.slot` when the open
 	// lands, so verify and the reclaim gate must judge it in the same frame.
-	SlotCommitment = rpc.CommitmentFinalized
+	SlotCommitment = paymentchannels.SlotCommitment
 
 	// BlockhashCommitment reads transaction-lifetime blockhashes. A finalized
 	// hash cannot be dropped by a fork before the transaction lands.
-	BlockhashCommitment = rpc.CommitmentFinalized
+	BlockhashCommitment = paymentchannels.BlockhashCommitment
 )
 
 // Extra field names carried in PaymentRequirements.Extra for SVM `upto`.
 const (
 	ExtraFeePayer             = "feePayer"
+	ExtraTransactionVersions  = svm.ExtraTransactionVersions
 	ExtraReceiverAuthorizer   = "receiverAuthorizer"
 	ExtraWithdrawDelay        = "withdrawDelay"
 	ExtraTokenProgram         = "tokenProgram"
@@ -91,19 +90,6 @@ func ResolvePaymentChannelConfig(requirements types.PaymentRequirements) (*Payme
 	}, nil
 }
 
-// NewRPCClient dials the configured endpoint, falling back to the network's
-// default when no override is set.
-func NewRPCClient(network, rpcURL string) (*rpc.Client, error) {
-	if rpcURL != "" {
-		return rpc.New(rpcURL), nil
-	}
-	config, err := svm.GetNetworkConfig(network)
-	if err != nil {
-		return nil, err
-	}
-	return rpc.New(config.RPCURL), nil
-}
-
 // ParseTokenProgramHint reads and validates `extra.tokenProgram`. The second
 // return value reports whether the challenge carried a hint at all, letting
 // callers pick their own fallback.
@@ -111,39 +97,14 @@ func NewRPCClient(network, rpcURL string) (*rpc.Client, error) {
 // A present-but-non-string value is a broken challenge and errors, rather
 // than being silently treated as absent and masking the malformed input.
 func ParseTokenProgramHint(extra map[string]interface{}) (solana.PublicKey, bool, error) {
-	raw, present := extra[ExtraTokenProgram]
-	if !present || raw == nil || raw == "" {
-		return solana.PublicKey{}, false, nil
-	}
-	hint, ok := raw.(string)
-	if !ok {
-		return solana.PublicKey{}, true, fmt.Errorf("tokenProgram %v is not a valid base58 address", raw)
-	}
-
-	tokenProgram, err := solana.PublicKeyFromBase58(hint)
-	if err != nil {
-		return solana.PublicKey{}, true, fmt.Errorf("tokenProgram is not a valid base58 address: %w", err)
-	}
-	if tokenProgram != solana.TokenProgramID && tokenProgram != solana.Token2022ProgramID {
-		return solana.PublicKey{}, true, fmt.Errorf("tokenProgram %s is not a supported SPL token program", tokenProgram)
-	}
-	return tokenProgram, true, nil
+	return paymentchannels.ParseTokenProgramHint(extra)
 }
 
 // ResolveTokenProgram resolves the SPL token program owning the requirement's
 // mint. The challenge hint wins; otherwise the registry answers, so a Token-2022
 // stablecoin is not mistaken for a legacy SPL Token one.
 func ResolveTokenProgram(requirements types.PaymentRequirements) (solana.PublicKey, error) {
-	tokenProgram, hinted, err := ParseTokenProgramHint(requirements.Extra)
-	if err != nil {
-		return solana.PublicKey{}, err
-	}
-	if hinted {
-		return tokenProgram, nil
-	}
-
-	registered := svm.GetStablecoinTokenProgram(requirements.Asset, string(requirements.Network))
-	return solana.PublicKeyFromBase58(registered)
+	return paymentchannels.ResolveTokenProgram(requirements)
 }
 
 // ParseWithdrawDelay reads the grace period from an extra value. JSON numbers
@@ -179,11 +140,7 @@ func ParseWithdrawDelay(value interface{}) (uint32, error) {
 // Both roles resolve through here, which keeps them from disagreeing on
 // whether a memo was requested.
 func ParseExtraMemo(value interface{}) *string {
-	memo, ok := value.(string)
-	if !ok || memo == "" {
-		return nil
-	}
-	return &memo
+	return paymentchannels.ResolveUptoSvmMemo(map[string]interface{}{ExtraMemo: value})
 }
 
 // ParseExtraUint64 reads an optional decimal u64 hint (recentSlot,

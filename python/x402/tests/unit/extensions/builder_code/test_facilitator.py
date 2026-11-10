@@ -6,10 +6,14 @@ from x402.extensions.builder_code import (
     BUILDER_CODE,
     MAX_CLIENT_SERVICE_CODES,
     MAX_SERVER_SERVICE_CODES,
-    BuilderCodeExtensionData,
     BuilderCodeFacilitatorExtension,
+    BuilderCodeSuffixData,
+    DataSuffixContext,
     parse_builder_code_suffix_from_calldata,
 )
+from x402.interfaces import FacilitatorContext
+from x402.mechanisms.evm.data_suffix import DataSuffixContext as EvmDataSuffixContext
+from x402.mechanisms.evm.data_suffix import resolve_data_suffix
 from x402.schemas import PaymentPayload, PaymentRequirements
 
 APP = "bc_my_app"
@@ -52,12 +56,12 @@ class TestConstructorValidation:
 class TestBuildDataSuffix:
     def test_encodes_wallet_code_only(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
-        assert _parse(ext, _payload()) == BuilderCodeExtensionData(w=WALLET)
+        assert _parse(ext, _payload()) == BuilderCodeSuffixData(w=WALLET)
 
     def test_wallet_code_optional(self) -> None:
         ext = BuilderCodeFacilitatorExtension()
         payload = _payload({BUILDER_CODE: {"info": {"a": APP, "s": SERVICE}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(a=APP, s=[SERVICE])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(a=APP, s=[SERVICE])
 
     def test_none_when_no_attribution(self) -> None:
         ext = BuilderCodeFacilitatorExtension()
@@ -66,20 +70,20 @@ class TestBuildDataSuffix:
     def test_reads_client_app_and_service(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"a": APP, "s": SERVICE}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(a=APP, w=WALLET, s=[SERVICE])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(a=APP, w=WALLET, s=[SERVICE])
 
     def test_keeps_valid_service_entries_drops_invalid(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload(
             {BUILDER_CODE: {"info": {"s": ["INVALID", SERVICE, "bc_other"]}, "schema": {}}}
         )
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_other"])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET, s=[SERVICE, "bc_other"])
 
     def test_truncates_echoed_service_codes_to_client_plus_server_budget(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         codes = [f"bc_{i}" for i in range(1, 12)]
         payload = _payload({BUILDER_CODE: {"info": {"s": codes}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(
+        assert _parse(ext, payload) == BuilderCodeSuffixData(
             w=WALLET, s=[f"bc_{i}" for i in range(1, 11)]
         )
 
@@ -93,7 +97,7 @@ class TestBuildDataSuffix:
                 }
             }
         )
-        assert _parse(ext, payload) == BuilderCodeExtensionData(
+        assert _parse(ext, payload) == BuilderCodeSuffixData(
             w=WALLET, s=[f"bc_{i}" for i in range(1, 11)]
         )
 
@@ -111,19 +115,19 @@ class TestBuildDataSuffix:
         payload = _payload(
             {BUILDER_CODE: {"info": {"s": client_codes + server_codes}, "schema": {}}}
         )
-        assert _parse(ext, payload) == BuilderCodeExtensionData(
+        assert _parse(ext, payload) == BuilderCodeSuffixData(
             w=WALLET, s=client_codes + server_codes
         )
 
     def test_ignores_invalid_client_service_string(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"s": "Also_Invalid"}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET)
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET)
 
     def test_ignores_invalid_client_app_code(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"a": "Bad-App"}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET)
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET)
 
     def test_drops_client_app_code_on_v1_payloads_but_still_encodes_service_codes(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code="bc_fac")
@@ -133,21 +137,78 @@ class TestBuildDataSuffix:
             accepted=_REQUIREMENTS,
             extensions={BUILDER_CODE: {"info": {"a": APP, "s": SERVICE}, "schema": {}}},
         )
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_fac"])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET, s=[SERVICE, "bc_fac"])
 
     def test_encodes_service_codes_on_v2_payloads_when_app_code_is_absent(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
         payload = _payload({BUILDER_CODE: {"info": {"s": SERVICE}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET, s=[SERVICE])
 
 
 class TestFacilitatorServiceCode:
     def test_appends_facilitator_service_code_after_echoed_codes(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code="bc_fac")
         payload = _payload({BUILDER_CODE: {"info": {"s": [SERVICE]}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE, "bc_fac"])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET, s=[SERVICE, "bc_fac"])
 
     def test_does_not_duplicate_facilitator_service_code_when_already_echoed(self) -> None:
         ext = BuilderCodeFacilitatorExtension(builder_code=WALLET, service_code=SERVICE)
         payload = _payload({BUILDER_CODE: {"info": {"s": [SERVICE]}, "schema": {}}})
-        assert _parse(ext, payload) == BuilderCodeExtensionData(w=WALLET, s=[SERVICE])
+        assert _parse(ext, payload) == BuilderCodeSuffixData(w=WALLET, s=[SERVICE])
+
+
+class TestSettlementMetadata:
+    def test_builds_a_suffix_from_metadata_alone(self) -> None:
+        ext = BuilderCodeFacilitatorExtension()
+        suffix = ext.build_data_suffix(_payload(), _REQUIREMENTS, {"x402Example": 7})
+        assert suffix is not None
+        parsed = parse_builder_code_suffix_from_calldata(f"0xdeadbeef{suffix[2:]}")
+        assert parsed == BuilderCodeSuffixData(m={"x402Example": 7})
+
+    def test_builds_a_suffix_from_context_metadata_alone(self) -> None:
+        ext = BuilderCodeFacilitatorExtension()
+        suffix = ext.build_data_suffix(
+            DataSuffixContext(
+                payload=_payload(),
+                requirements=_REQUIREMENTS,
+                metadata={"x402Example": 7},
+            )
+        )
+        assert suffix is not None
+        parsed = parse_builder_code_suffix_from_calldata(f"0xdeadbeef{suffix[2:]}")
+        assert parsed == BuilderCodeSuffixData(m={"x402Example": 7})
+
+    def test_emits_no_suffix_for_empty_metadata_and_no_attribution(self) -> None:
+        ext = BuilderCodeFacilitatorExtension()
+        assert ext.build_data_suffix(_payload(), _REQUIREMENTS, {}) is None
+        assert (
+            ext.build_data_suffix(
+                DataSuffixContext(payload=_payload(), requirements=_REQUIREMENTS, metadata={})
+            )
+            is None
+        )
+
+    def test_ignores_m_supplied_in_the_client_payload(self) -> None:
+        ext = BuilderCodeFacilitatorExtension(builder_code=WALLET)
+        payload = _payload(
+            {BUILDER_CODE: {"info": {"a": APP, "m": {"x402Example": 1}}, "schema": {}}}
+        )
+        assert _parse(ext, payload) == BuilderCodeSuffixData(a=APP, w=WALLET)
+
+    def test_resolve_data_suffix_forwards_metadata(self) -> None:
+        ext = BuilderCodeFacilitatorExtension()
+        context = FacilitatorContext({BUILDER_CODE: ext})
+        suffix = resolve_data_suffix(context, _payload(), _REQUIREMENTS, {"x402Example": 7})
+        assert suffix is not None
+        parsed = parse_builder_code_suffix_from_calldata(f"0xdeadbeef{suffix[2:]}")
+        assert parsed == BuilderCodeSuffixData(m={"x402Example": 7})
+
+        from_context = resolve_data_suffix(
+            context,
+            EvmDataSuffixContext(
+                payload=_payload(),
+                requirements=_REQUIREMENTS,
+                metadata={"x402Example": 7},
+            ),
+        )
+        assert from_context == suffix

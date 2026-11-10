@@ -272,16 +272,25 @@ describe("payment flows", () => {
         network,
       });
 
+      const beforeHandlerSettlement = {
+        result: buildSettleResponse({
+          success: true,
+          amount: "100000",
+          transaction: "0xdeposit",
+          network,
+        }),
+      };
+
       expect(
         resolveFailurePathSettlement(
           cancelSettlement,
-          undefined,
+          beforeHandlerSettlement,
           buildPaymentPayload({ payload: { channelId: "" } }),
         ),
       ).toEqual(
         expect.objectContaining({
           success: false,
-          extra: {},
+          extra: { depositTransaction: "0xdeposit", depositAmount: "100000" },
         }),
       );
     });
@@ -299,6 +308,17 @@ describe("payment flows", () => {
       expect(resolveFailurePathSettlement(undefined, beforeHandlerSettlement)).toEqual(
         beforeHandlerSettlement.result,
       );
+    });
+
+    it("omits cancel receipt when there is no before-handler settlement", () => {
+      const cancelSettlement = buildSettleResponse({
+        success: true,
+        amount: "0",
+        transaction: "0xcancel",
+        network,
+      });
+
+      expect(resolveFailurePathSettlement(cancelSettlement)).toBeUndefined();
     });
 
     it("returns undefined when neither cancel nor before-handler settlement applies", () => {

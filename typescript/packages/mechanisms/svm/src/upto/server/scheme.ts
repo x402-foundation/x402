@@ -78,11 +78,14 @@ export class UptoSvmScheme implements SchemeNetworkServer {
   /**
    * Settle canceled verified payments as a zero-amount refund so the facilitator
    * can `settle_and_seal` + `distribute` and return the deposit to the client.
+   * A cancel before the before-handler deposit settled no escrow, so there is
+   * nothing to refund.
    *
    * @param ctx - Cancellation context from the resource server
    * @returns Zero-amount requirements for prompt refund paths
    */
   settleOnCancel(ctx: VerifiedPaymentCanceledContext): PaymentRequirements | void {
+    if (!ctx.settledPhases.includes("before-handler")) return;
     if (
       ctx.reason === "handler_failed" ||
       ctx.reason === "handler_threw" ||

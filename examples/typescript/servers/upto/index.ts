@@ -15,7 +15,7 @@ const EVM_NETWORK = "eip155:84532" as Network;
 
 const evmAddress = process.env.EVM_ADDRESS as `0x${string}` | undefined;
 const svmAddress = process.env.SVM_ADDRESS;
-const svmReceiverAuthorizerKey = process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY;
+const svmReceiverAuthorizerKey = process.env.SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim();
 if (!evmAddress && !svmAddress) {
   console.error("Missing required EVM_ADDRESS or SVM_ADDRESS environment variable");
   process.exit(1);
@@ -27,6 +27,31 @@ if (!facilitatorUrl) {
   process.exit(1);
 }
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
+
+const receiverAuthorizerSigner = svmReceiverAuthorizerKey
+  ? await createKeyPairSignerFromBytes(base58.decode(svmReceiverAuthorizerKey))
+  : undefined;
+
+let resourceServer = new x402ResourceServer(facilitatorClient);
+if (evmAddress) resourceServer = resourceServer.register(EVM_NETWORK, new UptoEvmScheme());
+if (svmAddress) {
+  resourceServer = resourceServer.register(
+    SOLANA_DEVNET,
+    new UptoSvmScheme({
+      ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
+      rpcUrl: process.env.SVM_RPC_URL,
+    }),
+  );
+}
+
+try {
+  await resourceServer.initialize();
+} catch (error) {
+  console.error(
+    error instanceof Error ? error.message : "Failed to initialize x402 resource server",
+  );
+  process.exit(1);
+}
 
 const app = express();
 
@@ -52,28 +77,6 @@ if (svmAddress) {
   });
 }
 
-const receiverAuthorizerSigner = svmReceiverAuthorizerKey
-  ? await createKeyPairSignerFromBytes(base58.decode(svmReceiverAuthorizerKey))
-  : undefined;
-
-let resourceServer = new x402ResourceServer(facilitatorClient);
-if (evmAddress) resourceServer = resourceServer.register(EVM_NETWORK, new UptoEvmScheme());
-if (svmAddress && receiverAuthorizerSigner) {
-  resourceServer = resourceServer.register(
-    SOLANA_DEVNET,
-    new UptoSvmScheme({
-      receiverAuthorizerSigner,
-      rpcUrl: process.env.SVM_RPC_URL,
-    }),
-  );
-} else if (svmAddress && !receiverAuthorizerSigner) {
-  console.error(
-    "SVM_ADDRESS is set but SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is missing; " +
-      "SVM upto requires a server hot key that signs settlement vouchers",
-  );
-  process.exit(1);
-}
-
 app.use(
   paymentMiddleware(
     {
@@ -91,6 +94,9 @@ app.use(
       },
     },
     resourceServer,
+    undefined,
+    undefined,
+    false,
   ),
 );
 
@@ -124,5 +130,7 @@ app.listen(4021, () => {
   console.log(`  GET /api/generate  — usage-based billing via upto scheme (${enabledNetworks})`);
   if (receiverAuthorizerSigner) {
     console.log(`  SVM receiver authorizer: ${receiverAuthorizerSigner.address}`);
+  } else if (svmAddress) {
+    console.log("  SVM receiver authorizer: delegated to facilitator");
   }
 });

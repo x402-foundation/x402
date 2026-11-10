@@ -43,8 +43,12 @@ const {
     },
   };
   return {
-    RpcClient: vi.fn(() => rpcClient),
-    newSpeculativeClient: vi.fn(() => ({ speculativeExec })),
+    RpcClient: vi.fn(function () {
+      return rpcClient;
+    }),
+    newSpeculativeClient: vi.fn(function () {
+      return { speculativeExec };
+    }),
     rpcClient,
     speculativeExec,
     contractHash,

@@ -1,6 +1,9 @@
-"""Tests for paywall handlers and faucet URL plumbing."""
+"""Tests for paywall handlers and faucet / RPC URL plumbing."""
 
 from __future__ import annotations
+
+import json
+import re
 
 from x402.http.paywall import (
     EvmPaywallHandler,
@@ -139,3 +142,66 @@ def test_provider_runtime_faucet_urls_override_builder_faucet_urls() -> None:
     )
     assert "https://example.com/runtime" in html
     assert "https://example.com/builder" not in html
+
+
+# --- rpc_urls ---
+
+SOLANA_DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+
+
+def _injected_config(html: str) -> dict:
+    match = re.search(r"window\.x402 = (.*);\n", html)
+    assert match, "window.x402 config script not found"
+    return json.loads(match.group(1))
+
+
+def test_svm_handler_injects_rpc_urls() -> None:
+    urls = {SOLANA_DEVNET: "https://rpc.example.com/?key=k"}
+    provider = _build_svm_provider(testnet=True, rpc_urls=urls)
+    html = provider.generate_html(_make_svm_payment_required())
+    assert _injected_config(html)["rpcUrls"] == urls
+
+
+def test_svm_handler_omits_rpc_urls_when_unset() -> None:
+    provider = _build_svm_provider(testnet=True)
+    html = provider.generate_html(_make_svm_payment_required())
+    assert "rpcUrls" not in _injected_config(html)
+
+
+def test_provider_runtime_rpc_urls_override_builder_rpc_urls() -> None:
+    from x402.http.types import PaywallConfig
+
+    provider = _build_svm_provider(rpc_urls={SOLANA_DEVNET: "https://builder.example.com"})
+    html = provider.generate_html(
+        _make_svm_payment_required(),
+        config=PaywallConfig(rpc_urls={SOLANA_DEVNET: "https://runtime.example.com"}),
+    )
+    assert _injected_config(html)["rpcUrls"] == {SOLANA_DEVNET: "https://runtime.example.com"}
+
+
+def test_server_default_paywall_injects_rpc_urls() -> None:
+    """Without a paywall provider the server renders the built-in template itself."""
+    from x402.http.types import PaywallConfig
+    from x402.http.x402_http_server_base import x402HTTPServerBase
+    from x402.server import x402ResourceServerSync
+
+    urls = {SOLANA_DEVNET: "https://rpc.example.com"}
+    server = x402HTTPServerBase(x402ResourceServerSync(), {})
+    html = server._generate_paywall_html(
+        _make_svm_payment_required(), PaywallConfig(rpc_urls=urls), None
+    )
+    assert _injected_config(html)["rpcUrls"] == urls
+
+
+def test_server_default_paywall_injects_faucet_urls() -> None:
+    """The built-in template path honors faucet_urls like the paywall handlers do."""
+    from x402.http.types import PaywallConfig
+    from x402.http.x402_http_server_base import x402HTTPServerBase
+    from x402.server import x402ResourceServerSync
+
+    urls = {"eip155:84532": "https://example.com/base-faucet"}
+    server = x402HTTPServerBase(x402ResourceServerSync(), {})
+    html = server._generate_paywall_html(
+        _make_evm_payment_required(), PaywallConfig(faucet_urls=urls), None
+    )
+    assert _injected_config(html)["faucetUrls"] == urls

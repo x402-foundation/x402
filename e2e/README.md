@@ -14,7 +14,7 @@ You do **not** need to edit `generic-server` / `generic-client` / `generic-facil
 
 - **`env`** — map of env key → `{ required: boolean, roles: ["server"|"client"|"facilitator", ...] }`. Every key a role reads (including unprefixed ones like `TVM_PROVIDER` or `EVM_PERMIT2_ASSET`) is declared here; [`src/mechanisms.ts`](src/mechanisms.ts) has no hardcoded role override table. Prefix (`SERVER_` / `CLIENT_` / `FACILITATOR_`) is only a fallback for undeclared keys.
 - **`testnet` / `mainnet`** — `name`, `caip2`, optional `rpcUrlDefault`, optional `permit2Asset`/`permit2AssetName`. RPC env is pure convention, not declared: an operator sets `${ID}_TESTNET_RPC_URL` / `${ID}_MAINNET_RPC_URL` (e.g. `EVM_TESTNET_RPC_URL`), and the harness injects it into every spawned component as `${ID}_RPC_URL`. Set `rpcUrlRequired: true` on a mode with no `rpcUrlDefault` and no free public endpoint at all (a network whose SDK has no built-in node default, unlike e.g. Hedera/Keeta) so the harness fails fast at startup — with the missing input key named in the same preflight list as other required env — instead of deep inside a scenario run. Network identity defaults (`${ID}_NETWORK`) fall back to catalog `testnet.caip2` via `resolveNetworkCaip2`.
-- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
+- **`routes`** — one canonical definition per paid HTTP path: `scheme`, `sdks`, `assetTransferMethod`, `schemeOptions`, `schemeExtra`, declared `extensions`, required `price`, and optional `settlementOverride`. Handlers always return `{ message: "Protected endpoint accessed successfully", timestamp }`. The loader injects `network` (the file id) — routes never declare it themselves.
 
 CI family selection ([`scripts/ci-select-families.sh`](scripts/ci-select-families.sh) → [`scripts/ci-select-families.ts`](scripts/ci-select-families.ts)) prints families whose catalog `required: true` keys are all set — no per-family hardcoding in the shell script.
 
@@ -28,13 +28,16 @@ Every SDK reads this same set of files. The harness ([`src/mechanisms.ts`](src/m
 
 Resource servers resolve the same data at boot — payment middleware config **and** route handlers — through a per-language loader: [`servers/typescript/catalog.ts`](servers/typescript/catalog.ts), [`servers/python/catalog.py`](servers/python/catalog.py), [`servers/go/catalog.go`](servers/go/catalog.go). No framework entrypoint hardcodes a path, price, or extension; each loops over its resolved routes. The harness passes the catalog directory in `E2E_MECHANISMS_CATALOG`, and each loader falls back to walking up to `e2e/config/` so a server still runs standalone from its own directory.
 
-Route support is **listed** on each route via `sdks`, never inferred from a cartesian product. Scheme **registration** stays in the language-root client/server modules and facilitator mains.
+Route support is **listed** on each route via `sdks`, with `clientSdks` and
+`facilitatorSdks` narrowing role-specific support when needed, never inferred
+from a cartesian product. Scheme **registration** stays in the language-root
+client/server modules and facilitator mains.
 
 ## Add a mechanism
 
 Adding a paid route to every SDK that should serve it is a catalog edit:
 
-1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, or `settlementOverride` only where the route needs them.
+1. **Define the route** — add an entry under `routes` in the relevant `config/mechanisms_<id>.json`, keyed by its path, with `scheme`, `sdks` (e.g. `["typescript", "go", "python"]`), and `price`. Add `extensions`, `schemeOptions`, `schemeExtra` (auth-capture deadlines/flow), or `settlementOverride` only where the route needs them. An SDK that implements only the client role goes in `clientSdks` instead; it then pairs with servers and facilitators from other SDKs but is never asked to serve the route.
 2. **Register the scheme once per language**, if it is new: server module (`servers/<lang>/`), client module (`clients/<lang>/`), and the facilitator main.
 
 Servers pick up the route, its `402` payment requirements, and its handler with no per-framework edit. A surface that serves less than its SDK’s list can declare the narrowing in a local `test.config.json` (`excludeSchemes` / `excludeNetworks`); the harness applies it to the derived endpoints and forwards it to the server process (`E2E_EXCLUDE_SCHEMES` / `E2E_EXCLUDE_NETWORKS`), so declared and mounted routes cannot diverge.
@@ -66,11 +69,13 @@ These keep local `test.config.json` overlays and/or special orchestration — no
 | Flow | Where it lives |
 |------|----------------|
 | Batch-settlement multi-phase | Catalog `routes` entries + orchestration in [`test.ts`](test.ts) + shared scheme registration |
+| Batch-settlement facilitator-managed custody | Managed catalog routes `/batch-settlement-managed/evm/*` (`schemeOptions.facilitatorManaged: true`, ts/go; the voucher-store facilitator is go only) + dual servers (`E2E_BATCH_SERVER_ROLE=standard\|managed-batch`, `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self\|facilitator`) + one facilitator with `E2E_FACILITATOR_VOUCHER_STORE=true` (advertises `delegatedRefund: true`; optionally `SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY` for the server-owned key path); override one side with `--batchVoucherStore=self\|facilitator` |
 | Gas sponsoring / Permit2 coldstart | Route `schemeOptions.coldstart` + declared gas `extensions` + fund/revoke/drain in `test.ts` + facilitator extension registration |
 | Swig smart wallet | Client overlay [`clients/typescript/http/svm-smart-wallet/test.config.json`](clients/typescript/http/svm-smart-wallet/test.config.json) (`protocolFamilies`, `facilitators`, Swig env) + [`scripts/swig-setup.ts`](scripts/swig-setup.ts); uses catalog route `/exact/svm` |
+| Solana transaction v0 | SVM-only client overlays `clients/{typescript,go,python}/http/svm-v0/test.config.json` (`protocolFamilies: ["svm"]`). Clients build the highest Solana transaction version the facilitator advertises in `extra.transactionVersions`, so every other client builds v1 against facilitators advertising `[0, 1]`; these narrow the SVM schemes to `transactionVersions: [0]` (Go `PaymentClientOptions`, Python `create_e2e_client(svm_transaction_versions=...)`) to keep v0 covered. TS and Go cover exact, upto and batch-settlement; Python covers exact |
 | Legacy (v1) | `legacy/` trees only — separate configs; do not extend the mechanisms catalog for v1 |
 
-If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto).
+If an SDK implements a route end-to-end (client + server + facilitator), list it in that route’s `sdks`. Omit only when the mechanism package is missing (e.g. Go has no TVM; Python/Go have no AVM/NEAR/XRPL; Python has no SVM upto). Where an SDK has only a client, list it in `clientSdks`; use `facilitatorSdks` when facilitator support is narrower than client/server support.
 
 ## Legacy
 
@@ -136,7 +141,7 @@ Launches an interactive CLI where you can select:
 - **Clients** - Payment-capable HTTP clients (axios, fetch, httpx, requests, etc.)
 - **Extensions** - Additional features like Bazaar discovery
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
-- **Payment schemes** (when multiple apply) - `exact`, `upto`, or `batch-settlement`
+- **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
 - **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
 
@@ -301,11 +306,48 @@ pnpm test --testnet --min --families=evm --sdk=ts --paymentflow=upfront --assetT
 Optional environment variables (batch-settlement scheme):
 
 ```bash
-SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # optional: self-managed receiver authorizer (omit to delegate to facilitator /supported)
-SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # server hot key that signs upto settlement vouchers (no SOL required)
+# EVM
+SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=0x...              # self-managed auth-capture sync (/auth-capture/evm/*) and optional batch-settlement receiver authorizer; omit for facilitator-delegated auth-capture routes
 CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY=0x...  # EOA the client uses to sign vouchers
 EVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
+FACILITATOR_EVM_AUTH_CAPTURE_CUSTOM_OPERATORS=0x8FE4...       # optional comma-separated custom operator allowlist (defaults to ForwardingOperator on Base Sepolia)
+# Auth-capture: SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is required for /auth-capture/evm/* (server-signed sync capture). The facilitator-authorizer, deferred, and custom-forwarding routes always run in the same suite; deferred capture is triggered by the harness after the client GET. With the server key set you get full auth-capture coverage (5 EVM paths); without it only the three facilitator-delegated paths run (/auth-capture/evm/* are omitted via requiresEnv).
+
+# SVM
+SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY=...                # required for /upto/svm and /batch-settlement/svm; signs upto vouchers and the batch receiver authorizer (no SOL required)
+SERVER_SVM_OPERATOR_PRIVATE_KEY=...                           # required for /batch-settlement-server-signed/svm; operator that meters and signs vouchers
+CLIENT_SVM_SERVER_SIGNED_OPERATORS=...                        # optional: base58 operator pubkeys trusted by the client (defaults to pubkey derived from SERVER_SVM_OPERATOR_PRIVATE_KEY on server-signed routes)
+CLIENT_SVM_SERVER_SIGNED_MAX_DEPOSIT=$1                       # optional USD escrow cap per server-signed channel (default asset)
+FACILITATOR_SVM_BATCH_BINDING_STORE=memory                    # optional: `memory` (default) uses in-memory receiver-authorizer store; `none` relies on RPC history reads
+SVM_ARCHIVE_RPC_URL=https://...                                 # optional: full-history RPC for receiver-binding reconstruction (archive node)
+SVM_BATCH_SETTLEMENT_RECOVERY=true                            # test client state-loss recovery scenario (default: true)
+
+# EVM batch-settlement custody
+SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY=0x... # optional: managed servers sign refunds with their own key (402 carries refundAuthorizer, salt packed). Unset: rely on the facilitator's delegatedRefund (402 omits it, raw salt)
+EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self                 # debug/CI-only override: self|facilitator (same as --batchVoucherStore)
 ```
+
+Facilitator-managed batch runs self-batch on server A and managed-batch on server B
+(same facilitator with `E2E_FACILITATOR_VOUCHER_STORE=true`):
+
+```bash
+# Runs self-batch on server A and managed-batch on server B (same facilitator), when both route sets match filters
+SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY=0x... \
+pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go
+
+# Optional: only one custody side (skips second server / halves scenarios)
+pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go --batchVoucherStore=self
+pnpm test --testnet --min --families=evm --schemes=batch-settlement --sdk=go --batchVoucherStore=facilitator
+
+# TypeScript client and server against the Go voucher-store facilitator
+pnpm test --testnet --min --families=evm --schemes=batch-settlement --transport=http --sdk=ts --facilitators=go
+```
+
+Why two servers, one facilitator: one `BatchSettlementEvmScheme` has one
+`voucherStoreMode` per process, so managed and self batch need two listeners
+(same binary, different `E2E_BATCH_SERVER_ROLE` + route subset). A single
+facilitator with a voucher store serves both — self-batch 402s omit
+`extra.voucherManager`, managed 402s set `voucherManager: "facilitator"`.
 
 Optional environment variables for XRPL issued-currency tests are generated by
 `pnpm xrpl:iou:setup`:
@@ -339,6 +381,24 @@ only an e2e fixture; it is not a default asset in the XRPL SDK.
 
 See the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
 and [issued-token setup](https://xrpl.org/docs/tutorials/tokens/fungible-tokens/issue-a-fungible-token).
+
+#### Canton DevNet
+
+The client and the facilitator use a Canton participant (JSON Ledger API) whose
+ledger user can act as the client party and as the facilitator party, and, for
+`pnpm canton:setup`, as the payee (`SERVER_CANTON_ADDRESS`). The client and the
+payee are external parties with Ed25519 keys.
+
+1. Fund the client and the payee with DevNet Canton Coin from a DevNet tap (see
+   [performing a CC tap](https://docs.canton.network/sdks-tools/sdks/wallet-sdk/guides/performing-a-cc-tap)).
+2. Give the payee the `TransferPreapproval` the scheme requires to settle in one
+   transaction. The setup script creates it, or renews it when it expires within a
+   week, signing with `SERVER_CANTON_PRIVATE_KEY`; the payee pays the small fee:
+
+```bash
+pnpm canton:setup
+pnpm test --testnet --min --families=canton --versions=2
+```
 
 #### Stellar Testnet
 

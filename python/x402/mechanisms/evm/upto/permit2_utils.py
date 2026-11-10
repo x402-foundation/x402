@@ -41,6 +41,8 @@ from ..constants import (  # noqa: E402
     ERR_UPTO_AMOUNT_EXCEEDS_PERMITTED,
     ERR_UPTO_FACILITATOR_MISMATCH,
     ERR_UPTO_FAILED_TO_GET_NETWORK_CONFIG,
+    ERR_UPTO_INVALID_PAYLOAD,
+    ERR_UPTO_INVALID_REQUIRED_AMOUNT,
     ERR_UPTO_INVALID_SCHEME,
     ERR_UPTO_NETWORK_MISMATCH,
     ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT,
@@ -176,12 +178,39 @@ def verify_upto_permit2(
     # 6-8. Parse numeric fields
     try:
         deadline_val = int(permit2_payload.permit2_authorization.deadline)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid deadline format",
+            payer=payer,
+        )
+    try:
         valid_after_val = int(permit2_payload.permit2_authorization.witness.valid_after)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid validAfter format",
+            payer=payer,
+        )
+    try:
         amount_val = int(permit2_payload.permit2_authorization.permitted.amount)
+    except (ValueError, TypeError):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+            invalid_message="invalid permitted amount format",
+            payer=payer,
+        )
+    try:
         required_amount = int(requirements.amount)
     except (ValueError, TypeError):
         return VerifyResponse(
-            is_valid=False, invalid_reason="invalid_permit2_payload_format", payer=payer
+            is_valid=False,
+            invalid_reason=ERR_UPTO_INVALID_REQUIRED_AMOUNT,
+            invalid_message="invalid required amount format",
+            payer=payer,
         )
 
     # 6. Deadline check (6 second buffer)
@@ -507,7 +536,8 @@ def settle_upto_permit2(
     except (ValueError, TypeError):
         return SettleResponse(
             success=False,
-            error_reason="invalid_permit2_payload_format",
+            error_reason=ERR_UPTO_INVALID_PAYLOAD,
+            error_message="invalid settlement amount",
             network=network,
             payer=payer,
             transaction="",

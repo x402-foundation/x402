@@ -1,6 +1,6 @@
 # Builder Code extension (ERC-8021)
 
-Part of [`@x402/extensions`](../README.md). Import from `@x402/extensions/builder-code`.
+Part of [`@x402/extensions`](../../README.md). Import from `@x402/extensions/builder-code`.
 
 The Builder Code extension enables **on-chain attribution tracking** for x402 payments. At settlement time, the facilitator appends an [ERC-8021](https://eip.tools/eip/8021) Schema 2 CBOR suffix to the transaction calldata that records which application exposed the paid endpoint (`a`), which client/intermediary participated (`s`), and which facilitator settled the payment (`w`).
 
@@ -86,7 +86,8 @@ import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-cod
 
 const data = parseBuilderCodeSuffixFromCalldata(calldata);
 if (data) {
-  // { a?: "bc_my_service", w?: "bc_my_facilitator", s?: ["bc_my_client"] }
+  // { a?: "bc_my_service", w?: "bc_my_facilitator", s?: ["bc_my_client"], m?: { ... } }
+  // unsigned integers inside `m` are returned as bigint
 }
 ```
 
@@ -106,7 +107,7 @@ Creates the `{ info: { a, s? }, schema }` declaration for `PaymentRequired.exten
 
 ### `encodeBuilderCodeSuffix(data)` / `parseBuilderCodeSuffixFromCalldata(calldata)`
 
-Low-level CBOR helpers to encode a `BuilderCodeExtensionData` object into an ERC-8021 suffix and to parse the suffix back out of settlement calldata.
+Low-level CBOR helpers to encode a `BuilderCodeSuffixData` object into an ERC-8021 suffix and to parse the suffix back out of settlement calldata. Encoding throws when the CBOR exceeds 65,535 bytes.
 
 ### Constants and types
 
@@ -117,7 +118,7 @@ Low-level CBOR helpers to encode a `BuilderCodeExtensionData` object into an ERC
 - `MAX_FACILITATOR_SERVICE_CODES` — `1` (facilitator's dedicated `s` reservation)
 - `MAX_SERVICE_CODES` — `11` (on-chain cap for `s`; the sum of each side's reservation)
 - `ERC_8021_MARKER`, `SCHEMA_2_ID`, `BUILDER_CODE_SCHEMA`
-- Types: `BuilderCodeExtensionData`, `BuilderCodeFacilitatorConfig`, `BuilderCodeRequiredExtension`, `DataSuffixContext`
+- Types: `BuilderCodeExtensionData`, `BuilderCodeSuffixData`, `SettlementMetadata`, `BuilderCodeFacilitatorConfig`, `BuilderCodeRequiredExtension`, `DataSuffixContext`
 
 See [`index.ts`](./index.ts) for the full list of exports.
 
@@ -125,4 +126,4 @@ See [`index.ts`](./index.ts) for the full list of exports.
 
 - [Builder Code protocol spec](../../../../../specs/extensions/builder_code.md)
 - [ERC-8021](https://eip.tools/eip/8021)
-- [`@x402/extensions` overview](../README.md)
+- [`@x402/extensions` overview](../../README.md)

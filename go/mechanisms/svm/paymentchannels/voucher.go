@@ -1,10 +1,13 @@
 package paymentchannels
 
 import (
+	"context"
 	"crypto/ed25519"
 	"fmt"
 
 	solana "github.com/gagliardetto/solana-go"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
 // VoucherMessageSize is the fixed length of the signed voucher payload.
@@ -25,6 +28,20 @@ func EncodeVoucherMessage(channelID solana.PublicKey, cumulativeAmount uint64, e
 	return out
 }
 
+// VerifyEd25519Signature checks a raw Ed25519 signature over message.
+func VerifyEd25519Signature(publicKey, signature, message []byte) error {
+	if len(publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("publicKey must be %d bytes, got %d", ed25519.PublicKeySize, len(publicKey))
+	}
+	if len(signature) != ed25519.SignatureSize {
+		return fmt.Errorf("signature must be %d bytes, got %d", ed25519.SignatureSize, len(signature))
+	}
+	if !ed25519.Verify(publicKey, message, signature) {
+		return fmt.Errorf("ed25519 signature verification failed")
+	}
+	return nil
+}
+
 // VerifyVoucherSignature checks a base58 Ed25519 signature over the voucher
 // message against the base58 authorized signer.
 func VerifyVoucherSignature(signatureBase58, signerBase58 string, message []byte) error {
@@ -36,47 +53,26 @@ func VerifyVoucherSignature(signatureBase58, signerBase58 string, message []byte
 	if err != nil {
 		return fmt.Errorf("authorized signer is not a valid base58 address: %w", err)
 	}
-	if !ed25519.Verify(ed25519.PublicKey(signer.Bytes()), message, signature[:]) {
+	if err := VerifyEd25519Signature(signer.Bytes(), signature[:], message); err != nil {
 		return fmt.Errorf("voucher signature is not signed by %s", signerBase58)
 	}
 	return nil
 }
 
-// BuildEd25519VerifyInstruction builds the Ed25519 precompile instruction that
-// carries a voucher to the program. Layout matches the payment-channels Rust
-// helper: a 16-byte offset header, then signer, signature, and message.
-func BuildEd25519VerifyInstruction(
-	message []byte,
-	signature []byte,
-	signer solana.PublicKey,
-) (solana.Instruction, error) {
+// SignVoucher signs the canonical voucher message and returns the base58 signature.
+func SignVoucher(
+	ctx context.Context,
+	authorizer svm.ReceiverAuthorizerSigner,
+	channelID solana.PublicKey,
+	cumulativeAmount uint64,
+	expiresAt int64,
+) (string, error) {
+	signature, err := authorizer.SignMessage(ctx, EncodeVoucherMessage(channelID, cumulativeAmount, expiresAt))
+	if err != nil {
+		return "", err
+	}
 	if len(signature) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("voucher signature must be %d bytes, got %d", ed25519.SignatureSize, len(signature))
+		return "", fmt.Errorf("voucher signature must be %d bytes, got %d", ed25519.SignatureSize, len(signature))
 	}
-	if len(message) > 0xffff {
-		return nil, fmt.Errorf("voucher message too long: %d bytes", len(message))
-	}
-
-	const (
-		publicKeyOffset    = 16
-		signatureOffset    = publicKeyOffset + ed25519.PublicKeySize
-		messageDataOffset  = signatureOffset + ed25519.SignatureSize
-		currentInstruction = 0xffff
-	)
-
-	data := make([]byte, messageDataOffset+len(message))
-	data[0] = 1 // num_signatures
-	data[1] = 0 // padding
-	copy(data[2:4], u16LE(signatureOffset))
-	copy(data[4:6], u16LE(currentInstruction))
-	copy(data[6:8], u16LE(publicKeyOffset))
-	copy(data[8:10], u16LE(currentInstruction))
-	copy(data[10:12], u16LE(messageDataOffset))
-	copy(data[12:14], u16LE(uint16(len(message))))
-	copy(data[14:16], u16LE(currentInstruction))
-	copy(data[publicKeyOffset:], signer.Bytes())
-	copy(data[signatureOffset:], signature)
-	copy(data[messageDataOffset:], message)
-
-	return solana.NewInstruction(Ed25519ProgramID, solana.AccountMetaSlice{}, data), nil
+	return solana.SignatureFromBytes(signature).String(), nil
 }

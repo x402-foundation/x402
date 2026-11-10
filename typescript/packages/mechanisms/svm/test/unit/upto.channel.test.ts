@@ -18,8 +18,12 @@ vi.mock("../../src/payment-channels/generated/accounts/channel", async importOri
   };
 });
 
+import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import {
   accountFetchRpc,
+  type PaymentChannelFacilitatorSigner,
+} from "../../src/payment-channels/signer";
+import {
   channelExists,
   DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS,
   DEFAULT_CHANNEL_READ_MAX_ATTEMPTS,
@@ -28,12 +32,10 @@ import {
   getChannelDistributionHash,
   resolveChannelReadPolicy,
   type ExpectedOpenChannel,
-} from "../../src/upto/facilitator/channel";
-import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
-import type { UptoFacilitatorSigner } from "../../src/upto/facilitator/signer";
+} from "../../src/payment-channels/facilitator";
 
 const CHANNEL_ID = USDC_MAINNET_ADDRESS;
-const signer = {} as UptoFacilitatorSigner;
+const signer = {} as PaymentChannelFacilitatorSigner;
 const NETWORK = SOLANA_DEVNET_CAIP2;
 const PAYEE = USDC_DEVNET_ADDRESS;
 const PAYER = USDC_MAINNET_ADDRESS;
@@ -124,7 +126,11 @@ describe("upto SVM channel reads", () => {
       .mockResolvedValueOnce(missingAccount)
       .mockResolvedValueOnce(existingAccount);
 
-    const result = fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected);
+    const result = fetchAndVerifyOpenChannel(
+      accountFetchRpc(signer, NETWORK),
+      CHANNEL_ID,
+      expected,
+    );
     await vi.advanceTimersByTimeAsync(200);
 
     await expect(result).resolves.toMatchObject({ channelId: CHANNEL_ID });
@@ -135,7 +141,11 @@ describe("upto SVM channel reads", () => {
     vi.useFakeTimers();
     channelAccountMocks.fetchMaybeChannel.mockResolvedValue(missingAccount);
 
-    const result = fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected);
+    const result = fetchAndVerifyOpenChannel(
+      accountFetchRpc(signer, NETWORK),
+      CHANNEL_ID,
+      expected,
+    );
     const assertion = expect(result).rejects.toThrow(`channel ${CHANNEL_ID} does not exist`);
     await vi.advanceTimersByTimeAsync(3_000);
 
@@ -148,10 +158,15 @@ describe("upto SVM channel reads", () => {
     vi.useFakeTimers();
     channelAccountMocks.fetchMaybeChannel.mockResolvedValue(missingAccount);
 
-    const result = fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected, {
-      maxAttempts: 3,
-      backoffStepMs: 1,
-    });
+    const result = fetchAndVerifyOpenChannel(
+      accountFetchRpc(signer, NETWORK),
+      CHANNEL_ID,
+      expected,
+      {
+        maxAttempts: 3,
+        backoffStepMs: 1,
+      },
+    );
     const assertion = expect(result).rejects.toThrow(`channel ${CHANNEL_ID} does not exist`);
     await vi.advanceTimersByTimeAsync(10);
 
@@ -165,20 +180,17 @@ describe("upto SVM channel reads", () => {
       data: { ...channel, status: 1 },
     });
 
-    await expect(fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected)).rejects.toThrow(
-      `channel ${CHANNEL_ID} is not open`,
-    );
+    await expect(
+      fetchAndVerifyOpenChannel(accountFetchRpc(signer, NETWORK), CHANNEL_ID, expected),
+    ).rejects.toThrow(`channel ${CHANNEL_ID} is not open`);
     expect(channelAccountMocks.fetchMaybeChannel).toHaveBeenCalledTimes(1);
   });
 
   it("channelExists follows getAccountInfo presence", async () => {
     const getAccountInfo = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ data: "x" });
-    await expect(channelExists({ getAccountInfo } as never, NETWORK, CHANNEL_ID)).resolves.toBe(
-      false,
-    );
-    await expect(channelExists({ getAccountInfo } as never, NETWORK, CHANNEL_ID)).resolves.toBe(
-      true,
-    );
+    const rpc = accountFetchRpc({ getAccountInfo } as never, NETWORK);
+    await expect(channelExists(rpc, CHANNEL_ID)).resolves.toBe(false);
+    await expect(channelExists(rpc, CHANNEL_ID)).resolves.toBe(true);
     expect(getAccountInfo).toHaveBeenCalledWith(CHANNEL_ID, NETWORK, {
       commitment: "confirmed",
       encoding: "base64",
@@ -204,30 +216,39 @@ describe("upto SVM channel reads", () => {
       data: { ...channel, discriminator: 99 },
     });
 
-    await expect(fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, expected)).rejects.toThrow(
-      `channel ${CHANNEL_ID} has an invalid account discriminator`,
-    );
+    await expect(
+      fetchAndVerifyOpenChannel(accountFetchRpc(signer, NETWORK), CHANNEL_ID, expected),
+    ).rejects.toThrow(`channel ${CHANNEL_ID} has an invalid account discriminator`);
     expect(channelAccountMocks.fetchMaybeChannel).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a confirmed channel whose payee does not match the challenge", async () => {
     channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
     await expect(
-      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, payee: PAYER }),
+      fetchAndVerifyOpenChannel(accountFetchRpc(signer, NETWORK), CHANNEL_ID, {
+        ...expected,
+        payee: PAYER,
+      }),
     ).rejects.toThrow(/channel payee/);
   });
 
   it("rejects a confirmed channel whose mint does not match the challenge", async () => {
     channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
     await expect(
-      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, mint: PAYEE }),
+      fetchAndVerifyOpenChannel(accountFetchRpc(signer, NETWORK), CHANNEL_ID, {
+        ...expected,
+        mint: PAYEE,
+      }),
     ).rejects.toThrow(/channel mint/);
   });
 
   it("rejects a confirmed channel whose grace period does not match", async () => {
     channelAccountMocks.fetchMaybeChannel.mockResolvedValue(existingAccount);
     await expect(
-      fetchAndVerifyOpenChannel(signer, NETWORK, CHANNEL_ID, { ...expected, gracePeriod: 1 }),
+      fetchAndVerifyOpenChannel(accountFetchRpc(signer, NETWORK), CHANNEL_ID, {
+        ...expected,
+        gracePeriod: 1,
+      }),
     ).rejects.toThrow(/channel grace period/);
   });
 });

@@ -178,6 +178,46 @@ function buildSettledLog(
   } as Log;
 }
 
+function buildRefundedLog(
+  overrides: {
+    channelId?: `0x${string}`;
+    sender?: `0x${string}`;
+    amount?: string;
+    address?: `0x${string}`;
+  } = {},
+): Log {
+  const channelId = overrides.channelId ?? (("0x" + "11".repeat(32)) as `0x${string}`);
+  const sender = overrides.sender ?? FACILITATOR_ADDRESS;
+
+  return {
+    address: overrides.address ?? BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: batchSettlementABI,
+      eventName: "Refunded",
+      args: { channelId, sender },
+    }),
+    data: encodeAbiParameters([{ type: "uint128" }], [BigInt(overrides.amount ?? "9000")]),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+}
+
+function buildSuccessfulRefundSigner(
+  channelId: `0x${string}`,
+  amount: string,
+): FacilitatorEvmSigner {
+  return buildSigner({
+    waitForTransactionReceipt: vi.fn().mockResolvedValue({
+      status: "success",
+      logs: [buildRefundedLog({ channelId, amount })],
+    }),
+  });
+}
+
 function envelopeVoucher(payload: BatchSettlementVoucherPayload): PaymentPayload {
   return {
     x402Version: 2,
@@ -473,6 +513,68 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyVoucher", () => {
     expect(result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
   });
 
+  it("returns CumulativeAmountBelowClaimed when maxClaimable advances totalClaimed by less than the price", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 500n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1000" } });
+
+    const result = await scheme.verify(payload, makeRequirements({ amount: "1000" }));
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
+  });
+
+  it("accepts a voucher that advances totalClaimed by exactly the price", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 500n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1500" } });
+
+    const result = await scheme.verify(payload, makeRequirements({ amount: "1000" }));
+    expect(result.isValid).toBe(true);
+  });
+
+  it("rejects a zero-price voucher whose maxClaimable equals totalClaimed", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 500n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "500" } });
+
+    const result = await scheme.verify(payload, makeRequirements({ amount: "0" }));
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
+  });
+
+  it.each(["", "abc", "-1", "+5", " 5", "1.5", "0x10", "1_0"])(
+    "returns ErrInvalidVoucherPayload for malformed requirements.amount %j",
+    async amount => {
+      const signer = buildSigner();
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 500n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+      const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1500" } });
+
+      const result = await scheme.verify(payload, makeRequirements({ amount }));
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrInvalidVoucherPayload);
+    },
+  );
+
   it("accepts a refund payload whose maxClaimable equals totalClaimed", async () => {
     const signer = buildSigner();
     mockedMulticall.mockResolvedValue([
@@ -546,7 +648,10 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyVoucher", () => {
 describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
   const authorizer = buildAuthorizerSigner();
 
-  function buildDeposit(overrides: Partial<BatchSettlementDepositPayload["deposit"]> = {}): {
+  function buildDeposit(
+    overrides: Partial<BatchSettlementDepositPayload["deposit"]> = {},
+    maxClaimableAmount = "1000",
+  ): {
     payload: PaymentPayload;
     channelId: `0x${string}`;
   } {
@@ -558,7 +663,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
       channelConfig: config,
       voucher: {
         channelId,
-        maxClaimableAmount: "1000",
+        maxClaimableAmount,
         signature: "0xcafebabe",
       },
       deposit: {
@@ -593,6 +698,57 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyDeposit", () => {
     expect(result.payer).toBe(PAYER);
     expect(result.extra?.channelId).toBe(channelId);
   });
+
+  it("returns CumulativeAmountBelowClaimed when the voucher advances totalClaimed by less than the price", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [1000n, 500n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildDeposit({}, "1000");
+
+    const result = await scheme.verify(payload, makeRequirements({ amount: "1000" }));
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
+  });
+
+  it("rejects a zero-price deposit whose voucher equals totalClaimed", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [1000n, 500n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = buildDeposit({}, "500");
+
+    const result = await scheme.verify(payload, makeRequirements({ amount: "0" }));
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrCumulativeAmountBelowClaimed);
+  });
+
+  it.each(["", "abc", "-1", "+5", " 5", "1.5", "0x10", "1_0"])(
+    "returns ErrInvalidDepositPayload for malformed requirements.amount %j",
+    async amount => {
+      const signer = buildSigner();
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [1000n, 500n] },
+        { status: "success", result: 1_000_000n },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+      const { payload } = buildDeposit({}, "1500");
+
+      const result = await scheme.verify(payload, makeRequirements({ amount }));
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe(Errors.ErrInvalidDepositPayload);
+    },
+  );
 
   it("returns InsufficientBalance when payer balance < deposit amount", async () => {
     const signer = buildSigner();
@@ -1941,15 +2097,20 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
   });
 
   it("dispatches enriched refund payloads via executeRefundWithSignature", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "9000" })],
+      }),
+    });
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -1981,6 +2142,38 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(signer.writeContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: "refundWithSignature" }),
     );
+  });
+
+  it("fails closed when refund receipt has no Refunded event", async () => {
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success", logs: [] }),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: {
+        channelId,
+        maxClaimableAmount: "0",
+        signature: "0xdead",
+      },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundedEventMismatch);
   });
 
   it("returns settlement_pending when the refund receipt wait fails", async () => {
@@ -2090,7 +2283,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(failed.success).toBe(false);
     expect(failed.errorReason).toBe(Errors.ErrRefundSimulationFailed);
 
-    const okSigner = buildSigner();
+    const okSigner = buildSuccessfulRefundSigner(channelId, "9000");
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
@@ -2167,7 +2360,14 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
   });
 
   it("polls post-refund state when a withdrawal is pending", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "2000" })],
+      }),
+    });
     mockedMulticall
       .mockResolvedValueOnce([
         { status: "success", result: [10000n, 0n] },
@@ -2180,8 +2380,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
         { status: "success", result: 8n },
       ]);
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -2377,15 +2575,15 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("submits a refund that carries a server-supplied authorizer signature", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSuccessfulRefundSigner(channelId, "9000");
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -2474,7 +2672,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     expect(result.errorMessage).toContain("nonce too low");
   });
 
-  it("still broadcasts a refund whose requested amount is zero after claims are considered", async () => {
+  it("broadcasts but fails closed when a zero refund emits no Refunded event", async () => {
     const signer = buildSigner();
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
@@ -2500,23 +2698,29 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     );
     // getRefundableAmount returns null for a zero request (not 0n), so the
     // ErrRefundNoBalance short-circuit does not fire and the signed refund is submitted.
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrRefundedEventMismatch);
     expect(signer.writeContract).toHaveBeenCalled();
   });
 
   it("ignores claims for a different channel when computing refundable amount", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const other = buildChannelConfig({
+      salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
+    });
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        logs: [buildRefundedLog({ channelId, amount: "9000" })],
+      }),
+    });
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const other = buildChannelConfig({
-      salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
-    });
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -2545,15 +2749,15 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("still broadcasts when bundled claims exceed channel balance so refundable amount is unknown", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSuccessfulRefundSigner(channelId, "1000");
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
       { status: "success", result: 0n },
     ]);
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -2618,7 +2822,9 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("reads post-refund channel state when a withdrawal is already pending", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSuccessfulRefundSigner(channelId, "9000");
     mockedMulticall
       .mockResolvedValueOnce([
         { status: "success", result: [10000n, 0n] },
@@ -2631,8 +2837,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
         { status: "success", result: 1n },
       ]);
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,
@@ -2661,7 +2865,9 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("falls back to the pre-refund snapshot when the post-refund state read fails", async () => {
-    const signer = buildSigner();
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSuccessfulRefundSigner(channelId, "9000");
     mockedMulticall
       .mockResolvedValueOnce([
         { status: "success", result: [10000n, 0n] },
@@ -2670,8 +2876,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
       ])
       .mockRejectedValueOnce(new Error("rpc lag"));
     const scheme = new BatchSettlementEvmScheme(signer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
       channelConfig: config,

@@ -15,6 +15,7 @@ This directory contains TypeScript server examples demonstrating how to protect 
 | [`upfront/`](./upfront/) | `exact` scheme with `upfront` payment flow (settle before handler) |
 | [`upto/`](./upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
 | [`batch-settlement/`](./batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
+| [`auth-capture/`](./auth-capture/) | Refundable escrow payments: delegated sync/deferred and custom-operator collect |
 | [`bazaar/`](./bazaar/) | Makes a paid API discoverable via the Bazaar extension |
 | [`builder-code/`](./builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
 | [`offer-receipt/`](./offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |

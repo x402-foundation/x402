@@ -2,7 +2,6 @@ package facilitator
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"strconv"
 	"testing"
@@ -16,6 +15,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -87,6 +87,35 @@ func TestVerifyAcceptsAWellFormedOpen(t *testing.T) {
 	assert.Equal(t, fixture.payerKey.PublicKey().String(), response.Payer)
 	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
 	assert.Zero(t, stub.simulations(), "verify does not simulate")
+}
+
+// Phase 3 step 4: the read-only verify refuses an open whose channel already
+// exists, as the deposit settle does.
+func TestVerifyRejectsAChannelThatAlreadyExists(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, nil)
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Verify(context.Background(), fixture.payload, fixture.requirements, nil)
+	assert.Equal(t, ErrChannelAlreadyOpen, verifyErrorReason(t, err))
+	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
+}
+
+// The scheme types openSlot as a JSON number; the decimal string clients emit
+// and the number both verify.
+func TestVerifyAcceptsANumericOpenSlot(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, newStubRPC(t), nil)
+	slot, err := strconv.ParseUint(fixture.payload.Payload["openSlot"].(string), 10, 64)
+	require.NoError(t, err)
+
+	payload := fixture.withPayload(map[string]interface{}{"openSlot": float64(slot)})
+	response, err := scheme.Verify(context.Background(), payload, fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
 }
 
 func TestVerifyRejections(t *testing.T) {
@@ -547,7 +576,7 @@ func TestDepositSettleSimulatesThenBroadcasts(t *testing.T) {
 	assert.Equal(t, 1, stub.simulations(), "the whole lifecycle is simulated before the deposit is locked")
 	require.Len(t, signer.sentTransactions(), 1)
 
-	record, err := scheme.ChannelStorage().Get(context.Background(), fixture.channelID.String())
+	record, err := scheme.ChannelStorage().Get(context.Background(), testNetwork, fixture.channelID.String())
 	require.NoError(t, err)
 	require.NotNil(t, record, "the channel is indexed for rent cleanup")
 	assert.Equal(t, fixture.payTo.String(), record.PayTo)
@@ -642,9 +671,9 @@ func TestDepositSettleReleasesTheCacheOnBroadcastFailure(t *testing.T) {
 	_, err := scheme.Settle(context.Background(), fixture.payload, fixture.requirements, nil)
 	assert.Equal(t, ErrChannelBroadcast, settleErrorReason(t, err))
 
-	record, storageErr := scheme.ChannelStorage().Get(context.Background(), fixture.channelID.String())
+	record, storageErr := scheme.ChannelStorage().Get(context.Background(), testNetwork, fixture.channelID.String())
 	require.NoError(t, storageErr)
-	require.NotNil(t, record, "the PDA stays indexed so cleanup can recover its rent")
+	require.Nil(t, record, "a definitive broadcast failure reverts the open row")
 
 	// The deposit cache entry was released, so a retry is not a duplicate.
 	_, err = scheme.Settle(context.Background(), fixture.payload, fixture.requirements, nil)
@@ -693,7 +722,7 @@ func TestDepositSettleReportsAnUnboundChannel(t *testing.T) {
 	_, err := scheme.Settle(context.Background(), fixture.payload, fixture.requirements, nil)
 
 	assert.Equal(t, ErrChannelState, settleErrorReason(t, err))
-	record, storageErr := scheme.ChannelStorage().Get(context.Background(), fixture.channelID.String())
+	record, storageErr := scheme.ChannelStorage().Get(context.Background(), testNetwork, fixture.channelID.String())
 	require.NoError(t, storageErr)
 	assert.NotNil(t, record, "the channel stays indexed so its rent is still recoverable")
 }
@@ -718,9 +747,70 @@ func TestClaimSettleDistributesTheMeteredAmount(t *testing.T) {
 	require.Len(t, sent, 1)
 	programs := instructionPrograms(t, sent[0])
 	assert.Equal(t, []solana.PublicKey{
-		solana.ComputeBudget, solana.ComputeBudget,
 		paymentchannels.Ed25519ProgramID, paymentchannels.ProgramID, paymentchannels.ProgramID,
 	}, programs, "the voucher precompile must immediately precede settle_and_seal")
+	assert.Equal(t, solana.MessageVersionV1, sent[0].Message.GetVersion())
+}
+
+func intPtr(v int) *int { return &v }
+
+func TestResolveFacilitatorTransactionVersion(t *testing.T) {
+	assert.Equal(t, DefaultFacilitatorTransactionVersion, resolveFacilitatorTransactionVersion(nil))
+	assert.Equal(t, 0, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion0)))
+	assert.Equal(t, 1, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion1)))
+}
+
+func TestInvalidFacilitatorTransactionVersionPanicsAtConstruction(t *testing.T) {
+	for _, version := range []int{-1, 2, 3} {
+		assert.Panics(t, func() {
+			NewUptoSvmScheme(newMockSigner(t, 1), &Config{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+		assert.Panics(t, func() {
+			NewRentCleanupManager(RentCleanupConfig{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+	}
+}
+
+func TestClaimSettleHonoursTheConfiguredFacilitatorTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *int
+		wantVersion solana.MessageVersion
+		wantBudget  bool
+	}{
+		{"unset defaults to v1", nil, solana.MessageVersionV1, false},
+		{"explicit v1", intPtr(paymentchannels.FacilitatorTransactionVersion1), solana.MessageVersionV1, false},
+		{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0, true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			signer := newMockSigner(t, 1)
+			stub := newStubRPC(t)
+			fixture := newPaymentFixture(t, signer)
+			scheme := newScheme(signer, stub, &Config{FacilitatorTransactionVersion: test.version})
+			stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+			response, err := scheme.Settle(
+				context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
+			)
+			require.NoError(t, err)
+			require.True(t, response.Success)
+
+			sent := signer.sentTransactions()
+			require.Len(t, sent, 1)
+			assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+
+			hasBudget := false
+			for _, program := range instructionPrograms(t, sent[0]) {
+				if program.Equals(solana.ComputeBudget) {
+					hasBudget = true
+				}
+			}
+			assert.Equal(t, test.wantBudget, hasBudget,
+				"v0 carries ComputeBudget instructions; v1 carries the budget inline")
+		})
+	}
 }
 
 func TestClaimSettleSealsAZeroChargeWithoutAPrecompile(t *testing.T) {
@@ -741,27 +831,20 @@ func TestClaimSettleSealsAZeroChargeWithoutAPrecompile(t *testing.T) {
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
 	assert.Equal(t, []solana.PublicKey{
-		solana.ComputeBudget, solana.ComputeBudget, paymentchannels.ProgramID, paymentchannels.ProgramID,
+		paymentchannels.ProgramID, paymentchannels.ProgramID,
 	}, instructionPrograms(t, sent[0]),
 		"a zero charge seals at the watermark, which the program rejects with a voucher")
 }
 
-// computeBudgetData extracts the SetComputeUnitLimit/SetComputeUnitPrice
-// instruction data from a sent transaction's leading ComputeBudget prefix.
-func computeBudgetData(t *testing.T, tx *solana.Transaction) (limit uint32, price uint64) {
+// transactionConfigData extracts the mandatory v1 config from a settlement.
+func transactionConfigData(t *testing.T, tx *solana.Transaction) (limit uint32, price uint64) {
 	t.Helper()
-	for _, instruction := range tx.Message.Instructions {
-		program, err := tx.Message.Program(instruction.ProgramIDIndex)
-		require.NoError(t, err)
-		if !program.Equals(solana.ComputeBudget) {
-			continue
-		}
-		switch instruction.Data[0] {
-		case paymentchannels.ComputeBudgetSetUnitLimit:
-			limit = binary.LittleEndian.Uint32(instruction.Data[1:5])
-		case paymentchannels.ComputeBudgetSetUnitPrice:
-			price = binary.LittleEndian.Uint64(instruction.Data[1:9])
-		}
+	require.Equal(t, solana.MessageVersionV1, tx.Message.GetVersion())
+	require.NotNil(t, tx.Message.TransactionConfig.ComputeUnitLimit)
+	require.NotNil(t, tx.Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	limit = *tx.Message.TransactionConfig.ComputeUnitLimit
+	if tx.Message.TransactionConfig.PriorityFee != nil {
+		price = *tx.Message.TransactionConfig.PriorityFee
 	}
 	return limit, price
 }
@@ -783,9 +866,28 @@ func TestClaimSettleUsesTheConfiguredComputeBudget(t *testing.T) {
 
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
-	limit, gotPrice := computeBudgetData(t, sent[0])
+	limit, gotPrice := transactionConfigData(t, sent[0])
 	assert.Equal(t, settleLimit, limit)
-	assert.Equal(t, price, gotPrice)
+	assert.Equal(t, uint64(1), gotPrice)
+	require.NotNil(t, sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, paymentchannels.DefaultSettleLoadedAccountsDataSizeLimit, *sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+}
+
+func TestClaimSettleUsesTheConfiguredLoadedAccountsDataBudget(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	loadedLimit := uint32(2_097_152)
+	scheme := newScheme(signer, stub, &Config{SettleLoadedAccountsDataSizeLimit: &loadedLimit})
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Settle(context.Background(), fixture.claimPayload(t, 0), fixture.claimRequirements(0), nil)
+	require.NoError(t, err)
+
+	sent := signer.sentTransactions()
+	require.Len(t, sent, 1)
+	require.NotNil(t, sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, loadedLimit, *sent[0].Message.TransactionConfig.LoadedAccountsDataSizeLimit)
 }
 
 func TestClaimSettleOmitsComputeUnitPriceWhenZero(t *testing.T) {
@@ -801,27 +903,33 @@ func TestClaimSettleOmitsComputeUnitPriceWhenZero(t *testing.T) {
 
 	sent := signer.sentTransactions()
 	require.Len(t, sent, 1)
-	assert.Equal(t, []solana.PublicKey{solana.ComputeBudget, paymentchannels.ProgramID, paymentchannels.ProgramID},
-		instructionPrograms(t, sent[0]), "a zero price omits SetComputeUnitPrice but SetComputeUnitLimit is always emitted")
+	assert.Equal(t, []solana.PublicKey{paymentchannels.ProgramID, paymentchannels.ProgramID},
+		instructionPrograms(t, sent[0]), "v1 settlement has no ComputeBudget instructions")
+	assert.Nil(t, sent[0].Message.TransactionConfig.PriorityFee)
 }
 
-// Rent cleanup only sees channels the settle path indexed, so the claim must
-// keep the record current instead of relying on the deposit having stored it.
-func TestClaimSettleIndexesTheChannelForCleanup(t *testing.T) {
+// Rent cleanup reads the index written at open; a claim on an already-open
+// channel must not drop that row.
+func TestClaimSettleKeepsTheOpenIndexForCleanup(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	stub := newStubRPC(t)
 	fixture := newPaymentFixture(t, signer)
 	scheme := newScheme(signer, stub, nil)
-	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+	signer.onSend = func(*solana.Transaction) {
+		stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+	}
 
-	_, err := scheme.Settle(
+	_, err := scheme.Settle(context.Background(), fixture.payload, fixture.requirements, nil)
+	require.NoError(t, err)
+
+	_, err = scheme.Settle(
 		context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
 	)
 	require.NoError(t, err)
 
-	record, err := scheme.ChannelStorage().Get(context.Background(), fixture.channelID.String())
+	record, err := scheme.ChannelStorage().Get(context.Background(), testNetwork, fixture.channelID.String())
 	require.NoError(t, err)
-	require.NotNil(t, record, "an unindexed channel would leak its rent")
+	require.NotNil(t, record, "the open index must survive claim settlement")
 	assert.Equal(t, fixture.payTo.String(), record.PayTo)
 	assert.Equal(t, solana.TokenProgramID.String(), record.TokenProgram)
 	assert.Equal(t, fixture.expiresAt, record.ExpiresAt)
@@ -835,18 +943,13 @@ func TestDepositSettleFailsClosedWhenChannelStorageFails(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	stub := newStubRPC(t)
 	fixture := newPaymentFixture(t, signer)
-	var reported []StoragePhase
 	scheme := newScheme(signer, stub, &Config{
 		ChannelStorage: failingStorage{},
-		OnStorageError: func(_ error, _ string, phase StoragePhase) {
-			reported = append(reported, phase)
-		},
 	})
 
 	_, err := scheme.Settle(context.Background(), fixture.payload, fixture.requirements, nil)
 
 	assert.Equal(t, ErrChannelBroadcast, settleErrorReason(t, err))
-	assert.Equal(t, []StoragePhase{StoragePhaseSettle}, reported)
 	assert.Empty(t, signer.sentTransactions(), "nothing may reach the chain without a durable index")
 }
 
@@ -856,7 +959,7 @@ func TestDepositSettleSucceedsOnRetryAfterAStorageFailure(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	stub := newStubRPC(t)
 	fixture := newPaymentFixture(t, signer)
-	storage := &toggleableStorage{failing: true, inner: NewInMemoryChannelStorage()}
+	storage := &toggleableStorage{failing: true, inner: paymentchannels.NewInMemoryPaymentChannelStorage()}
 	scheme := newScheme(signer, stub, &Config{ChannelStorage: storage})
 	signer.onSend = func(*solana.Transaction) {
 		stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
@@ -908,7 +1011,7 @@ func TestClaimSettleRejectsAnUnboundChannel(t *testing.T) {
 			name: "channel already sealed",
 			account: func(f *paymentFixture) *channelAccount {
 				account := f.openChannel()
-				account.Status = paymentchannels.StatusSealed
+				account.Status = generated.ChannelStatus_Sealed
 				return &account
 			},
 		},
@@ -1143,7 +1246,7 @@ func TestClaimSettleDoesNotCacheRejectedRequests(t *testing.T) {
 	assert.True(t, response.Success)
 }
 
-func TestClaimSettleReleasesTheCacheOnBroadcastFailure(t *testing.T) {
+func TestClaimSettleKeepsTheCacheWhenBroadcastIsUnconfirmed(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	signer.sendErr = errors.New("node is behind")
 	stub := newStubRPC(t)
@@ -1154,14 +1257,15 @@ func TestClaimSettleReleasesTheCacheOnBroadcastFailure(t *testing.T) {
 	_, err := scheme.Settle(
 		context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
 	)
-	assert.Equal(t, ErrTransactionFailed, settleErrorReason(t, err))
+	assert.Equal(t, ErrSettlementPending, settleErrorReason(t, err))
 
 	signer.sendErr = nil
 	response, err := scheme.Settle(
 		context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
 	)
-	require.NoError(t, err, "a released cache entry lets the retry proceed")
+	require.NoError(t, err, "the retry reconciles the recorded signature instead of broadcasting again")
 	assert.True(t, response.Success)
+	assert.Empty(t, signer.sentTransactions())
 }
 
 func TestDepositCacheDoesNotBlockTheLaterClaim(t *testing.T) {
@@ -1223,12 +1327,8 @@ func TestSettleSucceedsWhenChannelStorageFails(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	stub := newStubRPC(t)
 	fixture := newPaymentFixture(t, signer)
-	var reported []StoragePhase
 	scheme := newScheme(signer, stub, &Config{
 		ChannelStorage: failingStorage{},
-		OnStorageError: func(_ error, _ string, phase StoragePhase) {
-			reported = append(reported, phase)
-		},
 	})
 	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
 
@@ -1238,41 +1338,41 @@ func TestSettleSucceedsWhenChannelStorageFails(t *testing.T) {
 
 	require.NoError(t, err, "cleanup bookkeeping never turns a charged payment into a failure")
 	assert.True(t, response.Success)
-	assert.Equal(t, []StoragePhase{StoragePhaseSettle}, reported)
 }
 
-func TestNewRentCleanupManagerSharesTheSchemeStorage(t *testing.T) {
+func TestNewRentCleanupManagerUsesSchemeChannelStorage(t *testing.T) {
 	signer := newMockSigner(t, 1)
 	stub := newStubRPC(t)
-	scheme := newScheme(signer, stub, nil)
-
-	manager := scheme.NewRentCleanupManager(testNetwork)
-
-	require.NotNil(t, manager)
-	assert.Same(t, scheme.ChannelStorage(), manager.storage)
-
-	storage := NewInMemoryChannelStorage()
+	storage := paymentchannels.NewInMemoryPaymentChannelStorage()
 	injected := newScheme(signer, stub, &Config{ChannelStorage: storage})
 	assert.Same(t, storage, injected.ChannelStorage())
-	assert.Same(t, storage, injected.NewRentCleanupManager(testNetwork).storage)
+	require.NotNil(t, injected.NewRentCleanupManager(testNetwork))
 }
 
 // failingStorage rejects every write so storage-failure paths can be exercised.
 type failingStorage struct{}
 
-func (failingStorage) Get(context.Context, string) (*ChannelRecord, error) {
-	return nil, errors.New("storage unavailable")
+func (failingStorage) RecordOpen(context.Context, paymentchannels.PaymentChannelRecord) (paymentchannels.PaymentChannelOpenWrite, error) {
+	return paymentchannels.PaymentChannelOpenWrite{}, errors.New("storage unavailable")
 }
 
-func (failingStorage) List(context.Context) ([]ChannelRecord, error) {
-	return nil, errors.New("storage unavailable")
-}
-
-func (failingStorage) Upsert(context.Context, ChannelRecord) error {
+func (failingStorage) RevertOpen(context.Context, paymentchannels.PaymentChannelOpenWrite) error {
 	return errors.New("storage unavailable")
 }
 
-func (failingStorage) Delete(context.Context, string) error {
+func (failingStorage) RecordActivity(context.Context, ...paymentchannels.PaymentChannelRecord) error {
+	return errors.New("storage unavailable")
+}
+
+func (failingStorage) Get(context.Context, string, string) (*paymentchannels.PaymentChannelRecord, error) {
+	return nil, errors.New("storage unavailable")
+}
+
+func (failingStorage) List(context.Context, string) ([]paymentchannels.PaymentChannelRecord, error) {
+	return nil, errors.New("storage unavailable")
+}
+
+func (failingStorage) Delete(context.Context, string, string) error {
 	return errors.New("storage unavailable")
 }
 
@@ -1280,26 +1380,40 @@ func (failingStorage) Delete(context.Context, string) error {
 // two settle calls, to prove a retry is not left permanently blocked.
 type toggleableStorage struct {
 	failing bool
-	inner   *InMemoryChannelStorage
+	inner   *paymentchannels.InMemoryPaymentChannelStorage
 }
 
-func (s *toggleableStorage) Get(ctx context.Context, channelID string) (*ChannelRecord, error) {
-	return s.inner.Get(ctx, channelID)
+func (s *toggleableStorage) RecordOpen(ctx context.Context, record paymentchannels.PaymentChannelRecord) (paymentchannels.PaymentChannelOpenWrite, error) {
+	if s.failing {
+		return paymentchannels.PaymentChannelOpenWrite{}, errors.New("storage unavailable")
+	}
+	return s.inner.RecordOpen(ctx, record)
 }
 
-func (s *toggleableStorage) List(ctx context.Context) ([]ChannelRecord, error) {
-	return s.inner.List(ctx)
-}
-
-func (s *toggleableStorage) Upsert(ctx context.Context, record ChannelRecord) error {
+func (s *toggleableStorage) RevertOpen(ctx context.Context, write paymentchannels.PaymentChannelOpenWrite) error {
 	if s.failing {
 		return errors.New("storage unavailable")
 	}
-	return s.inner.Upsert(ctx, record)
+	return s.inner.RevertOpen(ctx, write)
 }
 
-func (s *toggleableStorage) Delete(ctx context.Context, channelID string) error {
-	return s.inner.Delete(ctx, channelID)
+func (s *toggleableStorage) RecordActivity(ctx context.Context, records ...paymentchannels.PaymentChannelRecord) error {
+	if s.failing {
+		return errors.New("storage unavailable")
+	}
+	return s.inner.RecordActivity(ctx, records...)
+}
+
+func (s *toggleableStorage) Get(ctx context.Context, network, channelID string) (*paymentchannels.PaymentChannelRecord, error) {
+	return s.inner.Get(ctx, network, channelID)
+}
+
+func (s *toggleableStorage) List(ctx context.Context, network string) ([]paymentchannels.PaymentChannelRecord, error) {
+	return s.inner.List(ctx, network)
+}
+
+func (s *toggleableStorage) Delete(ctx context.Context, network, channelID string) error {
+	return s.inner.Delete(ctx, network, channelID)
 }
 
 // instructionPrograms lists the program invoked by each top-level instruction.
@@ -1342,7 +1456,6 @@ type delegatedFixture struct {
 	fixture    *paymentFixture
 	scheme     *UptoSvmScheme
 	authorizer *testAuthorizerSigner
-	store      *InMemoryDelegatedAuthStore
 }
 
 func newDelegatedFixture(t *testing.T, resolve ResolveCallerIdentity) *delegatedFixture {
@@ -1352,11 +1465,9 @@ func newDelegatedFixture(t *testing.T, resolve ResolveCallerIdentity) *delegated
 	authorizerKey, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 	authorizer := &testAuthorizerSigner{key: authorizerKey}
-	store := NewInMemoryDelegatedAuthStore()
 	scheme := newScheme(signer, stub, &Config{
 		AuthorizerSigner:      authorizer,
 		ResolveCallerIdentity: resolve,
-		DelegatedAuthStore:    store,
 	})
 	fixture := newPaymentFixtureWithAuthorizer(t, signer, authorizerKey)
 	return &delegatedFixture{
@@ -1365,8 +1476,14 @@ func newDelegatedFixture(t *testing.T, resolve ResolveCallerIdentity) *delegated
 		fixture:    fixture,
 		scheme:     scheme,
 		authorizer: authorizer,
-		store:      store,
 	}
+}
+
+func (d *delegatedFixture) storedRecord(t *testing.T) *paymentchannels.PaymentChannelRecord {
+	t.Helper()
+	record, err := d.scheme.ChannelStorage().Get(context.Background(), testNetwork, d.fixture.channelID.String())
+	require.NoError(t, err)
+	return record
 }
 
 func (d *delegatedFixture) depositPayload() types.PaymentPayload {
@@ -1411,44 +1528,23 @@ func TestNewUptoSvmSchemeRequiresResolveCallerIdentityWithAuthorizer(t *testing.
 	})
 }
 
-func TestInMemoryDelegatedAuthStore_Bind_FirstWriterWins(t *testing.T) {
-	store := NewInMemoryDelegatedAuthStore()
-	ctx := t.Context()
+func TestChannelStorageCallerIdentityConflict(t *testing.T) {
+	storage := paymentchannels.NewInMemoryPaymentChannelStorage()
+	ctx := context.Background()
 	expiresAt := time.Now().Add(time.Hour).Unix()
-
-	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
-		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: expiresAt,
-	}))
-	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
-		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: expiresAt,
-	}))
-
-	err := store.Bind(ctx, DelegatedAuthBinding{
-		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-2", ExpiresAt: expiresAt,
+	write, err := storage.RecordOpen(ctx, paymentchannels.PaymentChannelRecord{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: expiresAt, LastActivityAt: time.Now(),
 	})
-	require.ErrorIs(t, err, ErrDelegatedAuthIdentityConflict)
+	require.NoError(t, err)
+	err = paymentchannels.CheckOpenBindings(paymentchannels.PaymentChannelRecord{
+		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-2",
+	}, write.Record)
+	require.ErrorIs(t, err, paymentchannels.ErrCallerIdentityConflict)
 
-	got, err := store.Get(ctx, "ch-1", testNetwork)
+	got, err := storage.Get(ctx, testNetwork, "ch-1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "svc-1", got.CallerIdentity)
-}
-
-func TestInMemoryDelegatedAuthStore_Bind_ExpiredIsAbsent(t *testing.T) {
-	store := NewInMemoryDelegatedAuthStore()
-	ctx := t.Context()
-
-	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
-		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-1", ExpiresAt: time.Now().Add(-time.Second).Unix(),
-	}))
-	require.NoError(t, store.Bind(ctx, DelegatedAuthBinding{
-		ChannelID: "ch-1", Network: testNetwork, CallerIdentity: "svc-2", ExpiresAt: time.Now().Add(time.Hour).Unix(),
-	}))
-
-	got, err := store.Get(ctx, "ch-1", testNetwork)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, "svc-2", got.CallerIdentity)
 }
 
 func TestDelegatedSettleRoutesFullChargeTypeClaimAsClaim(t *testing.T) {
@@ -1467,9 +1563,9 @@ func TestDelegatedSettleRoutesFullChargeTypeClaimAsClaim(t *testing.T) {
 	assert.True(t, response.Success)
 	assert.Equal(t, "10000", response.Amount)
 	assert.Equal(t, sentBefore+1, len(d.signer.sentTransactions()), "claim must not re-broadcast open")
-	binding, err := d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
-	require.NoError(t, err)
-	assert.Nil(t, binding)
+	binding := d.storedRecord(t)
+	require.NotNil(t, binding)
+	assert.Equal(t, "svc-1", binding.CallerIdentity)
 }
 
 func TestDelegatedSettleRejectsMissingType(t *testing.T) {
@@ -1498,8 +1594,7 @@ func TestDelegatedSettleSignsAndSettlesMatchingIdentities(t *testing.T) {
 
 	_, err := d.scheme.Settle(context.Background(), d.depositPayload(), d.fixture.requirements, nil)
 	require.NoError(t, err)
-	binding, err := d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
-	require.NoError(t, err)
+	binding := d.storedRecord(t)
 	require.NotNil(t, binding)
 	assert.Equal(t, "svc-1", binding.CallerIdentity)
 
@@ -1510,9 +1605,9 @@ func TestDelegatedSettleSignsAndSettlesMatchingIdentities(t *testing.T) {
 	assert.True(t, response.Success)
 	assert.Equal(t, "1858", response.Amount)
 	assert.Equal(t, []DelegatedSettleStep{DelegatedSettleStepDeposit, DelegatedSettleStepClaim}, steps)
-	binding, err = d.store.Get(context.Background(), d.fixture.channelID.String(), testNetwork)
-	require.NoError(t, err)
-	assert.Nil(t, binding)
+	binding = d.storedRecord(t)
+	require.NotNil(t, binding)
+	assert.Equal(t, "svc-1", binding.CallerIdentity)
 }
 
 func TestDelegatedSettleRejectsDifferentIdentityWithoutBroadcasting(t *testing.T) {
@@ -1547,20 +1642,33 @@ func TestDelegatedSettleRejectsClaimWithNoStoredBinding(t *testing.T) {
 	assert.Empty(t, d.stub.commitmentsFor("getAccountInfo"))
 }
 
-type throwingDelegatedAuthStore struct {
+type failingGetChannelStorage struct {
+	inner  *paymentchannels.InMemoryPaymentChannelStorage
 	getErr error
 }
 
-func (s *throwingDelegatedAuthStore) Bind(context.Context, DelegatedAuthBinding) error {
-	return nil
+func (s *failingGetChannelStorage) RecordOpen(ctx context.Context, record paymentchannels.PaymentChannelRecord) (paymentchannels.PaymentChannelOpenWrite, error) {
+	return s.inner.RecordOpen(ctx, record)
 }
 
-func (s *throwingDelegatedAuthStore) Get(context.Context, string, x402.Network) (*DelegatedAuthBinding, error) {
+func (s *failingGetChannelStorage) RevertOpen(ctx context.Context, write paymentchannels.PaymentChannelOpenWrite) error {
+	return s.inner.RevertOpen(ctx, write)
+}
+
+func (s *failingGetChannelStorage) RecordActivity(ctx context.Context, records ...paymentchannels.PaymentChannelRecord) error {
+	return s.inner.RecordActivity(ctx, records...)
+}
+
+func (s *failingGetChannelStorage) Get(context.Context, string, string) (*paymentchannels.PaymentChannelRecord, error) {
 	return nil, s.getErr
 }
 
-func (s *throwingDelegatedAuthStore) Delete(context.Context, string, x402.Network) error {
-	return nil
+func (s *failingGetChannelStorage) List(ctx context.Context, network string) ([]paymentchannels.PaymentChannelRecord, error) {
+	return s.inner.List(ctx, network)
+}
+
+func (s *failingGetChannelStorage) Delete(ctx context.Context, network, channelID string) error {
+	return s.inner.Delete(ctx, network, channelID)
 }
 
 func TestDelegatedSettleRejectsClaimWhenAuthStoreGetFails(t *testing.T) {
@@ -1572,7 +1680,10 @@ func TestDelegatedSettleRejectsClaimWhenAuthStoreGetFails(t *testing.T) {
 	scheme := newScheme(signer, stub, &Config{
 		AuthorizerSigner:      authorizer,
 		ResolveCallerIdentity: identityResolver("svc-1"),
-		DelegatedAuthStore:    &throwingDelegatedAuthStore{getErr: errors.New("store down")},
+		ChannelStorage: &failingGetChannelStorage{
+			inner:  paymentchannels.NewInMemoryPaymentChannelStorage(),
+			getErr: errors.New("store down"),
+		},
 	})
 	fixture := newPaymentFixtureWithAuthorizer(t, signer, authorizerKey)
 

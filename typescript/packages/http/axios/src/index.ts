@@ -1,4 +1,5 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, ResponseBodyTooLargeError } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 import {
   type AxiosError,
@@ -8,7 +9,8 @@ import {
 } from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
-type AxiosHeaderRecord = Record<string, string>;
+type AxiosHeaderValue = string | string[];
+type AxiosHeaderRecord = Record<string, AxiosHeaderValue>;
 
 /**
  * Resolves the final absolute URL for an Axios 402 response.
@@ -57,10 +59,22 @@ function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): Axio
       : (headers as unknown as Record<string, unknown>);
 
   return Object.entries(source).reduce<AxiosHeaderRecord>((acc, [key, value]) => {
-    if (value !== undefined && value !== null && typeof value !== "function") {
-      acc[key] = String(value);
+    if (value === undefined || value === null || typeof value === "function") {
+      return acc;
     }
 
+    // Axios joins a Cookie array with "; " in its HTTP adapter. String()
+    // joins with "," and changes the cookie the paid retry sends.
+    if (Array.isArray(value)) {
+      // Keep empty strings. Axios joins them too, so "" + "locale=zh"
+      // stays "; locale=zh" on the paid retry instead of "locale=zh".
+      // Keep an empty array. Dropping Cookie: [] lets Axios merge an
+      // instance default back in on the paid retry.
+      acc[key] = value.filter((item): item is string => typeof item === "string");
+      return acc;
+    }
+
+    acc[key] = String(value);
     return acc;
   }, {});
 }
@@ -74,6 +88,40 @@ function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): Axio
  */
 function setAxiosHeader(headers: AxiosHeaderRecord, key: string, value: string): void {
   headers[key] = value;
+}
+
+/**
+ * Ensures an Axios `response.data` value stays within the control-plane body cap.
+ * Axios buffers response bodies, so byte length can be checked without streaming.
+ *
+ * @param data - Axios `response.data` for a payment-required or retry response
+ * @param maxBytes - Maximum allowed body size in bytes
+ * @throws {@link ResponseBodyTooLargeError} when the buffered body exceeds `maxBytes`
+ */
+function assertAxiosResponseBodyWithinLimit(
+  data: unknown,
+  maxBytes: number = MAX_CONTROL_PLANE_RESPONSE_BYTES,
+): void {
+  if (data == null) {
+    return;
+  }
+
+  let byteLength: number;
+  if (typeof data === "string") {
+    byteLength = new TextEncoder().encode(data).byteLength;
+  } else if (data instanceof ArrayBuffer) {
+    byteLength = data.byteLength;
+  } else if (data instanceof Uint8Array) {
+    byteLength = data.byteLength;
+  } else if (typeof Blob !== "undefined" && data instanceof Blob) {
+    byteLength = data.size;
+  } else {
+    byteLength = new TextEncoder().encode(JSON.stringify(data)).byteLength;
+  }
+
+  if (byteLength > maxBytes) {
+    throw new ResponseBodyTooLargeError(maxBytes);
+  }
 }
 
 /**
@@ -192,7 +240,12 @@ export function wrapAxiosWithPayment(
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
 
   axiosInstance.interceptors.response.use(
-    response => response,
+    response => {
+      if (response.status === 402) {
+        assertAxiosResponseBodyWithinLimit(response.data);
+      }
+      return response;
+    },
     async (error: AxiosError) => {
       if (!error.response || error.response.status !== 402) {
         return Promise.reject(error);
@@ -205,15 +258,17 @@ export function wrapAxiosWithPayment(
 
       // Check if this is already a retry to prevent infinite loops
       if ((originalConfig as X402RetryConfig).__is402Retry) {
+        assertAxiosResponseBodyWithinLimit(error.response.data);
         return Promise.reject(error);
       }
 
       try {
+        const response = error.response;
+        assertAxiosResponseBodyWithinLimit(response.data);
+
         // Parse payment requirements from response
         let paymentRequired: PaymentRequired;
         try {
-          const response = error.response!; // Already validated above
-
           // Create getHeader function for case-insensitive header lookup
           const getHeader = (name: string) => {
             const value = response.headers[name] ?? response.headers[name.toLowerCase()];
@@ -244,6 +299,7 @@ export function wrapAxiosWithPayment(
           if (hookResponse.status !== 402) {
             return hookResponse; // Hook succeeded
           }
+          assertAxiosResponseBodyWithinLimit(hookResponse.data);
           // Hook's retry got 402, fall through to payment
         }
 
@@ -281,6 +337,9 @@ export function wrapAxiosWithPayment(
         // response hooks below run before the rejection is rethrown.
         const paidOutcome = await sendPaidRequest(axiosInstance, paidConfig);
         const secondResponse = paidOutcome.response;
+        if (secondResponse.status === 402) {
+          assertAxiosResponseBodyWithinLimit(secondResponse.data);
+        }
 
         // Fire payment response hooks and handle recovery
         const getResponseHeader = (name: string) => {
@@ -308,6 +367,9 @@ export function wrapAxiosWithPayment(
           );
           const retryOutcome = await sendPaidRequest(axiosInstance, retryConfig);
           const retryResponse = retryOutcome.response;
+          if (retryResponse.status === 402) {
+            assertAxiosResponseBodyWithinLimit(retryResponse.data);
+          }
           // Process the final retry result without another recovery attempt.
           const getRetryHeader = (name: string) => {
             const value = retryResponse.headers[name] ?? retryResponse.headers[name.toLowerCase()];
@@ -375,7 +437,7 @@ export type {
   SelectPaymentRequirements,
   x402ClientConfig,
 } from "@x402/core/client";
-export { decodePaymentResponseHeader } from "@x402/core/http";
+export { decodePaymentResponseHeader, ResponseBodyTooLargeError } from "@x402/core/http";
 export type {
   Network,
   PaymentPayload,

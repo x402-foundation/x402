@@ -10,6 +10,7 @@ import { address, type Address, type Base58EncodedBytes, getBase64Encoder } from
 
 import type { FacilitatorSvmSigner } from "../signer";
 import type { Channel } from "./generated/accounts/channel";
+import { AccountDiscriminator } from "./generated/types/accountDiscriminator";
 import { getChannelDecoder } from "./generated/accounts/channel";
 import { PAYMENT_CHANNELS_PROGRAM_ID } from "./onchain";
 import { findPaymentChannelPda } from "./open";
@@ -19,6 +20,14 @@ export const CHANNEL_ACCOUNT_SIZE = 256n;
 
 /** `Channel.rent_payer` byte offset; also the getProgramAccounts memcmp offset. */
 export const CHANNEL_RENT_PAYER_OFFSET = 216n;
+
+/**
+ * Byte offset of `Channel.payer`, for discovering the channels a wallet funded.
+ *
+ * Derived from the account layout: the four preceding pubkeys sit after the
+ * 88-byte header, and `rent_payer` at 216 is this offset plus four addresses.
+ */
+export const CHANNEL_PAYER_OFFSET = 88n;
 
 /** A channel account found onchain and validated independent of offchain metadata. */
 export interface DiscoveredChannel {
@@ -41,6 +50,75 @@ export interface DiscoveredChannel {
  * @param programId - Optional payment-channels program id override
  * @returns Validated discovered channels
  */
+/**
+ * A `getProgramAccounts` scan, however the caller reaches the network.
+ *
+ * Lets a facilitator scan through its signer and a client through a plain RPC
+ * client without either owning the validation that follows.
+ */
+export type ProgramAccountScan = (
+  programId: string,
+  filters: readonly unknown[],
+) => Promise<readonly { pubkey: Address; account: { data: [string, string]; owner: Address } }[]>;
+
+/** The scan filters that select channels by one 32-byte address field. */
+export function channelAddressFilters(value: string, offset: bigint): readonly unknown[] {
+  return [
+    { dataSize: CHANNEL_ACCOUNT_SIZE },
+    {
+      memcmp: {
+        bytes: value as Base58EncodedBytes,
+        encoding: "base58",
+        offset,
+      },
+    },
+  ];
+}
+
+/**
+ * Run a channel scan and keep only the rows the chain actually vouches for.
+ *
+ * Every row is decoded and its PDA rederived from its own fields, because a
+ * `getProgramAccounts` filter result is never trusted on its own: an account
+ * can carry any bytes at the filtered offset.
+ */
+export async function discoverChannels(
+  scan: ProgramAccountScan,
+  filters: readonly unknown[],
+  programId?: string,
+): Promise<DiscoveredChannel[]> {
+  const program = address(programId ?? PAYMENT_CHANNELS_PROGRAM_ID);
+  const rows = await scan(program.toString(), filters);
+  const discovered: DiscoveredChannel[] = [];
+  for (const row of rows) {
+    const validated = await validateDiscoveredAccount(
+      row.pubkey,
+      row.account.owner,
+      row.account.data[0],
+      program,
+    );
+    if (validated) discovered.push(validated);
+  }
+  return discovered;
+}
+
+/**
+ * Discover the channels a wallet opened and funded, for a client that has to
+ * rebuild its own channel list.
+ *
+ * @param scan - How to reach `getProgramAccounts`
+ * @param payer - The channel `payer` to scan for
+ * @param programId - Payment-channels program override
+ * @returns Every channel whose PDA rederives from its own fields
+ */
+export async function discoverChannelsByPayer(
+  scan: ProgramAccountScan,
+  payer: string,
+  programId?: string,
+): Promise<DiscoveredChannel[]> {
+  return discoverChannels(scan, channelAddressFilters(payer, CHANNEL_PAYER_OFFSET), programId);
+}
+
 export async function discoverChannelsByRentPayer(
   signer: Pick<FacilitatorSvmSigner, "getProgramAccounts">,
   network: string,
@@ -53,33 +131,17 @@ export async function discoverChannelsByRentPayer(
         "Use toFacilitatorSvmSigner() which provides all required methods.",
     );
   }
-  const program = address(programId ?? PAYMENT_CHANNELS_PROGRAM_ID);
-  const results = await signer.getProgramAccounts(network, program.toString(), {
-    commitment: "confirmed",
-    encoding: "base64",
-    filters: [
-      { dataSize: CHANNEL_ACCOUNT_SIZE },
-      {
-        memcmp: {
-          bytes: rentPayer as Base58EncodedBytes,
-          encoding: "base58",
-          offset: CHANNEL_RENT_PAYER_OFFSET,
-        },
-      },
-    ],
-  });
-
-  const discovered: DiscoveredChannel[] = [];
-  for (const result of results) {
-    const validated = await validateDiscoveredAccount(
-      result.pubkey,
-      result.account.owner,
-      result.account.data[0],
-      program,
-    );
-    if (validated) discovered.push(validated);
-  }
-  return discovered;
+  const scan: ProgramAccountScan = (programAddress, filters) =>
+    signer.getProgramAccounts!(network, programAddress, {
+      commitment: "confirmed",
+      encoding: "base64",
+      filters,
+    });
+  return discoverChannels(
+    scan,
+    channelAddressFilters(rentPayer, CHANNEL_RENT_PAYER_OFFSET),
+    programId,
+  );
 }
 
 /**
@@ -111,7 +173,7 @@ async function validateDiscoveredAccount(
   } catch {
     return undefined;
   }
-  if (channel.discriminator !== 1) return undefined;
+  if (channel.discriminator !== AccountDiscriminator.Channel) return undefined;
 
   const derived = await findPaymentChannelPda({
     authorizedSigner: channel.authorizedSigner,

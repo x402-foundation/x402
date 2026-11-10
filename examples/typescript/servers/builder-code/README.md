@@ -32,7 +32,7 @@ app.get("/weather", (req, res) => res.json({ weather: "sunny", temperature: 70 }
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
 - EVM address on Base Sepolia for receiving payments
-- URL of a facilitator supporting Base Sepolia (`eip155:84532`); use the [builder-code facilitator](../facilitator/builder-code/) for full attribution 
+- URL of a facilitator supporting Base Sepolia (`eip155:84532`); use the [builder-code facilitator](../../facilitator/builder-code/) for full attribution 
 
 ## Setup
 
@@ -44,7 +44,7 @@ cp .env-local .env
 
 and fill required environment variables:
 
-- `FACILITATOR_URL` - Facilitator endpoint URL (use the [builder-code facilitator](../facilitator/builder-code/) for full attribution)
+- `FACILITATOR_URL` - Facilitator endpoint URL (use the [builder-code facilitator](../../facilitator/builder-code/) for full attribution)
 - `EVM_ADDRESS` - Base Sepolia address to receive payments
 - `APP_BUILDER_CODE` - Your service app builder code (e.g. `bc_weather_svc`)
 
