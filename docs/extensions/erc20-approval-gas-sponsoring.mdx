@@ -86,14 +86,24 @@ Advertise support for this extension in your route configuration:
 
 The `ExactEvmScheme` handles ERC-20 approval gas sponsoring automatically as a fallback when EIP-2612 is not available.
 
+Checking the current Permit2 allowance before signing requires reading from the chain. The scheme gets this capability from either:
+
+- A signer that includes `readContract` (e.g., `toClientEvmSigner(account, publicClient)`), or
+- An `rpcUrl` passed to `ExactEvmScheme` options
+
+If neither is provided and the server advertises this extension, the scheme logs a warning and skips the approval. A wallet with no Permit2 allowance will then receive a `412 permit2_allowance_required` error.
+
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
     import { ExactEvmScheme } from "@x402/evm/exact/client";
 
-    // signTransaction and getTransactionCount capabilities are required
-    const scheme = new ExactEvmScheme(signer);
+    // Option 1: pass rpcUrl so the scheme can read the chain
+    const scheme = new ExactEvmScheme(signer, { rpcUrl: "https://mainnet.base.org" });
     client.register("eip155:*", scheme);
+
+    // Option 2: use a signer that already has readContract
+    // const scheme = new ExactEvmScheme(toClientEvmSigner(account, publicClient));
 
     // The scheme automatically signs an ERC-20 approval when:
     // 1. The server advertises erc20ApprovalGasSponsoring
@@ -105,14 +115,27 @@ The `ExactEvmScheme` handles ERC-20 approval gas sponsoring automatically as a f
   <Tab title="Go">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
-    scheme := evm.NewExactEvmScheme(signer)
+    // The signer must support transaction signing to sign the approve() tx.
+    // Use an RPC-backed signer or configure RPCURL in the scheme options.
+    signer, _ := evmsigners.NewClientSignerFromPrivateKeyWithClient(
+        os.Getenv("EVM_PRIVATE_KEY"),
+        "https://your-rpc.example",
+    )
+
+    scheme := exactevm.NewExactEvmScheme(signer, nil)
+    // Or configure RPC separately:
+    // scheme := exactevm.NewExactEvmScheme(signer, &exactevm.ExactEvmSchemeConfig{
+    //     RPCURL: "https://your-rpc.example",
+    // })
     client.Register("eip155:*", scheme)
 
-    // ERC-20 approval gas sponsoring is handled automatically
-    // as a fallback when EIP-2612 is not available
+    // ERC-20 approval gas sponsoring is handled automatically as a fallback
+    // when EIP-2612 is not available. If the signer lacks transaction-signing
+    // capability, the extension is skipped and a warning is logged once per network.
     ```
   </Tab>
   <Tab title="Python">

@@ -354,7 +354,7 @@ The path `/get` is not in your `ROUTES` config, so it passes through to httpbin 
 
 Get test USDC for Base Sepolia or Solana Devnet from the [Circle faucet](https://faucet.circle.com). The default facilitator supports both testnets, so no facilitator change is needed.
 
-Use the [`fetch` client example](../../../../clients/fetch/) from this repo to make a paid request:
+Use the [`fetch` client example](../../clients/fetch/) from this repo to make a paid request:
 
 ```bash
 cd ../../../../clients/fetch

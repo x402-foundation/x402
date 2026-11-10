@@ -176,15 +176,15 @@ The upto facilitator's `GetExtra()` returns a `feePayer` address and, when `Auth
 
 A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each claim settle originates from the service whose deposit settle opened the channel (e.g. SIWX, JWT, or an API credential correlated across the two settles). The scheme records that identity at deposit and requires an exact match at claim. If the facilitator has no such authentication mechanism, omit `AuthorizerSigner` so no `receiverAuthorizer` is advertised; servers then supply their own voucher signatures.
 
-The default identity store is in-memory. A multi-replica facilitator must inject a shared `DelegatedAuthStore`; a lost binding fails closed and the server cannot settle (the client still has `request_close`).
+Delegated mode stores the caller identity from `ResolveCallerIdentity` on the channel row. A deposit records the row before broadcast and reverts it if that open fails definitively. Claims do not write storage; a delegated claim without `voucherSignature` reads the row and treats it as absent once `ExpiresAt` has passed. A missing or different identity rejects the claim.
 
 ### Channel Storage and Rent Cleanup
 
-The scheme records every channel it sponsors in a `ChannelStorage` at settle time, and `RentCleanupManager` reads that store rather than scanning the chain. The default store is in-memory; inject a durable one so cleanup survives restarts and works across replicas:
+The scheme records every channel it sponsors in a `paymentchannels.PaymentChannelStorage` before broadcasting the deposit, and `RentCleanupManager` reads that store rather than scanning the chain. The default store is in-memory; inject a durable one so cleanup survives restarts and works across replicas:
 
 ```go
 scheme := uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.Config{
-    ChannelStorage: myDurableChannelStorage, // implements uptosvm.ChannelStorage
+    ChannelStorage: myDurableChannelStorage, // implements paymentchannels.PaymentChannelStorage
 })
 ```
 

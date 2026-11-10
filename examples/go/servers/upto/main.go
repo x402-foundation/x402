@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	ginfw "github.com/gin-gonic/gin"
@@ -47,7 +49,12 @@ func main() {
 	maxPrice := "$0.10"
 
 	var accepts x402http.PaymentOptions
-	var schemes []ginmw.SchemeConfig
+
+	facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+		URL: facilitatorURL,
+	})
+
+	resourceServer := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facilitatorClient))
 
 	if evmAddress != "" {
 		fmt.Printf("  EVM Payee address: %s (%s)\n", evmAddress, evmNetwork)
@@ -57,49 +64,43 @@ func main() {
 			Network: evmNetwork,
 			PayTo:   evmAddress,
 		})
-		schemes = append(schemes, ginmw.SchemeConfig{
-			Network: evmNetwork,
-			Server:  uptoevm.NewUptoEvmScheme(),
-		})
+		resourceServer = resourceServer.Register(evmNetwork, uptoevm.NewUptoEvmScheme())
 	}
 
 	if svmAddress != "" {
-		// SVM upto settles through an onchain payment channel: the server hot key
-		// below signs the voucher that authorizes the metered amount.
-		authorizerKey := os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
-		if authorizerKey == "" {
-			fmt.Println("SVM_PAYEE_ADDRESS is set but SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY is missing; " +
-				"SVM upto requires a server hot key that signs settlement vouchers")
-			os.Exit(1)
-		}
-		authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
-		if err != nil {
-			fmt.Printf("Failed to load SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
-			os.Exit(1)
-		}
-
 		fmt.Printf("  SVM Payee address: %s (%s)\n", svmAddress, svmNetwork)
-		fmt.Printf("  SVM receiver authorizer: %s\n", authorizer.Address())
+		svmConfig := &uptosvm.Config{
+			RPCURL: os.Getenv("SVM_RPC_URL"),
+		}
+		authorizerKey := strings.TrimSpace(os.Getenv("SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"))
+		if authorizerKey != "" {
+			authorizer, err := svmsigners.NewReceiverAuthorizerSignerFromPrivateKey(authorizerKey)
+			if err != nil {
+				fmt.Printf("Failed to load SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("  SVM receiver authorizer: %s\n", authorizer.Address())
+			svmConfig.ReceiverAuthorizerSigner = authorizer
+		} else {
+			fmt.Println("  SVM receiver authorizer: delegated to facilitator")
+		}
 		accepts = append(accepts, x402http.PaymentOption{
 			Scheme:  "upto",
 			Price:   maxPrice,
 			Network: svmNetwork,
 			PayTo:   svmAddress,
 		})
-		schemes = append(schemes, ginmw.SchemeConfig{
-			Network: svmNetwork,
-			Server: uptosvm.NewUptoSvmScheme(&uptosvm.Config{
-				ReceiverAuthorizerSigner: authorizer,
-				RPCURL:                   os.Getenv("SVM_RPC_URL"),
-			}),
-		})
+		resourceServer = resourceServer.Register(svmNetwork, uptosvm.NewUptoSvmScheme(svmConfig))
+	}
+
+	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := resourceServer.Initialize(initCtx); err != nil {
+		fmt.Printf("Failed to initialize x402 resource server: %v\n", err)
+		os.Exit(1)
 	}
 
 	r := ginfw.Default()
-
-	facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-		URL: facilitatorURL,
-	})
 
 	route := x402http.RouteConfig{
 		Accepts:     accepts,
@@ -110,12 +111,12 @@ func main() {
 		route.Extensions = eip2612gassponsor.DeclareEip2612GasSponsoringExtension()
 	}
 
-	r.Use(ginmw.X402Payment(ginmw.Config{
-		Routes:      x402http.RoutesConfig{"GET /api/generate": route},
-		Facilitator: facilitatorClient,
-		Schemes:     schemes,
-		Timeout:     30 * time.Second,
-	}))
+	r.Use(ginmw.PaymentMiddleware(
+		x402http.RoutesConfig{"GET /api/generate": route},
+		resourceServer,
+		ginmw.WithSyncFacilitatorOnStart(false),
+		ginmw.WithTimeout(30*time.Second),
+	))
 
 	r.GET("/api/generate", func(c *ginfw.Context) {
 		// Simulate work that produces a variable cost.

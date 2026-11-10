@@ -201,6 +201,9 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       };
     }
 
+    // Set once the transaction is submitted, so a failure after that point
+    // still reports the hash of the transaction the facilitator paid for.
+    let transactionHash = "";
     try {
       const exactPayload = payload.payload as unknown as ExactCasperPayload;
       const transaction = await this.buildTransferWithAuthorizationTransaction(
@@ -209,7 +212,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       );
 
       await this.signer.signTransaction(transaction, requirements.network);
-      const transactionHash = await this.signer.putTransaction(requirements.network, transaction);
+      transactionHash = await this.signer.putTransaction(requirements.network, transaction);
       await this.signer.waitForTransaction(requirements.network, transactionHash);
 
       return {
@@ -225,7 +228,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
         errorReason: ErrSettleFailed,
         errorMessage: message,
         payer: verifyResp.payer,
-        transaction: "",
+        transaction: transactionHash,
         network: requirements.network,
       };
     }

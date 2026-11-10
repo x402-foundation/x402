@@ -29,12 +29,22 @@ export class GenericClientProxy extends BaseProxy implements ClientProxy {
         ENDPOINT_PATH: config.endpointPath,
         ...(config.batchSettlement
           ? {
+              // Family-neutral names; the EVM_ aliases stay for the Go and
+              // Python clients, which only run batch-settlement on EVM.
+              BATCH_SETTLEMENT_CHANNEL: config.batchSettlement.channelSalt,
+              BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
               EVM_BATCH_SETTLEMENT_CHANNEL: config.batchSettlement.channelSalt,
               EVM_BATCH_SETTLEMENT_PHASE: config.batchSettlement.phase,
               ...(config.batchSettlement.voucherSignerPrivateKey
                 ? {
                     CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY:
                       config.batchSettlement.voucherSignerPrivateKey,
+                  }
+                : {}),
+              ...(config.batchSettlement.svmServerSignedOperators
+                ? {
+                    CLIENT_SVM_SERVER_SIGNED_OPERATORS:
+                      config.batchSettlement.svmServerSignedOperators,
                   }
                 : {}),
             }

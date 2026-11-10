@@ -97,7 +97,7 @@ Facilitator signers interact with the blockchain to verify and settle payments.
 - Read blockchain state (nonces, balances)
 - Wait for transaction confirmation
 
-**Note:** Facilitator signer helpers are not yet available. For now, see the reference implementation in [`e2e/facilitators/go/main.go`](../../e2e/facilitators/go/main.go).
+**Note:** Facilitator signer helpers are not yet available. For now, see the reference implementation in [`e2e/facilitators/go/main.go`](../e2e/facilitators/go/main.go).
 
 ### 3. HTTP Endpoints
 
@@ -354,7 +354,7 @@ Facilitator signers need to:
 5. **Wait for Confirmation**: Poll for transaction finality
 6. **Handle Errors**: Retry on nonce errors, gas estimation failures
 
-**Reference Implementation:** See [`e2e/facilitators/go/main.go`](../../e2e/facilitators/go/main.go) for a complete facilitator signer implementation (~300 lines).
+**Reference Implementation:** See [`e2e/facilitators/go/main.go`](../e2e/facilitators/go/main.go) for a complete facilitator signer implementation (~300 lines).
 
 **Coming Soon:** Facilitator signer helpers will reduce this to ~10 lines.
 
@@ -771,8 +771,8 @@ spec:
 
 Complete facilitator examples:
 
-- **[Basic Facilitator](../../examples/go/facilitator/)** - API structure with hooks
-- **[E2E Facilitator](../../e2e/facilitators/go/)** - Complete implementation
+- **[Basic Facilitator](../examples/go/facilitator/)** - API structure with hooks
+- **[E2E Facilitator](../e2e/facilitators/go/)** - Complete implementation
 
 ## Related Documentation
 
@@ -780,5 +780,5 @@ Complete facilitator examples:
 - **[CLIENT.md](CLIENT.md)** - Building clients
 - **[SERVER.md](SERVER.md)** - Building servers
 - **[Mechanisms](mechanisms/)** - Payment scheme implementations
-- **[Examples](../../examples/go/facilitator/)** - Working facilitator examples
+- **[Examples](../examples/go/facilitator/)** - Working facilitator examples
 

@@ -83,6 +83,15 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDC",
         },
     ],  # Monad mainnet USDC
+    "eip155:10143": [
+        {
+            "asset": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Monad testnet USDC
     "eip155:988": [
         {
             "asset": "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
@@ -286,6 +295,33 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDC",
         },
     ],  # Sei testnet USDC (EIP-3009 supported)
+    "eip155:5042": [
+        {
+            "asset": "0x3600000000000000000000000000000000000000",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Arc mainnet USDC (EIP-3009 supported)
+    "eip155:5042002": [
+        {
+            "asset": "0x3600000000000000000000000000000000000000",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Arc Testnet USDC (EIP-3009 supported)
+    "eip155:4663": [
+        {
+            "asset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+            "name": "Global Dollar",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USDG",
+        },
+    ],  # Robinhood Chain mainnet USDG (EIP-3009 supported)
 }
 
 

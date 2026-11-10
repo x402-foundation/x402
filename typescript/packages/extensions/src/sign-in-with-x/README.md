@@ -1,6 +1,6 @@
 # Sign-In-With-X (SIWx) extension
 
-Part of [`@x402/extensions`](../README.md). Import from `@x402/extensions/sign-in-with-x`.
+Part of [`@x402/extensions`](../../README.md). Import from `@x402/extensions/sign-in-with-x`.
 
 The Sign-In-With-X extension implements [CAIP-122](https://chainagnostic.org/CAIPs/caip-122) for chain-agnostic wallet authentication. It allows clients to prove control of a wallet that previously paid for a resource, enabling access without repurchase.
 

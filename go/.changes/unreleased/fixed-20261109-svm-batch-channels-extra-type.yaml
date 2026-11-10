@@ -1,0 +1,3 @@
+kind: fixed
+body: 'SVM batch-settlement facilitator: extra.channels on a distribute response stays []string when the result is read back from the pending store. A fresh settlement and a reloaded one return the same Go type.'
+time: 2026-11-09T16:30:00Z

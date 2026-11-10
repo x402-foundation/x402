@@ -1,9 +1,8 @@
 # Batch-Settlement Client Example
 
-Fetch-based client that pays for a sequence of requests over a single payment channel using the **batch-settlement** EVM scheme. The first request opens the channel with a deposit; subsequent requests pay with a fresh cumulative voucher.
+Fetch-based client that pays for a sequence of requests over a single payment channel using the **batch-settlement** EVM or SVM scheme. The first request opens the channel with a deposit; subsequent requests pay with a fresh cumulative voucher.
 
-
-See the [scheme specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md) and the [scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
+See the [EVM specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md), [SVM specification](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_svm.md), and [EVM scheme README](../../../../typescript/packages/mechanisms/evm/src/batch-settlement/README.md) for protocol details.
 
 ## Voucher Signer Delegation
 
@@ -51,13 +50,13 @@ const scheme = new BatchSettlementEvmScheme(signer, {
 
 - Node.js v20+, pnpm v10
 - A running [batch-settlement server](../../servers/batch-settlement)
-- A funded EVM `EVM_PRIVATE_KEY` holding the deposit token (USDC on Base Sepolia by default)
+- A funded `EVM_PRIVATE_KEY` or `SVM_PRIVATE_KEY` holding the deposit token
 
 ## Setup
 
 ```bash
 cp .env-local .env
-# fill EVM_PRIVATE_KEY (and optionally EVM_VOUCHER_SIGNER_PRIVATE_KEY)
+# fill EVM_PRIVATE_KEY or SVM_PRIVATE_KEY
 
 cd ../../
 pnpm install && pnpm build
@@ -68,25 +67,30 @@ pnpm start
 
 ## Concurrent requests
 
-Use the concurrent example to send requests over multiple channels in parallel. Each slot uses a unique salt derived from `CHANNEL_SALT`, so the server can serialize work per channel while still processing channels concurrently.
+Use the concurrent example to send requests over multiple channels in parallel. Each slot uses `CONCURRENT_CHANNEL_SALT + index` (default base `0x1000`, so slots `0x1000`, `0x1001`, …). This is a separate variable from `CHANNEL_SALT`, so the concurrent example never shares a channel with `pnpm start`. The base must be below 2^96: when a facilitator-managed 402 carries a `refundAuthorizer`, the SDK keeps only the low 96 bits of the salt as the channel index, and a larger base would collapse every slot into one channel (the server then answers `invalid_batch_settlement_evm_channel_busy`). The example validates this and fails fast. The server serializes work per channel while still processing channels concurrently.
 
 ```bash
-CONCURRENCY=3 NUMBER_OF_ROUNDS=3 pnpm dev:concurrent
+NUMBER_OF_CHANNELS=3 NUMBER_OF_REQUESTS=3 pnpm dev:concurrent
 ```
 
 ## Environment
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `EVM_PRIVATE_KEY` | yes | Payer key (funds the deposit) |
+| --- | --- | --- |
+| `EVM_PRIVATE_KEY` | one of | EVM payer key (funds the deposit) |
 | `EVM_VOUCHER_SIGNER_PRIVATE_KEY` | no | Dedicated voucher-signing EOA (committed as `payerAuthorizer`) |
+| `SVM_PRIVATE_KEY` | one of | Base58-encoded SVM payer keypair bytes |
+| `SVM_RPC_URL` | no | SVM RPC endpoint override |
+| `SVM_SERVER_SIGNED_OPERATORS` | no | Comma-separated base58 operator keys allowed to sign vouchers for this client (server-signed, metered channels). Empty means server-signed accepts are refused and the client pays with its own vouchers. The operator of a server-signed channel can claim up to the whole escrow. Works over any transport. |
+| `SVM_SERVER_SIGNED_MAX_DEPOSIT` | no | USD cap (e.g. `$0.05`, default) on the escrow locked per channel under a trusted operator, for default assets; server `minDeposit` hints above it are clamped. Non-default tokens need an `allowedAssets` entry with an atomic cap in code. |
 | `RESOURCE_SERVER_URL` | no | Server base URL (default `http://localhost:4021`) |
 | `ENDPOINT_PATH` | no | Path on the server (default `/weather`) |
-| `CHANNEL_SALT` | no | `bytes32` salt for channel id; change to open a fresh channel |
+| `CHANNEL_SALT` | no | EVM channel index (hex) for `pnpm start` |
+| `CONCURRENT_CHANNEL_SALT` | no | Base EVM channel index (decimal or hex, must be < 2^96) for `pnpm dev:concurrent`; slots add `0`, `1`, `2`, … (default `0x1000`) |
+| `SVM_CHANNEL_SALT` | no | SVM decimal `u64` channel salt (default `0`); change to open a fresh channel |
 | `DEPOSIT_MULTIPLIER` | no | Deposit target is `amount ×` this multiplier when `extra.minDeposit` is absent; lock ceiling is `spendCap ×` this multiplier (integer **≥ 3**; default `5`) |
 | `STORAGE_DIR` | no | Persist client session state (defaults to in-memory) |
 | `NUMBER_OF_REQUESTS` | no | How many paid requests to issue (default 3) |
-| `CONCURRENCY` | no | How many channels to run in parallel in `pnpm dev:concurrent` (default 3) |
-| `NUMBER_OF_ROUNDS` | no | How many concurrent rounds to run in `pnpm dev:concurrent` (default 3) |
+| `NUMBER_OF_CHANNELS` | no | How many channels to run in parallel in `pnpm dev:concurrent` (default 3) |
 | `REFUND_AFTER_REQUESTS` | no | If `true`, issue a self-contained refund via `scheme.refund(url)` after the request loop |
-| `REFUND_AMOUNT` | no | Partial refund amount in base units; omit for a full refund |
+| `REFUND_AMOUNT` | no | Partial EVM refund amount in base units; omit for a full refund. SVM supports full refund only. |

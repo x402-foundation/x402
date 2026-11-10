@@ -22,6 +22,27 @@ async function issueRequest(): Promise<RequestResult> {
     response.headers["payment-response"] || response.headers["x-payment-response"];
 
   if (!paymentResponseHeader) {
+    if (response.status === 402) {
+      const bodyError = (response.data as { error?: unknown })?.error;
+      return {
+        success: false,
+        data: response.data,
+        status_code: response.status,
+        error: typeof bodyError === "string" && bodyError ? `Payment failed (402): ${bodyError}` : `Payment failed (402): ${JSON.stringify(response.data)}`,
+      };
+    }
+    if (response.status >= 400) {
+      const bodyError = (response.data as { error?: unknown })?.error;
+      return {
+        success: false,
+        data: response.data,
+        status_code: response.status,
+        error:
+          typeof bodyError === "string" && bodyError
+            ? `Request failed (${response.status}): ${bodyError}`
+            : `Request failed (${response.status}): ${JSON.stringify(response.data)}`,
+      };
+    }
     return { success: true, data: response.data, status_code: response.status };
   }
 
@@ -31,6 +52,7 @@ async function issueRequest(): Promise<RequestResult> {
     data: response.data,
     status_code: response.status,
     payment_response: decodedPaymentResponse,
+    ...(decodedPaymentResponse.success ? {} : { error: `Payment failed: ${decodedPaymentResponse.errorReason ?? "settle unsuccessful"}` }),
   };
 }
 

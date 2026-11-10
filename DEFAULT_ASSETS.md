@@ -109,13 +109,7 @@ Non-EVM families use the same `asset` / `decimals` / `symbol` core fields withou
 
 The HTTP paywall formats human-readable amounts using each chain's default stablecoin decimals. The generated map (`typescript/packages/http/paywall/src/evm/gen/decimals.ts`) only includes chains whose default asset **does not** use 6 decimals.
 
-If your new or updated default uses **any value other than 6** for `decimals`, run the paywall build from `typescript/` and commit the generated artifacts:
-
-```bash
-cd typescript && pnpm --filter @x402/paywall build:paywall
-```
-
-See [CONTRIBUTING.md — Paywall Changes](CONTRIBUTING.md#paywall-changes). Skip this step when the default asset stays at 6 decimals.
+If your new or updated default uses **any value other than 6** for `decimals`, regenerate the paywall and commit the generated artifacts, following [CONTRIBUTING.md — Paywall Changes](CONTRIBUTING.md#paywall-changes). Skip this step when the default asset stays at 6 decimals.
 
 ### 4. Submit a PR
 
@@ -131,7 +125,7 @@ Add one line to `typescript/packages/http/paywall/src/faucetUrls.ts`:
 "eip155:YOUR_TESTNET_CHAIN_ID": "https://your-faucet-url",
 ```
 
-Paywall-only file; recommended for testnet entries; N/A for mainnet (paywall faucet UI is testnet-gated).
+Paywall-only file; recommended for testnet entries; N/A for mainnet (paywall faucet UI is testnet-gated). The map is bundled into the paywall UI, so regenerate the paywall templates as described in [CONTRIBUTING.md — Paywall Changes](CONTRIBUTING.md#paywall-changes) and commit them; CI checks this.
 
 ## Asset selection policy
 

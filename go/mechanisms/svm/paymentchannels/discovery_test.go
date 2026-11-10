@@ -12,6 +12,8 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
 
 // discoveryAccount is a canned getProgramAccounts row a test can tamper with
@@ -83,8 +85,8 @@ func validDiscoveryChannel(t *testing.T, rentPayer solana.PublicKey) (solana.Pub
 	require.NoError(t, err)
 
 	data := make([]byte, ChannelAccountSize)
-	data[0] = ChannelAccountDiscriminator
-	data[3] = byte(StatusDistributed)
+	data[0] = uint8(generated.AccountDiscriminator_Channel)
+	data[3] = byte(generated.ChannelStatus_Distributed)
 	copy(data[4:12], u64LE(salt))
 	copy(data[ChannelPayerOffset:ChannelPayerOffset+32], payer.Bytes())
 	copy(data[ChannelPayeeOffset:ChannelPayeeOffset+32], payee.Bytes())
@@ -154,6 +156,78 @@ func TestDiscoverChannelsByRentPayer_RejectsPDAMismatch(t *testing.T) {
 	discovered, err := DiscoverChannelsByRentPayer(t.Context(), rpcProgramAccountsQuerier{client: client}, rentPayer)
 	require.NoError(t, err)
 	assert.Empty(t, discovered)
+}
+
+func TestDiscoverChannelsByPayerKeepsRowsWhosePDARederives(t *testing.T) {
+	payer := testKeypair(t).PublicKey()
+	payee := testKeypair(t).PublicKey()
+	mint := testKeypair(t).PublicKey()
+	salt, openSlot := uint64(0), uint64(500)
+	pda, err := FindChannelPDA(payer, payee, mint, payer, salt, openSlot)
+	require.NoError(t, err)
+
+	encode := func(slot uint64) []byte {
+		data := make([]byte, ChannelAccountSize)
+		data[0] = uint8(generated.AccountDiscriminator_Channel)
+		data[3] = byte(generated.ChannelStatus_Open)
+		copy(data[4:12], u64LE(salt))
+		copy(data[12:20], u64LE(10_000))
+		copy(data[20:28], u64LE(2_000))
+		copy(data[ChannelPayerOffset:ChannelPayerOffset+32], payer.Bytes())
+		copy(data[ChannelPayeeOffset:ChannelPayeeOffset+32], payee.Bytes())
+		copy(data[ChannelAuthorizedSignerOffset:ChannelAuthorizedSignerOffset+32], payer.Bytes())
+		copy(data[ChannelMintOffset:ChannelMintOffset+32], mint.Bytes())
+		copy(data[ChannelRentPayerOffset:ChannelRentPayerOffset+32], payee.Bytes())
+		copy(data[ChannelOpenSlotOffset:ChannelOpenSlotOffset+8], u64LE(slot))
+		return data
+	}
+	row := func(pubkey solana.PublicKey, owner solana.PublicKey, data []byte) *rpc.KeyedAccount {
+		return &rpc.KeyedAccount{
+			Pubkey: pubkey,
+			Account: &rpc.Account{
+				Owner:    owner,
+				Data:     rpc.DataBytesOrJSONFromBytes(data),
+				Lamports: 2_000_000,
+			},
+		}
+	}
+	scan := func(rows []*rpc.KeyedAccount) ProgramAccountScan {
+		return func(_ context.Context, program solana.PublicKey, filters []rpc.RPCFilter) (rpc.GetProgramAccountsResult, error) {
+			assert.Equal(t, ProgramID, program)
+			require.Len(t, filters, 2)
+			assert.EqualValues(t, ChannelAccountSize, filters[0].DataSize)
+			require.NotNil(t, filters[1].Memcmp)
+			assert.EqualValues(t, ChannelPayerOffset, filters[1].Memcmp.Offset)
+			assert.Equal(t, solana.Base58(payer.Bytes()), filters[1].Memcmp.Bytes)
+			return rows, nil
+		}
+	}
+
+	found, err := DiscoverChannelsByPayer(t.Context(), scan([]*rpc.KeyedAccount{
+		row(pda, ProgramID, encode(openSlot)),
+	}), payer, ProgramID)
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, pda, found[0].ChannelID)
+	assert.Equal(t, uint64(10_000), found[0].Channel.Deposit)
+
+	found, err = DiscoverChannelsByPayer(t.Context(), scan([]*rpc.KeyedAccount{
+		row(payee, ProgramID, encode(openSlot)),
+	}), payer, ProgramID)
+	require.NoError(t, err)
+	assert.Empty(t, found)
+
+	found, err = DiscoverChannelsByPayer(t.Context(), scan([]*rpc.KeyedAccount{
+		row(pda, payee, encode(openSlot)),
+	}), payer, ProgramID)
+	require.NoError(t, err)
+	assert.Empty(t, found)
+
+	found, err = DiscoverChannelsByPayer(t.Context(), scan([]*rpc.KeyedAccount{
+		row(pda, ProgramID, encode(openSlot+1)),
+	}), payer, ProgramID)
+	require.NoError(t, err)
+	assert.Empty(t, found)
 }
 
 func TestDiscoverChannelsByRentPayer_RejectsMalformedAccount(t *testing.T) {

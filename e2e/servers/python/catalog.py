@@ -104,6 +104,7 @@ class CatalogRoute:
     extensions: list[str]
     settlement_override: dict[str, str] | None
     payment_flow: str | None
+    scheme_extra: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ class ResolvedRoute:
     network: str
     pay_to: str
     price: Any
-    extra: dict[str, str] | None
+    extra: dict[str, Any] | None
     extensions: list[str] = field(default_factory=list)
     settlement_override: dict[str, str] | None = None
 
@@ -147,9 +148,21 @@ def _route_filter() -> tuple[set[str], set[str]]:
     return parse("E2E_EXCLUDE_SCHEMES"), parse("E2E_EXCLUDE_NETWORKS")
 
 
+def _batch_server_role() -> str:
+    """Harness-assigned custody role for this server process (defaults to standard)."""
+    return (os.getenv("E2E_BATCH_SERVER_ROLE", "").strip().lower() or "standard")
+
+
+def _is_managed_batch(definition: dict[str, Any]) -> bool:
+    return definition.get("scheme") == "batch-settlement" and bool(
+        (definition.get("schemeOptions") or {}).get("facilitatorManaged")
+    )
+
+
 def catalog_routes() -> list[CatalogRoute]:
     """Routes this SDK implements, after applying the harness exclusions."""
     excluded_schemes, excluded_networks = _route_filter()
+    role = _batch_server_role()
     routes: list[CatalogRoute] = []
 
     for path, definition in _CATALOG["routes"].items():
@@ -157,6 +170,12 @@ def catalog_routes() -> list[CatalogRoute]:
             continue
         network = definition["network"]
         if definition["scheme"] in excluded_schemes or network in excluded_networks:
+            continue
+        managed = _is_managed_batch(definition)
+        if role == "managed-batch":
+            if not managed:
+                continue
+        elif managed:
             continue
         routes.append(
             CatalogRoute(
@@ -168,6 +187,7 @@ def catalog_routes() -> list[CatalogRoute]:
                 extensions=list(definition.get("extensions", [])),
                 settlement_override=definition.get("settlementOverride"),
                 payment_flow=definition.get("paymentFlow"),
+                scheme_extra=definition.get("schemeExtra"),
             )
         )
 
@@ -294,6 +314,8 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
         extra = _merge_route_extra(extra, route.payment_flow)
+        if route.scheme_extra:
+            extra = {**(extra or {}), **route.scheme_extra}
 
         resolved.append(
             ResolvedRoute(

@@ -51,8 +51,31 @@ export function readExtraNumber(
 ): number {
   const value = extra?.[key];
   if (typeof value === "number") return value;
-  if (typeof value === "string") return parseInt(value, 10) || fallback;
+  if (typeof value === "string") {
+    const n = parseInt(value, 10);
+    return Number.isNaN(n) ? fallback : n;
+  }
   return fallback;
+}
+
+/**
+ * Strictly reads a non-negative integer (as a decimal string) from optional payment `extra`.
+ *
+ * Canonical rule shared across SDKs: a plain decimal string with no leading zeros (`"0"` is the
+ * only string starting with `0`), or a JSON number that is a non-negative safe integer.
+ *
+ * @param extra - Optional payment extra record.
+ * @param key - Key on `BatchSettlementChannelStateExtra` to read.
+ * @returns Canonical decimal string, or `undefined` when absent or not a canonical non-negative integer.
+ */
+export function readExtraUintString(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
+  key: keyof BatchSettlementChannelStateExtra,
+): string | undefined {
+  const value = extra?.[key];
+  if (typeof value === "string" && /^(0|[1-9]\d*)$/.test(value)) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+  return undefined;
 }
 
 export type RefundSettlementSnapshot = {

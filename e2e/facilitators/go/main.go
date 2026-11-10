@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -35,14 +36,17 @@ import (
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
 	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	authcapturefacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/facilitator"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	batchedevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
+	channelstorage "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
+	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
@@ -245,6 +249,19 @@ func (s *realFacilitatorEvmSigner) ReadContract(
 	method string,
 	args ...interface{},
 ) (interface{}, error) {
+	return s.ReadContractFrom(ctx, s.address.Hex(), contractAddress, abiJSON, method, args...)
+}
+
+// ReadContractFrom reads as an explicit sender, which the auth-capture escrow requires
+// because it gates authorize, capture and void on msg.sender.
+func (s *realFacilitatorEvmSigner) ReadContractFrom(
+	ctx context.Context,
+	from string,
+	contractAddress string,
+	abiJSON []byte,
+	method string,
+	args ...interface{},
+) (interface{}, error) {
 	// Parse ABI
 	contractABI, err := abi.JSON(strings.NewReader(string(abiJSON)))
 	if err != nil {
@@ -266,7 +283,7 @@ func (s *realFacilitatorEvmSigner) ReadContract(
 	// msg.sender == witness.facilitator in settle().
 	to := common.HexToAddress(contractAddress)
 	msg := ethereum.CallMsg{
-		From: s.address,
+		From: common.HexToAddress(from),
 		To:   &to,
 		Data: data,
 	}
@@ -302,55 +319,7 @@ func (s *realFacilitatorEvmSigner) WriteContract(
 	dataSuffix []byte,
 	args ...interface{},
 ) (string, error) {
-	// Parse ABI
-	contractABI, err := abi.JSON(strings.NewReader(string(abiJSON)))
-	if err != nil {
-		return "", fmt.Errorf("failed to parse ABI: %w", err)
-	}
-
-	// Pack the method call
-	data, err := contractABI.Pack(method, args...)
-	if err != nil {
-		return "", fmt.Errorf("failed to pack method call: %w", err)
-	}
-	data = evmmech.AppendDataSuffix(data, dataSuffix)
-
-	// Get nonce
-	nonce, err := s.reserveNonce(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	// Get gas price
-	gasPrice, err := s.client.SuggestGasPrice(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to get gas price: %w", err)
-	}
-
-	// Create transaction
-	to := common.HexToAddress(contractAddress)
-	tx := types.NewTransaction(
-		nonce,
-		to,
-		big.NewInt(0), // value
-		300000,        // gas limit
-		gasPrice,
-		data,
-	)
-
-	// Sign transaction
-	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(s.chainID), s.privateKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign transaction: %w", err)
-	}
-
-	// Send transaction
-	err = s.client.SendTransaction(ctx, signedTx)
-	if err != nil {
-		return "", fmt.Errorf("failed to send transaction: %w", err)
-	}
-
-	return signedTx.Hash().Hex(), nil
+	return s.writeContract(ctx, contractAddress, abiJSON, method, dataSuffix, 0, args...)
 }
 
 func (s *realFacilitatorEvmSigner) SendTransaction(
@@ -407,6 +376,7 @@ func (s *realFacilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Context
 				Status:      uint64(receipt.Status),
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 		time.Sleep(1 * time.Second)
@@ -699,19 +669,13 @@ func (s *realFacilitatorSvmSigner) SignTransaction(ctx context.Context, tx *sola
 	return nil
 }
 
-func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string) error {
+func (s *realFacilitatorSvmSigner) SimulateTransaction(ctx context.Context, tx *solana.Transaction, network string, opts *svmmech.FacilitatorSimulateTransactionOptions) error {
 	rpcClient, err := s.getRPC(ctx, network)
 	if err != nil {
 		return err
 	}
 
-	opts := rpc.SimulateTransactionOpts{
-		SigVerify:              false,
-		ReplaceRecentBlockhash: false,
-		Commitment:             svmmech.DefaultCommitment,
-	}
-
-	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, &opts)
+	simResult, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, svmmech.SimulationRPCOpts(opts))
 	if err != nil {
 		return fmt.Errorf("simulation failed: %w", err)
 	}
@@ -826,26 +790,6 @@ func (s *realFacilitatorSvmSigner) GetSlot(ctx context.Context, network string, 
 		return 0, err
 	}
 	return rpcClient.GetSlot(ctx, commitment)
-}
-
-func (s *realFacilitatorSvmSigner) SimulateTransactionWithOpts(
-	ctx context.Context,
-	tx *solana.Transaction,
-	network string,
-	opts *rpc.SimulateTransactionOpts,
-) error {
-	rpcClient, err := s.getRPC(ctx, network)
-	if err != nil {
-		return err
-	}
-	result, err := rpcClient.SimulateTransactionWithOpts(ctx, tx, opts)
-	if err != nil {
-		return fmt.Errorf("simulation failed: %w", err)
-	}
-	if result != nil && result.Value != nil && result.Value.Err != nil {
-		return fmt.Errorf("simulation failed: transaction would fail on-chain")
-	}
-	return nil
 }
 
 func (s *realFacilitatorSvmSigner) GetProgramAccounts(
@@ -1008,6 +952,26 @@ func getV1EvmNetwork(network string) string {
 	}
 }
 
+func buildSvmBatchFacilitatorConfig(svmNetwork, archiveRpcURL string) *batchsvmfac.Config {
+	bindingStore := strings.TrimSpace(strings.ToLower(os.Getenv("FACILITATOR_SVM_BATCH_BINDING_STORE")))
+	useInMemoryStore := bindingStore == "" ||
+		bindingStore == "memory" ||
+		bindingStore == "inmemory" ||
+		bindingStore == "true" ||
+		bindingStore == "1"
+
+	cfg := &batchsvmfac.Config{}
+	if archiveRpcURL != "" {
+		cfg.ReceiverBindingHistoryReader = batchsvmfac.NewReceiverBindingHistoryReader(map[string]string{
+			svmNetwork: archiveRpcURL,
+		})
+		log.Printf("SVM batch-settlement binding history RPC: %s", archiveRpcURL)
+	} else if !useInMemoryStore {
+		log.Printf("SVM batch-settlement: FACILITATOR_SVM_BATCH_BINDING_STORE=none; receiver bindings fall back to RPC history when not on the channel row")
+	}
+	return cfg
+}
+
 func getV1SvmNetwork(network string) string {
 	switch network {
 	case "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":
@@ -1038,6 +1002,12 @@ func main() {
 
 	facilitator := x402.Newx402Facilitator()
 	var evmSigner *realFacilitatorEvmSigner
+	var batchChannelManager *batchedevm.FacilitatorChannelManager
+
+	voucherStoreEnabled := func() bool {
+		raw := strings.TrimSpace(strings.ToLower(os.Getenv("E2E_FACILITATOR_VOUCHER_STORE")))
+		return raw == "1" || raw == "true" || raw == "yes"
+	}()
 
 	if evmPrivateKey != "" {
 		log.Printf("🌐 EVM Network: %s", evmNetwork)
@@ -1063,9 +1033,89 @@ func main() {
 			log.Fatalf("Failed to create batch-settlement authorizer: %v", err)
 		}
 		log.Printf("EVM Receiver Authorizer (batch-settlement): %s", batchedAuthorizer.Address())
+
+		batchRefundIdentity := batchedevm.BatchSettlementEvmSchemeConfig{
+			ResolveCallerIdentity: func(_ batchedevm.DelegatedSettleContext) (string, error) {
+				return "x402-e2e", nil
+			},
+			DelegatedAuthStore: channelstorage.NewInMemoryDelegatedAuthStore(),
+		}
+		if voucherStoreEnabled {
+			store := channelstorage.NewInMemoryChannelStorage[*batchedevm.FacilitatorChannel]()
+			batchConfig := batchRefundIdentity
+			batchConfig.VoucherStore = &batchedevm.VoucherStoreConfig{
+				Storage:             store,
+				WithdrawDelay:       900,
+				SettleTargetStorage: channelstorage.NewInMemorySettleTargetStorage(),
+			}
+			batchScheme, err := batchedevm.NewBatchSettlementEvmSchemeWithConfig(evmSigner, batchedAuthorizer, &batchConfig)
+			if err != nil {
+				log.Fatalf("Failed to create batch-settlement scheme with voucher store: %v", err)
+			}
+			facilitator.Register(
+				[]x402.Network{x402.Network(evmNetwork)},
+				batchScheme,
+			)
+			batchChannelManager, err = batchScheme.CreateChannelManager(nil)
+			if err != nil {
+				log.Fatalf("Failed to create voucher-store channel manager: %v", err)
+			}
+			claimSecs, settleSecs, refundSecs, refundIdle := 60, 120, 180, 180
+			batchChannelManager.Start(batchedevm.FacilitatorAutoConfig{
+				ClaimIntervalSecs:  &claimSecs,
+				SettleIntervalSecs: &settleSecs,
+				RefundIntervalSecs: &refundSecs,
+				RefundIdleSecs:     &refundIdle,
+				MaxClaimsPerBatch:  100,
+				OnClaim: func(r batchedevm.FacilitatorClaimResult) {
+					log.Printf("[voucher store] Claimed %d vouchers (tx: %s)", r.Vouchers, r.Transaction)
+				},
+				OnSettle: func(r batchedevm.FacilitatorSettleResult) {
+					log.Printf("[voucher store] Settled %s (tx: %s)", r.Receiver, r.Transaction)
+				},
+				OnRefund: func(r batchedevm.FacilitatorRefundResult) {
+					log.Printf("[voucher store] Refunded channel %s (tx: %s)", r.Channel, r.Transaction)
+				},
+				OnError: func(e error) {
+					log.Printf("[voucher store] Settlement error: %v", e)
+				},
+			})
+			log.Printf("Facilitator voucher store: enabled (in-memory, withdrawDelay 900s)")
+		} else {
+			batchScheme, err := batchedevm.NewBatchSettlementEvmSchemeWithConfig(evmSigner, batchedAuthorizer, &batchRefundIdentity)
+			if err != nil {
+				log.Fatalf("Failed to create batch-settlement scheme: %v", err)
+			}
+			facilitator.Register(
+				[]x402.Network{x402.Network(evmNetwork)},
+				batchScheme,
+			)
+		}
+
+		authCaptureDelegatedStorage := authcapturefacilitator.NewInMemoryAuthCaptureDelegatedAuthStorage()
+		authCaptureAuthorizer, err := newBatchedAuthorizerSigner(evmPrivateKey)
+		if err != nil {
+			log.Fatalf("Failed to create auth-capture delegated authorizer: %v", err)
+		}
+		log.Printf("EVM Receiver Authorizer (auth-capture): %s", authCaptureAuthorizer.Address())
+		customOperators := authCaptureCustomOperators()
+		if len(customOperators) > 0 {
+			log.Printf("EVM Auth-capture custom operators: %v", customOperators)
+		}
 		facilitator.Register(
 			[]x402.Network{x402.Network(evmNetwork)},
-			batchedevm.NewBatchSettlementEvmScheme(evmSigner, batchedAuthorizer),
+			authcapturefacilitator.NewAuthCaptureEvmScheme(evmSigner, authcapturefacilitator.AuthCaptureEvmSchemeConfig{
+				CaptureAuthorizer: addresses[0],
+				AuthorizerSigner:  authCaptureAuthorizer,
+				DelegatedAuthStorage: authCaptureDelegatedStorage,
+				ResolveCallerIdentity: func(ctx context.Context, _ authcapturefacilitator.DelegatedSettleContext) (string, error) {
+					return "x402-e2e", nil
+				},
+				OnStorageError: func(err error, network x402.Network, paymentInfoHash string) {
+					log.Printf("[delegated-auth-storage] network=%s paymentInfoHash=%s err=%v", network, paymentInfoHash, err)
+				},
+				Operators: customOperators,
+			}),
 		)
 
 		evmV1Config := &exactevmv1.ExactEvmSchemeV1Config{}
@@ -1097,6 +1147,15 @@ func main() {
 		facilitator.Register(
 			[]x402.Network{x402.Network(svmNetwork)},
 			uptosvm.NewUptoSvmScheme(svmSigner, nil),
+		)
+		archiveRpcURL := strings.TrimSpace(os.Getenv("SVM_ARCHIVE_RPC_URL"))
+		facilitator.Register(
+			[]x402.Network{x402.Network(svmNetwork)},
+			batchsvmfac.NewBatchSvmScheme(
+				context.Background(),
+				svmSigner,
+				buildSvmBatchFacilitatorConfig(svmNetwork, archiveRpcURL),
+			),
 		)
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
@@ -1300,9 +1359,17 @@ func main() {
 		)
 		if err != nil {
 			log.Printf("Verify error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -1440,6 +1507,14 @@ func main() {
 		// Give time for response to be sent, then exit
 		go func() {
 			time.Sleep(100 * time.Millisecond)
+			if batchChannelManager != nil {
+				log.Println("Shutting down — flushing voucher-store claims…")
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := batchChannelManager.Stop(ctx, true); err != nil {
+					log.Printf("Channel manager stop: %v", err)
+				}
+			}
 			os.Exit(0)
 		}()
 	})
@@ -1484,4 +1559,9 @@ func main() {
 	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+// WriteContractFrom ignores from: this signer holds a single address.
+func (r *realFacilitatorEvmSigner) WriteContractFrom(ctx context.Context, _, address string, abiJSON []byte, functionName string, dataSuffix []byte, args ...interface{}) (string, error) {
+	return r.WriteContract(ctx, address, abiJSON, functionName, dataSuffix, args...)
 }

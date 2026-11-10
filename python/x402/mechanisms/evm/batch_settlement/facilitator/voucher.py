@@ -12,9 +12,11 @@ from ..errors import (
     ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,
     ERR_CUMULATIVE_EXCEEDS_BALANCE,
     ERR_INVALID_VOUCHER_SIGNATURE,
+    ERR_VOUCHER_PAYLOAD,
 )
 from ..types import ChannelConfig
 from .utils import (
+    parse_requirements_amount,
     read_channel_state,
     validate_channel_config,
     verify_batch_settlement_voucher_typed_data,
@@ -36,6 +38,17 @@ def verify_voucher(
     config_err = validate_channel_config(channel_config, channel_id, requirements)
     if config_err:
         return VerifyResponse(is_valid=False, invalid_reason=config_err, payer=payer)
+
+    # Refunds are zero-charge and never consult the price; every other payload is floored by it.
+    is_refund = payload.get("type") == "refund"
+    price = 0 if is_refund else parse_requirements_amount(requirements.amount)
+    if price is None:
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_VOUCHER_PAYLOAD,
+            invalid_message="invalid requirements amount",
+            payer=payer,
+        )
 
     voucher_ok = verify_batch_settlement_voucher_typed_data(
         signer,
@@ -74,11 +87,13 @@ def verify_voucher(
             payer=payer,
         )
 
-    is_refund = payload.get("type") == "refund"
     if is_refund:
         below_claimed = max_claimable_amount < state.total_claimed
     else:
-        below_claimed = max_claimable_amount <= state.total_claimed
+        below_claimed = (
+            max_claimable_amount < state.total_claimed + price
+            or max_claimable_amount <= state.total_claimed
+        )
     if below_claimed:
         return VerifyResponse(
             is_valid=False,

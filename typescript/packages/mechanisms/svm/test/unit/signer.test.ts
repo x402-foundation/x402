@@ -27,6 +27,20 @@ import { SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from "../../src/constants";
 import { encodeSignedTransaction, placeholderFeePayerSignature } from "./helpers/signedTransaction";
 
 describe("SVM Signer Converters", () => {
+  it("searches older history only when recovery requests it", async () => {
+    const getSignatureStatuses = vi.fn().mockReturnValue({
+      send: async () => ({ value: [{ slot: 55n, confirmationStatus: "confirmed", err: null }] }),
+    });
+    const caps = createRpcCapabilitiesFromRpc({ getSignatureStatuses } as never);
+    await caps.confirmTransaction("fresh");
+    expect(getSignatureStatuses).toHaveBeenLastCalledWith(["fresh"]);
+    await caps.confirmTransaction("recover", { searchTransactionHistory: true });
+    expect(getSignatureStatuses).toHaveBeenLastCalledWith(["recover"], {
+      searchTransactionHistory: true,
+    });
+    expect(getSignatureStatuses).toHaveBeenCalledTimes(2);
+  });
+
   describe("toClientSvmSigner", () => {
     it("should return the same signer (identity function)", () => {
       const mockSigner: ClientSvmSigner = {
@@ -292,7 +306,7 @@ describe("SVM Signer Converters", () => {
 
       await expect(
         facilitator.confirmTransaction("okSignature", SOLANA_DEVNET_CAIP2),
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ confirmationStatus: "finalized", err: null });
     });
 
     it("should simulate with sigVerify disabled", async () => {
@@ -652,6 +666,28 @@ describe("SVM Signer Converters", () => {
       await expect(
         facilitator.getConfirmedTransactionInnerInstructions!("sig", SOLANA_DEVNET_CAIP2),
       ).resolves.toEqual({ innerInstructions });
+    });
+
+    it("requests confirmed transactions up to version 1", async () => {
+      const mockSigner = {
+        address: "FacilitatorAddress1111111111111111111" as never,
+        signTransactions: vi.fn() as never,
+        signMessages: vi.fn().mockResolvedValue([{}]) as never,
+      };
+      const getTransaction = vi.fn().mockReturnValue({ send: vi.fn().mockResolvedValue(null) });
+      const mockRpc = { getBalance: vi.fn(), getSlot: vi.fn(), getTransaction } as never;
+      const facilitator = toFacilitatorSvmSigner(mockSigner as never, mockRpc);
+
+      await facilitator.getConfirmedTransaction!("sig", SOLANA_DEVNET_CAIP2);
+      await facilitator.getConfirmedTransactionInnerInstructions!("sig", SOLANA_DEVNET_CAIP2);
+
+      expect(getTransaction).toHaveBeenCalledTimes(2);
+      for (const [, config] of getTransaction.mock.calls) {
+        expect(config).toMatchObject({
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 1,
+        });
+      }
     });
 
     it("returns a token account balance or null when the RPC omits amount", async () => {

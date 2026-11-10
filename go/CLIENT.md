@@ -512,11 +512,11 @@ signer, _ := evmsigners.NewClientSignerFromPrivateKey(privateKey)
 
 ## Examples
 
-Complete examples are available in [`examples/go/clients/`](../../examples/go/clients/):
+Complete examples are available in [`examples/go/clients/`](../examples/go/clients/):
 
-- **[Basic HTTP Client](../../examples/go/clients/http/)** - Simple integration
-- **[Custom Client](../../examples/go/clients/custom/)** - Manual implementation
-- **[Advanced Patterns](../../examples/go/clients/advanced/)** - Production patterns
+- **[Basic HTTP Client](../examples/go/clients/http/)** - Simple integration
+- **[Custom Client](../examples/go/clients/custom/)** - Manual implementation
+- **[Advanced Patterns](../examples/go/clients/advanced/)** - Production patterns
 
 ## Troubleshooting
 
@@ -649,5 +649,5 @@ client.
 - **[FACILITATOR.md](FACILITATOR.md)** - Building facilitators
 - **[Signers](signers/README.md)** - Signer helpers
 - **[Mechanisms](mechanisms/)** - Payment scheme implementations
-- **[Examples](../../examples/go/clients/)** - Working client examples
+- **[Examples](../examples/go/clients/)** - Working client examples
 

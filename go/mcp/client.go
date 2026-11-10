@@ -180,7 +180,7 @@ func (c *X402MCPClient) CallTool(ctx context.Context, name string, args map[stri
 	}
 
 	payload, err := c.paymentClient.CreatePaymentPayload(
-		ctx,
+		x402.WithPaymentRequired(ctx, *paymentRequired),
 		selected,
 		paymentRequired.Resource,
 		paymentRequired.Extensions,
@@ -238,7 +238,7 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 
 	if recovered && paymentRequired != nil {
 		freshPayload, err := c.paymentClient.CreatePaymentPayload(
-			ctx,
+			x402.WithPaymentRequired(ctx, *paymentRequired),
 			payload.Accepted,
 			paymentRequired.Resource,
 			paymentRequired.Extensions,
@@ -253,10 +253,7 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 			Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: freshPayload},
 		}
 		retryTimeout := freshPayload.Accepted.MaxTimeoutSeconds
-		if retryTimeout == 0 {
-			retryTimeout = 300
-		}
-		retryCtx, retryCancel := withTimeoutIfNone(ctx, time.Duration(retryTimeout)*time.Second)
+		retryCtx, retryCancel := withTimeoutIfNone(ctx, c.paidTimeout(retryTimeout))
 		defer retryCancel()
 
 		retryResult, err := c.caller.CallTool(retryCtx, retryParams)
@@ -589,7 +586,7 @@ func CallPaidTool(
 	}
 
 	paymentPayload, err := x402Client.CreatePaymentPayload(
-		ctx,
+		x402.WithPaymentRequired(ctx, *paymentRequired),
 		selected,
 		paymentRequired.Resource,
 		paymentRequired.Extensions,

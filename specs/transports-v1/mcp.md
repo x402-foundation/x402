@@ -200,7 +200,7 @@ When payment settlement fails, servers return a tool result with `isError: true`
 
 ## References
 
-- [Core x402 Specification](../x402-specification.md)
+- [Core x402 Specification](../x402-specification-v1.md)
 - [MCP Specification](https://modelcontextprotocol.io/specification/)
 - [MCP \_meta Field Documentation](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta)
 - [x402-mcp](https://github.com/ethanniser/x402-mcp)

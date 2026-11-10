@@ -11,7 +11,8 @@
   "dependencies": {
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
-    "@x402/cardano": "workspace:*",    
+    "@x402/canton": "workspace:*",
+    "@x402/cardano": "workspace:*",
     "@x402/casper": "workspace:*",
     "@x402/concordium": "workspace:*",
     "@x402/core": "workspace:*",
@@ -25,7 +26,7 @@
     "@x402/svm": "workspace:*",
     "@x402/tvm": "workspace:*",
     "@x402/xrpl": "workspace:*",
-    "next": "^16.2.6",
+    "next": "^16.4.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "viem": "^2.48.11"

@@ -34,7 +34,7 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 
 ## AI-assisted contributions
 
-Follow the repository AI-assisted contribution policy in [CONTRIBUTING.md](../../CONTRIBUTING.md#ai-assisted-contributions). Review all AI-generated output before requesting maintainer review.
+Follow the repository AI-assisted contribution policy in [CONTRIBUTING.md](../../../CONTRIBUTING.md#ai-assisted-contributions). Review all AI-generated output before requesting maintainer review.
 
 ## Working on an Issue
 

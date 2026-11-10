@@ -8,48 +8,53 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
 
 func TestInMemoryChannelStorageKeepsTheWidestWindow(t *testing.T) {
 	ctx := context.Background()
-	storage := NewInMemoryChannelStorage()
-	firstSeenAt := time.Now().Add(-time.Hour)
-	record := ChannelRecord{
-		ChannelID:    "channel-1",
-		PayTo:        "recipient",
-		TokenProgram: solana.TokenProgramID.String(),
-		FirstSeenAt:  firstSeenAt,
-		ExpiresAt:    2_000,
-		Network:      testNetwork,
+	storage := paymentchannels.NewInMemoryPaymentChannelStorage()
+	firstActivity := time.Now().Add(-time.Hour)
+	record := paymentchannels.PaymentChannelRecord{
+		ChannelID:      "channel-1",
+		PayTo:          "recipient",
+		TokenProgram:   solana.TokenProgramID.String(),
+		LastActivityAt: firstActivity,
+		ExpiresAt:      2_000,
+		Network:        testNetwork,
 	}
-	require.NoError(t, storage.Upsert(ctx, record))
+	_, err := storage.RecordOpen(ctx, record)
+	require.NoError(t, err)
 
 	// A later settle on the same channel must not shorten its cleanup window.
 	later := record
-	later.FirstSeenAt = time.Now()
+	later.LastActivityAt = time.Now()
 	later.ExpiresAt = 1_000
-	require.NoError(t, storage.Upsert(ctx, later))
+	_, err = storage.RecordOpen(ctx, later)
+	require.NoError(t, err)
 
-	stored, err := storage.Get(ctx, record.ChannelID)
+	stored, err := storage.Get(ctx, testNetwork, record.ChannelID)
 	require.NoError(t, err)
 	require.NotNil(t, stored)
-	assert.Equal(t, firstSeenAt, stored.FirstSeenAt)
+	assert.True(t, stored.LastActivityAt.After(firstActivity) || stored.LastActivityAt.Equal(firstActivity))
 	assert.Equal(t, int64(2_000), stored.ExpiresAt)
 
 	// A longer voucher does extend it.
 	extended := record
 	extended.ExpiresAt = 3_000
-	require.NoError(t, storage.Upsert(ctx, extended))
-	stored, err = storage.Get(ctx, record.ChannelID)
+	_, err = storage.RecordOpen(ctx, extended)
+	require.NoError(t, err)
+	stored, err = storage.Get(ctx, testNetwork, record.ChannelID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3_000), stored.ExpiresAt)
 
-	records, err := storage.List(ctx)
+	records, err := storage.List(ctx, testNetwork)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
-	require.NoError(t, storage.Delete(ctx, record.ChannelID))
-	stored, err = storage.Get(ctx, record.ChannelID)
+	require.NoError(t, storage.Delete(ctx, testNetwork, record.ChannelID))
+	stored, err = storage.Get(ctx, testNetwork, record.ChannelID)
 	require.NoError(t, err)
 	assert.Nil(t, stored)
 }

@@ -93,7 +93,7 @@ func (c *UptoSvmScheme) CreatePaymentPayload(
 	if c.config != nil {
 		rpcOverride = c.config.RPCURL
 	}
-	rpcClient, err := upto.NewRPCClient(networkStr, rpcOverride)
+	rpcClient, err := svm.CreateRPCClient(networkStr, rpcOverride)
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
@@ -111,19 +111,27 @@ func (c *UptoSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
+	// Build the highest message version shared with extra.transactionVersions;
+	// refuse up front when the facilitator advertises none this client builds.
+	transactionVersion, err := svm.ResolveTransactionVersionFor(requirements.Extra, c.config.ClientTransactionVersions())
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildOpen+": %w", err)
+	}
+
 	open, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
-		Payer:            c.signer.Address(),
-		Payee:            feePayer,
-		Mint:             mint,
-		AuthorizedSigner: receiverAuthorizer,
-		FeePayer:         feePayer,
-		TokenProgram:     tokenProgram,
-		Deposit:          maxAmount,
-		Blockhash:        blockhash,
-		OpenSlot:         openSlot,
-		GracePeriod:      channelConfig.WithdrawDelay,
-		Recipients:       channelConfig.Splits,
-		Memo:             upto.ParseExtraMemo(requirements.Extra[upto.ExtraMemo]),
+		Payer:              c.signer.Address(),
+		Payee:              feePayer,
+		Mint:               mint,
+		AuthorizedSigner:   receiverAuthorizer,
+		FeePayer:           feePayer,
+		TokenProgram:       tokenProgram,
+		Deposit:            maxAmount,
+		Blockhash:          blockhash,
+		OpenSlot:           openSlot,
+		GracePeriod:        channelConfig.WithdrawDelay,
+		Recipients:         channelConfig.Splits,
+		Memo:               paymentchannels.ResolveUptoSvmMemo(requirements.Extra),
+		TransactionVersion: transactionVersion,
 	})
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildOpen+": %w", err)
@@ -171,7 +179,7 @@ func (c *UptoSvmScheme) resolveTokenProgram(
 	mint solana.PublicKey,
 	requirements types.PaymentRequirements,
 ) (solana.PublicKey, error) {
-	tokenProgram, hinted, err := upto.ParseTokenProgramHint(requirements.Extra)
+	tokenProgram, hinted, err := paymentchannels.ParseTokenProgramHint(requirements.Extra)
 	if err != nil {
 		return solana.PublicKey{}, fmt.Errorf(ErrUnknownTokenProgram+": %w", err)
 	}
@@ -199,17 +207,11 @@ func (c *UptoSvmScheme) resolveBlockhash(
 	rpcClient *rpc.Client,
 	requirements types.PaymentRequirements,
 ) (solana.Hash, error) {
-	if hint, ok := requirements.Extra[upto.ExtraRecentBlockhash].(string); ok && hint != "" {
-		if blockhash, err := solana.HashFromBase58(hint); err == nil {
-			return blockhash, nil
-		}
-	}
-
-	latest, err := rpcClient.GetLatestBlockhash(ctx, upto.BlockhashCommitment)
+	blockhash, err := svm.ResolveBlockhash(ctx, rpcClient, requirements)
 	if err != nil {
 		return solana.Hash{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
 	}
-	return latest.Value.Blockhash, nil
+	return blockhash, nil
 }
 
 // resolveOpenSlot resolves the channel open-slot anchor.
@@ -218,11 +220,7 @@ func (c *UptoSvmScheme) resolveOpenSlot(
 	rpcClient *rpc.Client,
 	requirements types.PaymentRequirements,
 ) (uint64, error) {
-	if slot, ok := upto.ParseExtraUint64(requirements.Extra[upto.ExtraRecentSlot]); ok {
-		return slot, nil
-	}
-
-	slot, err := rpcClient.GetSlot(ctx, upto.SlotCommitment)
+	slot, err := svm.ResolveOpenSlot(ctx, rpcClient, requirements)
 	if err != nil {
 		return 0, fmt.Errorf(ErrFailedToGetSlot+": %w", err)
 	}

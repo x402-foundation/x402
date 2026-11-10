@@ -202,6 +202,63 @@ func (c *x402Client) DisableSpendControls() *x402Client {
 	return c
 }
 
+type paymentRequiredContextKey struct{}
+
+// WithPaymentRequired attaches the 402 challenge so a scheme
+// PaymentCreationFailureHandler can fall back to a sibling accept.
+func WithPaymentRequired(ctx context.Context, required types.PaymentRequired) context.Context {
+	return context.WithValue(ctx, paymentRequiredContextKey{}, required)
+}
+
+func paymentRequiredFromContext(ctx context.Context) (types.PaymentRequired, bool) {
+	required, ok := ctx.Value(paymentRequiredContextKey{}).(types.PaymentRequired)
+	return required, ok
+}
+
+// recoverCreationFailure runs user hooks, then the scheme handler. The first
+// recovered payload of type T wins; a recovered payload of another type is skipped.
+func recoverCreationFailure[T any](
+	c *x402Client,
+	ctx context.Context,
+	scheme any,
+	failureCtx PaymentCreationFailureContext,
+) (T, bool, error) {
+	var zero T
+	if required, ok := paymentRequiredFromContext(ctx); ok {
+		failureCtx.PaymentRequired = &required
+	}
+	take := func(payload any, recovered bool) (T, bool) {
+		if !recovered || payload == nil {
+			return zero, false
+		}
+		typed, ok := payload.(T)
+		return typed, ok
+	}
+	for _, hook := range c.onPaymentCreationFailureHooks {
+		result, err := hook(failureCtx)
+		if err != nil {
+			return zero, false, err
+		}
+		if result != nil {
+			if typed, ok := take(result.Payload, result.Recovered); ok {
+				return typed, true, nil
+			}
+		}
+	}
+	if handler, ok := scheme.(PaymentCreationFailureHandler); ok {
+		result, err := handler.OnPaymentCreationFailure(ctx, failureCtx)
+		if err != nil {
+			return zero, false, fmt.Errorf("scheme OnPaymentCreationFailure: %w", err)
+		}
+		if result != nil {
+			if typed, ok := take(result.Payload, result.Recovered); ok {
+				return typed, true, nil
+			}
+		}
+	}
+	return zero, false, nil
+}
+
 // HandlePaymentResponse dispatches the OnPaymentResponse lifecycle for a paid
 // response: invokes the scheme's PaymentResponseHandler (if implemented) followed
 // by every user-registered OnPaymentResponseHook. Returns Recovered=true if any
@@ -679,19 +736,15 @@ func (c *x402Client) CreatePaymentPayloadV1(
 		payload, err = client.CreatePaymentPayload(ctx, requirements, payloadCtx)
 	}
 	if err != nil {
-		for _, hook := range c.onPaymentCreationFailureHooks {
-			result, hookErr := hook(PaymentCreationFailureContext{
-				PaymentCreationContext: creationCtxV1,
-				Error:                  err,
-			})
-			if hookErr != nil {
-				return types.PaymentPayloadV1{}, hookErr
-			}
-			if result != nil && result.Recovered {
-				if recovered, ok := result.Payload.(types.PaymentPayloadV1); ok {
-					return recovered, nil
-				}
-			}
+		recovered, recoveredOK, hookErr := recoverCreationFailure[types.PaymentPayloadV1](c, ctx, client, PaymentCreationFailureContext{
+			PaymentCreationContext: creationCtxV1,
+			Error:                  err,
+		})
+		if hookErr != nil {
+			return types.PaymentPayloadV1{}, hookErr
+		}
+		if recoveredOK {
+			return recovered, nil
 		}
 		return types.PaymentPayloadV1{}, err
 	}
@@ -760,19 +813,15 @@ func (c *x402Client) CreatePaymentPayload(
 		partial, err = client.CreatePaymentPayload(ctx, requirements, payloadCtx)
 	}
 	if err != nil {
-		for _, hook := range c.onPaymentCreationFailureHooks {
-			result, hookErr := hook(PaymentCreationFailureContext{
-				PaymentCreationContext: creationCtxV2,
-				Error:                  err,
-			})
-			if hookErr != nil {
-				return types.PaymentPayload{}, hookErr
-			}
-			if result != nil && result.Recovered {
-				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
-					return recovered, nil
-				}
-			}
+		recovered, recoveredOK, hookErr := recoverCreationFailure[types.PaymentPayload](c, ctx, client, PaymentCreationFailureContext{
+			PaymentCreationContext: creationCtxV2,
+			Error:                  err,
+		})
+		if hookErr != nil {
+			return types.PaymentPayload{}, hookErr
+		}
+		if recoveredOK {
+			return recovered, nil
 		}
 		return types.PaymentPayload{}, err
 	}
@@ -791,19 +840,15 @@ func (c *x402Client) CreatePaymentPayload(
 		Resource:    resource,
 	})
 	if err != nil {
-		for _, hook := range c.onPaymentCreationFailureHooks {
-			result, hookErr := hook(PaymentCreationFailureContext{
-				PaymentCreationContext: creationCtxV2,
-				Error:                  err,
-			})
-			if hookErr != nil {
-				return types.PaymentPayload{}, hookErr
-			}
-			if result != nil && result.Recovered {
-				if recovered, ok := result.Payload.(types.PaymentPayload); ok {
-					return recovered, nil
-				}
-			}
+		recovered, recoveredOK, hookErr := recoverCreationFailure[types.PaymentPayload](c, ctx, client, PaymentCreationFailureContext{
+			PaymentCreationContext: creationCtxV2,
+			Error:                  err,
+		})
+		if hookErr != nil {
+			return types.PaymentPayload{}, hookErr
+		}
+		if recoveredOK {
+			return recovered, nil
 		}
 		return types.PaymentPayload{}, err
 	}

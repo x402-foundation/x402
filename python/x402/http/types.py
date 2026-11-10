@@ -155,6 +155,11 @@ class PaywallConfig:
     (e.g. ``"eip155:84532"``). Wins over the paywall's curated default map for
     the matching chain. Unmapped chains render "No faucet configured." rather
     than a fallback link.
+
+    ``rpc_urls`` is a per-chain RPC endpoint the paywall uses from the browser,
+    keyed by CAIP-2 network identifier. Currently read by the SVM paywall only;
+    chains without an entry use the public default. The URLs are visible to
+    every visitor, so use browser-safe endpoints, never secret keys.
     """
 
     app_name: str | None = None
@@ -163,6 +168,7 @@ class PaywallConfig:
     current_url: str | None = None
     testnet: bool = False
     faucet_urls: dict[str, str] | None = None
+    rpc_urls: dict[str, str] | None = None
 
 
 # Dynamic function types (supports both sync and async callbacks)

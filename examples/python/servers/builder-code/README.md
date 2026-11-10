@@ -26,7 +26,7 @@ routes = {
 - Python 3.10+
 - uv (install via [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/))
 - EVM address on Base Sepolia for receiving payments
-- URL of a facilitator supporting Base Sepolia (`eip155:84532`); use the [builder-code facilitator](../facilitator/builder-code/) for full attribution
+- URL of a facilitator supporting Base Sepolia (`eip155:84532`); use the [builder-code facilitator](../../facilitator/builder-code/) for full attribution
 
 ## Setup
 
@@ -42,7 +42,7 @@ uv sync --reinstall-package x402
 cp .env-local .env
 ```
 
-- `FACILITATOR_URL` — Facilitator endpoint URL (use the [builder-code facilitator](../facilitator/builder-code/) for full attribution)
+- `FACILITATOR_URL` — Facilitator endpoint URL (use the [builder-code facilitator](../../facilitator/builder-code/) for full attribution)
 - `EVM_ADDRESS` — Base Sepolia address to receive payments
 - `APP_BUILDER_CODE` — Your service app builder code (e.g. `bc_weather_svc`)
 

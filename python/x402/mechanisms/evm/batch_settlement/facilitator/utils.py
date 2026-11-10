@@ -220,6 +220,18 @@ def read_channel_state(signer: FacilitatorEvmSigner, channel_id: str) -> Channel
     )
 
 
+def parse_requirements_amount(amount: Any) -> int | None:
+    """Parse the server-supplied ``requirements.amount`` as a non-negative base-10 integer.
+
+    The amount comes from the resource server, so the facilitator must not trust it: malformed
+    or negative values (which would lower the minimum-advance floor) yield ``None`` instead of
+    raising or being accepted.
+    """
+    if isinstance(amount, str) and amount.isascii() and amount.isdigit():
+        return int(amount)
+    return None
+
+
 def _unpack_pair(value: Any) -> tuple[int, int]:
     if isinstance(value, list | tuple) and len(value) >= 2:
         return int(value[0]), int(value[1])
@@ -234,4 +246,5 @@ __all__ = [
     "verify_batch_settlement_voucher_typed_data",
     "validate_channel_config",
     "read_channel_state",
+    "parse_requirements_amount",
 ]

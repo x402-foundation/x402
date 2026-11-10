@@ -9,10 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
 
-// schemeOnlySigner implements every UptoFacilitatorSigner method and omits
-// GetProgramAccounts, so construction succeeds and Discover panics.
+// schemeOnlySigner implements every PaymentChannelFacilitatorSigner method and omits
+// GetProgramAccounts, so construction succeeds and Discover reports the gap.
 type schemeOnlySigner struct{}
 
 func (schemeOnlySigner) GetAddresses(context.Context, string) []solana.PublicKey {
@@ -23,7 +24,7 @@ func (schemeOnlySigner) SignTransaction(context.Context, *solana.Transaction, so
 	return nil
 }
 
-func (schemeOnlySigner) SimulateTransaction(context.Context, *solana.Transaction, string) error {
+func (schemeOnlySigner) SimulateTransaction(context.Context, *solana.Transaction, string, *svm.FacilitatorSimulateTransactionOptions) error {
 	return nil
 }
 
@@ -47,13 +48,9 @@ func (schemeOnlySigner) GetSlot(context.Context, string, rpc.CommitmentType) (ui
 	return 0, nil
 }
 
-func (schemeOnlySigner) SimulateTransactionWithOpts(context.Context, *solana.Transaction, string, *rpc.SimulateTransactionOpts) error {
-	return nil
-}
-
 var (
-	_ svm.FacilitatorSvmSigner = schemeOnlySigner{}
-	_ UptoFacilitatorSigner    = schemeOnlySigner{}
+	_ svm.FacilitatorSvmSigner                        = schemeOnlySigner{}
+	_ paymentchannels.PaymentChannelFacilitatorSigner = schemeOnlySigner{}
 )
 
 func TestNewUptoSvmSchemeAllowsSignerWithoutGetProgramAccounts(t *testing.T) {
@@ -65,10 +62,9 @@ func TestNewUptoSvmSchemeAllowsSignerWithoutGetProgramAccounts(t *testing.T) {
 func TestDiscoverRequiresGetProgramAccounts(t *testing.T) {
 	manager := NewRentCleanupManager(RentCleanupConfig{
 		Signer:  schemeOnlySigner{},
-		Storage: NewInMemoryChannelStorage(),
+		Storage: paymentchannels.NewInMemoryPaymentChannelStorage(),
 		Network: testNetwork,
 	})
-	assert.PanicsWithValue(t, "RentCleanupManager.Discover requires GetProgramAccounts on the signer", func() {
-		_ = manager.Discover(context.Background(), DiscoveryOptions{})
-	})
+	err := manager.Discover(context.Background(), DiscoveryOptions{})
+	assert.EqualError(t, err, "RentCleanupManager.Discover requires GetProgramAccounts on the signer")
 }
