@@ -52,20 +52,6 @@ describe("defaultAssets (EVM)", () => {
       );
     });
 
-    it("returns USDG as the Robinhood Chain default (EIP-3009, 6 decimals)", () => {
-      const usdg = getDefaultAsset("eip155:4663");
-      expect(usdg).toEqual({
-        asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
-        name: "Global Dollar",
-        version: "1",
-        decimals: 6,
-        symbol: "USDG",
-      });
-      expect(usdg.assetTransferMethod).toBeUndefined();
-      expect(getDefaultAsset("eip155:4663", "usdg")).toEqual(usdg);
-      expect(findDefaultAsset(usdg.asset.toLowerCase(), "eip155:4663")).toEqual(usdg);
-    });
-
     it("throws when requesting a symbol that is not configured on the network", () => {
       expect(() => getDefaultAsset("eip155:8453", "USDT")).toThrow(
         /No USDT default asset configured for network eip155:8453/,

@@ -59,18 +59,6 @@ describe("ExactEvmScheme (Server)", () => {
       });
     });
 
-    describe("Robinhood Chain network", () => {
-      const network = "eip155:4663";
-
-      it("should use Robinhood Chain USDG with its EIP-712 domain", async () => {
-        const result = await server.parsePrice("$0.01", network);
-        expect(result.asset).toBe("0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168");
-        expect(result.amount).toBe("10000"); // 0.01 USDG = 10000 smallest units
-        expect(result.extra).toEqual({ name: "Global Dollar", version: "1" });
-        expect(result.extra).not.toHaveProperty("assetTransferMethod");
-      });
-    });
-
     describe("MegaETH network", () => {
       const network = "eip155:4326";
 

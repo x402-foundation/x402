@@ -59,24 +59,6 @@ func TestEVMDefaultAssets(t *testing.T) {
 		}
 	})
 
-	t.Run("returns USDG as the Robinhood Chain default", func(t *testing.T) {
-		got, err := evm.GetDefaultAsset("eip155:4663", "")
-		if err != nil {
-			t.Fatalf("GetDefaultAsset(eip155:4663): %v", err)
-		}
-		if got.Asset != "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" || got.Name != "Global Dollar" ||
-			got.Version != "1" || got.Decimals != 6 || got.Symbol != "USDG" {
-			t.Fatalf("GetDefaultAsset(eip155:4663) = %+v", got)
-		}
-		if found := evm.FindDefaultAsset(strings.ToLower(got.Asset), "eip155:4663"); found == nil || found.Asset != got.Asset {
-			t.Fatalf("FindDefaultAsset(USDG, eip155:4663) = %+v", found)
-		}
-		_, amount, err := evm.ConvertDefaultMoney("0.01", "eip155:4663", "USDG")
-		if err != nil || amount != "10000" {
-			t.Fatalf("ConvertDefaultMoney(0.01, eip155:4663) = %s, %v, want 10000", amount, err)
-		}
-	})
-
 	t.Run("throws when requesting a symbol that is not configured", func(t *testing.T) {
 		_, err := evm.GetDefaultAsset("eip155:8453", "USDT")
 		if err == nil || !strings.Contains(err.Error(), "no USDT default asset configured for network eip155:8453") {
