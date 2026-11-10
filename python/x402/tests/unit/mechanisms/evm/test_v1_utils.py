@@ -7,7 +7,38 @@ from x402.mechanisms.evm.v1.utils import get_asset_info, get_evm_chain_id
 
 
 class TestV1GetEvmChainId:
-    """Test v1 get_evm_chain_id rejection paths."""
+    """Test v1 get_evm_chain_id lookup and rejection."""
+
+    @pytest.mark.parametrize(
+        ("network", "chain_id"),
+        [
+            ("base", 8453),
+            ("base-sepolia", 84532),
+            ("ethereum", 1),
+            ("polygon", 137),
+            ("polygon-amoy", 80002),
+            ("avalanche", 43114),
+            ("avalanche-fuji", 43113),
+            ("abstract", 2741),
+            ("abstract-testnet", 11124),
+            ("iotex", 4689),
+            ("sei", 1329),
+            ("sei-testnet", 1328),
+            ("peaq", 3338),
+            ("story", 1513),
+            ("educhain", 656476),
+            ("skale-base-sepolia", 1444673419),
+            ("megaeth", 4326),
+            ("monad", 143),
+            ("monad-testnet", 10143),
+            ("stable", 988),
+            ("stable-testnet", 2201),
+            ("celo", 42220),
+            ("flare", 14),
+        ],
+    )
+    def test_should_map_legacy_name_to_chain_id(self, network: str, chain_id: int):
+        assert get_evm_chain_id(network) == chain_id
 
     def test_should_resolve_story(self):
         assert get_evm_chain_id("story") == 1514

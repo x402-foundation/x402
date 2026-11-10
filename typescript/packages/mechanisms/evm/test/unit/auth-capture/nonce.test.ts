@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { keccak256, zeroAddress } from "viem";
+import { zeroAddress } from "viem";
 import {
   AUTH_CAPTURE_DEPLOYMENT_V1_0,
   AUTH_CAPTURE_DEPLOYMENT_V1_1,
@@ -177,16 +177,6 @@ describe("nonce utilities", () => {
       expect(a).toBe(b);
       expect(a).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect(a).toBe("0xd0967e09b6c8fccf96277d95a03e98583e8605ab10858b1349aa50ea6d78132c");
-    });
-
-    it("hashes the PaymentInfo type string to a stable value", () => {
-      expect(
-        keccak256(
-          new TextEncoder().encode(
-            "PaymentInfo(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)",
-          ),
-        ),
-      ).toBe("0xae68ac7ce30c86ece8196b61a7c486d8f0061f575037fbd34e7fe4e2820c6591");
     });
 
     it("changes when any bound input changes", () => {

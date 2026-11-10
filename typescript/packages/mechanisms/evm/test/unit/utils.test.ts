@@ -66,6 +66,35 @@ describe("EVM Utils", () => {
   });
 
   describe("getEvmChainIdV1 (legacy names)", () => {
+    it.each([
+      ["ethereum", 1],
+      ["sepolia", 11155111],
+      ["abstract", 2741],
+      ["abstract-testnet", 11124],
+      ["base-sepolia", 84532],
+      ["base", 8453],
+      ["avalanche-fuji", 43113],
+      ["avalanche", 43114],
+      ["iotex", 4689],
+      ["sei", 1329],
+      ["sei-testnet", 1328],
+      ["polygon", 137],
+      ["polygon-amoy", 80002],
+      ["peaq", 3338],
+      ["story", 1514],
+      ["educhain", 41923],
+      ["skale-base-sepolia", 324705682],
+      ["megaeth", 4326],
+      ["monad", 143],
+      ["monad-testnet", 10143],
+      ["stable", 988],
+      ["stable-testnet", 2201],
+      ["celo", 42220],
+      ["flare", 14],
+    ] as const)("maps %s to chain id %s", (name, chainId) => {
+      expect(getEvmChainIdV1(name)).toBe(chainId);
+    });
+
     it("should throw for CAIP-2 format", () => {
       expect(() => getEvmChainIdV1("eip155:8453")).toThrow("Unsupported v1 network");
     });

@@ -46,3 +46,17 @@ class TestErrorConstants:
         consts = _all_error_constants()
         values = list(consts.values())
         assert len(values) == len(set(values))
+
+    def test_known_codes_unchanged(self):
+        """Sentinel values for codes that are particularly load-bearing on the wire."""
+        assert err_mod.ERR_INVALID_SCHEME == "invalid_batch_settlement_evm_scheme"
+        assert err_mod.ERR_NETWORK_MISMATCH == "invalid_batch_settlement_evm_network_mismatch"
+        assert err_mod.ERR_INVALID_PAYLOAD_TYPE == "invalid_batch_settlement_evm_payload_type"
+        assert (
+            err_mod.ERR_CUMULATIVE_AMOUNT_MISMATCH
+            == "invalid_batch_settlement_evm_cumulative_amount_mismatch"
+        )
+        assert (
+            err_mod.ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED
+            == "invalid_batch_settlement_evm_cumulative_below_claimed"
+        )

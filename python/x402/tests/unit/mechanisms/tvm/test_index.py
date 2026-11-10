@@ -24,6 +24,7 @@ from x402.mechanisms.tvm import (
     ToncenterRestClient,
     WalletV5R1MnemonicSigner,
     create_tvm_provider_client,
+    get_network_global_id,
     normalize_address,
     parse_amount,
 )
@@ -72,6 +73,11 @@ class TestExports:
 class TestNetworkUtilities:
     def test_should_export_supported_networks(self):
         assert SUPPORTED_NETWORKS == {TVM_MAINNET, TVM_TESTNET}
+
+    def test_should_extract_global_id_from_caip2_network(self):
+        assert get_network_global_id("tvm:-239") == -239
+        assert get_network_global_id(TVM_MAINNET) == -239
+        assert get_network_global_id(TVM_TESTNET) == -3
 
 
 class TestAmountUtilities:

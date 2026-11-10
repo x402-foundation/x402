@@ -38,6 +38,14 @@ describe("Aptos Constants", () => {
   });
 
   describe("getAptosNetwork", () => {
+    it("should return MAINNET for aptos:1", () => {
+      expect(getAptosNetwork("aptos:1")).toBe(Network.MAINNET);
+    });
+
+    it("should return TESTNET for aptos:2", () => {
+      expect(getAptosNetwork("aptos:2")).toBe(Network.TESTNET);
+    });
+
     it("should throw for unsupported networks", () => {
       expect(() => getAptosNetwork("aptos:99")).toThrow("Unsupported Aptos network");
       expect(() => getAptosNetwork("ethereum:1")).toThrow("Unsupported Aptos network");
@@ -83,6 +91,14 @@ describe("Aptos Constants", () => {
   });
 
   describe("getAptosChainId", () => {
+    it("should return 1 for mainnet", () => {
+      expect(getAptosChainId("aptos:1")).toBe(1);
+    });
+
+    it("should return 2 for testnet", () => {
+      expect(getAptosChainId("aptos:2")).toBe(2);
+    });
+
     it("should throw for unsupported networks", () => {
       expect(() => getAptosChainId("aptos:99")).toThrow("Unsupported Aptos network");
       expect(() => getAptosChainId("ethereum:1")).toThrow("Unsupported Aptos network");

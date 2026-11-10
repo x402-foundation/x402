@@ -130,8 +130,12 @@ func TestIsAcceptedTransactionVersion(t *testing.T) {
 func TestAdvertisedTransactionVersionsAreAccepted(t *testing.T) {
 	require.NotEmpty(t, AdvertisedTransactionVersions)
 	for _, version := range AdvertisedTransactionVersions {
-		assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersion(version)), "advertised %d", version)
+		decoded, err := messageVersionForWire(version)
+		require.NoError(t, err)
+		assert.NotEqual(t, solana.MessageVersionLegacy, decoded, "legacy is accepted but never advertised")
+		assert.True(t, IsAcceptedTransactionVersion(decoded), "advertised %d", version)
 	}
+	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionLegacy))
 }
 
 func TestResolveTransactionVersion(t *testing.T) {
