@@ -3,6 +3,7 @@ package facilitator
 import (
 	"context"
 	"sync"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 
@@ -135,6 +136,33 @@ func ReserveBroadcast(ctx context.Context, store PendingSettlementStore, key, si
 		return false, err
 	}
 	return true, nil
+}
+
+// recoveryGrace is how long pending-store access may run past the request deadline.
+const recoveryGrace = 250 * time.Millisecond
+
+// recoveryFallbackTimeout bounds recovery access when the request context has no deadline.
+const recoveryFallbackTimeout = 5 * time.Second
+
+// recoveryContext detaches pending-store access from request cancellation, bounded to
+// the request deadline plus recoveryGrace (from now if already expired).
+func recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithTimeout(detached, recoveryFallbackTimeout)
+	}
+	if now := time.Now(); deadline.Before(now) {
+		deadline = now
+	}
+	return context.WithDeadline(detached, deadline.Add(recoveryGrace))
+}
+
+// recoveryGet reads key from the pending store on a recovery context.
+func (f *BatchSvmScheme) recoveryGet(ctx context.Context, key string) (string, bool, error) {
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
+	return f.pendingStore.Get(recoveryCtx, key)
 }
 
 // BroadcastExpiredWithoutLanding reports whether a broadcast whose confirmation

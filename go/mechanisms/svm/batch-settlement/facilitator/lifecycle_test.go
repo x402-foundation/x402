@@ -1102,7 +1102,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{
-				ChannelID: channelID, Deposit: 1, ExpectedDeposit: 10_000, IsTopUp: false,
+				ChannelID: channelID, Deposit: 1, ExpectedDeposit: 10_000, IsTopUp: false, Existing: channel(),
 				Payload: batchsettlement.BatchDepositPayload{
 					Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
 					Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
@@ -1265,14 +1265,13 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{
-				ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 10_000, IsTopUp: false,
+				ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 10_000, IsTopUp: false, Existing: channel(),
 				Payload: batchsettlement.BatchDepositPayload{
 					Type: deposit.Type, ChannelConfig: channelConfig, Deposit: *deposit.Deposit, Voucher: &voucher,
 				},
 				Terms: defaultTerms,
 			}, nil
 		}
-		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return channel(), nil }
 		scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return channel(), nil }
 		idempotent, err := scheme.settleDeposit(ctx, deposit, req, nil)
 		require.NoError(t, err)

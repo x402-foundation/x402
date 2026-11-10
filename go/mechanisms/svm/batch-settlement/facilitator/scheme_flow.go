@@ -92,6 +92,9 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 	switch {
 	case args.broadcast != nil:
 		sent, err = args.broadcast()
+	case args.send != nil && args.beforeSend == nil:
+		// The completed and pending keys were read above with nothing in between.
+		sent, err = f.broadcastUnchecked(ctx, args.key, args.network, args.payer, args.send)
 	case args.send != nil:
 		sent, err = f.broadcastDurably(ctx, args.key, args.network, args.payer, args.send)
 	default:
@@ -173,6 +176,7 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 		Deposit:     deposit,
 		Proof:       proof,
 		ProofAmount: proofAmount,
+		Existing:    existing,
 	}
 	if payload.Voucher != nil {
 		voucher := *payload.Voucher
@@ -329,9 +333,7 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 	if validated.IsTopUp {
 		key = "batch:topup:" + requirements.Network + ":" + payload.Deposit.Transaction
 	}
-	if existing, err := f.readChannel(ctx, requirements.Network, validated.ChannelID); err != nil {
-		return nil, err
-	} else if existing != nil && !validated.IsTopUp {
+	if validated.Existing != nil && !validated.IsTopUp {
 		channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
 		if err != nil {
 			return nil, err
