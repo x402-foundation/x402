@@ -5,11 +5,11 @@
   "description": "x402 Payment Protocol Monorepo",
   "main": "index.js",
   "scripts": {
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "lint:check": "turbo run lint:check",
-    "format": "turbo run format",
-    "format:check": "turbo run format:check"
+    "build": "pnpm --filter \"!x402_examples\" -r --if-present run build",
+    "lint": "pnpm --filter \"!x402_examples\" -r --if-present run lint",
+    "lint:check": "pnpm --filter \"!x402_examples\" -r --if-present run lint:check",
+    "format": "pnpm --filter \"!x402_examples\" -r --if-present run format",
+    "format:check": "pnpm --filter \"!x402_examples\" -r --if-present run format:check"
   },
   "keywords": [],
   "author": "",
@@ -18,7 +18,7 @@
   "devDependencies": {
     "prettier-linter-helpers": "^1.0.1",
     "tsup": "^8.4.0",
-    "turbo": "^2.5.0",
+    "turbo": "^2.9.14",
     "typescript": "^5.7.3"
   }
 }

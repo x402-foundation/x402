@@ -230,7 +230,11 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
 
     const client = new x402Client();
     client.register("solana:*", new ExactSvmScheme(signer)); // fixed-price services
-    client.register("solana:*", new UptoSvmScheme(signer));  // usage-based services
+    client.register("solana:*", new UptoSvmScheme(signer, {
+      // Optional: restrict to version-0 transactions only (e.g. for signers that
+      // cannot sign version-1). Default: build the highest version the facilitator supports.
+      // transactionVersions: [0],
+    }));  // usage-based services
     ```
   </Tab>
   <Tab title="Go (EVM)">
@@ -267,8 +271,12 @@ Register the `upto` scheme alongside `exact` if your client may call both fixed-
     }
 
     x402Client := x402.Newx402Client().
-        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).      // fixed-price services
-        Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))    // usage-based services
+        Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner)).   // fixed-price services
+        Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, &uptosvm.ClientConfig{
+            // Optional: restrict to version-0 transactions only (e.g. for signers that
+            // cannot sign version-1). Default: build the highest version the facilitator supports.
+            // TransactionVersions: []int{0},
+        }))  // usage-based services
     ```
   </Tab>
   <Tab title="Python">
@@ -346,6 +354,16 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
       // Raise these on RPC providers with slower replica convergence.
       // channelReadMaxAttempts: 6,
       // channelReadBackoffStepMs: 200,
+      // Optional: message version (0 or 1) for facilitator-built transactions
+      // (claim, cancel, rent-cleanup). Does not affect client-built transactions.
+      // Default: 1
+      // facilitatorTransactionVersion: 1,
+      // Optional: accepted transaction versions (default [0, 1]).
+      // Pass [0] to reject version-1 client transactions.
+      // transactionVersions: [0, 1],
+      // Optional: override the treasury owner the payment-channels program was built with.
+      // Useful when running against a custom or local program build.
+      // paymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     });
 
     facilitator.register("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", svmUptoScheme);
@@ -375,6 +393,14 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
         // },
         // Optional: shared store for multi-replica facilitators. Default is in-memory.
         // DelegatedAuthStore: sharedRedisDelegatedAuthStore,
+        // Optional: accepted transaction versions (default [0, 1]).
+        // Pass []int{0} to reject version-1 client transactions.
+        // TransactionVersions: []int{0, 1},
+        // Optional: message version for facilitator-built transactions (0 or 1). Default: 1.
+        // FacilitatorTransactionVersion: 1,
+        // Optional: override the treasury owner the payment-channels program was built with.
+        // Useful when running against a custom or local program build.
+        // PaymentChannelsTreasuryOwner: "YourTreasuryOwnerPubkey",
     })
     facilitator.Register([]x402.Network{network}, scheme)
 

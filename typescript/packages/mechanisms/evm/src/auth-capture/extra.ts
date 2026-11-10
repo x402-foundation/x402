@@ -18,6 +18,7 @@ import {
   feeAmountFromBps,
   resolveAuthCaptureDeployment,
 } from "./constants";
+import { paymentInfoToContractTuple } from "./utils";
 
 const MAX_FEE_BPS = 10_000;
 
@@ -415,6 +416,8 @@ export function captureFeeFromPayload(
   };
 }
 
+type PaymentInfoContractTuple = ReturnType<typeof paymentInfoToContractTuple>;
+
 /**
  * Encode capture() arguments for the resolved deployment.
  *
@@ -424,7 +427,7 @@ export function captureFeeFromPayload(
  * @returns Positional arguments for `capture`.
  */
 export function captureEscrowArgs(
-  tuple: ReturnType<typeof import("./utils").paymentInfoToContractTuple>,
+  tuple: PaymentInfoContractTuple,
   amount: bigint,
   fee: SubmittedFee,
 ): readonly unknown[] {
@@ -445,7 +448,7 @@ export function captureEscrowArgs(
  * @returns Positional arguments for `charge`.
  */
 export function chargeEscrowArgs(
-  tuple: ReturnType<typeof import("./utils").paymentInfoToContractTuple>,
+  tuple: PaymentInfoContractTuple,
   amount: bigint,
   tokenCollector: `0x${string}`,
   collectorData: `0x${string}`,

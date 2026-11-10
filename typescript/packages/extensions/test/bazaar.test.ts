@@ -1408,6 +1408,38 @@ describe("Bazaar Discovery Extension", () => {
       expect(postResult.valid).toBe(true);
     });
 
+    // Issue #3511: a route registered without a verb returns 402 for any method,
+    // so the probe method can disagree with the declared input shape.
+    it.each([
+      {
+        name: "body declaration probed with GET",
+        config: { input: { prompt: "hi" }, bodyType: "json" as const },
+        probe: "GET",
+        expected: "POST",
+      },
+      {
+        name: "query declaration probed with POST",
+        config: { input: { q: "hi" } },
+        probe: "POST",
+        expected: "GET",
+      },
+    ])("should not advertise the probe method for a $name", ({ config, probe, expected }) => {
+      const declared = declareDiscoveryExtension(config);
+
+      const enriched = bazaarResourceServerExtension.enrichDeclaration!(declared.bazaar, {
+        method: probe,
+        path: "/test",
+        adapter: createMockAdapter(),
+      }) as DiscoveryExtension;
+
+      expect((enriched.info as BodyDiscoveryInfo).input.method).toBe(expected);
+      expect(extractMethodEnum(enriched.schema as Record<string, unknown>)).toEqual([expected]);
+      expect(
+        validateDiscoveryExtensionSpec(enriched as unknown as Record<string, unknown>),
+      ).toEqual({ valid: true });
+      expect(validateDiscoveryExtension(enriched)).toEqual({ valid: true });
+    });
+
     it("should return unchanged declaration for non-HTTP context", () => {
       const declared = declareDiscoveryExtension({
         input: { data: "test" },
@@ -1643,6 +1675,115 @@ describe("Bazaar Discovery Extension", () => {
 
       expect(discovered).not.toBeNull();
       expect(discovered!.resourceUrl).toBe("https://mcp.example.com/tools");
+    });
+  });
+
+  describe("extractDiscoveryInfo - opaque-origin resource schemes", () => {
+    // mcp:// is not a WHATWG "special scheme" (only http/https/ws/wss/ftp/file
+    // are), so it parses to an opaque origin, and URL.prototype.origin
+    // serializes an opaque origin as the literal string "null" — see
+    // https://github.com/x402-foundation/x402/issues/3121. The fix is
+    // scheme-agnostic (detect the opaque-origin sentinel, not a scheme
+    // allowlist), so this pins the general rule with two independent
+    // schemes, not just mcp://, to catch the next undocumented scheme
+    // before it regresses the same way.
+    const declared = declareDiscoveryExtension({
+      toolName: "financial_analysis",
+      description: "Analyze financial data",
+      inputSchema: {
+        type: "object",
+        properties: { ticker: { type: "string" } },
+      },
+    });
+    const buildPayload = (url: string) => ({
+      x402Version: 2,
+      scheme: "exact",
+      network: "eip155:8453" as unknown,
+      payload: {},
+      accepted: {} as unknown,
+      resource: { url },
+      extensions: {
+        [BAZAAR.key]: declared.bazaar,
+      },
+    });
+
+    it("should use the raw resource URL as canonical for mcp:// (opaque origin)", () => {
+      const discovered = extractDiscoveryInfo(
+        buildPayload("mcp://tool/financial_analysis"),
+        {} as unknown,
+      );
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("mcp://tool/financial_analysis");
+      expect(discovered!.resourceUrl).not.toContain("null");
+    });
+
+    it("should use the raw resource URL as canonical for an arbitrary non-special scheme (opaque origin)", () => {
+      // Not mcp:// — a made-up scheme this package has never heard of, to
+      // prove the fix doesn't special-case mcp specifically.
+      const discovered = extractDiscoveryInfo(
+        buildPayload("test-scheme://tool/financial_analysis"),
+        {} as unknown,
+      );
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("test-scheme://tool/financial_analysis");
+      expect(discovered!.resourceUrl).not.toContain("null");
+    });
+
+    it("should strip query params from an opaque-origin resource URL", () => {
+      // The gap whawk46 flagged on #3138: the opaque-origin branch above
+      // used the raw resourceUrl verbatim, so a query string survived into
+      // the canonical instead of being stripped like every special-scheme
+      // canonical already strips it. `mcp://tool/x?session=abc` recreates
+      // the per-variant catalog duplication the stripping exists to
+      // prevent unless it's stripped here too.
+      const discovered = extractDiscoveryInfo(
+        buildPayload("mcp://tool/financial_analysis?session=abc"),
+        {} as unknown,
+      );
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("mcp://tool/financial_analysis");
+      expect(discovered!.resourceUrl).not.toContain("session");
+      expect(discovered!.resourceUrl).not.toContain("?");
+    });
+
+    it("should use routeTemplate for an opaque-origin resource URL", () => {
+      // Requested in review on #3138: the opaque-origin branch must not
+      // ignore routeTemplate, or each concrete path variant is catalogued
+      // separately, which is the duplication the template exists to prevent.
+      const extension = declareDiscoveryExtension({
+        input: {},
+        inputSchema: { properties: {} },
+      }).bazaar;
+      const enrichedExtension = {
+        ...extension,
+        routeTemplate: "/users/:userId",
+        info: {
+          ...extension.info,
+          input: { ...extension.info.input, pathParams: { userId: "123" } },
+        },
+      };
+
+      const discovered = extractDiscoveryInfo(
+        {
+          x402Version: 2,
+          scheme: "exact",
+          network: "eip155:8453" as unknown,
+          payload: {},
+          accepted: {} as unknown,
+          resource: { url: "mcp://tool/users/123?session=abc" },
+          extensions: {
+            [BAZAAR.key]: enrichedExtension,
+          },
+        },
+        {} as unknown,
+        false,
+      );
+
+      expect(discovered).not.toBeNull();
+      expect(discovered!.resourceUrl).toBe("mcp://tool/users/:userId");
     });
   });
 
@@ -2609,6 +2750,71 @@ describe("Bazaar Discovery Extension", () => {
       };
       validateBazaarRouteExtensions(routes);
       expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it("should keep protocol checks when runtime code generation is unavailable", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const ext = declareDiscoveryExtension({
+        input: { q: "test" },
+        inputSchema: { properties: { q: { type: "string" } } },
+      });
+      const accepts = [
+        { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+      ];
+      const routes = {
+        "/valid": {
+          accepts,
+          extensions: ext,
+        },
+        "/invalid": {
+          accepts,
+          extensions: {
+            bazaar: {
+              info: { input: { type: "grpc" } },
+              schema: {},
+            },
+          },
+        },
+      };
+
+      try {
+        vi.stubGlobal("Function", function () {
+          throw new EvalError("Code generation from strings disallowed for this context");
+        });
+        validateBazaarRouteExtensions(routes);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy.mock.calls[0][0]).toContain('Route "/invalid"');
+        expect(warnSpy.mock.calls[0][0]).toContain("input.type");
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("should warn when a bazaar extension has a malformed JSON schema in Node", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const routes = {
+        "/api": {
+          accepts: [
+            { scheme: "exact", payTo: "0x1", price: "$0.01", network: "eip155:1" as const },
+          ],
+          extensions: {
+            bazaar: {
+              info: { input: { type: "http", method: "GET" } },
+              schema: { type: "not-a-json-schema-type" },
+            },
+          },
+        },
+      };
+
+      validateBazaarRouteExtensions(routes);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toContain("invalid bazaar extension");
       spy.mockRestore();
     });
 

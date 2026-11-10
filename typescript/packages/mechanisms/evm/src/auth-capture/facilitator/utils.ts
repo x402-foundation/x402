@@ -7,8 +7,7 @@ import {
   type Log,
 } from "viem";
 import type { FacilitatorEvmSigner } from "../../signer";
-import { escrowAbiWithErrorsForDeployment } from "../abi";
-import { ESCROW_VIEW_ABI } from "../abi";
+import { ESCROW_VIEW_ABI, escrowAbiWithErrorsForDeployment } from "../abi";
 import type { AuthCaptureDeployment } from "../constants";
 import { isNonZeroAddress } from "../nonce";
 import type {

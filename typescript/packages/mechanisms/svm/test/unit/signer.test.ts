@@ -668,6 +668,28 @@ describe("SVM Signer Converters", () => {
       ).resolves.toEqual({ innerInstructions });
     });
 
+    it("requests confirmed transactions up to version 1", async () => {
+      const mockSigner = {
+        address: "FacilitatorAddress1111111111111111111" as never,
+        signTransactions: vi.fn() as never,
+        signMessages: vi.fn().mockResolvedValue([{}]) as never,
+      };
+      const getTransaction = vi.fn().mockReturnValue({ send: vi.fn().mockResolvedValue(null) });
+      const mockRpc = { getBalance: vi.fn(), getSlot: vi.fn(), getTransaction } as never;
+      const facilitator = toFacilitatorSvmSigner(mockSigner as never, mockRpc);
+
+      await facilitator.getConfirmedTransaction!("sig", SOLANA_DEVNET_CAIP2);
+      await facilitator.getConfirmedTransactionInnerInstructions!("sig", SOLANA_DEVNET_CAIP2);
+
+      expect(getTransaction).toHaveBeenCalledTimes(2);
+      for (const [, config] of getTransaction.mock.calls) {
+        expect(config).toMatchObject({
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 1,
+        });
+      }
+    });
+
     it("returns a token account balance or null when the RPC omits amount", async () => {
       const mockSigner = {
         address: "FacilitatorAddress1111111111111111111" as never,

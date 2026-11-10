@@ -185,7 +185,7 @@ In Algorand there are no consensus forks and so it achieves instant finality the
 
 ## Network Identifiers (CAIP-2)
 
-Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` namespace. The reference is the URL-safe base64 encoding of the genesis hash, truncated to the first 32 characters. Full genesis hashes are used only in onchain transaction `gh` fields, not in CAIP-2 `network` values.
+Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` namespace. The reference is the URL-safe base64 encoding of the genesis hash, truncated to the first 32 characters as defined by the Algorand CAIP-2 namespace profile. Full genesis hashes are used only in onchain transaction `gh` fields, never in `network` values.
 
 | Network | CAIP-2 |
 | ------- | ------ |

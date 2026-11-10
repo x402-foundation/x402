@@ -45,7 +45,6 @@ import { classifyErc6492Payer } from "../../shared/verifySignature";
 import { getEvmChainId, truncateErrorMessage } from "../../utils";
 import { paymentInfoToContractTuple, reconstructPaymentInfo, unpackForSettle } from "../utils";
 import { signCharge, verifyCharge, type ChargeDigest } from "../authorizerSigner";
-import type { AuthCaptureDelegatedAuthRecord } from "./delegatedAuth";
 import type {
   AuthCaptureCollectPayload,
   AuthCaptureFacilitatorConfig,
@@ -59,6 +58,7 @@ import {
   bindThenBroadcast,
   getDelegatedAuthorizer,
   resolveDelegatedCallerIdentity,
+  type AuthCaptureDelegatedAuthRecord,
   type BindDisposition,
   type DelegatedAuthorizer,
 } from "./delegatedAuth";
@@ -822,6 +822,7 @@ export async function settleCollect(
     return {
       success: false,
       errorReason: verification.invalidReason ?? Errors.ErrVerificationFailed,
+      errorMessage: verification.invalidMessage,
       transaction: "",
       network: requirements.network,
       payer: verification.payer,

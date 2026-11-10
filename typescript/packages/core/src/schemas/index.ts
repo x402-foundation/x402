@@ -15,14 +15,14 @@ export type NonEmptyString = z.infer<typeof NonEmptyString>;
  * Any record schema - an object with unknown keys and values.
  * Used for scheme-specific payloads and other extensible objects.
  */
-export const Any = z.record(z.unknown());
+export const Any = z.record(z.string(), z.unknown());
 export type Any = z.infer<typeof Any>;
 
 /**
  * Optional any record schema - an optional object with unknown keys and values.
  * Used for optional extension fields like `extra` and `extensions`.
  */
-export const OptionalAny = z.record(z.unknown()).optional().nullable();
+export const OptionalAny = z.record(z.string(), z.unknown()).optional().nullable();
 export type OptionalAny = z.infer<typeof OptionalAny>;
 
 // ============================================================================
@@ -38,14 +38,11 @@ export type NetworkV1 = z.infer<typeof NetworkSchemaV1>;
 
 /**
  * Network identifier schema for V2 - CAIP-2 format validation.
- * V2 requires minimum length of 3 and a colon separator (e.g., "eip155:84532", "solana:devnet").
+ * V2 requires a CAIP-2 namespace and reference (e.g., "eip155:84532", "solana:devnet").
  */
-export const NetworkSchemaV2 = z
-  .string()
-  .min(3)
-  .refine(val => val.includes(":"), {
-    message: "Network must be in CAIP-2 format (e.g., 'eip155:84532')",
-  });
+export const NetworkSchemaV2 = z.string().regex(/^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/, {
+  message: "Network must be in CAIP-2 format (e.g., 'eip155:84532')",
+});
 export type NetworkV2 = z.infer<typeof NetworkSchemaV2>;
 
 /**
@@ -121,6 +118,9 @@ export const PaymentRequirementsV1Schema = z.object({
 });
 export type PaymentRequirementsV1 = z.infer<typeof PaymentRequirementsV1Schema>;
 
+// 1024 covers every supported network times a few assets.
+const maxPaymentAccepts = 1024;
+
 /**
  * PaymentRequired (402 response) schema for V1.
  * Contains payment requirements when a resource requires payment.
@@ -128,7 +128,7 @@ export type PaymentRequirementsV1 = z.infer<typeof PaymentRequirementsV1Schema>;
 export const PaymentRequiredV1Schema = z.object({
   x402Version: z.literal(1),
   error: z.string().optional(),
-  accepts: z.array(PaymentRequirementsV1Schema).min(1),
+  accepts: z.array(PaymentRequirementsV1Schema).min(1).max(maxPaymentAccepts),
 });
 export type PaymentRequiredV1 = z.infer<typeof PaymentRequiredV1Schema>;
 
@@ -174,7 +174,7 @@ export const PaymentRequiredV2Schema = z.object({
     .nullish()
     .transform(v => v ?? undefined),
   resource: ResourceInfoSchema,
-  accepts: z.array(PaymentRequirementsV2Schema).min(1),
+  accepts: z.array(PaymentRequirementsV2Schema).min(1).max(maxPaymentAccepts),
   extensions: OptionalAny,
 });
 export type PaymentRequiredV2 = z.infer<typeof PaymentRequiredV2Schema>;
@@ -238,7 +238,7 @@ export type PaymentPayload = z.infer<typeof PaymentPayloadSchema>;
  */
 export function parsePaymentRequired(
   value: unknown,
-): z.SafeParseReturnType<unknown, PaymentRequired> {
+): ReturnType<typeof PaymentRequiredSchema.safeParse> {
   return PaymentRequiredSchema.safeParse(value);
 }
 
@@ -271,7 +271,7 @@ export function isPaymentRequired(value: unknown): value is PaymentRequired {
  */
 export function parsePaymentRequirements(
   value: unknown,
-): z.SafeParseReturnType<unknown, PaymentRequirements> {
+): ReturnType<typeof PaymentRequirementsSchema.safeParse> {
   return PaymentRequirementsSchema.safeParse(value);
 }
 
@@ -304,7 +304,7 @@ export function isPaymentRequirements(value: unknown): value is PaymentRequireme
  */
 export function parsePaymentPayload(
   value: unknown,
-): z.SafeParseReturnType<unknown, PaymentPayload> {
+): ReturnType<typeof PaymentPayloadSchema.safeParse> {
   return PaymentPayloadSchema.safeParse(value);
 }
 

@@ -9,6 +9,10 @@
 import type { Network } from "@x402/core/types";
 
 import {
+  type FacilitatorTransactionVersion,
+  resolveFacilitatorTransactionVersion,
+} from "../../payment-channels/facilitator";
+import {
   PaymentChannelRentCleanupManager,
   type PaymentChannelRentCleanupManagerConfig,
 } from "../../payment-channels/rentCleanup";
@@ -20,10 +24,15 @@ export {
   DEFAULT_MAX_CLOSES_PER_RUN,
   DEFAULT_MAX_IDLE_SECS,
   DEFAULT_MAX_RECLAIMS_PER_TX,
+  DEFAULT_MAX_RECLAIMS_PER_TX_V1,
   DEFAULT_MAX_TXS_PER_RUN,
   DEFAULT_MAX_TXS_PER_SIGNER,
   MAX_SAFE_RECLAIMS_PER_TX,
 } from "../../payment-channels/rentCleanup";
+export {
+  DEFAULT_FACILITATOR_TRANSACTION_VERSION,
+  resolveFacilitatorTransactionVersion,
+} from "../../payment-channels/facilitator";
 export type {
   RentCleanupCloseResult,
   RentCleanupOptions,
@@ -43,6 +52,14 @@ export interface BatchSvmRentCleanupManagerConfig {
    * cleanup passes that do not override {@link RentCleanupOptions.maxIdleSecs}.
    */
   maxIdleSecs?: number;
+  /**
+   * Message version (0 or 1) of the cleanup transactions the facilitator
+   * builds itself; see `BatchSvmFacilitatorConfig.facilitatorTransactionVersion`.
+   * v0 caps reclaim batches at `MAX_SAFE_RECLAIMS_PER_TX`. Defaults to 1.
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion;
+  /** Treasury owner override for close/distribute cleanup. */
+  treasuryOwner?: string;
 }
 
 /**
@@ -64,6 +81,9 @@ export class BatchSvmRentCleanupManager extends PaymentChannelRentCleanupManager
       abandonPolicy: "idle",
       label: "BatchSvmRentCleanupManager",
       sealClosingChannels: true,
+      facilitatorTransactionVersion: resolveFacilitatorTransactionVersion(
+        config.facilitatorTransactionVersion,
+      ),
     };
     super(shared);
   }

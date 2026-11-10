@@ -1,22 +1,14 @@
 import { getAddress, hashTypedData, recoverAddress, isAddressEqual } from "viem";
 import { verifyTypedDataSignature } from "../../shared/verifySignature";
-import type { PaymentRequirements } from "@x402/core/types";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
-import {
-  BATCH_SETTLEMENT_ADDRESS,
-  MIN_WITHDRAW_DELAY,
-  MAX_WITHDRAW_DELAY,
-  voucherTypes,
-} from "../constants";
+import { BATCH_SETTLEMENT_ADDRESS, voucherTypes } from "../constants";
 import { batchSettlementABI } from "../abi";
-import type {
-  BatchSettlementPaymentRequirementsExtra,
-  ChannelConfig,
-  ChannelState,
-} from "../types";
-import { computeChannelId, getBatchSettlementEip712Domain } from "../utils";
+import type { ChannelConfig, ChannelState } from "../types";
+import { getBatchSettlementEip712Domain } from "../utils";
 import * as Errors from "../errors";
+
+export { validateChannelConfig } from "../utils";
 
 /**
  * Normalises a {@link ChannelConfig} into the checksummed-address tuple expected by the
@@ -142,55 +134,6 @@ export async function verifyBatchSettlementVoucherTypedData(
     message,
     signature: params.signature,
   });
-}
-
-/**
- * Validates that a {@link ChannelConfig} is consistent with the claimed `channelId` and
- * the server's {@link PaymentRequirements}.
- *
- * @param config - The channel configuration from the payload.
- * @param channelId - The `channelId` claimed in the payload.
- * @param requirements - Server payment requirements to cross-check against.
- * @returns An error code string if validation fails, otherwise `undefined`.
- */
-export function validateChannelConfig(
-  config: ChannelConfig,
-  channelId: `0x${string}`,
-  requirements: PaymentRequirements,
-): string | undefined {
-  const computedId = computeChannelId(config, requirements.network);
-  if (computedId.toLowerCase() !== channelId.toLowerCase()) {
-    return Errors.ErrChannelIdMismatch;
-  }
-
-  if (getAddress(config.receiver) !== getAddress(requirements.payTo)) {
-    return Errors.ErrReceiverMismatch;
-  }
-
-  const extra = requirements.extra as Partial<BatchSettlementPaymentRequirementsExtra> | undefined;
-  const requiredReceiverAuthorizer = extra?.receiverAuthorizer;
-
-  if (
-    !requiredReceiverAuthorizer ||
-    getAddress(requiredReceiverAuthorizer) === "0x0000000000000000000000000000000000000000" ||
-    getAddress(config.receiverAuthorizer) !== getAddress(requiredReceiverAuthorizer)
-  ) {
-    return Errors.ErrReceiverAuthorizerMismatch;
-  }
-
-  if (getAddress(config.token) !== getAddress(requirements.asset)) {
-    return Errors.ErrTokenMismatch;
-  }
-
-  if (extra?.withdrawDelay !== undefined && config.withdrawDelay !== Number(extra.withdrawDelay)) {
-    return Errors.ErrWithdrawDelayMismatch;
-  }
-
-  if (config.withdrawDelay < MIN_WITHDRAW_DELAY || config.withdrawDelay > MAX_WITHDRAW_DELAY) {
-    return Errors.ErrWithdrawDelayOutOfRange;
-  }
-
-  return undefined;
 }
 
 /**

@@ -365,10 +365,19 @@ class x402HTTPServerBase:
         """
         upper_method = method.upper()
 
+        def verb_matches(verb: str) -> bool:
+            # A method-less route must not gate the CORS preflight: the browser sends
+            # OPTIONS without a payment and only sends the paid request if it succeeds.
+            # An explicit "OPTIONS /path" route still matches.
+            return verb == upper_method or (verb == "*" and upper_method != "OPTIONS")
+
         def find_match(candidate: str) -> tuple[RouteConfig, str] | None:
             for route in self._compiled_routes:
-                if route.regex.match(candidate):
-                    if route.verb == "*" or route.verb == upper_method:
+                if route.regex.match(candidate) and verb_matches(route.verb):
+                    return route.config, route.pattern
+            if upper_method == "HEAD":
+                for route in self._compiled_routes:
+                    if route.regex.match(candidate) and route.verb == "GET":
                         return route.config, route.pattern
             return None
 
@@ -716,18 +725,26 @@ class x402HTTPServerBase:
             dec_part = (parts[1] if len(parts) > 1 else "").ljust(2, "0")[:2]
             scaled_percent = int(int_part) * 100 + int(dec_part)
             base = int(requirements.amount)
-            return str(base * scaled_percent // 10000)
+            resolved = str(base * scaled_percent // 10000)
+        else:
+            dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
+            if dollar_match:
+                if decimals is None:
+                    raise ValueError(
+                        f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
+                        "asset decimals are unknown. Pass an atomic amount or register the asset."
+                    )
+                resolved = convert_to_token_amount(dollar_match.group(1), decimals)
+            else:
+                resolved = raw_amount
 
-        dollar_match = re.match(r"^\$(\d+(?:\.\d+)?)$", raw_amount)
-        if dollar_match:
-            if decimals is None:
-                raise ValueError(
-                    f'Cannot convert dollar settlement override "{raw_amount}" to atomic units: '
-                    "asset decimals are unknown. Pass an atomic amount or register the asset."
-                )
-            return convert_to_token_amount(dollar_match.group(1), decimals)
+        if int(resolved) > int(requirements.amount):
+            raise ValueError(
+                f'Settlement override amount "{raw_amount}" resolves to {resolved} atomic units, '
+                f"which exceeds the authorized maximum of {requirements.amount} in PaymentRequirements."
+            )
 
-        return raw_amount
+        return resolved
 
     def _apply_settlement_overrides(
         self,
@@ -901,7 +918,7 @@ class x402HTTPServerBase:
     # Internal Methods
     # =========================================================================
 
-    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | PaymentPayloadV1 | None:
+    def _extract_payment(self, adapter: HTTPAdapter) -> PaymentPayload | None:
         """Extract payment from HTTP headers (V2 only)."""
         # Check V2 header (case-insensitive)
         header = adapter.get_header(PAYMENT_SIGNATURE_HEADER) or adapter.get_header(
@@ -910,9 +927,14 @@ class x402HTTPServerBase:
 
         if header:
             try:
-                return decode_payment_signature_header(header)
+                payload = decode_payment_signature_header(header)
             except Exception:
                 return None
+            # V2 server only accepts V2 payments. A V1 payload has no `accepted`
+            # field and would fail requirement matching.
+            if isinstance(payload, PaymentPayloadV1):
+                return None
+            return payload
 
         return None
 
@@ -955,6 +977,8 @@ class x402HTTPServerBase:
         if unpaid_response:
             content_type = unpaid_response.content_type
             body = unpaid_response.body
+        elif payment_required.error:
+            body = {"error": payment_required.error}
 
         return HTTPResponseInstructions(
             status=402,

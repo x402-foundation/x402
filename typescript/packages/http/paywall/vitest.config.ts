@@ -18,6 +18,7 @@ const NODE_TESTABLE_COVERAGE = [
   "src/evm/paywall.ts",
   "src/svm/index.ts",
   "src/svm/paywall.ts",
+  "src/svm/solana/transactionVersions.ts",
   "src/cardano/index.ts",
   "src/cardano/handler.ts",
   "src/cardano/paywall.ts",

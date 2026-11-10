@@ -14,8 +14,7 @@ import type {
   SchemeServerHooks,
   SupportedKind,
 } from "@x402/core/types";
-import type { FacilitatorClient } from "@x402/core/server";
-import type { VerifiedPaymentCanceledContext } from "@x402/core/server";
+import type { FacilitatorClient, VerifiedPaymentCanceledContext } from "@x402/core/server";
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { getAddress, isAddressEqual, zeroAddress } from "viem";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
