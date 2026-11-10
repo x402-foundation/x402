@@ -42,6 +42,19 @@ class TestGetDefaultAsset:
         assert get_default_asset("eip155:8453") == BASE_USDC
         assert get_default_asset("base") == BASE_USDC
 
+    def test_returns_usdg_as_robinhood_chain_default(self):
+        usdg = get_default_asset("eip155:4663")
+        assert usdg == {
+            "asset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+            "name": "Global Dollar",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USDG",
+        }
+        assert "asset_transfer_method" not in usdg
+        assert get_default_asset("eip155:4663", "usdg") == usdg
+        assert find_default_asset(usdg["asset"].lower(), "eip155:4663") == usdg
+
     def test_throws_when_requesting_a_symbol_not_configured(self):
         with pytest.raises(
             ValueError,
