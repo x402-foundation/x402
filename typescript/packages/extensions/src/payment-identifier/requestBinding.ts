@@ -42,7 +42,10 @@ function normalizeIfHexAddress(value: string): string {
  * @param keys - Keys to omit; `undefined` or empty omits nothing.
  * @returns A new object without the omitted keys.
  */
-function omitKeys(obj: Record<string, unknown> | undefined, keys: string[] | undefined): Record<string, unknown> {
+function omitKeys(
+  obj: Record<string, unknown> | undefined,
+  keys: string[] | undefined,
+): Record<string, unknown> {
   if (!obj) {
     return {};
   }
