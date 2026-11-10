@@ -24,6 +24,7 @@ Tools that **never touch** `extensions` on x402 payloads—pre-payment guards, f
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [AffixIO](https://github.com/AffixIO/SDK) | Optional client-side policy gate using x402's pre-payment hook before a payment payload is created | TypeScript | [GitHub example](https://github.com/AffixIO/SDK/tree/main/examples/x402-before-pay) · [npm](https://www.npmjs.com/package/affixio) |
 | [OMATrust](https://www.omatrust.org/x402) | Key authorizations for Signed Offers and Receipts | TypeScript | [GitHub](https://github.com/oma3dao/omatrust-sdk) · [npm](https://www.npmjs.com/package/@oma3/omatrust) |
 | [zauth](https://zauthx402.com) | Monitoring, verification, and refund SDK | TypeScript | [GitHub](https://github.com/zauthofficial/zauthSDK) · [npm](https://www.npmjs.com/package/@zauthx402/sdk) |
 | [Tanilo x402 Guard](https://tanilo.io/docs/x402-guard) | Pre-payment check of price and spend cap against the buyer's own terms, using published rules; optional signed receipts | JavaScript | [GitHub](https://github.com/TKCollective/tanilo-x402-guard) · [npm](https://www.npmjs.com/package/@tanilo/x402-guard) |

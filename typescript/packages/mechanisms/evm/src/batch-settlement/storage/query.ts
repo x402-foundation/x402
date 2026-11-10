@@ -63,7 +63,7 @@ export type QueryPage<T> = { items: T[]; cursor?: string };
  * @returns Whether the row belongs in the result set.
  */
 export function matchesChannelQuery(channel: Channel, filter: ChannelQuery): boolean {
-  if (filter.network !== undefined && channelNetwork(channel) !== filter.network) {
+  if (filter.network !== undefined && channel.network !== filter.network) {
     return false;
   }
 
@@ -170,7 +170,7 @@ export async function settleQueryByScan<T extends Channel>(
     if (BigInt(channel.totalClaimed) === 0n) {
       continue;
     }
-    const network = channelNetwork(channel) ?? filter.network;
+    const network = channel.network ?? filter.network;
     if (!network || (filter.network !== undefined && network !== filter.network)) {
       continue;
     }
@@ -250,16 +250,6 @@ function matchesUnclaimedThreshold(channel: Channel, minUnclaimed: string): bool
     return false;
   }
   return BigInt(channel.chargedCumulativeAmount) - BigInt(channel.totalClaimed) >= threshold;
-}
-
-/**
- * Reads the optional network field from a channel record.
- *
- * @param channel - Stored channel record.
- * @returns The network or undefined.
- */
-function channelNetwork(channel: Channel): Network | undefined {
-  return channel.network;
 }
 
 /**
