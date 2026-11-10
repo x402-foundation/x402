@@ -17,6 +17,7 @@ Packages that **read or write** the `extensions` property on x402 payloads (`Pay
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | TypeScript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk) |
+| [x402 Lint](https://api.spendpreflight.com/lint) | Read-only checks of x402 challenges and Bazaar discovery metadata; web reports and CI checks. Operated by SpendPreflight. | TypeScript | [GitHub Action](https://github.com/spendpreflight/x402-lint-action) |
 
 ## Third-party utilities
 
@@ -31,3 +32,5 @@ Tools that **never touch** `extensions` on x402 payloads—pre-payment guards, f
 | [Hosannaith](https://hosannaith.com) | Reliability oracle for x402 endpoints — verified uptime, correct-402, and latency scores on Algorand | TypeScript | [GitHub](https://github.com/cameron4316/x402-oracle-server) · [npm](https://www.npmjs.com/package/hosannaith-client) |
 | [Elara](https://navigatorbuilds.github.io/elara-mesh/) | Post-quantum (ML-DSA-65) record verification; attestation bound to the x402 payment id | Rust | [GitHub](https://github.com/navigatorbuilds/elara-mesh) · [crates.io](https://crates.io/crates/elara-verify) |
 | [Teppi](https://teppi.xyz) | Check a seller's paid delivery record before signing, and verify signed receipts | TypeScript | [GitHub](https://github.com/teppi-xyz/teppi-client) · [Docs](https://api.teppi.xyz/docs/integrations) · [npm](https://www.npmjs.com/package/teppi-client) |
+| [SpendPreflight](https://spendpreflight.com) | Allow/hold/block spend guard with optional paid sanctions/preflight checks; operated by SpendPreflight | TypeScript | [GitHub](https://github.com/spendpreflight/spendpreflight-js) · [npm](https://www.npmjs.com/package/spendpreflight) |
+| [Bazaar Delisting Tracker](https://spendpreflight.com/bazaar-delistings) | Dated aggregate samples of Bazaar metadata signals and explicitly observed departures; missing listings remain unknown. Operated by SpendPreflight. | TypeScript | [JSON snapshot](https://api.spendpreflight.com/v1/bazaar-delistings) |
