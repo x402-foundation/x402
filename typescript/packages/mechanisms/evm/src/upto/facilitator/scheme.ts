@@ -140,10 +140,10 @@ export class UptoEvmScheme implements SchemeNetworkFacilitator {
 }
 
 /**
- * Parses an upto payload into a Permit2 authorization, or the invalid-payload message.
+ * Returns the upto Permit2 payload, or the invalid-payload message and payer.
  *
  * @param payload - Payment payload whose `payload` field should be upto Permit2
- * @returns The Permit2 payload, or the field error and payer to surface
+ * @returns The parsed payload, or the invalid message and payer
  */
 function readUptoPermit2Payload(
   payload: PaymentPayload,

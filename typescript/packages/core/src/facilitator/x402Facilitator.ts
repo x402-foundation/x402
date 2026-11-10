@@ -426,8 +426,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Resolves the first registration whose scheme matches. Within a registration,
-   * an exact network match is preferred over that registration's wildcard pattern.
+   * Returns the first facilitator for this version whose scheme matches and whose
+   * network is listed or matches that registration's pattern.
    *
    * @param x402Version - Payment payload version
    * @param requirements - Scheme and network to match
