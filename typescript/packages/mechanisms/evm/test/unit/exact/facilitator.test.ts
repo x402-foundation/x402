@@ -2623,6 +2623,17 @@ describe("ExactEvmScheme (Facilitator)", () => {
 });
 
 describe("shared Permit2 helpers", () => {
+  it("splitEip2612Signature normalizes a raw y-parity recovery byte to 27/28", () => {
+    // Some signers (e.g. KMS/HSM backends) return the recovery byte as the raw y-parity (0/1),
+    // but ecrecover-based permit() implementations only accept 27/28.
+    const rs = "aa".repeat(64);
+    expect(splitEip2612Signature(`${rs}00`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}01`).v).toBe(28);
+    expect(splitEip2612Signature(`0x${rs}00`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}1b`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}1c`).v).toBe(28);
+  });
+
   it("mapSettleError maps known revert strings and truncates unknown ones", () => {
     const payload = {
       accepted: { scheme: "exact", network: "eip155:84532" },
