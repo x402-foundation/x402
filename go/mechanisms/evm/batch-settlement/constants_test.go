@@ -102,11 +102,8 @@ func TestWithdrawDelayBounds(t *testing.T) {
 }
 
 // TestErrorCodes pins the canonical wire prefix `invalid_batch_settlement_evm_`
-// for every error reason exported from this package. Both facilitator-mirrored
-// constants and resource-server abort reasons share the same envelope —
-// renaming or dropping the prefix here breaks cdp-facilitator's substring
-// classifier and the `x402VerifyInvalidReason` / `x402SettleErrorReason`
-// CDP Accounts API enums.
+// for every error reason exported from this package. Facilitator and
+// resource-server reasons share that prefix.
 func TestErrorCodes(t *testing.T) {
 	const wirePrefix = "invalid_batch_settlement_evm_"
 	for _, code := range []string{
