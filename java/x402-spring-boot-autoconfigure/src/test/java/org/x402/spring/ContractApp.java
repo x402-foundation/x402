@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 import org.x402.spring.annotation.X402Payment;
 
 /**
@@ -68,7 +69,7 @@ public class ContractApp implements ImportSelector {
     @X402Payment("weather")
     @GetMapping("/items/{id}")
     String item(@PathVariable("id") String id) {
-      return "item " + id;
+      return "item " + HtmlUtils.htmlEscape(id);
     }
 
     @GetMapping("/items/free")
@@ -119,12 +120,12 @@ public class ContractApp implements ImportSelector {
 
     @GetMapping("/report/{name}")
     String report(@PathVariable("name") String name) {
-      return "report " + name;
+      return "report " + HtmlUtils.htmlEscape(name);
     }
 
     @GetMapping("/files/{name}")
     String file(@PathVariable("name") String name) {
-      return "file " + name;
+      return "file " + HtmlUtils.htmlEscape(name);
     }
   }
 

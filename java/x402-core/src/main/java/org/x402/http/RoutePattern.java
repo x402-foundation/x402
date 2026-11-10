@@ -24,8 +24,6 @@ public final class RoutePattern {
   private static final Pattern BRACKET_PARAM = Pattern.compile("\\[([^\\]]+)\\]");
   private static final Pattern COLON_PARAM = Pattern.compile(":([a-zA-Z_][a-zA-Z0-9_]*)");
   private static final Pattern QUERY = Pattern.compile("[?#]");
-  private static final Pattern SLASHES = Pattern.compile("/+");
-  private static final Pattern TRAILING = Pattern.compile("(.+?)/+\\z");
 
   private final String verb;
   private final String path;
@@ -143,9 +141,31 @@ public final class RoutePattern {
     return result.isEmpty() ? "/" : result;
   }
 
+  /**
+   * Collapses repeated slashes and drops a trailing one, in one pass. The result is the same as
+   * the former {@code replaceAll("/+", "/")} then {@code replaceFirst("(.+?)/+\\z", "$1")} (ported
+   * from the TypeScript reference), whose backtracking was quadratic in the path length. That
+   * includes the Java regex's edge: {@code .} matches no line terminator, so a lone {@code /} and
+   * a trailing slash right after a line terminator stay.
+   */
   private static String collapse(String path) {
-    String single = SLASHES.matcher(path).replaceAll("/");
-    return TRAILING.matcher(single).replaceFirst("$1");
+    StringBuilder sb = new StringBuilder(path.length());
+    for (int i = 0; i < path.length(); i++) {
+      char c = path.charAt(i);
+      if (c != '/' || sb.length() == 0 || sb.charAt(sb.length() - 1) != '/') {
+        sb.append(c);
+      }
+    }
+    int last = sb.length() - 1;
+    if (last > 0 && sb.charAt(last) == '/' && !isLineTerminator(sb.charAt(last - 1))) {
+      sb.setLength(last);
+    }
+    return sb.toString();
+  }
+
+  /** The characters {@link Pattern}'s {@code .} does not match without {@code DOTALL}. */
+  private static boolean isLineTerminator(char c) {
+    return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
   }
 
   /**

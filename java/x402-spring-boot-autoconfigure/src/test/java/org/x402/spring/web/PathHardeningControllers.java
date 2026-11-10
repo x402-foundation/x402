@@ -5,6 +5,7 @@ import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 /**
  * Unannotated handlers protected by YAML {@code path:} offers in the path-hardening tests: a paid
@@ -24,12 +25,12 @@ public class PathHardeningControllers {
 
   @GetMapping("/cheap/{name}")
   String cheap(@PathVariable("name") String name) {
-    return "cheap " + name;
+    return "cheap " + HtmlUtils.htmlEscape(name);
   }
 
   @GetMapping("/public/{name}")
   String open(@PathVariable("name") String name) {
-    return "public " + name;
+    return "public " + HtmlUtils.htmlEscape(name);
   }
 
   /**
