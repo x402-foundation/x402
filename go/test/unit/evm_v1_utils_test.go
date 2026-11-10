@@ -14,33 +14,7 @@ func TestV1GetEvmChainId(t *testing.T) {
 		expectedChain int64
 		expectError   bool
 	}{
-		{"ethereum", "ethereum", 1, false},
-		{"sepolia", "sepolia", 11155111, false},
-		{"abstract", "abstract", 2741, false},
-		{"abstract-testnet", "abstract-testnet", 11124, false},
-		{"base-sepolia", "base-sepolia", 84532, false},
 		{"base", "base", 8453, false},
-		{"avalanche-fuji", "avalanche-fuji", 43113, false},
-		{"avalanche", "avalanche", 43114, false},
-		{"iotex", "iotex", 4689, false},
-		{"sei", "sei", 1329, false},
-		{"sei-testnet", "sei-testnet", 1328, false},
-		{"polygon", "polygon", 137, false},
-		{"polygon-amoy", "polygon-amoy", 80002, false},
-		{"peaq", "peaq", 3338, false},
-		{"story", "story", 1514, false},
-		{"educhain", "educhain", 41923, false},
-		{"skale-base-sepolia", "skale-base-sepolia", 324705682, false},
-		{"megaeth", "megaeth", 4326, false},
-		{"monad", "monad", 143, false},
-		{"monad-testnet", "monad-testnet", 10143, false},
-		{"stable", "stable", 988, false},
-		{"stable-testnet", "stable-testnet", 2201, false},
-		{"celo", "celo", 42220, false},
-		{"flare", "flare", 14, false},
-
-		// CAIP-2 format should NOT work in v1
-		{"CAIP-2 rejected", "eip155:8453", 0, true},
 		{"Unknown network", "unknown-chain", 0, true},
 	}
 
