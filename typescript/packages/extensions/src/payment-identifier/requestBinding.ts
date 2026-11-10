@@ -18,7 +18,7 @@
  */
 
 import { createHash } from "crypto";
-import type { PaymentPayload } from "@x402/core";
+import type { PaymentPayload } from "@x402/core/types";
 
 /**
  * Caller-supplied context that is not part of `PaymentPayload` itself but is
