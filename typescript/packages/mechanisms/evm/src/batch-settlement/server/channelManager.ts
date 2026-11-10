@@ -288,7 +288,8 @@ export class BatchSettlementChannelManager {
    *
    * A voucher is claimable when its `chargedCumulativeAmount` exceeds what has already
    * been claimed onchain.  An optional idle filter skips sessions that received a
-   * request within the last `idleSecs` seconds.
+   * request within the last `idleSecs` seconds, except channels with a pending
+   * timed withdrawal, which are always returned.
    *
    * @param opts - Optional filtering: `idleSecs` to only return idle channels.
    * @param opts.idleSecs - Minimum seconds since last request for a channel to be included.
@@ -301,7 +302,17 @@ export class BatchSettlementChannelManager {
         ? { idleAtOrBefore: Date.now() - opts.idleSecs * 1000 }
         : {}),
     };
-    const { items: channels } = await queryChannels(this.scheme.getStorage(), filter);
+    const storage = this.scheme.getStorage();
+    const { items: claimable } = await queryChannels(storage, filter);
+    if (opts?.idleSecs === undefined) {
+      return this.getClaimableVouchersFromChannels(claimable, opts);
+    }
+    const ids = new Set(claimable.map(channel => channel.channelId.toLowerCase()));
+    const { items: withdrawPending } = await queryChannels(storage, { kind: "withdrawPending" });
+    const channels = [
+      ...withdrawPending.filter(channel => !ids.has(channel.channelId.toLowerCase())),
+      ...claimable,
+    ];
     return this.getClaimableVouchersFromChannels(channels, opts);
   }
 
@@ -647,6 +658,10 @@ export class BatchSettlementChannelManager {
   /**
    * Loads stored channels and applies the configured claim selector, if any.
    *
+   * Channels with a pending timed withdrawal are always kept, even when the
+   * selector drops them: their outstanding vouchers must be claimed before the
+   * withdraw delay elapses or the delivered service goes unpaid.
+   *
    * @param opts - Claim options containing an optional target selector.
    * @returns The channel snapshot that should be inspected for claimable vouchers.
    */
@@ -659,7 +674,13 @@ export class BatchSettlementChannelManager {
     }
 
     const context = this.buildAutoSettlementContext(Date.now());
-    return this.filterInNetwork(await opts.selectClaimChannels(channels, context));
+    const selected = this.filterInNetwork(await opts.selectClaimChannels(channels, context));
+    const selectedIds = new Set(selected.map(channel => channel.channelId.toLowerCase()));
+    const withdrawPending = channels.filter(
+      channel =>
+        channel.withdrawRequestedAt > 0 && !selectedIds.has(channel.channelId.toLowerCase()),
+    );
+    return [...withdrawPending, ...selected];
   }
 
   /**
