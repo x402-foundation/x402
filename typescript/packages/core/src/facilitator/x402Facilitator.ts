@@ -517,7 +517,7 @@ export class x402Facilitator {
     // `networks` is scoped to its OWN namespace's networks (not the full,
     // possibly mixed-namespace set): every network is still found in its
     // own namespace's entry, so exact matching (checked first in
-    // verify()/settle()'s dispatch loop, before pattern matching) stays
+    // resolveSchemeNetworkFacilitator, before pattern matching) stays
     // correct, and getSupported() no longer walks the same network once
     // per namespace entry and advertises duplicate kinds for it.
     const networksByNamespace = new Map<string, Network[]>();

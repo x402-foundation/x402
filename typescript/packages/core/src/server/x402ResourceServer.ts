@@ -2053,7 +2053,7 @@ export class x402ResourceServer {
 
   /**
    * Calls the facilitator selected for this version, scheme, and network.
-   * When none is selected, tries each registered client and keeps the first success.
+   * When none is selected, tries each registered client and keeps the first result that does not throw.
    *
    * @param x402Version - Payment payload version
    * @param requirements - Scheme and network used to select a client
