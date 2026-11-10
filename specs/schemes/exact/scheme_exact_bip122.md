@@ -128,6 +128,8 @@ JSON number fields MUST be safe integers. The server MUST choose confirmation an
 
 Legacy addresses MUST pass Base58Check with the network's version byte and a 20-byte payload. Witness version 0 MUST use Bech32 and a 20-byte or 32-byte program; version 1 MUST use Bech32m and a 32-byte program. Other witness versions and lengths are unsupported. Witness addresses MUST use the selected network's prefix and canonical lowercase encoding, with valid checksum and padding.
 
+This method does not implement the `exact` scheme's optional multi-payee `extra.splits` extension. Servers MUST NOT issue requirements with a non-empty `splits` array. Clients MUST NOT pay such requirements, and settlement MUST reject them with `invalid_payment_requirements`. `maxPaymentOutputs` is unrelated to splits: every selected output pays the one `payTo` script.
+
 ## Request Binding
 
 The resource server MUST authenticate the complete issued requirements and the operation they authorise, keyed by `paymentId`. It MAY store them or authenticate them through `issuanceToken`. A token MUST protect every requirement except itself, and the operation binding, against alteration. The binding MUST cover the resource, its action, every input affecting execution or price, and any application identity on which access depends.
