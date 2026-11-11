@@ -782,13 +782,14 @@ func (f *BatchSvmScheme) sendDurably(
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
 	var reserved, holder string
-	signature, err := broadcast(func(broadcastSignature, _ string) error {
-		existing, ok, err := f.duplicateStore.Reserve(ctx, key, broadcastSignature, ReservationTTL)
+	signature, err := broadcast(func(broadcastSignature, wire string) error {
+		record := encodeBroadcastRecord(broadcastSignature, blockhashOfWire(wire))
+		existing, ok, err := f.duplicateStore.Reserve(ctx, key, record, ReservationTTL)
 		if err != nil {
 			return err
 		}
 		if ok {
-			reserved = broadcastSignature
+			reserved = record
 			return nil
 		}
 		holder = existing
@@ -805,11 +806,24 @@ func (f *BatchSvmScheme) sendDurably(
 			f.releaseReservation(ctx, key, reserved)
 			return durableResult{}, err
 		}
-		recoveryCtx, cancel := recoveryContext(ctx)
-		defer cancel()
-		return durableResult{Response: RecordPendingOrTerminal(recoveryCtx, f.pendingStore, key, pending, payer, x402.Network(network), err)}, nil
+		// The reserved record carries the blockhash a later retry needs to tell
+		// that this broadcast can no longer land.
+		if reservedSignature, _ := parseBroadcastRecord(reserved); reservedSignature == pending {
+			pending = reserved
+		}
+		return durableResult{Response: f.recordPending(ctx, key, pending, payer, network, err)}, nil
 	}
 	return durableResult{OK: true, Signature: signature}, nil
+}
+
+// recordPending keeps record under key so a retry reconciles it, then answers settlement_pending
+// for the record's signature.
+func (f *BatchSvmScheme) recordPending(ctx context.Context, key, record, payer, network string, cause error) *x402.SettleResponse {
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
+	response := RecordPendingOrTerminal(recoveryCtx, f.pendingStore, key, record, payer, x402.Network(network), cause)
+	response.Transaction, _ = parseBroadcastRecord(record)
+	return response
 }
 
 // releaseReservation frees key after a broadcast that can no longer land, so a
@@ -831,11 +845,13 @@ func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature,
 	return f.reconcileBroadcastImpl(ctx, key, signature, network, payer)
 }
 
-// reconcileBroadcastImpl awaits the confirmation of a signature already
-// broadcast under key. One that failed onchain clears the pending record and
-// frees the reservation. An unconfirmed one stays pending. The caller clears
-// the pending record once it has finished the operation.
-func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signature, network, payer string) (durableResult, error) {
+// reconcileBroadcastImpl awaits the confirmation of the broadcast record
+// already held under key. One that failed onchain, or expired without landing,
+// clears the pending record and frees the reservation so a retry sends afresh.
+// An unconfirmed one that may still land stays pending. The caller clears the
+// pending record once it has finished the operation.
+func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, record, network, payer string) (durableResult, error) {
+	signature, blockhash := parseBroadcastRecord(record)
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
 		return durableResult{}, err
@@ -844,22 +860,36 @@ func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signat
 		var onchain *svm.TransactionOnchainFailureError
 		if errors.As(err, &onchain) {
 			f.forgetPending(ctx, key, signature)
-			f.releaseReservation(ctx, key, signature)
+			f.releaseReservation(ctx, key, record)
 			return durableResult{Response: SettleFailureWithTransaction(x402.Network(network), "transaction_failed", payer, onchain.Error(), signature)}, nil
 		}
-		recoveryCtx, cancel := recoveryContext(ctx)
-		defer cancel()
-		return durableResult{Response: RecordPendingOrTerminal(recoveryCtx, f.pendingStore, key, signature, payer, x402.Network(network), err)}, nil
+		if f.expiredWithoutLanding(ctx, parsed, blockhash, network) {
+			f.forgetPending(ctx, key, signature)
+			f.releaseReservation(ctx, key, record)
+			return durableResult{Response: SettleFailureWithTransaction(
+				x402.Network(network),
+				"transaction_failed",
+				payer,
+				fmt.Sprintf("transaction %s expired before confirmation: its blockhash is no longer valid and the network has no record of it", signature),
+				signature,
+			)}, nil
+		}
+		return durableResult{Response: f.recordPending(ctx, key, record, payer, network, err)}, nil
 	}
 	return durableResult{OK: true, Signature: signature}, nil
 }
 
-// forgetPending deletes the pending record of key while it still names signature.
+// forgetPending deletes the pending record of key while it still names signature,
+// given bare or as a broadcast record.
 func (f *BatchSvmScheme) forgetPending(ctx context.Context, key, signature string) {
 	recoveryCtx, cancel := recoveryContext(ctx)
 	defer cancel()
 	current, found, err := f.pendingStore.Get(recoveryCtx, key)
-	if err != nil || !found || current != signature {
+	if err != nil || !found {
+		return
+	}
+	currentSignature, _ := parseBroadcastRecord(current)
+	if wanted, _ := parseBroadcastRecord(signature); currentSignature != wanted {
 		return
 	}
 	_ = f.pendingStore.Delete(recoveryCtx, key)

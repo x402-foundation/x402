@@ -805,24 +805,33 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 
 // finishDistribution attributes a confirmed sweep and keeps its payout for a
 // retry. fromPending is true when signature came from the pending store, the
-// only case where a pending record exists to clear.
+// only case where a pending record exists to clear. A fresh sweep that cannot
+// be finished records its signature, so a retry attributes it instead of
+// finding the channel already distributed.
 func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+	network := x402.Network(requirements.Network)
+	unfinished := func(cause error) *x402.SettleResponse {
+		if fromPending {
+			return SettlementPending(network, "", signature, cause.Error())
+		}
+		return f.recordPending(ctx, key, signature, "", requirements.Network, cause)
+	}
 	response, err := f.attributeDistribution(ctx, signature, prepared, requirements)
 	if err != nil {
 		var ambiguous *PayoutAttributionAmbiguousError
 		if !errors.As(err, &ambiguous) {
-			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil
+			return unfinished(err), nil
 		}
-		response = SettleFailureWithTransaction(x402.Network(requirements.Network), batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
+		response = SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
 		if err := f.keepPayoutResult(ctx, key, response); err != nil {
-			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+			return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
 		}
 	} else {
 		if err := f.keepPayoutResult(ctx, key, response); err != nil {
-			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+			return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
 		}
 		if err := f.recordPayout(ctx, key, response, requirements); err != nil {
-			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a hook failure stays pending
+			return SettlementPending(network, "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; the kept result is replayed to the hook
 		}
 	}
 	if fromPending {

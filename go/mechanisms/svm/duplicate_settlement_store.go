@@ -17,7 +17,8 @@ import (
 // Implementations must be safe for concurrent use.
 type DuplicateSettlementStore interface {
 	// Reserve records signature under key for ttl when key is free. When key
-	// is held it returns the holder's signature and reserved=false.
+	// is held it returns the holder's signature and reserved=false. The store
+	// treats signature as an opaque string and returns it unchanged.
 	Reserve(ctx context.Context, key, signature string, ttl time.Duration) (existing string, reserved bool, err error)
 	// Release removes key only while it still holds signature, so a failed
 	// broadcast can be retried before ttl and a later holder is never evicted.
