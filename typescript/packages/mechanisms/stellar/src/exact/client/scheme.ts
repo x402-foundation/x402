@@ -109,7 +109,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     return {
       x402Version,
       payload: {
-        transaction: tx.built!.toXDR(),
+        transaction: tx.built!.toXdr(),
       },
     };
   }

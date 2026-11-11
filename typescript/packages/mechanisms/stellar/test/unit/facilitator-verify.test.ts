@@ -22,6 +22,7 @@ import {
   invalidVerifyResponse,
   validVerifyResponse,
 } from "../../src/exact/facilitator/scheme";
+import { getAddressCredentials } from "../../src/shared";
 import { createEd25519Signer } from "../../src/signer";
 import * as stellarUtils from "../../src/utils";
 import type { FacilitatorStellarSigner } from "../../src/signer";
@@ -50,7 +51,7 @@ function createMockContractEvent({
   to: string;
   amount: bigint;
   fnName?: string;
-  contractId?: xdr.Hash | null;
+  contractId?: xdr.ContractId | null;
 }): xdr.DiagnosticEvent {
   // symbol for the function name
   const transferSymbol = xdr.ScVal.scvSymbol(fnName);
@@ -82,7 +83,7 @@ function createMockContractEvent({
   });
   return createMockDiagnosticEvent(
     contractEventV0,
-    xdr.ContractEventType.contract(),
+    xdr.ContractEventType.contract,
     contractId ?? null,
   );
 }
@@ -93,7 +94,7 @@ function createMockContractEvent({
 function createMockSystemEvent(): xdr.DiagnosticEvent {
   return createMockDiagnosticEvent(
     new xdr.ContractEventV0({ topics: [], data: xdr.ScVal.scvVoid() }),
-    xdr.ContractEventType.system(),
+    xdr.ContractEventType.system,
   );
 }
 
@@ -109,19 +110,14 @@ function createMockSystemEvent(): xdr.DiagnosticEvent {
  */
 function createMockDiagnosticEvent(
   v0: xdr.ContractEventV0,
-  eventType: ReturnType<typeof xdr.ContractEventType.contract> = xdr.ContractEventType.contract(),
-  contractId: xdr.Hash | null = null,
+  eventType: xdr.ContractEventType = xdr.ContractEventType.contract,
+  contractId: xdr.ContractId | null = null,
 ): xdr.DiagnosticEvent {
-  const eventBodyXdr = xdr.ContractEventBody.toXDR(
-    xdr.ContractEventBody.fromXDR(
-      Buffer.concat([Buffer.from([0, 0, 0, 0]), xdr.ContractEventV0.toXDR(v0)]),
-    ),
-  );
   const contractEvent = new xdr.ContractEvent({
-    ext: xdr.ExtensionPoint.fromXDR(Buffer.from([0, 0, 0, 0])),
+    ext: xdr.ExtensionPoint.v0(),
     contractId,
     type: eventType,
-    body: xdr.ContractEventBody.fromXDR(eventBodyXdr),
+    body: xdr.ContractEventBody.v0(v0),
   });
   return new xdr.DiagnosticEvent({
     inSuccessfulContractCall: true,
@@ -221,10 +217,11 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
     stellarPayload = validPayload.payload as { transaction: string };
     const txEnvelope = xdr.TransactionEnvelope.fromXDR(stellarPayload.transaction, "base64");
     baseTransaction = new Transaction(stellarPayload.transaction, networkPassphrase);
-    baseSorobanData = txEnvelope.v1()?.tx()?.ext()?.sorobanData() || undefined;
+    const txExt = txEnvelope.type === "envelopeTypeTx" ? txEnvelope.v1.tx.ext : undefined;
+    baseSorobanData = txExt?.type === "sorobanData" ? txExt.sorobanData : undefined;
     baseOperation = baseTransaction.operations[0] as Operation.InvokeHostFunction;
     baseFunc = baseOperation.func;
-    baseInvokeContractArgs = baseFunc.invokeContract();
+    baseInvokeContractArgs = (baseFunc as xdr.HostFunctionInvokeContract).invokeContract;
   });
 
   /**
@@ -263,7 +260,8 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
       maxTransactionFeeStroops: 1_000_000,
     });
 
-    const expectedAssetHash = new Address(ASSET).toScAddress().contractId();
+    const expectedAssetHash = (new Address(ASSET).toScAddress() as xdr.ScAddressContract)
+      .contractId;
     const defaultTransferEvent = createMockContractEvent({
       from: CLIENT_PUBLIC,
       to: TRANSACTION_RECIPIENT,
@@ -426,9 +424,9 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
     it("should reject wrong contract function name", async () => {
       const wrongFuncArgs = new xdr.InvokeContractArgs({
-        contractAddress: baseInvokeContractArgs.contractAddress(),
+        contractAddress: baseInvokeContractArgs.contractAddress,
         functionName: "mint", // ❌ function name MUST be "transfer"
-        args: baseInvokeContractArgs.args(),
+        args: baseInvokeContractArgs.args,
       });
       const modifiedFunc = xdr.HostFunction.hostFunctionTypeInvokeContract(wrongFuncArgs);
       const modifiedOperation = Operation.invokeHostFunction({
@@ -472,7 +470,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           throw new Error("Missing sorobanData or auth in test transaction");
         }
 
-        const originalArgs = baseInvokeContractArgs.args();
+        const originalArgs = baseInvokeContractArgs.args;
         const facilitatorKeypair = Keypair.fromPublicKey(facilitatorAddress);
         const facilitatorScAddress = xdr.ScVal.scvAddress(
           xdr.ScAddress.scAddressTypeAccount(
@@ -481,8 +479,8 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         );
 
         const modifiedInvokeContractArgs = new xdr.InvokeContractArgs({
-          contractAddress: baseInvokeContractArgs.contractAddress(),
-          functionName: baseInvokeContractArgs.functionName(),
+          contractAddress: baseInvokeContractArgs.contractAddress,
+          functionName: baseInvokeContractArgs.functionName,
           args: [
             facilitatorScAddress, // ❌ facilitator CANNOT be the payer
             originalArgs[1],
@@ -518,7 +516,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           throw new Error("Missing sorobanData or auth in test transaction");
         }
 
-        const originalArgs = baseInvokeContractArgs.args();
+        const originalArgs = baseInvokeContractArgs.args;
         const feeBumpKeypair = Keypair.fromPublicKey(feeBumpSigner.address);
         const feeBumpScAddress = xdr.ScVal.scvAddress(
           xdr.ScAddress.scAddressTypeAccount(
@@ -527,8 +525,8 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         );
 
         const modifiedInvokeContractArgs = new xdr.InvokeContractArgs({
-          contractAddress: baseInvokeContractArgs.contractAddress(),
-          functionName: baseInvokeContractArgs.functionName(),
+          contractAddress: baseInvokeContractArgs.contractAddress,
+          functionName: baseInvokeContractArgs.functionName,
           args: [
             feeBumpScAddress, // ❌ feeBumpSigner is facilitator-controlled too and must not be the payer
             originalArgs[1],
@@ -570,18 +568,18 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         }
 
         const originalAuth = baseOperation.auth[0];
-        const originalCreds = originalAuth.credentials().address();
+        const originalCreds = getAddressCredentials(originalAuth.credentials)!;
 
         const unsignedCreds = new xdr.SorobanAddressCredentials({
-          address: originalCreds.address(),
-          nonce: originalCreds.nonce(),
-          signatureExpirationLedger: originalCreds.signatureExpirationLedger(),
+          address: originalCreds.address,
+          nonce: originalCreds.nonce,
+          signatureExpirationLedger: originalCreds.signatureExpirationLedger,
           signature: xdr.ScVal.scvVoid(), // ❌ payer signature is missing
         });
 
         const authWithoutSignature = new xdr.SorobanAuthorizationEntry({
           credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(unsignedCreds),
-          rootInvocation: originalAuth.rootInvocation(),
+          rootInvocation: originalAuth.rootInvocation,
         });
 
         const modifiedOperation = Operation.invokeHostFunction({
@@ -602,7 +600,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         }
 
         const originalAuth = baseOperation.auth[0];
-        const originalCreds = originalAuth.credentials().address();
+        const originalCreds = getAddressCredentials(originalAuth.credentials)!;
 
         const otherKeypair = Keypair.random();
         const otherAddressScVal = xdr.ScAddress.scAddressTypeAccount(
@@ -611,14 +609,14 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
         const pendingCreds = new xdr.SorobanAddressCredentials({
           address: otherAddressScVal,
-          nonce: originalCreds.nonce(),
-          signatureExpirationLedger: originalCreds.signatureExpirationLedger(),
+          nonce: originalCreds.nonce,
+          signatureExpirationLedger: originalCreds.signatureExpirationLedger,
           signature: xdr.ScVal.scvVoid(),
         });
 
         const pendingAuth = new xdr.SorobanAuthorizationEntry({
           credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(pendingCreds),
-          rootInvocation: originalAuth.rootInvocation(),
+          rootInvocation: originalAuth.rootInvocation,
         });
 
         const modifiedOperation = Operation.invokeHostFunction({
@@ -641,19 +639,19 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         }
 
         const originalAuth = baseOperation.auth[0];
-        const originalCreds = originalAuth.credentials().address();
+        const originalCreds = getAddressCredentials(originalAuth.credentials)!;
         const farFuture = (txSignatureExpiration + 10_000).toString();
 
         const farFutureCreds = new xdr.SorobanAddressCredentials({
-          address: originalCreds.address(),
-          nonce: originalCreds.nonce(),
+          address: originalCreds.address,
+          nonce: originalCreds.nonce,
           signatureExpirationLedger: Number(farFuture), // ❌ Signature expiration too far
-          signature: originalCreds.signature(),
+          signature: originalCreds.signature,
         });
 
         const authWithFarExpiration = new xdr.SorobanAuthorizationEntry({
           credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(farFutureCreds),
-          rootInvocation: originalAuth.rootInvocation(),
+          rootInvocation: originalAuth.rootInvocation,
         });
 
         const modifiedOperation = Operation.invokeHostFunction({
@@ -674,14 +672,10 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
             throw new Error("Missing sorobanData in test transaction");
           }
 
-          const sourceAccountAuth = xdr.SorobanAuthorizationEntry.fromXDR(
-            xdr.SorobanAuthorizationEntry.toXDR(
-              new xdr.SorobanAuthorizationEntry({
-                credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), // ❌ not sorobanCredentialsAddress
-                rootInvocation: baseOperation.auth![0].rootInvocation(),
-              }),
-            ),
-          );
+          const sourceAccountAuth = new xdr.SorobanAuthorizationEntry({
+            credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), // ❌ not sorobanCredentialsAddress
+            rootInvocation: baseOperation.auth![0].rootInvocation,
+          });
 
           const modifiedOperation = Operation.invokeHostFunction({
             ...baseOperation,
@@ -707,19 +701,19 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           // than relabelling the V1 fixture's signature, so the payload matches
           // what an upgraded network actually accepts.
           const originalAuth = baseOperation.auth[0];
-          const originalCredentials = originalAuth.credentials().address();
-          const expirationLedger = originalCredentials.signatureExpirationLedger();
+          const originalCredentials = getAddressCredentials(originalAuth.credentials)!;
+          const expirationLedger = originalCredentials.signatureExpirationLedger;
 
           const unsignedV2Auth = new xdr.SorobanAuthorizationEntry({
             credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
               new xdr.SorobanAddressCredentials({
-                address: originalCredentials.address(),
-                nonce: originalCredentials.nonce(),
+                address: originalCredentials.address,
+                nonce: originalCredentials.nonce,
                 signatureExpirationLedger: 0, // replaced by authorizeEntry
                 signature: xdr.ScVal.scvVoid(),
               }),
             ),
-            rootInvocation: originalAuth.rootInvocation(),
+            rootInvocation: originalAuth.rootInvocation,
           });
           const v2Auth = await authorizeEntry(
             unsignedV2Auth,
@@ -734,7 +728,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
             expirationLedger,
             networkPassphrase,
           );
-          expect(v2Preimage.switch().name).toBe("envelopeTypeSorobanAuthorizationWithAddress");
+          expect(v2Preimage.type).toBe("envelopeTypeSorobanAuthorizationWithAddress");
 
           const modifiedOperation = Operation.invokeHostFunction({
             ...baseOperation,
@@ -752,18 +746,18 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           }
 
           const originalAuth = baseOperation.auth[0];
-          const originalCredentials = originalAuth.credentials().address();
+          const originalCredentials = getAddressCredentials(originalAuth.credentials)!;
 
           const unsignedV2Auth = new xdr.SorobanAuthorizationEntry({
             credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
               new xdr.SorobanAddressCredentials({
-                address: originalCredentials.address(),
-                nonce: originalCredentials.nonce(),
-                signatureExpirationLedger: originalCredentials.signatureExpirationLedger(),
+                address: originalCredentials.address,
+                nonce: originalCredentials.nonce,
+                signatureExpirationLedger: originalCredentials.signatureExpirationLedger,
                 signature: xdr.ScVal.scvVoid(), // ❌ never signed
               }),
             ),
-            rootInvocation: originalAuth.rootInvocation(),
+            rootInvocation: originalAuth.rootInvocation,
           });
 
           const modifiedOperation = Operation.invokeHostFunction({
@@ -788,11 +782,11 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           const delegatedAuth = new xdr.SorobanAuthorizationEntry({
             credentials: xdr.SorobanCredentials.sorobanCredentialsAddressWithDelegates(
               new xdr.SorobanAddressCredentialsWithDelegates({
-                addressCredentials: originalAuth.credentials().address(),
+                addressCredentials: getAddressCredentials(originalAuth.credentials)!,
                 delegates: [],
               }),
             ),
-            rootInvocation: originalAuth.rootInvocation(),
+            rootInvocation: originalAuth.rootInvocation,
           });
 
           const modifiedOperation = Operation.invokeHostFunction({
@@ -816,20 +810,20 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           }
 
           const originalAuth = baseOperation.auth[0];
-          const originalRootInvocation = originalAuth.rootInvocation();
+          const originalRootInvocation = originalAuth.rootInvocation;
 
           const subInvocation = new xdr.SorobanAuthorizedInvocation({
-            function: originalRootInvocation.function(),
+            function: originalRootInvocation.function,
             subInvocations: [],
           });
 
           const rootWithSubInvocations = new xdr.SorobanAuthorizedInvocation({
-            function: originalRootInvocation.function(),
+            function: originalRootInvocation.function,
             subInvocations: [subInvocation], // ❌ sub-invocations not allowed
           });
 
           const authWithSubInvocations = new xdr.SorobanAuthorizationEntry({
-            credentials: originalAuth.credentials(),
+            credentials: originalAuth.credentials,
             rootInvocation: rootWithSubInvocations,
           });
 
@@ -853,7 +847,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
           const facilitatorAddress = facilitatorSigner1.address;
           const originalAuth = baseOperation.auth[0];
-          const originalAddressCredentials = originalAuth.credentials().address();
+          const originalAddressCredentials = getAddressCredentials(originalAuth.credentials)!;
 
           const facilitatorKeypair = Keypair.fromPublicKey(facilitatorAddress);
           const facilitatorAddressScVal = xdr.ScAddress.scAddressTypeAccount(
@@ -862,14 +856,14 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
           const facilitatorCredentials = new xdr.SorobanAddressCredentials({
             address: facilitatorAddressScVal, // ❌ facilitator address in auth entry
-            nonce: originalAddressCredentials.nonce(),
-            signatureExpirationLedger: originalAddressCredentials.signatureExpirationLedger(),
-            signature: originalAddressCredentials.signature(),
+            nonce: originalAddressCredentials.nonce,
+            signatureExpirationLedger: originalAddressCredentials.signatureExpirationLedger,
+            signature: originalAddressCredentials.signature,
           });
 
           const authWithFacilitator = new xdr.SorobanAuthorizationEntry({
             credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(facilitatorCredentials),
-            rootInvocation: originalAuth.rootInvocation(),
+            rootInvocation: originalAuth.rootInvocation,
           });
 
           const modifiedOperation = Operation.invokeHostFunction({
@@ -954,7 +948,8 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
 
     // Event-based balance change validation
     describe("simulation event validation", () => {
-      const expectedAssetHash = () => new Address(ASSET).toScAddress().contractId();
+      const expectedAssetHash = () =>
+        (new Address(ASSET).toScAddress() as xdr.ScAddressContract).contractId;
 
       it("should reject when simulation shows multiple transfer events", async () => {
         const mockTransferEvent1 = createMockContractEvent({
@@ -1090,7 +1085,7 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
           from: CLIENT_PUBLIC,
           to: TRANSACTION_RECIPIENT,
           amount: BigInt(10000),
-          contractId: new Address(wrongAsset).toScAddress().contractId(),
+          contractId: (new Address(wrongAsset).toScAddress() as xdr.ScAddressContract).contractId,
         });
 
         vi.mocked(mockServer.simulateTransaction).mockResolvedValueOnce({

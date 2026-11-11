@@ -131,14 +131,14 @@ export function handleSimulationResult(
 export function getAddressCredentials(
   credentials: xdr.SorobanCredentials,
 ): xdr.SorobanAddressCredentials | undefined {
-  const credentialsType = credentials.switch();
-  if (credentialsType === xdr.SorobanCredentialsType.sorobanCredentialsAddress()) {
-    return credentials.address();
+  switch (credentials.type) {
+    case "sorobanCredentialsAddress":
+      return credentials.address;
+    case "sorobanCredentialsAddressV2":
+      return credentials.addressV2;
+    default:
+      return undefined;
   }
-  if (credentialsType === xdr.SorobanCredentialsType.sorobanCredentialsAddressV2()) {
-    return credentials.addressV2();
-  }
-  return undefined;
 }
 
 /**
@@ -222,13 +222,13 @@ export function gatherAuthEntrySignatureStatus({
     // Handle address-based credentials, both legacy V1 and CAP-71 V2 (accepted
     // by the network from Protocol 28 onward). Source-account credentials are
     // skipped - these use the transaction source.
-    const addressCredentials = getAddressCredentials(entry.credentials());
+    const addressCredentials = getAddressCredentials(entry.credentials);
     if (addressCredentials) {
-      const address = Address.fromScAddress(addressCredentials.address()).toString();
-      const signature = addressCredentials.signature();
+      const address = Address.fromScAddress(addressCredentials.address).toString();
+      const signature = addressCredentials.signature;
 
       // Check if already signed (signature is not scvVoid)
-      const isSigned = signature.switch().name !== "scvVoid";
+      const isSigned = signature.type !== "scvVoid";
 
       if (isSigned) {
         alreadySigned.push(address);
