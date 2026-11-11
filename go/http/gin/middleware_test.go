@@ -743,6 +743,61 @@ func TestPaymentMiddleware_AbortBelow400Settles(t *testing.T) {
 	}
 }
 
+// A redirect must reach the client as a redirect. c.Redirect renders with code
+// -1 before http.Redirect sets the real status, so a capture that recorded -1
+// would mark itself written and drop the 302, delivering a 200 for a redirect.
+// Echo and net/http deliver the 302 and settle, since a 3xx is below 400.
+func TestPaymentMiddleware_AbortedRedirectDeliversStatus(t *testing.T) {
+	settleCalled := false
+	router := createAbortTestRouter(&settleCalled)
+
+	router.Use(func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "https://example.com/elsewhere")
+		c.Abort()
+	})
+	router.POST("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"secret": "data"})
+	})
+
+	w := servePaymentRequest(router)
+
+	if w.Code != http.StatusFound {
+		t.Errorf("Expected status 302, got %d", w.Code)
+	}
+
+	if loc := w.Header().Get("Location"); loc != "https://example.com/elsewhere" {
+		t.Errorf("Expected Location header to be preserved, got %q", loc)
+	}
+
+	if !settleCalled {
+		t.Error("Settlement SHOULD be called for a 302, matching the Echo and net/http adapters")
+	}
+}
+
+// A non-positive status code carries no status to capture. gin's own writer
+// ignores these, and c.Redirect depends on that, so the capture must match.
+func TestResponseCapture_IgnoresNonPositiveStatusCode(t *testing.T) {
+	capture := &responseCapture{
+		ResponseWriter: &mockGinResponseWriter{
+			ResponseRecorder: httptest.NewRecorder(),
+		},
+		body:       &bytes.Buffer{},
+		statusCode: http.StatusOK,
+	}
+
+	capture.WriteHeader(-1)
+
+	if capture.Written() {
+		t.Error("Expected a -1 status to leave the capture unwritten")
+	}
+
+	capture.WriteHeader(http.StatusFound)
+
+	if capture.statusCode != http.StatusFound {
+		t.Errorf("Expected status 302 to be captured next, got %d", capture.statusCode)
+	}
+}
+
 // createAbortTestRouter builds a router wired with the payment middleware and a
 // route whose handler must never run on the aborted paths.
 func createAbortTestRouter(settleCalled *bool) *gin.Engine {

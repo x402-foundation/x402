@@ -531,9 +531,15 @@ func (w *responseCapture) WriteHeader(code int) {
 	w.writeHeaderLocked(code)
 }
 
-// writeHeaderLocked sets the status code (must be called with lock held)
+// writeHeaderLocked sets the status code (must be called with lock held).
+//
+// Non-positive codes are ignored, matching gin's responseWriter. c.Redirect
+// renders with code -1 before http.Redirect sets the real status, so recording
+// it would mark the capture written and drop the actual code: the response
+// would go out as a 200 and, being below 400, settle for a redirect that was
+// never delivered as one.
 func (w *responseCapture) writeHeaderLocked(code int) {
-	if !w.written {
+	if code > 0 && !w.written {
 		w.statusCode = code
 		w.written = true
 	}
