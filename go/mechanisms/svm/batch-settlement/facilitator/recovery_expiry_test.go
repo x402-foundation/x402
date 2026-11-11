@@ -31,7 +31,8 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 	wire, err := svm.EncodeTransaction(tx)
 	require.NoError(t, err)
 	signature := tx.Signatures[0].String()
-	record := encodeBroadcastRecord(signature, blockhash.String())
+	record := encodeBroadcastRecord(signature, blockhash.String(), "")
+	timedOutRecord := encodeBroadcastRecord(signature, blockhash.String(), wire)
 	key := "batch:claim:" + network + ":" + svm.USDCDevnetAddress + ":1000"
 
 	newScheme := func(t *testing.T, valid func(context.Context, solana.Hash, string) (bool, error), confirmed func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error)) (*BatchSvmScheme, *capabilitySigner, *x402.InMemoryPendingSettlementStore, *svm.InMemoryDuplicateSettlementStore) {
@@ -143,8 +144,54 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		assert.False(t, failing.expiredWithoutLanding(context.Background(), parsed, blockhash.String(), network))
 	})
 
-	t.Run("a timed-out send records its blockhash and a retry after expiry broadcasts afresh", func(t *testing.T) {
-		scheme, _, pending, _ := newScheme(t, expired, nil)
+	t.Run("a retry sends the kept transaction again and keeps it while the blockhash is valid", func(t *testing.T) {
+		scheme, signer, pending, duplicates := newScheme(t, live, nil)
+		require.NoError(t, pending.Set(context.Background(), key, timedOutRecord))
+		_, reserved, err := duplicates.Reserve(context.Background(), key, record, ReservationTTL)
+		require.NoError(t, err)
+		require.True(t, reserved)
+
+		result, err := scheme.reconcileBroadcast(context.Background(), key, timedOutRecord, network, "")
+		require.NoError(t, err)
+		require.NotNil(t, result.Response)
+		assert.Equal(t, x402.ErrSettlementPending, result.Response.ErrorReason)
+		assert.Equal(t, signature, result.Response.Transaction)
+		sent := signer.sentTransactions()
+		require.Len(t, sent, 1)
+		assert.Equal(t, tx.Signatures[0], sent[0].Signatures[0])
+		got, ok, err := pending.Get(context.Background(), key)
+		require.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, timedOutRecord, got)
+	})
+
+	t.Run("an expired record that kept its transaction still frees the reservation", func(t *testing.T) {
+		scheme, _, pending, duplicates := newScheme(t, expired, nil)
+		require.NoError(t, pending.Set(context.Background(), key, timedOutRecord))
+		_, reserved, err := duplicates.Reserve(context.Background(), key, record, ReservationTTL)
+		require.NoError(t, err)
+		require.True(t, reserved)
+
+		result, err := scheme.reconcileBroadcast(context.Background(), key, timedOutRecord, network, "")
+		require.NoError(t, err)
+		require.NotNil(t, result.Response)
+		assert.Equal(t, "transaction_failed", result.Response.ErrorReason)
+		_, reserved, err = duplicates.Reserve(context.Background(), key, "next", ReservationTTL)
+		require.NoError(t, err)
+		assert.True(t, reserved, "the reservation holds the record without its transaction")
+	})
+
+	t.Run("a retry never sends a kept transaction that does not match the record's signature", func(t *testing.T) {
+		scheme, signer, _, _ := newScheme(t, live, nil)
+		other := encodeBroadcastRecord(solana.Signature{9}.String(), blockhash.String(), wire)
+
+		_, err := scheme.reconcileBroadcast(context.Background(), key, other, network, "")
+		require.NoError(t, err)
+		assert.Empty(t, signer.sentTransactions())
+	})
+
+	t.Run("a timed-out send keeps its blockhash and transaction, and a retry after expiry broadcasts afresh", func(t *testing.T) {
+		scheme, signer, pending, _ := newScheme(t, expired, nil)
 		sends := 0
 		timedOut := func(onPrepared func(string, string) error) (string, error) {
 			sends++
@@ -179,14 +226,15 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		stored, ok, err := pending.Get(context.Background(), key)
 		require.NoError(t, err)
 		require.True(t, ok)
-		assert.Equal(t, record, stored)
+		assert.Equal(t, timedOutRecord, stored)
 
 		_, _, response, err = scheme.settleDurably(context.Background(), args(landed))
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		assert.Equal(t, "transaction_failed", response.ErrorReason)
 		assert.Contains(t, response.ErrorMessage, "expired")
-		assert.Equal(t, 1, sends, "the expired record is answered without sending")
+		assert.Equal(t, 1, sends, "the expired record is answered without a new broadcast")
+		assert.Len(t, signer.sentTransactions(), 1, "only the kept transaction is sent again")
 		_, ok, err = pending.Get(context.Background(), key)
 		require.NoError(t, err)
 		assert.False(t, ok)
