@@ -53,6 +53,9 @@ func SplitEip2612Signature(signature string) (uint8, [32]byte, [32]byte, error) 
 	copy(r[:], sigBytes[0:32])
 	copy(s[:], sigBytes[32:64])
 	v := sigBytes[64]
+	if v < 27 {
+		v += 27
+	}
 
 	return v, r, s, nil
 }
