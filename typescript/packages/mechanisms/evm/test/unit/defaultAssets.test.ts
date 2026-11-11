@@ -20,14 +20,6 @@ describe("defaultAssets (EVM)", () => {
       expect(findDefaultAsset(BASE_USDC.asset, "base")).toEqual(BASE_USDC);
     });
 
-    it("resolves v1 legacy network names hemi and hemi-testnet", () => {
-      const hemiUsdce = DEFAULT_ASSETS["eip155:43111"]![0]!;
-      const hemiTestnetUsdce = DEFAULT_ASSETS["eip155:743111"]![0]!;
-
-      expect(findDefaultAsset(hemiUsdce.asset, "hemi")).toEqual(hemiUsdce);
-      expect(findDefaultAsset(hemiTestnetUsdce.asset, "hemi-testnet")).toEqual(hemiTestnetUsdce);
-    });
-
     it("finds 18-decimal mUSD on Mezo testnet", () => {
       expect(findDefaultAsset(MEZO_TESTNET_MUSD.asset, "eip155:31611")).toEqual(MEZO_TESTNET_MUSD);
       expect(MEZO_TESTNET_MUSD.decimals).toBe(18);

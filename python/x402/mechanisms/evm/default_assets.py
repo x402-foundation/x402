@@ -322,6 +322,25 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDG",
         },
     ],  # Robinhood Chain mainnet USDG (EIP-3009 supported)
+    "eip155:43111": [
+        {
+            "asset": "0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA",
+            "name": "Bridged USDC (Stargate)",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC.e",
+        },
+    ],  # Hemi mainnet USDC.e (EIP-3009 supported)
+    "eip155:743111": [
+        {
+            "asset": "0xD47971C7F5B1067d25cd45d30b2c9eb60de96443",
+            "name": "USDC.e",
+            "version": "1",
+            "decimals": 6,
+            "symbol": "USDC.e",
+            "asset_transfer_method": "permit2",
+        },
+    ],  # Hemi testnet USDC.e (no EIP-3009, no EIP-2612)
 }
 
 
