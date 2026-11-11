@@ -25,6 +25,8 @@ V1_NETWORKS = [
     "celo",
     "ethereum",
     "flare",
+    "hemi",
+    "hemi-testnet",
 ]
 
 # V1 network name to chain ID mapping
@@ -52,4 +54,6 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "stable-testnet": 2201,
     "celo": 42220,
     "flare": 14,
+    "hemi": 43111,
+    "hemi-testnet": 743111,
 }
