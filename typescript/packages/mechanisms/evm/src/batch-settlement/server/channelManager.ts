@@ -663,7 +663,8 @@ export class BatchSettlementChannelManager {
   }
 
   /**
-   * Refunds each eligible channel independently.
+   * Refunds each eligible channel independently. Channels whose balance is already
+   * fully charged are skipped: the contract reverts a zero-amount refund (`ZeroRefund`).
    *
    * @param channels - Channels to refund.
    * @returns Successful refund results.
@@ -672,6 +673,9 @@ export class BatchSettlementChannelManager {
     const lock = this.scheme.getLockStorage();
     const results: RefundResult[] = [];
     for (const channel of this.filterInNetwork(channels)) {
+      if (BigInt(channel.balance) <= BigInt(channel.chargedCumulativeAmount)) {
+        continue;
+      }
       if (await channelIsHeld(lock, channel.channelId)) {
         continue;
       }
