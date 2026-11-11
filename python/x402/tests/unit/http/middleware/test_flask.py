@@ -31,6 +31,10 @@ from x402.http.types import (
     ProcessSettleResult,
     RouteConfig,
 )
+from x402.http.utils import (
+    decode_payment_required_header,
+    encode_payment_signature_header,
+)
 from x402.schemas import PaymentPayload, PaymentRequirements
 from x402.schemas.errors import FacilitatorCapabilityError
 from x402.schemas.hooks import (
@@ -41,6 +45,7 @@ from x402.schemas.hooks import (
 
 from ....mocks import (
     CashFacilitatorClientSync,
+    CashSchemeNetworkClient,
     CashSchemeNetworkFacilitator,
     CashSchemeNetworkServer,
 )
@@ -1443,14 +1448,14 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
     """
 
     @staticmethod
-    def _routes() -> dict[str, RouteConfig]:
+    def _routes(key: str = "GET /api/premium") -> dict[str, RouteConfig]:
         option = PaymentOption(
             scheme="cash",
             pay_to="Alice",
             price="$0.01",
             network="x402:cash",
         )
-        return {"GET /api/premium": RouteConfig(accepts=option)}
+        return {key: RouteConfig(accepts=option)}
 
     @staticmethod
     def _cash_server() -> x402ResourceServerSync:
@@ -1463,12 +1468,11 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
         server.initialize()
         return server
 
-    @pytest.fixture()
-    def client(self):
+    def _client(self, route_key: str = "GET /api/premium"):
         app = Flask(__name__)
         payment_middleware(
             app,
-            self._routes(),
+            self._routes(route_key),
             self._cash_server(),
             sync_facilitator_on_start=False,
         )
@@ -1479,11 +1483,71 @@ class TestLiteralRoutePercentEncodedSeparatorBypass:
 
         return app.test_client()
 
+    @pytest.fixture()
+    def client(self):
+        return self._client()
+
+    @staticmethod
+    def _paid_head(client):
+        requirements = PaymentRequirements(
+            scheme="cash",
+            network="x402:cash",
+            asset="USD",
+            amount="0.01",
+            pay_to="Alice",
+            max_timeout_seconds=300,
+            extra={},
+        )
+        payload = PaymentPayload(
+            x402_version=2,
+            accepted=requirements,
+            payload=CashSchemeNetworkClient("Bob").create_payment_payload(requirements),
+        )
+        return client.head(
+            "/api/premium",
+            headers={"PAYMENT-SIGNATURE": encode_payment_signature_header(payload)},
+        )
+
     def test_baseline_literal_route_returns_402(self, client) -> None:
         assert client.get("/api/premium").status_code == 402
 
     def test_head_uses_get_payment_rule(self, client) -> None:
         assert client.head("/api/premium").status_code == 402
+
+    @pytest.mark.parametrize("route_key", ["GET /api/premium", "/api/premium"])
+    def test_head_carrying_payment_is_refused_without_settling(self, route_key) -> None:
+        """A HEAD response carries no content, so settling on one charges for
+        nothing deliverable.
+
+        HEAD reaches these routes through the GET fallback added alongside the
+        test above, or through a method-less route, which is what closes the
+        unpaid-HEAD bypass. This covers the other half: once HEAD matches a
+        paid route implicitly, a HEAD that carries a payment must be refused
+        before settlement rather than charged for a body it can never return.
+
+        The payload below matches the route's requirements, so without the
+        guard the request proceeds to verification and settlement.
+        """
+        response = self._paid_head(self._client(route_key))
+
+        assert response.status_code == 402
+        assert "PAYMENT-RESPONSE" not in response.headers, (
+            "a settlement header means the payment was taken for an empty body"
+        )
+
+        challenge = decode_payment_required_header(response.headers["PAYMENT-REQUIRED"])
+        assert "HEAD" in (challenge.error or "")
+        assert "GET" in (challenge.error or "")
+
+    def test_a_route_declared_as_head_still_settles(self) -> None:
+        """A route declared as "HEAD /path" is the seller saying HEAD is what is
+        sold, so it settles as declared, as it did before the guard. Only a HEAD
+        that reached a paid route implicitly is refused.
+        """
+        response = self._paid_head(self._client("HEAD /api/premium"))
+
+        assert response.status_code == 200
+        assert "PAYMENT-RESPONSE" in response.headers
 
     @pytest.mark.parametrize(
         "raw_uri",

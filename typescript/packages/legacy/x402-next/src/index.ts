@@ -131,6 +131,22 @@ export function paymentMiddleware(
       );
     }
 
+    // A HEAD response carries no content (RFC 9110 9.3.2), so settling on one
+    // charges for a result that cannot be delivered. HEAD reaches a paid route
+    // through a method-less route or the GET fallback in findMatchingRoute; a
+    // route declared as "HEAD /path" is the seller saying HEAD is the product,
+    // and settles as declared. The challenge is still served.
+    if (method === "HEAD" && matchingRoute.verb !== "HEAD") {
+      return NextResponse.json(
+        {
+          x402Version,
+          error: "a HEAD response cannot carry the result; retry as GET",
+          accepts: paymentRequirements,
+        },
+        { status: 402 },
+      );
+    }
+
     // Verify payment
     const verificationResult = await verifyPayment(
       paymentHeader,

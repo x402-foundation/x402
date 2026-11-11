@@ -363,6 +363,13 @@ class x402HTTPServerBase:
         Checks the escaped ``path`` first, then the framework's ``decoded_path``
         (if distinct), so a route can't be bypassed via either representation.
         """
+        route = self._match_route(path, method, decoded_path)
+        return None if route is None else (route.config, route.pattern)
+
+    def _match_route(
+        self, path: str, method: str, decoded_path: str | None = None
+    ) -> CompiledRoute | None:
+        """The compiled route a request matches, or None. See _get_route_config."""
         upper_method = method.upper()
 
         def verb_matches(verb: str) -> bool:
@@ -371,14 +378,14 @@ class x402HTTPServerBase:
             # An explicit "OPTIONS /path" route still matches.
             return verb == upper_method or (verb == "*" and upper_method != "OPTIONS")
 
-        def find_match(candidate: str) -> tuple[RouteConfig, str] | None:
+        def find_match(candidate: str) -> CompiledRoute | None:
             for route in self._compiled_routes:
                 if route.regex.match(candidate) and verb_matches(route.verb):
-                    return route.config, route.pattern
+                    return route
             if upper_method == "HEAD":
                 for route in self._compiled_routes:
                     if route.regex.match(candidate) and route.verb == "GET":
-                        return route.config, route.pattern
+                        return route
             return None
 
         match = find_match(self._normalize_path(path))
@@ -411,10 +418,10 @@ class x402HTTPServerBase:
             context = dataclasses.replace(context, method=context.adapter.get_method())
 
         # Find matching route
-        route_match = self._get_route_config(context.path, context.method, context.decoded_path)
-        if route_match is None:
+        matched_route = self._match_route(context.path, context.method, context.decoded_path)
+        if matched_route is None:
             return HTTPProcessResult(type=RESULT_NO_PAYMENT_REQUIRED)
-        route_config, route_pattern = route_match
+        route_config, route_pattern = matched_route.config, matched_route.pattern
         context = dataclasses.replace(context, route_pattern=route_pattern)
         transport_context = HTTPTransportContext(request=context)
 
@@ -434,6 +441,21 @@ class x402HTTPServerBase:
 
         # Extract payment from headers
         payment_payload = self._extract_payment(context.adapter)
+
+        # A HEAD response carries no content (RFC 9110 9.3.2), so settling on
+        # one charges for a result that cannot be delivered. HEAD reaches a
+        # paid route through a method-less route or the GET fallback, which
+        # is what closes the bypass; this stops the other half, where the
+        # buyer pays and receives an empty body. The challenge is still
+        # served, so the price stays discoverable over HEAD, and only the
+        # settlement is refused. A route declared as "HEAD /path" is the
+        # seller saying HEAD is the product, so it settles as declared, the
+        # same split the OPTIONS preflight rule makes.
+        head_cannot_settle = (
+            (context.method or "").upper() == "HEAD"
+            and matched_route.verb != "HEAD"
+            and payment_payload is not None
+        )
 
         # Build resource info (Static metadata as per maintainer feedback)
         resource_info = ResourceInfo(
@@ -482,15 +504,21 @@ class x402HTTPServerBase:
             (
                 requirements,
                 resource_info,
-                None if payment_payload else "Payment required",
+                "Payment required"
+                if not payment_payload
+                else (
+                    "a HEAD response cannot carry the result; retry as GET"
+                    if head_cannot_settle
+                    else None
+                ),
                 extensions,
                 transport_context,
             ),
             None,
         )
 
-        # No payment provided
-        if payment_payload is None:
+        # No payment provided, or the request can never deliver what it buys
+        if payment_payload is None or head_cannot_settle:
             unpaid_body = None
             if route_config.unpaid_response_body:
                 unpaid_body = route_config.unpaid_response_body(context)

@@ -1139,4 +1139,47 @@ describe("paymentMiddleware()", () => {
       );
     });
   });
+
+  describe("a paid HEAD cannot settle unless the route declares HEAD", () => {
+    const paidHead = async (verb: string) => {
+      (findMatchingRoute as ReturnType<typeof vi.fn>).mockReturnValue({
+        pattern: /^\/protected\/test$/,
+        verb,
+        config: { price: "$0.001", network: "base-sepolia", config: middlewareConfig },
+      });
+      const request = {
+        ...mockRequest,
+        method: "HEAD",
+        headers: new Headers({ "X-PAYMENT": "valid-payment-header" }),
+      } as unknown as NextRequest;
+      return middleware(request);
+    };
+
+    it.each(["GET", "*"])("refuses a paid HEAD that matched a %s route", async verb => {
+      const response = await paidHead(verb);
+
+      expect(response.status).toBe(402);
+      expect(mockDecodePayment).not.toHaveBeenCalled();
+      expect(mockVerify).not.toHaveBeenCalled();
+      expect(mockSettle).not.toHaveBeenCalled();
+    });
+
+    it("lets a paid HEAD on a route declared as HEAD proceed, as before", async () => {
+      mockDecodePayment.mockReturnValue({
+        scheme: "exact",
+        network: "base-sepolia",
+        x402Version: 1,
+      });
+      (mockVerify as ReturnType<typeof vi.fn>).mockResolvedValue({ isValid: true });
+      (mockSettle as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        transaction: "0x123",
+        network: "base-sepolia",
+      });
+      await paidHead("HEAD");
+
+      expect(mockDecodePayment).toHaveBeenCalledWith("valid-payment-header");
+      expect(mockVerify).toHaveBeenCalled();
+    });
+  });
 });

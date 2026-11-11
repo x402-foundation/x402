@@ -1,0 +1,1 @@
+Refused to settle a payment carried on a HEAD request that reached a paid route through the GET fallback or a method-less route, whose response cannot carry the result. The challenge is still served over HEAD. A route declared as `HEAD /path` settles as before.
