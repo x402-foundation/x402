@@ -38,11 +38,14 @@ type PreparedRefund struct {
 	ChannelID    string
 	Terms        BatchTerms
 	RequestClose string
+	// Binding is the channel binding PrepareRefund read, so the cooperative
+	// close does not read the channel row again. Nil means unread.
+	Binding *ChannelBinding
 }
 
 // SealDependencies are the scheme internals the seal path borrows.
 type SealDependencies struct {
-	PendingStore             PendingSettlementStore
+	PendingStore             x402.PendingSettlementStore
 	ResolveTerms             func(context.Context, batchsettlement.BatchChannelConfig, types.PaymentRequirements, VoucherModeBinding) (BatchTerms, error)
 	ReadBinding              func(context.Context, string, string) (ChannelBinding, error)
 	IsDelegatedAuthorizer    func(string) bool
@@ -53,9 +56,7 @@ type SealDependencies struct {
 	AssertClaimChannel       func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
 	DistributeInstruction    func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
 	SubmitRedemption         func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
-	CompleteOrPending        func(context.Context, string, string, string, string) (*x402.SettleResponse, error)
 	NowSeconds               func() int64
-	SettlementCache          interface{ IsDuplicate(string) bool }
 	OnDistributionConfirmed  OnDistributionConfirmed
 	// PrepareRefund, when set, replaces PrepareRefund on the refund settle path.
 	PrepareRefund func(context.Context, batchsettlement.BatchRefundPayload, types.PaymentRequirements, RefundLimits, any) (PreparedRefund, error)
@@ -81,6 +82,10 @@ func AssertRefundable(channel *generated.Channel, channelID string) error {
 }
 
 // SettleSeal applies the server's latest voucher with settle_and_seal and pays out with distribute.
+//
+// A retry after the close landed answers from the channel status. With
+// OnDistributionConfirmed set the payout is kept for a retry, so the retry
+// replays the recorded amount.
 func SettleSeal(
 	ctx context.Context,
 	deps SealDependencies,
@@ -88,6 +93,19 @@ func SettleSeal(
 	requirements types.PaymentRequirements,
 	intent CloseIntent,
 	facilitatorContext any,
+) (*x402.SettleResponse, error) {
+	return settleSeal(ctx, deps, payload, requirements, intent, facilitatorContext, nil)
+}
+
+// settleSeal is SettleSeal with a binding the caller already read, or nil to read it.
+func settleSeal(
+	ctx context.Context,
+	deps SealDependencies,
+	payload batchsettlement.BatchSealPayload,
+	requirements types.PaymentRequirements,
+	intent CloseIntent,
+	facilitatorContext any,
+	loaded *ChannelBinding,
 ) (*x402.SettleResponse, error) {
 	network := requirements.Network
 	payer := payload.ChannelConfig.Payer
@@ -110,18 +128,20 @@ func SettleSeal(
 	if err != nil {
 		return nil, err
 	}
-	if err := authenticateServer(ctx, deps, payload, requirements, terms, channelID, cumulative, intent, facilitatorContext); err != nil {
+	if err := authenticateServer(ctx, deps, payload, requirements, terms, channelID, cumulative, intent, facilitatorContext, loaded); err != nil {
 		return nil, err
 	}
 	key := fmt.Sprintf("batch:%s:%s:%s:%d", intent, network, channelID, cumulative)
-	if previous, ok, err := deps.PendingStore.Get(ctx, key+":result"); err != nil {
-		return nil, err
-	} else if ok {
-		var stored x402.SettleResponse
-		if err := json.Unmarshal([]byte(previous), &stored); err != nil {
+	if deps.OnDistributionConfirmed != nil {
+		if previous, ok, err := deps.PendingStore.Get(ctx, resultKey(key)); err != nil {
 			return nil, err
+		} else if ok {
+			var stored x402.SettleResponse
+			if err := json.Unmarshal([]byte(previous), &stored); err != nil {
+				return nil, err
+			}
+			return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
 		}
-		return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
 	}
 	channel, err := deps.FetchChannel(ctx, network, channelID)
 	if err != nil {
@@ -132,6 +152,15 @@ func SettleSeal(
 		required = generated.ChannelStatus_Open
 	}
 	if generated.ChannelStatus(channel.Status) != required {
+		if deps.OnDistributionConfirmed == nil && closedAtVoucher(channel, cumulative) {
+			if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{
+				generated.ChannelStatus_Sealed,
+				generated.ChannelStatus_Distributed,
+			}); err != nil {
+				return nil, err
+			}
+			return RefundResponse(channelID, channel, x402.Network(network), ""), nil
+		}
 		return nil, fmt.Errorf("%s: %s applies only to a %s channel; observed status %s",
 			batchsettlement.ErrCloseState, intent, paymentchannels.ChannelStatusString(required), paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 	}
@@ -175,9 +204,6 @@ func SettleSeal(
 		return nil, err
 	}
 	instructions = append(instructions, distribute)
-	if deps.SettlementCache != nil && deps.SettlementCache.IsDuplicate(key) {
-		return SettleFailure(x402.Network(requirements.Network), ChannelBusy, payer, ""), nil
-	}
 	submitted, err := deps.SubmitRedemption(ctx, terms.FeePayer, network, instructions, key, payer)
 	if err != nil {
 		return nil, err
@@ -192,11 +218,6 @@ func SettleSeal(
 	if observed != nil && generated.ChannelStatus(observed.Status) == required {
 		return SettlementPending(x402.Network(network), payer, submitted.Signature, string(intent)+" confirmed but the sealed state is not visible yet"), nil
 	}
-	if incomplete, err := deps.CompleteOrPending(ctx, key, submitted.Signature, network, payer); err != nil {
-		return nil, err
-	} else if incomplete != nil {
-		return incomplete, nil
-	}
 	paid := uint64(0)
 	if cumulative >= channel.Settlement.PayoutWatermark {
 		paid = cumulative - channel.Settlement.PayoutWatermark
@@ -209,15 +230,31 @@ func SettleSeal(
 		}
 		sealed.Amount = fmt.Sprintf("%d", refunded)
 	}
-	encoded, err := json.Marshal(sealed)
-	if err != nil {
-		return nil, err
-	}
-	if err := deps.PendingStore.Set(ctx, key+":result", string(encoded)); err != nil {
-		return nil, err
+	if deps.OnDistributionConfirmed != nil {
+		encoded, err := json.Marshal(sealed)
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.PendingStore.Set(ctx, resultKey(key), string(encoded)); err != nil {
+			return nil, err
+		}
 	}
 	return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, sealed, requirements, intent), nil
 }
+
+// closedAtVoucher reports whether a close at cumulative already landed: the
+// channel is sealed or distributed with exactly that voucher applied.
+func closedAtVoucher(channel *generated.Channel, cumulative uint64) bool {
+	status := generated.ChannelStatus(channel.Status)
+	return (status == generated.ChannelStatus_Sealed || status == generated.ChannelStatus_Distributed) &&
+		channel.Settlement.Settled == cumulative
+}
+
+// resultKey holds the payout response kept for a retry. It exists only when OnDistributionConfirmed is set.
+func resultKey(key string) string { return key + ":result" }
+
+// recordedKey marks a payout the OnDistributionConfirmed hook already received.
+func recordedKey(key string) string { return key + ":recorded" }
 
 // PrepareRefund validates a refund and picks the cooperative close or the payer-signed request_close.
 func PrepareRefund(
@@ -264,7 +301,7 @@ func PrepareRefund(
 			return PreparedRefund{}, err
 		}
 		_ = facilitatorContext
-		return PreparedRefund{ChannelID: channelID, Terms: terms}, nil
+		return PreparedRefund{ChannelID: channelID, Terms: terms, Binding: &binding}, nil
 	}
 	if payload.Transaction == "" {
 		return PreparedRefund{}, fmt.Errorf("%s: resend the refund with a payer-signed request_close transaction", batchsettlement.ErrReceiverBindingUnavailable)
@@ -354,12 +391,12 @@ func SettleCooperativeRefund(
 		Voucher:            *payload.Voucher,
 		CloseAuthorization: payload.CloseAuthorization,
 	}
-	return SettleSeal(ctx, deps, seal, requirements, CloseIntentRefund, facilitatorContext)
+	return settleSeal(ctx, deps, seal, requirements, CloseIntentRefund, facilitatorContext, prepared.Binding)
 }
 
 func notifySealDistribution(
 	ctx context.Context,
-	store PendingSettlementStore,
+	store x402.PendingSettlementStore,
 	hook OnDistributionConfirmed,
 	key string,
 	response *x402.SettleResponse,
@@ -369,7 +406,7 @@ func notifySealDistribution(
 	if hook == nil {
 		return nil
 	}
-	recorded, ok, err := store.Get(ctx, key+":recorded")
+	recorded, ok, err := store.Get(ctx, recordedKey(key))
 	if err != nil {
 		return err
 	}
@@ -394,12 +431,12 @@ func notifySealDistribution(
 	if err := hook(ctx, &view, requirements); err != nil {
 		return err
 	}
-	return store.Set(ctx, key+":recorded", "1")
+	return store.Set(ctx, recordedKey(key), "1")
 }
 
 func completeSealDistribution(
 	ctx context.Context,
-	store PendingSettlementStore,
+	store x402.PendingSettlementStore,
 	hook OnDistributionConfirmed,
 	key string,
 	response *x402.SettleResponse,
@@ -467,10 +504,17 @@ func authenticateServer(
 	cumulative uint64,
 	intent CloseIntent,
 	facilitatorContext any,
+	loaded *ChannelBinding,
 ) error {
-	binding, err := deps.ReadBinding(ctx, requirements.Network, channelID)
-	if err != nil {
-		return err
+	var binding ChannelBinding
+	if loaded != nil {
+		binding = *loaded
+	} else {
+		var err error
+		binding, err = deps.ReadBinding(ctx, requirements.Network, channelID)
+		if err != nil {
+			return err
+		}
 	}
 	bound, err := RequireReceiverAuthorizer(binding.ReceiverAuthorizer, terms.ReceiverAuthorizer, channelID)
 	if err != nil {

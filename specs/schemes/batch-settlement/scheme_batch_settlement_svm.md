@@ -1815,8 +1815,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   the authoritative replay defense. The same authorization MUST NOT execute the
   resource handler more than once.
 - **Client-supplied transactions.** For `deposit` and `refund`, the facilitator
-  SHOULD maintain a short-lived in-flight cache keyed by the exact serialized
-  transaction or its first signature. Concurrent `/settle` calls for the same
+  SHOULD maintain a short-lived in-flight cache keyed by the transaction's
+  message hash, which is stable across signature variants of the same message.
+  Concurrent `/settle` calls for the same
   transaction MUST be coalesced to one broadcast and one result or rejected
   with `duplicate_settlement`; they MUST NOT produce independent successful
   settlements. The entry MAY be evicted once the transaction's blockhash is no
@@ -1825,7 +1826,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
 - **Claims.** Program `settle` requires a strictly increasing watermark, so the
   same claim cannot advance accounting twice. A facilitator MAY coalesce
   in-flight `(channelId, maxClaimableAmount)` claims to avoid a predictable
-  second transaction failure; no durable duplicate cache is required.
+  second transaction failure; no durable duplicate cache is required. A claim
+  whose `maxClaimableAmount` is at or below the observed `settled` watermark has
+  already landed and MAY be answered from channel state without a broadcast.
 - **Open-channel distributions.** `distribute` advances `payout_watermark` to
   `settled`; a repeat cannot pay the same delta again. A facilitator MAY
   coalesce concurrent distributions for the same channel and observed
@@ -1940,6 +1943,30 @@ database, object store, distributed lock, HSM-backed signer, or another design,
 provided reservation and completion invariants survive process failure and
 concurrent workers. Retention, sharding, monitoring, and application-result
 storage are implementation concerns.
+
+Facilitator `/settle` needs two further stores, and the chain is the source of
+truth for everything else:
+
+- A duplicate-settlement store with an atomic
+  `reserve(key, signature, ttl) -> (existing, reserved)` and a
+  `release(key, signature)`. The facilitator reserves the signed transaction's
+  signature after signing and before sending. A concurrent duplicate that loses
+  the reservation MUST NOT send and reconciles against the holder's signature.
+  The reservation is released only after a definitive failure, and its TTL
+  covers the blockhash lifetime plus a grace period.
+- A pending-settlement store, read once at the start of an operation and written
+  only when a confirmation times out, so a retry reconciles the recorded
+  signature instead of broadcasting again. The record is deleted once the
+  outcome is known.
+
+Delegated identity and receiver binding stay on the channel storage row. A
+facilitator that exposes a payout hook (`OnDistributionConfirmed`) MUST keep the
+confirmed result and a recorded marker in the pending store until the hook has
+run, so a retry of `seal`, refund, or `distribute` still delivers the payout;
+the hook MUST be idempotent per transaction. Without a hook, a retry of a
+completed `seal`, refund, or `distribute` MAY be answered from the observed
+channel status and carry no transaction signature. On the happy path a settle
+costs one pending-store read and one reservation.
 
 ## 7. Error Codes
 

@@ -16,13 +16,13 @@ import (
 
 // strictContextStore fails calls on a done context, like Redis, and counts reads per key.
 type strictContextStore struct {
-	inner *InMemoryPendingSettlementStore
+	inner *x402.InMemoryPendingSettlementStore
 	mu    sync.Mutex
 	gets  map[string]int
 }
 
 func newStrictContextStore() *strictContextStore {
-	return &strictContextStore{inner: NewInMemoryPendingSettlementStore(), gets: map[string]int{}}
+	return &strictContextStore{inner: x402.NewInMemoryPendingSettlementStore(), gets: map[string]int{}}
 }
 
 func (s *strictContextStore) Get(ctx context.Context, key string) (string, bool, error) {
@@ -49,20 +49,6 @@ func (s *strictContextStore) Delete(ctx context.Context, key string) error {
 	return s.inner.Delete(ctx, key)
 }
 
-func (s *strictContextStore) SetIfAbsent(ctx context.Context, key, value string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return s.inner.SetIfAbsent(ctx, key, value)
-}
-
-func (s *strictContextStore) DeleteIfEquals(ctx context.Context, key, value string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return s.inner.DeleteIfEquals(ctx, key, value)
-}
-
 func (s *strictContextStore) readCount(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -75,7 +61,7 @@ func TestBatchSettlementRecoveryOutlivesRequestContext(t *testing.T) {
 	payer := mustKey(t).PublicKey().String()
 	signature := solana.Signature{2}.String()
 
-	newScheme := func(t *testing.T, store PendingSettlementStore) *BatchSvmScheme {
+	newScheme := func(t *testing.T, store x402.PendingSettlementStore) *BatchSvmScheme {
 		t.Helper()
 		signer := &confirmingSigner{scriptedSigner: newScriptedSigner(t, 1), slot: 1}
 		return NewBatchSvmScheme(context.Background(), signer, &Config{PendingSettlementStore: store})
@@ -102,7 +88,7 @@ func TestBatchSettlementRecoveryOutlivesRequestContext(t *testing.T) {
 		assert.Equal(t, signature, recorded)
 	})
 
-	t.Run("a durable settle reads the completed and pending keys once", func(t *testing.T) {
+	t.Run("a durable settle reads the pending key once", func(t *testing.T) {
 		store := newStrictContextStore()
 		scheme := newScheme(t, store)
 
@@ -121,7 +107,6 @@ func TestBatchSettlementRecoveryOutlivesRequestContext(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, response)
 		assert.Equal(t, signature, got)
-		assert.Equal(t, 1, store.readCount(key+CompletedBroadcastSuffix))
 		assert.Equal(t, 1, store.readCount(key))
 	})
 }

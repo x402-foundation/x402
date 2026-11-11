@@ -447,7 +447,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 	})
 
 	t.Run("keeps a legacy refund result pending when the merchant credit was not stored", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+		store := x402.NewInMemoryPendingSettlementStore()
 		key := "batch:refund:" + network + ":" + channelID + ":3000:result"
 		encoded, err := json.Marshal(x402.SettleResponse{
 			Success:     true,
@@ -490,7 +490,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 				channel, payload, amount = openLive, refundPayload(t, 3_000), "7000"
 			}
 			store := &readSignalStore{
-				PendingSettlementStore: NewInMemoryPendingSettlementStore(),
+				PendingSettlementStore: x402.NewInMemoryPendingSettlementStore(),
 				key:                    fmt.Sprintf("batch:%s:%s:%s:3000:result", tc.intent, network, channelID),
 				read:                   make(chan struct{}, 1),
 			}
@@ -644,7 +644,7 @@ func (l *payoutLog) calls() []payoutCall {
 }
 
 type readSignalStore struct {
-	PendingSettlementStore
+	x402.PendingSettlementStore
 	key  string
 	read chan struct{}
 }
