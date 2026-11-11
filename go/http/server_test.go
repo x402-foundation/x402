@@ -2538,3 +2538,40 @@ func TestResolveCancelledSettlement_NilDispatcher(t *testing.T) {
 		t.Fatal("expected the before-handler receipt to be echoed")
 	}
 }
+
+// Flows that settle before the handler and do not settle again (upfront) take the
+// after-handler early return that only echoes the receipt. Overrides are still
+// set on the response header map by the handler, so that path must strip them too.
+func TestProcessSettlement_StripsOverridesOnReceiptEchoPath(t *testing.T) {
+	server := Newx402HTTPResourceServer(RoutesConfig{})
+
+	requirements := types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"}
+	responseHeaders := http.Header{}
+	responseHeaders.Set(SettlementOverridesHeader, `{"amount":"500"}`)
+
+	result := server.ProcessSettlement(
+		context.Background(),
+		types.PaymentPayload{},
+		requirements,
+		nil,
+		&HTTPTransportContext{ResponseHeaders: responseHeaders},
+		nil,
+		&x402.CompletedSettlement{
+			Phase:        x402.SettlePhaseBeforeHandler,
+			Flow:         x402.PaymentFlowUpfront,
+			Result:       &x402.SettleResponse{Success: true, Transaction: "0xdeposit", Network: "eip155:8453"},
+			Requirements: requirements,
+		},
+		"",
+	)
+
+	if !result.Success {
+		t.Fatalf("expected the receipt echo to succeed, got %+v", result)
+	}
+	if result.Headers["PAYMENT-RESPONSE"] == "" {
+		t.Fatal("expected the before-handler receipt to be echoed")
+	}
+	if got := responseHeaders.Get(SettlementOverridesHeader); got != "" {
+		t.Errorf("Settlement-Overrides not stripped on the receipt-echo path, got %q", got)
+	}
+}
