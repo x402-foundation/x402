@@ -211,13 +211,6 @@ func settleSeal(
 	if !submitted.OK {
 		return submitted.Response, nil
 	}
-	observed, err := deps.ReadChannel(ctx, network, channelID)
-	if err != nil {
-		return nil, err
-	}
-	if observed != nil && generated.ChannelStatus(observed.Status) == required {
-		return SettlementPending(x402.Network(network), payer, submitted.Signature, string(intent)+" confirmed but the sealed state is not visible yet"), nil
-	}
 	paid := uint64(0)
 	if cumulative >= channel.Settlement.PayoutWatermark {
 		paid = cumulative - channel.Settlement.PayoutWatermark
@@ -230,10 +223,19 @@ func settleSeal(
 		}
 		sealed.Amount = fmt.Sprintf("%d", refunded)
 	}
+	// The payout is kept before the state read: once the close confirmed, a
+	// retry that finds the channel already closed replays it to the hook.
 	if deps.OnDistributionConfirmed != nil {
 		if err := storePayoutResult(ctx, deps.PendingStore, key, sealed); err != nil {
 			return nil, err
 		}
+	}
+	observed, err := deps.ReadChannel(ctx, network, channelID)
+	if err != nil {
+		return nil, err
+	}
+	if observed != nil && generated.ChannelStatus(observed.Status) == required {
+		return SettlementPending(x402.Network(network), payer, submitted.Signature, string(intent)+" confirmed but the sealed state is not visible yet"), nil
 	}
 	return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, sealed, requirements, intent), nil
 }

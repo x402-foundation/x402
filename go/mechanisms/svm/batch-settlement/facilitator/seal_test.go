@@ -287,6 +287,44 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.Len(t, payouts.calls(), 2)
 	})
 
+	t.Run("delivers the payout of a close that confirmed before its sealed state was visible", func(t *testing.T) {
+		payouts := &payoutLog{}
+		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+		sealedChannel := live(func(channel *generated.Channel) {
+			channel.Status = uint8(generated.ChannelStatus_Sealed)
+			channel.Settlement = generated.SettlementWatermarks{Settled: 3_000, PayoutWatermark: 500}
+		})
+		stale := live(nil)
+		var closeLanded bool
+		fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if closeLanded {
+				return sealedChannel, nil
+			}
+			return stale, nil
+		}
+		reads := 0
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			reads++
+			closeLanded = true
+			return stale, nil
+		}
+		payload := sealPayload(t, 3_000)
+
+		pending := settleThrown(t, fixture.scheme, payload)
+		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+		assert.Equal(t, signature, pending.Transaction)
+		assert.Empty(t, payouts.calls())
+
+		recovered := settle(t, fixture.scheme, payload)
+		assert.True(t, recovered.Success)
+		assert.Equal(t, "2500", recovered.Amount)
+		assert.Equal(t, signature, recovered.Transaction)
+		assert.Len(t, fixture.submits, 1)
+		assert.Equal(t, 1, reads)
+		require.Len(t, payouts.calls(), 1)
+		assert.Equal(t, "2500", payouts.calls()[0].response.Amount)
+	})
+
 	t.Run("seals at the current watermark without a precompile when the voucher equals settled", func(t *testing.T) {
 		fixture := facilitator(t, nil, true)
 		response := settle(t, fixture.scheme, sealPayload(t, 1_000))

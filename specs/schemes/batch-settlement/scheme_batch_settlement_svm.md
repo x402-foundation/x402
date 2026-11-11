@@ -1815,8 +1815,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   the authoritative replay defense. The same authorization MUST NOT execute the
   resource handler more than once.
 - **Client-supplied transactions.** For `deposit` and `refund`, the facilitator
-  SHOULD maintain a short-lived in-flight cache keyed by the exact serialized
-  transaction or its first signature. Concurrent `/settle` calls for the same
+  SHOULD maintain a short-lived in-flight cache keyed by the transaction's
+  message hash, which is stable across signature variants of the same message.
+  Concurrent `/settle` calls for the same
   transaction MUST be coalesced to one broadcast and one result or rejected
   with `duplicate_settlement`; they MUST NOT produce independent successful
   settlements. The entry MAY be evicted once the transaction's blockhash is no
@@ -1945,10 +1946,14 @@ storage are implementation concerns.
 
 Facilitator `/settle` needs no durable result store: it only coalesces in-flight
 duplicates and remembers broadcasts whose confirmation timed out, and the chain
-answers for everything else. A retry of a completed `seal`, refund, or
-`distribute` MAY therefore be answered from the observed channel status without
-a transaction signature. A facilitator that exposes a payout hook MUST instead
-keep the confirmed payout until the hook has run.
+answers for everything else. A remembered broadcast whose blockhash is no longer
+valid and that the network has no record of MUST be dropped, so a retry
+broadcasts afresh instead of staying `settlement_pending`. A retry of a
+completed `seal`, refund, or `distribute` MAY be answered from the observed
+channel status without a transaction signature. A facilitator that exposes a
+payout hook MUST instead keep the confirmed payout, from the moment the
+transaction confirms, until the hook has run. The hook is at-least-once and MUST
+be idempotent per transaction.
 
 ## 7. Error Codes
 
