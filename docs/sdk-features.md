@@ -51,7 +51,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | exact | avm | - | ✅ | ❌ | ❌ |
 | exact | stellar | - | ✅ | ❌ | ❌ |
 | exact | aptos | - | ✅ | ❌ | ❌ |
-| exact | casper | CEP-3009 | ✅ | ❌  | ❌ |
+| exact | casper | CEP-3009 | ✅ | ✅ | ❌ |
 | exact | hedera | - | ✅ | ❌ | ❌ |
 | exact | tvm | - | ✅ | ❌ | ✅ |
 | exact | keeta | - | ✅ | ❌ | ❌ |
