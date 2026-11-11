@@ -33,8 +33,20 @@ type Config struct {
 	// token account distribute pays. The zero key uses the deployed program's
 	// owner for the requirement's network; set it for a custom or local build.
 	PaymentChannelsTreasuryOwner solana.PublicKey
-	PendingSettlementStore       PendingSettlementStore
-	OnDistributionConfirmed      OnDistributionConfirmed
+	// PendingSettlementStore remembers a broadcast whose confirmation was not
+	// observed, so a retry reconciles that signature instead of sending again.
+	// It is read once per settle and written only on a confirmation timeout.
+	// With OnDistributionConfirmed set it also holds the payout record a retry
+	// replays. Unset uses x402.NewInMemoryPendingSettlementStore.
+	PendingSettlementStore x402.PendingSettlementStore
+	// DuplicateSettlementStore coalesces concurrent settles of one operation
+	// across workers: a worker reserves the signature it is about to send and
+	// a loser reconciles against it. Share one backed by a networked store
+	// across facilitator replicas. Unset uses svm.NewInMemoryDuplicateSettlementStore.
+	DuplicateSettlementStore svm.DuplicateSettlementStore
+	// OnDistributionConfirmed records a confirmed payout. Setting it also
+	// makes the facilitator keep each payout for a retry.
+	OnDistributionConfirmed OnDistributionConfirmed
 	// ChannelStorage is the one channel store for every use case: the lifecycle
 	// index, the receiver-authorizer binding, the delegated caller identity,
 	// and rent cleanup. Unset uses one in-memory instance of this same store.
@@ -88,15 +100,15 @@ type schemeHooks struct {
 
 // BatchSvmScheme is the facilitator role of SVM batch settlement.
 type BatchSvmScheme struct {
-	config          Config
-	raw             paymentchannels.PaymentChannelFacilitatorSigner
-	signer          *recordingSigner
-	channelStorage  paymentchannels.PaymentChannelStorage
-	pendingStore    PendingSettlementStore
-	settlementCache *svm.SettlementCache
-	maxIdleSecs     int64
-	history         ReceiverBindingHistoryReader
-	delegated       *DelegatedReceiverAuth
+	config         Config
+	raw            paymentchannels.PaymentChannelFacilitatorSigner
+	signer         *recordingSigner
+	channelStorage paymentchannels.PaymentChannelStorage
+	pendingStore   x402.PendingSettlementStore
+	duplicateStore svm.DuplicateSettlementStore
+	maxIdleSecs    int64
+	history        ReceiverBindingHistoryReader
+	delegated      *DelegatedReceiverAuth
 	// transactionVersions is the normalized Config.TransactionVersions.
 	transactionVersions []int
 	// facilitatorTransactionVersion is the resolved
@@ -140,14 +152,18 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	}
 	pending := config.PendingSettlementStore
 	if pending == nil {
-		pending = NewInMemoryPendingSettlementStore()
+		pending = x402.NewInMemoryPendingSettlementStore()
+	}
+	duplicates := config.DuplicateSettlementStore
+	if duplicates == nil {
+		duplicates = svm.NewInMemoryDuplicateSettlementStore()
 	}
 	scheme := &BatchSvmScheme{
 		config:              *config,
 		raw:                 raw,
 		channelStorage:      config.ChannelStorage,
 		pendingStore:        pending,
-		settlementCache:     svm.NewSettlementCache(),
+		duplicateStore:      duplicates,
 		maxIdleSecs:         idle,
 		history:             config.ReceiverBindingHistoryReader,
 		delegated:           delegated,
@@ -736,20 +752,19 @@ func (f *BatchSvmScheme) broadcastDurably(
 	if f.hooks.broadcastDurably != nil {
 		return f.hooks.broadcastDurably(ctx, key, network, payer, broadcast)
 	}
-	if completed, ok, err := f.pendingStore.Get(ctx, f.completedBroadcastKey(key)); err != nil {
-		return durableResult{}, err
-	} else if ok {
-		return durableResult{OK: true, Replayed: true, Signature: completed}, nil
-	}
 	if recorded, ok, err := f.pendingStore.Get(ctx, key); err != nil {
 		return durableResult{}, err
 	} else if ok {
-		return f.reconcileBroadcast(ctx, key, recorded, network, payer)
+		recovered, err := f.reconcileBroadcast(ctx, key, recorded, network, payer)
+		if err == nil && recovered.OK {
+			f.forgetPending(ctx, key, recorded)
+		}
+		return recovered, err
 	}
 	return f.sendDurably(ctx, key, network, payer, broadcast)
 }
 
-// broadcastUnchecked is broadcastDurably for callers that already read the completed and pending keys.
+// broadcastUnchecked is broadcastDurably for callers that already read the pending key.
 func (f *BatchSvmScheme) broadcastUnchecked(
 	ctx context.Context,
 	key, network, payer string,
@@ -766,35 +781,28 @@ func (f *BatchSvmScheme) sendDurably(
 	key, network, payer string,
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
-	signature, err := broadcast(func(broadcastSignature, wire string) error {
-		if err := f.pendingStore.Set(ctx, wireKey(network, broadcastSignature), wire); err != nil {
-			return err
-		}
-		reserved, err := ReserveBroadcast(ctx, f.pendingStore, key, broadcastSignature)
-		if err != nil {
-			return err
-		}
-		if reserved {
-			return nil
-		}
-		DiscardWire(ctx, f.pendingStore, network, broadcastSignature)
-		existing, ok, err := f.pendingStore.Get(ctx, key)
+	var reserved, holder string
+	signature, err := broadcast(func(broadcastSignature, _ string) error {
+		existing, ok, err := f.duplicateStore.Reserve(ctx, key, broadcastSignature, ReservationTTL)
 		if err != nil {
 			return err
 		}
 		if ok {
-			return &paymentchannels.SettlementConfirmationTimeoutError{Signature: existing}
+			reserved = broadcastSignature
+			return nil
 		}
-		return errors.New("concurrent broadcast reservation changed")
+		holder = existing
+		return errReservationHeld
 	})
 	if err != nil {
-		if recorded, ok, getErr := f.recoveryGet(ctx, key); getErr != nil {
-			return durableResult{}, getErr
-		} else if ok {
-			return f.reconcileBroadcast(ctx, key, recorded, network, payer)
+		if holder != "" {
+			recovered, err := f.reconcileBroadcast(ctx, key, holder, network, payer)
+			recovered.Replayed = recovered.OK
+			return recovered, err
 		}
 		pending, found := PendingSignatureOf(err)
 		if !found {
+			f.releaseReservation(ctx, key, reserved)
 			return durableResult{}, err
 		}
 		recoveryCtx, cancel := recoveryContext(ctx)
@@ -804,40 +812,40 @@ func (f *BatchSvmScheme) sendDurably(
 	return durableResult{OK: true, Signature: signature}, nil
 }
 
+// releaseReservation frees key after a broadcast that can no longer land, so a
+// retry before the reservation lapses builds a fresh one. A store error is ignored:
+// the reservation then lapses on its own.
+func (f *BatchSvmScheme) releaseReservation(ctx context.Context, key, signature string) {
+	if signature == "" {
+		return
+	}
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
+	_ = f.duplicateStore.Release(recoveryCtx, key, signature)
+}
+
 func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature, network, payer string) (durableResult, error) {
 	if f.hooks.reconcileBroadcast != nil {
 		return f.hooks.reconcileBroadcast(ctx, key, signature, network, payer)
 	}
-	return f.reconcileBroadcastImpl(ctx, key, signature, network, payer, true)
+	return f.reconcileBroadcastImpl(ctx, key, signature, network, payer)
 }
 
-func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signature, network, payer string, resend bool) (durableResult, error) {
-	wire, _, _ := f.recoveryGet(ctx, wireKey(network, signature))
+// reconcileBroadcastImpl awaits the confirmation of a signature already
+// broadcast under key. One that failed onchain clears the pending record and
+// frees the reservation. An unconfirmed one stays pending. The caller clears
+// the pending record once it has finished the operation.
+func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signature, network, payer string) (durableResult, error) {
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
 		return durableResult{}, err
-	}
-	if wire != "" && resend {
-		if tx, decodeErr := svm.DecodeTransaction(wire); decodeErr == nil {
-			_, _ = f.raw.SendTransaction(ctx, tx, network)
-		}
 	}
 	if err := f.observeConfirmation(ctx, parsed, network, &svm.FacilitatorConfirmOptions{SearchTransactionHistory: true}); err != nil {
 		var onchain *svm.TransactionOnchainFailureError
 		if errors.As(err, &onchain) {
 			f.forgetPending(ctx, key, signature)
+			f.releaseReservation(ctx, key, signature)
 			return durableResult{Response: SettleFailureWithTransaction(x402.Network(network), "transaction_failed", payer, onchain.Error(), signature)}, nil
-		}
-		if BroadcastExpiredWithoutLanding(ctx, f.raw, parsed, network, wire) {
-			f.forgetPending(ctx, key, signature)
-			f.discardWire(ctx, network, signature)
-			return durableResult{Response: SettleFailureWithTransaction(
-				x402.Network(network),
-				"transaction_failed",
-				payer,
-				fmt.Sprintf("transaction %s expired before confirmation: its blockhash is no longer valid and the network has no record of it", signature),
-				signature,
-			)}, nil
 		}
 		recoveryCtx, cancel := recoveryContext(ctx)
 		defer cancel()
@@ -846,42 +854,10 @@ func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signat
 	return durableResult{OK: true, Signature: signature}, nil
 }
 
-func (f *BatchSvmScheme) completeBroadcast(ctx context.Context, key, signature, network string) error {
-	recoveryCtx, cancel := recoveryContext(ctx)
-	defer cancel()
-	if err := f.pendingStore.Set(recoveryCtx, f.completedBroadcastKey(key), signature); err != nil {
-		return err
-	}
-	f.forgetPending(ctx, key, signature)
-	f.discardWire(ctx, network, signature)
-	return nil
-}
-
-// discardWire drops the kept wire bytes on a recovery context.
-func (f *BatchSvmScheme) discardWire(ctx context.Context, network, signature string) {
-	recoveryCtx, cancel := recoveryContext(ctx)
-	defer cancel()
-	DiscardWire(recoveryCtx, f.pendingStore, network, signature)
-}
-
-func (f *BatchSvmScheme) completeOrPending(ctx context.Context, key, signature, network, payer string) (*x402.SettleResponse, error) {
-	if err := f.completeBroadcast(ctx, key, signature, network); err != nil {
-		return SettlementPending(x402.Network(network), payer, signature, "operation confirmed but completion could not be persisted: "+err.Error()), nil //nolint:nilerr // the broadcast landed; persistence failure stays pending
-	}
-	return nil, nil
-}
-
-func (f *BatchSvmScheme) completedBroadcastKey(key string) string {
-	return key + CompletedBroadcastSuffix
-}
-
+// forgetPending deletes the pending record of key while it still names signature.
 func (f *BatchSvmScheme) forgetPending(ctx context.Context, key, signature string) {
 	recoveryCtx, cancel := recoveryContext(ctx)
 	defer cancel()
-	if conditional, ok := f.pendingStore.(ConditionalPendingStore); ok {
-		_, _ = conditional.DeleteIfEquals(recoveryCtx, key, signature)
-		return
-	}
 	current, found, err := f.pendingStore.Get(recoveryCtx, key)
 	if err != nil || !found || current != signature {
 		return
@@ -889,11 +865,24 @@ func (f *BatchSvmScheme) forgetPending(ctx context.Context, key, signature strin
 	_ = f.pendingStore.Delete(recoveryCtx, key)
 }
 
+// broadcaster sends a prepared transaction under a durable operation key.
+type broadcaster func(ctx context.Context, key, network, payer string, send func(func(signature, wire string) error) (string, error)) (durableResult, error)
+
+// submitRedemption sends a redemption after checking the pending record of key.
 func (f *BatchSvmScheme) submitRedemption(ctx context.Context, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {
+	return f.submitWith(ctx, f.broadcastDurably, feePayer, network, instructions, key, payer)
+}
+
+// submitRedemptionUnchecked sends a redemption for a caller that already read the pending record of key.
+func (f *BatchSvmScheme) submitRedemptionUnchecked(ctx context.Context, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {
+	return f.submitWith(ctx, f.broadcastUnchecked, feePayer, network, instructions, key, payer)
+}
+
+func (f *BatchSvmScheme) submitWith(ctx context.Context, broadcastWith broadcaster, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {
 	if f.hooks.submitRedemption != nil {
 		return f.hooks.submitRedemption(ctx, feePayer, network, instructions, key, payer)
 	}
-	broadcast, err := f.broadcastDurably(ctx, key, network, payer, func(onPrepared func(string, string) error) (string, error) {
+	broadcast, err := broadcastWith(ctx, key, network, payer, func(onPrepared func(string, string) error) (string, error) {
 		feeKey, err := solana.PublicKeyFromBase58(feePayer)
 		if err != nil {
 			return "", err
@@ -1009,9 +998,7 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,
-		CompleteOrPending:       f.completeOrPending,
 		NowSeconds:              f.now,
-		SettlementCache:         f.settlementCache,
 		OnDistributionConfirmed: f.config.OnDistributionConfirmed,
 	}
 }
@@ -1055,10 +1042,6 @@ func decodeAs[T any](value any) (T, error) {
 		return out, err
 	}
 	return out, nil
-}
-
-func wireKey(network, signature string) string {
-	return "batch:transaction:" + network + ":" + signature + ":wire"
 }
 
 func extraInt(extra map[string]any, key string) (int64, bool) {

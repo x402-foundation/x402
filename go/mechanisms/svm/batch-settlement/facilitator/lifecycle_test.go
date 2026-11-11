@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1579,37 +1578,10 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.ErrorContains(t, err, batchsettlement.ErrReceiverBindingUnavailable)
 	})
 
-	t.Run("serializes opens by channel and releases the lock before broadcast failures", func(t *testing.T) {
-		facilitatorSigner := newSigner(t)
-		scheme := newScheme(t, facilitatorSigner, nil)
+	t.Run("holds no reservation after a top-up fails before broadcast", func(t *testing.T) {
 		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
 		require.NoError(t, err)
-		deposit := batchsettlement.ParsedBatchPayload{
-			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
-			Deposit: &batchsettlement.BatchDeposit{Amount: "1000", Transaction: "open-a"}, Voucher: &voucher,
-		}
-		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
-			return ValidatedDeposit{
-				ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 1_000, IsTopUp: false,
-				Payload: batchsettlement.BatchDepositPayload{
-					Type: deposit.Type, ChannelConfig: channelConfig, Deposit: *deposit.Deposit, Voucher: &voucher,
-				},
-				Terms: defaultTerms,
-			}, nil
-		}
-		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
-		key := "batch:deposit:" + network + ":" + channelID
-		require.False(t, scheme.settlementCache.IsDuplicate(key)) // seed pending
 		req := requirements()
-		for _, transaction := range []string{"open-a", "open-b"} {
-			payload := deposit
-			payload.Deposit = &batchsettlement.BatchDeposit{Amount: "1000", Transaction: transaction}
-			result, err := scheme.settleDeposit(ctx, payload, req, nil)
-			require.NoError(t, err)
-			require.False(t, result.Success)
-			require.Equal(t, ChannelBusy, result.ErrorReason)
-		}
-
 		simSigner := newSigner(t)
 		simSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
 			return errors.New("bad simulation")
@@ -1646,9 +1618,16 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		simulation.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
 		_, err = simulation.settleDeposit(ctx, topUpPayload, req, nil)
 		require.ErrorContains(t, err, batchsettlement.ErrSettlementSimulation)
-		topKey := "batch:topup:" + network + ":" + openWire
-		_, held := simulation.settlementCache.Entries()[topKey]
-		require.False(t, held)
+		_, openHash, err := decodeWithMessageHash(openWire)
+		require.NoError(t, err)
+		topKey := "batch:topup:" + network + ":" + openHash
+		requireNotReserved := func(scheme *BatchSvmScheme) {
+			t.Helper()
+			holder, reserved, err := scheme.duplicateStore.Reserve(ctx, topKey, "probe", ReservationTTL)
+			require.NoError(t, err)
+			require.True(t, reserved, "held by %q", holder)
+		}
+		requireNotReserved(simulation)
 
 		classifiedSigner := newSigner(t)
 		classifiedSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
@@ -1667,8 +1646,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		indexing.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
 		_, err = indexing.settleDeposit(ctx, topUpPayload, req, nil)
 		require.ErrorContains(t, err, "storage unavailable")
-		_, held = indexing.settlementCache.Entries()[topKey]
-		require.False(t, held)
+		requireNotReserved(indexing)
 	})
 
 	t.Run("prepares and confirms a voucher claim batch", func(t *testing.T) {
@@ -1970,10 +1948,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, fixedSigStr, first.Signature)
 
 		pendingStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 		}
@@ -1992,7 +1967,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.NotEmpty(t, calls)
 		require.NotNil(t, calls[0].opts)
 		require.True(t, calls[0].opts.SearchTransactionHistory)
-		require.Zero(t, pendingStore.deletes)
+		require.Equal(t, 1, pendingStore.deletes, "the pending record is cleared once the reconcile finds the transaction landed")
 	})
 
 	t.Run("distinguishes pre-broadcast, pending, and onchain-terminal failures", func(t *testing.T) {
@@ -2011,10 +1986,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, fixedSigStr, pending.Response.Transaction)
 
 		terminalStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 		}
@@ -2039,10 +2011,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.NotZero(t, terminalStore.deletes)
 
 		retryStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 			deleteErr: errors.New("delete failed"),
