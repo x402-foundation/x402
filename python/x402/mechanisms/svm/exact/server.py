@@ -9,6 +9,12 @@ from ....schemas import AssetAmount, Network, PaymentRequirements, Price, Suppor
 from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset, get_default_asset
+from .splits import (
+    assert_within_capabilities,
+    get_split_capabilities,
+    parse_payment_legs,
+    uses_split_terms,
+)
 
 if TYPE_CHECKING:
     from ..rpc import SvmRpcClient
@@ -131,6 +137,10 @@ class ExactSvmScheme:
 
         Returns:
             Enhanced payment requirements with feePayer in extra.
+
+        Raises:
+            SplitsError: If ``extra.splits`` / ``extra.ataCreationRequired`` are
+                invalid or exceed what the facilitator advertises (§5.5).
         """
         # Mark unused parameters to satisfy linter
         _ = extension_keys
@@ -146,6 +156,14 @@ class ExactSvmScheme:
         extra = supported_kind.extra or {}
         if "feePayer" in extra:
             requirements.extra["feePayer"] = extra["feePayer"]
+
+        # A server MUST NOT issue splits the selected facilitator does not
+        # advertise (§5.5), so a misconfigured route fails here rather than as a
+        # verify rejection after the client has signed.
+        if uses_split_terms(requirements):
+            assert_within_capabilities(
+                parse_payment_legs(requirements), get_split_capabilities(extra)
+            )
 
         # Copy the transaction message versions the facilitator advertises so
         # the client builds one of them (absent means version 0).

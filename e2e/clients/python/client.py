@@ -118,16 +118,33 @@ def create_e2e_client(
 
     if svm_private_key:
         svm_signer = KeypairSigner.from_base58(svm_private_key)
+
+        def approve_splits(splits: list[dict[str, str]], context: dict[str, Any]) -> bool:
+            return (
+                len(splits) == 1
+                and splits[0]["payTo"] == "4AdS22kC7xzb4bcqg9JATuCfAMNcQYcZa1u5eWzs6cSJ"
+                and splits[0]["amount"] == "100"
+                and not splits[0].get("memo")
+                and context["primaryAmount"] == "900"
+            )
+
         if svm_transaction_versions is None:
             register_exact_svm_client(
-                client, svm_signer, networks=network_caip2_pattern("svm"), rpc_url=svm_rpc_url
+                client,
+                svm_signer,
+                networks=network_caip2_pattern("svm"),
+                rpc_url=svm_rpc_url,
+                approve_splits=approve_splits,
             )
         else:
             # v2 only: the v1 exact scheme has no transaction-version option.
             client.register(
                 network_caip2_pattern("svm"),
                 ExactSvmClientScheme(
-                    svm_signer, svm_rpc_url, transaction_versions=svm_transaction_versions
+                    svm_signer,
+                    svm_rpc_url,
+                    transaction_versions=svm_transaction_versions,
+                    approve_splits=approve_splits,
                 ),
             )
 
