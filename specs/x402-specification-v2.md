@@ -493,6 +493,14 @@ Each `SupportedKind` object in the `kinds` array contains:
 | `network`     | `string` | Required | Blockchain network identifier in CAIP-2 format             |
 | `extra`       | `object` | Optional | Additional scheme-specific configuration                   |
 
+## 7.4 Requirement Binding (客户端 accepted 与服务端 accepts[] 强制绑定)
+
+Resource Server 在向 facilitator 发起 `POST /verify`（§7.1）或 `POST /settle`（§7.2）之前，必须将客户端提交的 `PaymentPayload.accepted` 与自身在 `PaymentRequired` 中发布的 `accepts[]` 进行逐字段匹配绑定：
+
+1. **绑定前置**：在调用 `/verify` 或 `/settle` 前，Resource Server 必须把客户端 `accepted` 的 `scheme`、`network`、`amount`、`asset`、`payTo`、`maxTimeoutSeconds` 与 `extra` 逐一与自身已发布 `accepts[]` 中的一项完全匹配。网络（CAIP-2）、金额、资产、收款方与方案必须精确相等。
+2. **禁止转发未绑定 accepted**：客户端 `accepted` 若不存在于服务端自身发布的 `accepts[]` 中，Resource Server 必须在任何 facilitator 调用之前以 `400 Invalid Request` 拒绝，严禁直接转发未绑定的客户端 `accepted`。
+3. **服务端权威**：Resource Server 发布的 `accepts[]` 是唯一可信来源；客户端 `accepted` 仅为对其的选择，不得替代、合并或补全服务端发布的条件。发送至 `/verify`/`settle` 的 `paymentRequirements` 必须源自匹配到的服务端 `accepts[]` 条目，而非直接拷贝客户端载荷。
+
 ## 8. Discovery API
 
 The x402 protocol includes a discovery mechanism that allows clients to find and explore available x402-enabled resources. This enables the creation of marketplaces (known as "Bazaars") where users can discover and access monetized APIs and digital services.
@@ -625,6 +633,10 @@ The x402 protocol implements multiple layers of protection against replay attack
 ### 10.2 Authentication Integration
 
 The protocol supports integration with authentication systems (e.g., Sign-In with Ethereum - SIWE) to enable authenticated pricing models where verified users receive discounted rates or special access terms.
+
+### 10.3 Requirement Binding Enforcement
+
+Resource Server 必须按 §7.4 在 `/verify` 与 `/settle` 前将客户端 `accepted` 与自身发布的 `accepts[]` 强制绑定，未绑定的客户端付款载荷必须拒绝，禁止直转。此绑定防止客户端伪造支付条件绕过服务端策略。
 
 ## 11. Implementation Notes
 
