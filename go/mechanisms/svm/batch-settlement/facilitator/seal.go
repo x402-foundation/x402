@@ -231,11 +231,7 @@ func settleSeal(
 		sealed.Amount = fmt.Sprintf("%d", refunded)
 	}
 	if deps.OnDistributionConfirmed != nil {
-		encoded, err := json.Marshal(sealed)
-		if err != nil {
-			return nil, err
-		}
-		if err := deps.PendingStore.Set(ctx, resultKey(key), string(encoded)); err != nil {
+		if err := storePayoutResult(ctx, deps.PendingStore, key, sealed); err != nil {
 			return nil, err
 		}
 	}
@@ -255,6 +251,28 @@ func resultKey(key string) string { return key + ":result" }
 
 // recordedKey marks a payout the OnDistributionConfirmed hook already received.
 func recordedKey(key string) string { return key + ":recorded" }
+
+// storePayoutResult keeps a payout response for a retry to replay.
+func storePayoutResult(ctx context.Context, store x402.PendingSettlementStore, key string, response *x402.SettleResponse) error {
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	return store.Set(ctx, resultKey(key), string(encoded))
+}
+
+// deliverPayoutOnce hands response to hook unless a previous call for key already did.
+func deliverPayoutOnce(ctx context.Context, store x402.PendingSettlementStore, hook OnDistributionConfirmed, key string, response *x402.SettleResponse, requirements types.PaymentRequirements) error {
+	if recorded, ok, err := store.Get(ctx, recordedKey(key)); err != nil {
+		return err
+	} else if ok && recorded != "" {
+		return nil
+	}
+	if err := hook(ctx, response, requirements); err != nil {
+		return err
+	}
+	return store.Set(ctx, recordedKey(key), "1")
+}
 
 // PrepareRefund validates a refund and picks the cooperative close or the payer-signed request_close.
 func PrepareRefund(
@@ -406,13 +424,6 @@ func notifySealDistribution(
 	if hook == nil {
 		return nil
 	}
-	recorded, ok, err := store.Get(ctx, recordedKey(key))
-	if err != nil {
-		return err
-	}
-	if ok && recorded != "" {
-		return nil
-	}
 	merchant, found := response.Extra[extraPaidToReceiver].(string)
 	switch intent {
 	case CloseIntentSeal:
@@ -428,10 +439,7 @@ func notifySealDistribution(
 	}
 	view := *response
 	view.Amount = merchant
-	if err := hook(ctx, &view, requirements); err != nil {
-		return err
-	}
-	return store.Set(ctx, recordedKey(key), "1")
+	return deliverPayoutOnce(ctx, store, hook, key, &view, requirements)
 }
 
 func completeSealDistribution(

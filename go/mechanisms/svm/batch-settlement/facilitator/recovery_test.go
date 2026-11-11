@@ -1004,7 +1004,7 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 			return nil
 		}, []svm.FacilitatorTokenBalance{token(0, payTo, "9900")})
 
-		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), prepared, requirements)
+		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, requirements)
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		require.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)
@@ -1026,7 +1026,7 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 		require.NoError(t, store.Set(context.Background(), key, signature.String()))
 		scheme := newScheme(t, store, nil, []svm.FacilitatorTokenBalance{token(0, payTo, "9900")})
 
-		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), prepared, requirements)
+		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, requirements)
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		require.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)

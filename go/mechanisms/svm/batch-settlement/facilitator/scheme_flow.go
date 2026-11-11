@@ -20,31 +20,25 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-type durablePhase string
-
-const (
-	phaseCompleted durablePhase = "completed"
-	phasePending   durablePhase = "pending"
-	phaseBroadcast durablePhase = "broadcast"
-)
-
 type durableArgs struct {
-	key           string
-	network       string
-	payer         string
-	beforeSend    func() (*x402.SettleResponse, error)
-	send          func(func(string, string) error) (string, error)
-	broadcast     func() (durableResult, error)
-	onReplay      func(string) *x402.SettleResponse
-	postcondition func(signature string, phase durablePhase) (any, *x402.SettleResponse, error)
+	key        string
+	network    string
+	payer      string
+	beforeSend func() (*x402.SettleResponse, error)
+	send       func(func(string, string) error) (string, error)
+	broadcast  func() (durableResult, error)
+	onReplay   func(string) *x402.SettleResponse
+	// postcondition observes the operation's result onchain. fromPending is true
+	// when signature was recovered from the pending store rather than just sent.
+	postcondition func(signature string, fromPending bool) (any, *x402.SettleResponse, error)
 }
 
 // settleDurably runs one operation under args.key: it reconciles a pending
 // broadcast, answers from chain state in beforeSend, or broadcasts under a
 // reservation. Storage cost on the happy path is one pending read and one reservation.
 func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (any, string, *x402.SettleResponse, error) {
-	finish := func(signature string, phase durablePhase) (any, string, *x402.SettleResponse, error) {
-		channel, response, err := args.postcondition(signature, phase)
+	finish := func(signature string, fromPending bool) (any, string, *x402.SettleResponse, error) {
+		channel, response, err := args.postcondition(signature, fromPending)
 		if err != nil || response != nil {
 			return nil, signature, response, err
 		}
@@ -57,7 +51,7 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 		if err != nil || !recovered.OK {
 			return nil, recovered.Signature, recovered.Response, err
 		}
-		channel, signature, response, err := finish(recovered.Signature, phasePending)
+		channel, signature, response, err := finish(recovered.Signature, true)
 		if err == nil && response == nil {
 			f.forgetPending(ctx, args.key, pending)
 		}
@@ -86,11 +80,7 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 	if sent.Replayed && args.onReplay != nil {
 		return nil, sent.Signature, args.onReplay(sent.Signature), nil
 	}
-	phase := phaseBroadcast
-	if sent.Replayed {
-		phase = phaseCompleted
-	}
-	return finish(sent.Signature, phase)
+	return finish(sent.Signature, false)
 }
 
 func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettlement.ParsedBatchPayload, requirements types.PaymentRequirements, bound ProofAmountBound) (ValidatedDeposit, error) {
@@ -400,7 +390,7 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 					}
 					return signature, nil
 				},
-				postcondition: func(string, durablePhase) (any, *x402.SettleResponse, error) {
+				postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
 					channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
 					if err != nil {
 						return nil, nil, err
@@ -599,7 +589,7 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 		onReplay: func(signature string) *x402.SettleResponse {
 			return ClaimResponse(prepared, x402.Network(requirements.Network), signature)
 		},
-		postcondition: func(signature string, _ durablePhase) (any, *x402.SettleResponse, error) {
+		postcondition: func(signature string, _ bool) (any, *x402.SettleResponse, error) {
 			ids := make([]string, len(prepared))
 			for i, item := range prepared {
 				ids[i] = item.ChannelID
@@ -761,7 +751,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		if err != nil || !recovered.OK {
 			return recovered.Response, err
 		}
-		return f.finishDistribution(ctx, key, recovered.Signature, prepared, requirements)
+		return f.finishDistribution(ctx, key, recovered.Signature, true, prepared, requirements)
 	}
 	var instructions []solana.Instruction
 	var swept []PreparedDistribution
@@ -810,30 +800,34 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	if err != nil || !submitted.OK {
 		return submitted.Response, err
 	}
-	return f.finishDistribution(ctx, key, submitted.Signature, prepared, requirements)
+	return f.finishDistribution(ctx, key, submitted.Signature, false, prepared, requirements)
 }
 
-func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+// finishDistribution attributes a confirmed sweep and keeps its payout for a
+// retry. fromPending is true when signature came from the pending store, the
+// only case where a pending record exists to clear.
+func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 	response, err := f.attributeDistribution(ctx, signature, prepared, requirements)
 	if err != nil {
 		var ambiguous *PayoutAttributionAmbiguousError
-		if errors.As(err, &ambiguous) {
-			failed := SettleFailureWithTransaction(x402.Network(requirements.Network), batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
-			if err := f.keepPayoutResult(ctx, key, failed); err != nil {
-				return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
-			}
-			f.forgetPending(ctx, key, signature)
-			return failed, nil
+		if !errors.As(err, &ambiguous) {
+			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil
 		}
-		return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil
+		response = SettleFailureWithTransaction(x402.Network(requirements.Network), batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
+		if err := f.keepPayoutResult(ctx, key, response); err != nil {
+			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+		}
+	} else {
+		if err := f.keepPayoutResult(ctx, key, response); err != nil {
+			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+		}
+		if err := f.recordPayout(ctx, key, response, requirements); err != nil {
+			return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a hook failure stays pending
+		}
 	}
-	if err := f.keepPayoutResult(ctx, key, response); err != nil {
-		return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+	if fromPending {
+		f.forgetPending(ctx, key, signature)
 	}
-	if err := f.recordPayout(ctx, key, response, requirements); err != nil {
-		return SettlementPending(x402.Network(requirements.Network), "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; a hook failure stays pending
-	}
-	f.forgetPending(ctx, key, signature)
 	return response, nil
 }
 
@@ -843,11 +837,7 @@ func (f *BatchSvmScheme) keepPayoutResult(ctx context.Context, key string, respo
 	if f.config.OnDistributionConfirmed == nil {
 		return nil
 	}
-	encoded, err := json.Marshal(response)
-	if err != nil {
-		return err
-	}
-	return f.pendingStore.Set(ctx, resultKey(key), string(encoded))
+	return storePayoutResult(ctx, f.pendingStore, key, response)
 }
 
 // recordPayout hands a confirmed payout to OnDistributionConfirmed once per key.
@@ -855,15 +845,7 @@ func (f *BatchSvmScheme) recordPayout(ctx context.Context, key string, response 
 	if f.config.OnDistributionConfirmed == nil {
 		return nil
 	}
-	if recorded, ok, err := f.pendingStore.Get(ctx, recordedKey(key)); err != nil {
-		return err
-	} else if ok && recorded != "" {
-		return nil
-	}
-	if err := f.config.OnDistributionConfirmed(ctx, response, requirements); err != nil {
-		return err
-	}
-	return f.pendingStore.Set(ctx, recordedKey(key), "1")
+	return deliverPayoutOnce(ctx, f.pendingStore, f.config.OnDistributionConfirmed, key, response, requirements)
 }
 
 // attributeDistribution reads the confirmed sweep and attributes the
@@ -1014,9 +996,9 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 		onReplay: func(signature string) *x402.SettleResponse {
 			return RecoveredRefundResponse(prepared.ChannelID, payer, x402.Network(requirements.Network), signature)
 		},
-		postcondition: func(signature string, phase durablePhase) (any, *x402.SettleResponse, error) {
+		postcondition: func(signature string, fromPending bool) (any, *x402.SettleResponse, error) {
 			observed, matched, err := f.fetchChannelUntil(ctx, requirements.Network, prepared.ChannelID, func(channel *generated.Channel) bool {
-				if phase == phasePending {
+				if fromPending {
 					return channel == nil || statusIn(channel, closed)
 				}
 				return channel != nil && statusIn(channel, closed)
@@ -1024,7 +1006,7 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 			if err != nil {
 				return nil, nil, err
 			}
-			if phase == phasePending && matched && observed == nil {
+			if fromPending && matched && observed == nil {
 				return (*generated.Channel)(nil), nil, nil
 			}
 			if !matched || observed == nil {

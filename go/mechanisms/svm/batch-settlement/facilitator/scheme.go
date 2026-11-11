@@ -904,10 +904,7 @@ func (f *BatchSvmScheme) submitWith(ctx context.Context, broadcastWith broadcast
 	if err != nil {
 		return durableResult{}, err
 	}
-	if !broadcast.OK {
-		return broadcast, nil
-	}
-	return durableResult{OK: true, Replayed: broadcast.Replayed, Signature: broadcast.Signature}, nil
+	return broadcast, nil
 }
 
 func (f *BatchSvmScheme) assertClaimChannel(channel *generated.Channel, config batchsettlement.BatchChannelConfig, terms BatchTerms, requirements types.PaymentRequirements, allowed []generated.ChannelStatus) error {
