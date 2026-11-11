@@ -647,6 +647,17 @@ def _settle_permit2_direct(
         return _map_settle_error(e, network, payer)
 
 
+def _split_eip2612_signature(signature: str) -> tuple[int, bytes, bytes]:
+    """permit() accepts v of 27 or 28."""
+    sig_raw = hex_to_bytes(signature)
+    if len(sig_raw) != 65:
+        raise ValueError("EIP-2612 signature must be 65 bytes")
+    v = sig_raw[64]
+    if v < 27:
+        v += 27
+    return v, sig_raw[:32], sig_raw[32:64]
+
+
 def _settle_permit2_with_eip2612(
     signer: FacilitatorEvmSigner,
     payload: PaymentPayload,
@@ -664,15 +675,7 @@ def _settle_permit2_with_eip2612(
             permit2_payload
         )
 
-        sig_hex = eip2612_info.signature
-        sig_raw = hex_to_bytes(sig_hex)
-        if len(sig_raw) != 65:
-            return _map_settle_error(
-                ValueError("EIP-2612 signature must be 65 bytes"), network, payer
-            )
-        r = sig_raw[:32]
-        s = sig_raw[32:64]
-        v = sig_raw[64]
+        v, r, s = _split_eip2612_signature(eip2612_info.signature)
 
         permit2612_tuple = (
             int(eip2612_info.amount),
