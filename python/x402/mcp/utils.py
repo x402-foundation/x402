@@ -86,13 +86,11 @@ def extract_payment_from_meta(params: dict[str, Any]) -> PaymentPayload | None:
     if payment_data is None:
         return None
 
-    # Convert to PaymentPayload
     try:
         if isinstance(payment_data, PaymentPayload):
             return payment_data
         if isinstance(payment_data, dict):
             return PaymentPayload(**payment_data)
-        # Try JSON string
         if isinstance(payment_data, str):
             data = json.loads(payment_data)
             return PaymentPayload(**data)
@@ -182,7 +180,6 @@ def extract_payment_response_from_meta(
             return response_data
         if isinstance(response_data, dict):
             return SettleResponse(**response_data)
-        # Try JSON string
         if isinstance(response_data, str):
             data = json.loads(response_data)
             return SettleResponse(**data)
@@ -324,7 +321,6 @@ def _extract_payment_required_from_object(
     Returns:
         PaymentRequired / PaymentRequiredV1 if valid, None otherwise
     """
-    # Check for x402Version/x402_version and accepts fields
     if "x402Version" not in obj and "x402_version" not in obj:
         return None
 
@@ -457,12 +453,10 @@ def extract_payment_required_from_error(error: Any) -> PaymentRequired | Payment
     if not is_object(error):
         return None
 
-    # Check if this is a 402 payment required error
     code = error.get("code")
     if code != MCP_PAYMENT_REQUIRED_CODE:
         return None
 
-    # Extract and validate the data field
     data = error.get("data")
     if not is_object(data):
         return None
@@ -484,7 +478,6 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     Returns:
         MCPToolResult
     """
-    # Extract content
     content = getattr(mcp_result, "content", [])
     if not isinstance(content, list):
         content = []
@@ -494,14 +487,12 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     if is_error is None:
         is_error = getattr(mcp_result, "is_error", False)
 
-    # Extract meta
     meta = getattr(mcp_result, "meta", None)
     if not isinstance(meta, dict):
         meta = getattr(mcp_result, "_meta", {})
     if not isinstance(meta, dict):
         meta = {}
 
-    # Extract structuredContent
     structured_content = getattr(mcp_result, "structuredContent", None)
     if structured_content is None:
         structured_content = getattr(mcp_result, "structured_content", None)
@@ -560,28 +551,6 @@ def build_x402_client_config(
         spend_controls=spend_controls,
         payment_requirements_selector=payment_requirements_selector,
     )
-
-
-def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None:
-    """Register payment schemes on a payment client.
-
-    Shared helper used by factory functions in both sync and async clients
-    to avoid duplicating scheme registration logic.
-
-    Args:
-        payment_client: x402 payment client (sync or async)
-        schemes: List of scheme registrations, each with 'network' and 'client' keys,
-                 and optional 'x402_version' (defaults to 2)
-    """
-    for scheme in schemes:
-        network = scheme["network"]
-        client_scheme = scheme["client"]
-        x402_version = scheme.get("x402_version", 2)
-
-        if x402_version == 1:
-            payment_client.register_v1(network, client_scheme)
-        else:
-            payment_client.register(network, client_scheme)
 
 
 def is_payment_required_error(error: Exception) -> bool:

@@ -8,6 +8,7 @@ from eth_account import Account
 from x402 import NoMatchingRequirementsError, x402ClientSync
 from x402.mechanisms.evm.exact import register_exact_evm_client
 from x402.mechanisms.evm.exact.v1.client import ExactEvmSchemeV1
+from x402.mechanisms.evm.v1.constants import V1_NETWORK_CHAIN_IDS
 from x402.schemas.v1 import PaymentRequiredV1, PaymentRequirementsV1
 
 
@@ -55,3 +56,13 @@ class TestRegisterExactEvmClientV1Networks:
             payload = client.create_payment_payload(_payment_required_v1("base"))
 
         assert payload.network == "base"
+
+    @pytest.mark.parametrize("network", sorted(V1_NETWORK_CHAIN_IDS))
+    def test_should_accept_every_v1_network_in_the_chain_id_map(self, network: str):
+        client = x402ClientSync().set_spend_controls(False)
+        register_exact_evm_client(client, Account.create())
+
+        with patch.object(ExactEvmSchemeV1, "create_payment_payload", return_value={"ok": True}):
+            payload = client.create_payment_payload(_payment_required_v1(network))
+
+        assert payload.network == network

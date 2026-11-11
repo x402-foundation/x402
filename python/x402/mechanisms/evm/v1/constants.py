@@ -23,6 +23,8 @@ V1_NETWORKS = [
     "stable",
     "stable-testnet",
     "celo",
+    "ethereum",
+    "flare",
 ]
 
 # V1 network name to chain ID mapping
@@ -40,9 +42,9 @@ V1_NETWORK_CHAIN_IDS: dict[str, int] = {
     "sei": 1329,
     "sei-testnet": 1328,
     "peaq": 3338,
-    "story": 1513,
-    "educhain": 656476,
-    "skale-base-sepolia": 1444673419,
+    "story": 1514,
+    "educhain": 41923,
+    "skale-base-sepolia": 324705682,
     "megaeth": 4326,
     "monad": 143,
     "monad-testnet": 10143,

@@ -784,14 +784,12 @@ async def _create_payment_required_result_async(
             config.extensions,
         )
 
-    # Convert to dict for structuredContent
     payment_required_dict = (
         payment_required.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payment_required, "model_dump")
         else payment_required
     )
 
-    # Create content text
     content_text = json.dumps(payment_required_dict)
 
     return MCPToolResult(

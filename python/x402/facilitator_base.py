@@ -285,63 +285,57 @@ class x402FacilitatorBase:
     # Internal Helpers
     # ========================================================================
 
+    def _find_registered(
+        self,
+        schemes: list[SchemeData[FacilitatorT]],
+        scheme: str,
+        network: Network,
+    ) -> FacilitatorT | None:
+        for scheme_data in schemes:
+            if scheme_data.facilitator.scheme != scheme:
+                continue
+            if network in scheme_data.networks or matches_network_pattern(
+                network, scheme_data.pattern
+            ):
+                return scheme_data.facilitator
+        return None
+
     def _find_facilitator(
         self,
         scheme: str,
         network: Network,
     ) -> SchemeNetworkFacilitator | None:
-        """Find V2 facilitator for scheme/network."""
-        for scheme_data in self._schemes:
-            if scheme_data.facilitator.scheme != scheme:
-                continue
-
-            # Check if network matches
-            if network in scheme_data.networks:
-                return scheme_data.facilitator
-
-            # Check wildcard pattern
-            if matches_network_pattern(network, scheme_data.pattern):
-                return scheme_data.facilitator
-
-        return None
+        return self._find_registered(self._schemes, scheme, network)
 
     def _find_facilitator_v1(
         self,
         scheme: str,
         network: Network,
     ) -> SchemeNetworkFacilitatorV1 | None:
-        """Find V1 facilitator for scheme/network."""
-        for scheme_data in self._schemes_v1:
-            if scheme_data.facilitator.scheme != scheme:
-                continue
-
-            # Check if network matches
-            if network in scheme_data.networks:
-                return scheme_data.facilitator
-
-            # Check wildcard pattern
-            if matches_network_pattern(network, scheme_data.pattern):
-                return scheme_data.facilitator
-
-        return None
+        return self._find_registered(self._schemes_v1, scheme, network)
 
     def _build_facilitator_context(self) -> FacilitatorContext:
         """Build a FacilitatorContext from the registered extensions."""
         return FacilitatorContext(self._extensions)
+
+    def _require_facilitator(
+        self,
+        finder: Callable[[str, Network], FacilitatorT | None],
+        payload: PaymentPayload | PaymentPayloadV1,
+    ) -> FacilitatorT:
+        scheme = payload.get_scheme()
+        network = payload.get_network()
+        facilitator = finder(scheme, network)
+        if facilitator is None:
+            raise SchemeNotFoundError(scheme, network)
+        return facilitator
 
     def _verify_v2(
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> VerifyResponse:
-        """Verify V2 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator, payload)
         return facilitator.verify(payload, requirements, self._build_facilitator_context())
 
     def _verify_v1(
@@ -349,14 +343,7 @@ class x402FacilitatorBase:
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
     ) -> VerifyResponse:
-        """Verify V1 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator_v1(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator_v1, payload)
         return facilitator.verify(payload, requirements, self._build_facilitator_context())
 
     def _settle_v2(
@@ -364,14 +351,7 @@ class x402FacilitatorBase:
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> SettleResponse:
-        """Settle V2 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator, payload)
         return facilitator.settle(payload, requirements, self._build_facilitator_context())
 
     def _settle_v1(
@@ -379,14 +359,7 @@ class x402FacilitatorBase:
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
     ) -> SettleResponse:
-        """Settle V1 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator_v1(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator_v1, payload)
         return facilitator.settle(payload, requirements, self._build_facilitator_context())
 
     # ========================================================================

@@ -175,11 +175,9 @@ class x402MCPClient:
         probe_kwargs = {**kwargs, "read_timeout_seconds": probe_timeout}
         result = await self._call_mcp_tool(call_params, **probe_kwargs)
 
-        # Check if this is a payment required response
         payment_required = extract_payment_required_from_result(result)
 
         if payment_required is None:
-            # Free tool - return as-is
             return MCPToolCallResult(
                 content=result.content,
                 is_error=result.is_error,
@@ -384,10 +382,7 @@ class x402MCPClient:
         Returns:
             MCP tool result
         """
-        # Call the underlying MCP client's call_tool method (async)
         mcp_result = await self._mcp_client.call_tool(params, **kwargs)
-
-        # Convert to our MCPToolResult format
         return convert_mcp_result(mcp_result)
 
     # Passthrough methods - forward to underlying async MCP client
@@ -575,7 +570,7 @@ def wrap_mcp_client_with_payment(
         )
         ```
     """
-    return x402MCPClient(
+    return create_x402_mcp_client(
         mcp_client,
         payment_client,
         auto_payment=auto_payment,
