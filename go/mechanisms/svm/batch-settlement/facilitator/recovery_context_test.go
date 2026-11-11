@@ -99,7 +99,7 @@ func TestBatchSettlementRecoveryOutlivesRequestContext(t *testing.T) {
 			send: func(func(string, string) error) (string, error) {
 				return signature, nil
 			},
-			postcondition: func(string, durablePhase) (any, *x402.SettleResponse, error) {
+			postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
 				return nil, nil, nil
 			},
 		})
