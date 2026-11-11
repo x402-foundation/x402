@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Standalone example (no Spring); not part of the java/ reactor. Install the SDK first:
+       mvn -f java/pom.xml install -DskipTests -->
+  <groupId>org.x402.examples</groupId>
+  <artifactId>java-http-client</artifactId>
+  <version>0.0.0</version>
+  <name>x402 example: java.net.http client</name>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <x402.version>2.0.0-SNAPSHOT</x402.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- The SDK's own versions (Jackson, cardano-client-lib, JUnit, WireMock, ...). -->
+      <dependency>
+        <groupId>org.x402</groupId>
+        <artifactId>x402-parent</artifactId>
+        <version>${x402.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-core</artifactId>
+      <version>${x402.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-mechanism-cardano</artifactId>
+      <version>${x402.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+      </plugin>
+      <plugin>
+        <!-- mvn -q compile exec:java [-Dexec.args=http://127.0.0.1:8080/report] -->
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>org.x402.examples.client.JavaHttpClientExample</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

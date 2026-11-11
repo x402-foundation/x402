@@ -199,7 +199,7 @@ export function printHelp(): void {
   console.log('  --versions=<list>          Comma-separated version numbers (e.g., 1,2)');
   console.log('  --families=<list>          Comma-separated protocol families (e.g., evm,svm,hedera,tvm)');
   console.log('  --schemes=<list>           Payment schemes: exact, upto, batch-settlement, auth-capture');
-  console.log('  --sdk=<list>               SDK languages: ts, go, python (aliases: typescript, py)');
+  console.log('  --sdk=<list>               SDK languages: ts, go, python, java (aliases: typescript, py)');
   console.log('  --paymentflow=<list>       Payment flows: authorization, upfront, escrow');
   console.log('  --assetTransferMethod=<list>  Asset transfer methods: eip3009, permit2, sequence, ticketSequence');
   console.log('  --batchVoucherStore=<mode> Custody side: self or facilitator (skips the other batch server role)');

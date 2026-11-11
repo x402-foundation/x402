@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.x402</groupId>
+    <artifactId>x402-parent</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>x402-mechanism-cardano</artifactId>
+  <name>x402-mechanism-cardano</name>
+  <description>Cardano exact scheme: client, server (incl. Masumi terms binding) and facilitator.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.bloxbean.cardano</groupId>
+      <artifactId>cardano-client-lib</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.bloxbean.cardano</groupId>
+      <artifactId>cardano-client-backend-blockfrost</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.bloxbean.cardano</groupId>
+      <artifactId>cardano-client-cip8</artifactId>
+    </dependency>
+
+    <!-- Test: a local Blockfrost for BlockfrostChainBackendTest (version managed in the parent). -->
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,7 @@
+{
+  "name": "java/http/spring-webflux",
+  "type": "server",
+  "language": "java",
+  "transport": "http",
+  "x402Version": 2
+}

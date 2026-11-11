@@ -1,0 +1,252 @@
+{
+  "generatedFrom": "typescript/packages/core/src/http/httpFacilitatorClient.ts",
+  "responsesFrom": "the TS e2e facilitator handlers (e2e/facilitators/typescript/index.ts)",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "basePath": "/x402",
+  "cases": [
+    {
+      "name": "verify-valid",
+      "operation": "verify",
+      "request": {
+        "method": "POST",
+        "path": "/x402/verify",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"isValid\":true,\"payer\":\"addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket\"}"
+      },
+      "tsOutcome": {
+        "result": {
+          "isValid": true,
+          "payer": "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket"
+        }
+      }
+    },
+    {
+      "name": "verify-invalid",
+      "operation": "verify",
+      "note": "an invalid payment is 200 with isValid:false",
+      "request": {
+        "method": "POST",
+        "path": "/x402/verify",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"isValid\":false,\"invalidReason\":\"insufficient_funds\",\"payer\":\"addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket\"}"
+      },
+      "tsOutcome": {
+        "result": {
+          "isValid": false,
+          "invalidReason": "insufficient_funds",
+          "payer": "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket"
+        }
+      }
+    },
+    {
+      "name": "verify-hook-abort",
+      "operation": "verify",
+      "note": "a before-verify abort is 200 isValid:false with the reason",
+      "request": {
+        "method": "POST",
+        "path": "/x402/verify",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"isValid\":false,\"invalidReason\":\"payee_not_allowed\"}"
+      },
+      "tsOutcome": {
+        "result": {
+          "isValid": false,
+          "invalidReason": "payee_not_allowed"
+        }
+      }
+    },
+    {
+      "name": "verify-error",
+      "operation": "verify",
+      "request": {
+        "method": "POST",
+        "path": "/x402/verify",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 500,
+        "body": "{\"error\":\"boom\"}"
+      },
+      "tsOutcome": {
+        "error": {
+          "name": "Error",
+          "message": "Facilitator verify failed (500): {\"error\":\"boom\"}"
+        }
+      }
+    },
+    {
+      "name": "verify-missing-field",
+      "operation": "verify",
+      "note": "the TS client always sends all three fields; this records how it reports a 400",
+      "request": {
+        "method": "POST",
+        "path": "/x402/verify",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 400,
+        "body": "{\"error\":\"Missing x402Version, paymentPayload or paymentRequirements\"}"
+      },
+      "tsOutcome": {
+        "error": {
+          "name": "Error",
+          "message": "Facilitator verify failed (400): {\"error\":\"Missing x402Version, paymentPayload or paymentRequirements\"}"
+        }
+      }
+    },
+    {
+      "name": "settle-success",
+      "operation": "settle",
+      "request": {
+        "method": "POST",
+        "path": "/x402/settle",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"success\":true,\"payer\":\"addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket\",\"transaction\":\"8d7a2d0bd4a8b1b7a8c76e9f5d1b0a3f4e6c2d9b8a7f6e5d4c3b2a19081726354\",\"network\":\"cardano:preprod\"}"
+      },
+      "tsOutcome": {
+        "result": {
+          "success": true,
+          "payer": "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket",
+          "transaction": "8d7a2d0bd4a8b1b7a8c76e9f5d1b0a3f4e6c2d9b8a7f6e5d4c3b2a19081726354",
+          "network": "cardano:preprod"
+        }
+      }
+    },
+    {
+      "name": "settle-abort",
+      "operation": "settle",
+      "note": "Java wire shape for SettleAbortedException; passes TS settleResponseSchema",
+      "request": {
+        "method": "POST",
+        "path": "/x402/settle",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"success\":false,\"errorReason\":\"payee_not_allowed\",\"transaction\":\"\",\"network\":\"cardano:preprod\"}"
+      },
+      "tsOutcome": {
+        "result": {
+          "success": false,
+          "errorReason": "payee_not_allowed",
+          "transaction": "",
+          "network": "cardano:preprod"
+        }
+      }
+    },
+    {
+      "name": "settle-abort-ts-e2e-shape",
+      "operation": "settle",
+      "note": "the TS e2e abort body (e2e/facilitators/typescript/index.ts); TS settleResponseSchema rejects it",
+      "request": {
+        "method": "POST",
+        "path": "/x402/settle",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"success\":false,\"errorReason\":\"payee_not_allowed\",\"network\":\"unknown\"}"
+      },
+      "tsOutcome": {
+        "error": {
+          "name": "FacilitatorResponseError",
+          "message": "Facilitator settle returned invalid data: {\"success\":false,\"errorReason\":\"payee_not_allowed\",\"network\":\"unknown\"}"
+        }
+      }
+    },
+    {
+      "name": "settle-error",
+      "operation": "settle",
+      "request": {
+        "method": "POST",
+        "path": "/x402/settle",
+        "contentType": "application/json",
+        "body": "{\"x402Version\":2,\"paymentPayload\":{\"x402Version\":2,\"resource\":{\"url\":\"https://api.example.com/weather\",\"description\":\"Weather API\",\"mimeType\":\"application/json\"},\"accepted\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}},\"payload\":{\"transaction\":\"84a400d90102818258200000\",\"futurePayloadField\":{\"a\":1}},\"extensions\":{\"vendorExtension\":{\"info\":{\"k\":\"v\"},\"list\":[2,3]}}},\"paymentRequirements\":{\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"asset\":\"16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d\",\"amount\":\"10000\",\"payTo\":\"addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7\",\"maxTimeoutSeconds\":300,\"extra\":{\"assetTransferMethod\":\"default\",\"areFeesSponsored\":false,\"confirmationPolicy\":{\"l1Confirmations\":1},\"futureExtra\":{\"nested\":[1,\"x\",null,true]}}}}"
+      },
+      "response": {
+        "status": 500,
+        "body": "{\"error\":\"boom\"}"
+      },
+      "tsOutcome": {
+        "error": {
+          "name": "Error",
+          "message": "Facilitator settle failed (500): {\"error\":\"boom\"}"
+        }
+      }
+    },
+    {
+      "name": "supported",
+      "operation": "supported",
+      "request": {
+        "method": "GET",
+        "path": "/x402/supported",
+        "contentType": "application/json",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"kinds\":[{\"x402Version\":2,\"scheme\":\"exact\",\"network\":\"cardano:preprod\",\"extra\":{\"areFeesSponsored\":false}}],\"extensions\":[],\"signers\":{\"cardano:*\":[\"addr_signer\"]}}"
+      },
+      "tsOutcome": {
+        "result": {
+          "kinds": [
+            {
+              "x402Version": 2,
+              "scheme": "exact",
+              "network": "cardano:preprod",
+              "extra": {
+                "areFeesSponsored": false
+              }
+            }
+          ],
+          "extensions": [],
+          "signers": {
+            "cardano:*": [
+              "addr_signer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "supported-error",
+      "operation": "supported",
+      "request": {
+        "method": "GET",
+        "path": "/x402/supported",
+        "contentType": "application/json",
+        "body": null
+      },
+      "response": {
+        "status": 500,
+        "body": "{\"error\":\"boom\"}"
+      },
+      "tsOutcome": {
+        "error": {
+          "name": "Error",
+          "message": "Facilitator getSupported failed (500): {\"error\":\"boom\"}"
+        }
+      }
+    }
+  ]
+}

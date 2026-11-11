@@ -1,0 +1,113 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "one-accept",
+      "value": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "description": "Weather API",
+          "mimeType": "application/json"
+        },
+        "accepts": [
+          {
+            "scheme": "exact",
+            "network": "cardano:preprod",
+            "asset": "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d",
+            "amount": "10000",
+            "payTo": "addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "assetTransferMethod": "default",
+              "areFeesSponsored": false
+            }
+          }
+        ]
+      },
+      "header": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vd2VhdGhlciIsImRlc2NyaXB0aW9uIjoiV2VhdGhlciBBUEkiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24ifSwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiY2FyZGFubzpwcmVwcm9kIiwiYXNzZXQiOiIxNmE1NWIyYTM0OTM2MWZmODhjMDM3ODhmOTNlMWU5NjZlNWQ2ODk2MDVkMDQ0ZmVmNzIyZGRkZTAwMTRkZjEwNzQ1NTUzNDQ0ZCIsImFtb3VudCI6IjEwMDAwIiwicGF5VG8iOiJhZGRyX3Rlc3QxcXB3MGRqZ2oweDU5bmdyanZxdGhuN2VuaHZydXhuc2F2c3c1dGg2M2xhM21qZWwzdGtjOTc0c3IyM2ptbHpncTV6ZGE0Z3R2OGs5Y3kzODc1NnI5eTNxZ21rcXFqejZhYTciLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJhc3NldFRyYW5zZmVyTWV0aG9kIjoiZGVmYXVsdCIsImFyZUZlZXNTcG9uc29yZWQiOmZhbHNlfX1dfQ=="
+    },
+    {
+      "name": "three-accepts-resource-extensions",
+      "value": {
+        "x402Version": 2,
+        "error": "Payment required",
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "description": "Weather API",
+          "mimeType": "application/json",
+          "serviceName": "Weather Co",
+          "tags": [
+            "weather",
+            "näive ✓"
+          ],
+          "iconUrl": "https://api.example.com/icon.png"
+        },
+        "accepts": [
+          {
+            "scheme": "exact",
+            "network": "cardano:preprod",
+            "asset": "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d",
+            "amount": "10000",
+            "payTo": "addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "assetTransferMethod": "default",
+              "areFeesSponsored": false
+            }
+          },
+          {
+            "scheme": "exact",
+            "network": "cardano:preprod",
+            "asset": "lovelace",
+            "amount": "1500000",
+            "payTo": "addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "assetTransferMethod": "default",
+              "areFeesSponsored": false
+            }
+          },
+          {
+            "scheme": "exact",
+            "network": "cardano:mainnet",
+            "asset": "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d",
+            "amount": "10000",
+            "payTo": "addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x",
+            "maxTimeoutSeconds": 600,
+            "extra": {
+              "assetTransferMethod": "masumi",
+              "confirmationPolicy": {
+                "l1Confirmations": 1
+              },
+              "nested": {
+                "list": [
+                  1,
+                  2.5,
+                  "x",
+                  null,
+                  true
+                ]
+              }
+            }
+          }
+        ],
+        "extensions": {
+          "bazaar": {
+            "info": {
+              "input": {
+                "type": "http",
+                "method": "GET"
+              }
+            },
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "header": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQYXltZW50IHJlcXVpcmVkIiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vd2VhdGhlciIsImRlc2NyaXB0aW9uIjoiV2VhdGhlciBBUEkiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJzZXJ2aWNlTmFtZSI6IldlYXRoZXIgQ28iLCJ0YWdzIjpbIndlYXRoZXIiLCJuw6RpdmUg4pyTIl0sImljb25VcmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9pY29uLnBuZyJ9LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJjYXJkYW5vOnByZXByb2QiLCJhc3NldCI6IjE2YTU1YjJhMzQ5MzYxZmY4OGMwMzc4OGY5M2UxZTk2NmU1ZDY4OTYwNWQwNDRmZWY3MjJkZGRlMDAxNGRmMTA3NDU1NTM0NDRkIiwiYW1vdW50IjoiMTAwMDAiLCJwYXlUbyI6ImFkZHJfdGVzdDFxcHcwZGpnajB4NTluZ3JqdnF0aG43ZW5odnJ1eG5zYXZzdzV0aDYzbGEzbWplbDN0a2M5NzRzcjIzam1semdxNXpkYTRndHY4azljeTM4NzU2cjl5M3FnbWtxcWp6NmFhNyIsIm1heFRpbWVvdXRTZWNvbmRzIjozMDAsImV4dHJhIjp7ImFzc2V0VHJhbnNmZXJNZXRob2QiOiJkZWZhdWx0IiwiYXJlRmVlc1Nwb25zb3JlZCI6ZmFsc2V9fSx7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImNhcmRhbm86cHJlcHJvZCIsImFzc2V0IjoibG92ZWxhY2UiLCJhbW91bnQiOiIxNTAwMDAwIiwicGF5VG8iOiJhZGRyX3Rlc3QxcXB3MGRqZ2oweDU5bmdyanZxdGhuN2VuaHZydXhuc2F2c3c1dGg2M2xhM21qZWwzdGtjOTc0c3IyM2ptbHpncTV6ZGE0Z3R2OGs5Y3kzODc1NnI5eTNxZ21rcXFqejZhYTciLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJhc3NldFRyYW5zZmVyTWV0aG9kIjoiZGVmYXVsdCIsImFyZUZlZXNTcG9uc29yZWQiOmZhbHNlfX0seyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJjYXJkYW5vOm1haW5uZXQiLCJhc3NldCI6IjE2YTU1YjJhMzQ5MzYxZmY4OGMwMzc4OGY5M2UxZTk2NmU1ZDY4OTYwNWQwNDRmZWY3MjJkZGRlMDAxNGRmMTA3NDU1NTM0NDRkIiwiYW1vdW50IjoiMTAwMDAiLCJwYXlUbyI6ImFkZHIxcXgyZnh2MnVteWh0dGt4eXhwOHgwZGxwZHQzazZjd25nNXB4ajNqaHN5ZHplcjNuMGQzdmxsbXlxd3N4NXdrdGNkOGNjM3NxODM1bHU3ZHJ2Mnh3bDJ3eXdmZ3NlMzVhM3giLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAwLCJleHRyYSI6eyJhc3NldFRyYW5zZmVyTWV0aG9kIjoibWFzdW1pIiwiY29uZmlybWF0aW9uUG9saWN5Ijp7ImwxQ29uZmlybWF0aW9ucyI6MX0sIm5lc3RlZCI6eyJsaXN0IjpbMSwyLjUsIngiLG51bGwsdHJ1ZV19fX1dLCJleHRlbnNpb25zIjp7ImJhemFhciI6eyJpbmZvIjp7ImlucHV0Ijp7InR5cGUiOiJodHRwIiwibWV0aG9kIjoiR0VUIn19LCJzY2hlbWEiOnsidHlwZSI6Im9iamVjdCJ9fX19"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "valid",
+      "value": {
+        "isValid": true,
+        "payer": "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket"
+      },
+      "json": "{\"isValid\":true,\"payer\":\"addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket\"}"
+    },
+    {
+      "name": "invalid",
+      "value": {
+        "isValid": false,
+        "invalidReason": "invalid_exact_cardano_payload_nonce_spent",
+        "invalidMessage": "nonce input already spent"
+      },
+      "json": "{\"isValid\":false,\"invalidReason\":\"invalid_exact_cardano_payload_nonce_spent\",\"invalidMessage\":\"nonce input already spent\"}"
+    }
+  ]
+}

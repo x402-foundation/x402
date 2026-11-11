@@ -1,0 +1,1246 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": {
+    "routes": [
+      {
+        "pattern": "/weather",
+        "verb": "*",
+        "path": "/weather",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": true
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "GET /weather",
+        "verb": "GET",
+        "path": "/weather",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": true
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": true
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "POST /api/*",
+        "verb": "POST",
+        "path": "/api/*",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": true
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": true
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": true
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": true
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "/api/*",
+        "verb": "*",
+        "path": "/api/*",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": true
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": true
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": true
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": true
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "/items/:id",
+        "verb": "*",
+        "path": "/items/:id",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": true
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": true
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": true
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": true
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": true
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": true
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "/items/[id]",
+        "verb": "*",
+        "path": "/items/[id]",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": true
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": true
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": true
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": true
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": true
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": true
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "/items/:id/reviews",
+        "verb": "*",
+        "path": "/items/:id/reviews",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": true
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "GET /files/*/raw",
+        "verb": "GET",
+        "path": "/files/*/raw",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": true
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": true
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "/a.b/(x)",
+        "verb": "*",
+        "path": "/a.b/(x)",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": true
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": false
+          }
+        ]
+      },
+      {
+        "pattern": "* /any",
+        "verb": "*",
+        "path": "/any",
+        "matches": [
+          {
+            "path": "/weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather/",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather?city=Zurich",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/weather#frag",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/WEATHER",
+            "normalized": "/WEATHER",
+            "match": false
+          },
+          {
+            "path": "/api",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/",
+            "normalized": "/api",
+            "match": false
+          },
+          {
+            "path": "/api/premium",
+            "normalized": "/api/premium",
+            "match": false
+          },
+          {
+            "path": "/api/premium/deep/path",
+            "normalized": "/api/premium/deep/path",
+            "match": false
+          },
+          {
+            "path": "/apix",
+            "normalized": "/apix",
+            "match": false
+          },
+          {
+            "path": "/items/42",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/",
+            "normalized": "/items/42",
+            "match": false
+          },
+          {
+            "path": "/items/42/reviews",
+            "normalized": "/items/42/reviews",
+            "match": false
+          },
+          {
+            "path": "/items/4%2F2",
+            "normalized": "/items/4%2F2",
+            "match": false
+          },
+          {
+            "path": "/items/a%5Cb",
+            "normalized": "/items/a%5Cb",
+            "match": false
+          },
+          {
+            "path": "/items/%E2%9C%93",
+            "normalized": "/items/✓",
+            "match": false
+          },
+          {
+            "path": "/items/%zz",
+            "normalized": "/items/%zz",
+            "match": false
+          },
+          {
+            "path": "/files/x/raw",
+            "normalized": "/files/x/raw",
+            "match": false
+          },
+          {
+            "path": "/files/x/y/raw",
+            "normalized": "/files/x/y/raw",
+            "match": false
+          },
+          {
+            "path": "/a.b/(x)",
+            "normalized": "/a.b/(x)",
+            "match": false
+          },
+          {
+            "path": "/aXb/(x)",
+            "normalized": "/aXb/(x)",
+            "match": false
+          },
+          {
+            "path": "//weather",
+            "normalized": "/weather",
+            "match": false
+          },
+          {
+            "path": "/any",
+            "normalized": "/any",
+            "match": true
+          }
+        ]
+      }
+    ],
+    "decoded": [
+      {
+        "path": "/weather/",
+        "normalized": "/weather"
+      },
+      {
+        "path": "/items/4/2",
+        "normalized": "/items/4/2"
+      },
+      {
+        "path": "/a\\b",
+        "normalized": "/a\\b"
+      },
+      {
+        "path": "/x//y/",
+        "normalized": "/x/y"
+      }
+    ]
+  }
+}

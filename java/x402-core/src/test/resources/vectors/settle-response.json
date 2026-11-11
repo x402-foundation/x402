@@ -1,0 +1,46 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "success",
+      "value": {
+        "success": true,
+        "payer": "addr_test1vz09v9yfxguvlp0zsnrpa3tdtm7el8xufp3m5lsm7qxzclgmzkket",
+        "transaction": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "network": "cardano:preprod",
+        "amount": "10000",
+        "extensionResponses": {
+          "internal": {
+            "secret": true
+          }
+        }
+      },
+      "header": "eyJzdWNjZXNzIjp0cnVlLCJwYXllciI6ImFkZHJfdGVzdDF2ejA5djl5ZnhndXZscDB6c25ycGEzdGR0bTdlbDh4dWZwM201bHNtN3F4emNsZ216a2tldCIsInRyYW5zYWN0aW9uIjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsIm5ldHdvcmsiOiJjYXJkYW5vOnByZXByb2QiLCJhbW91bnQiOiIxMDAwMCJ9"
+    },
+    {
+      "name": "failure",
+      "value": {
+        "success": false,
+        "errorReason": "invalid_exact_cardano_payload_underpaid",
+        "errorMessage": "output 0 pays 9999 < 10000",
+        "transaction": "",
+        "network": "cardano:preprod"
+      },
+      "header": "eyJzdWNjZXNzIjpmYWxzZSwiZXJyb3JSZWFzb24iOiJpbnZhbGlkX2V4YWN0X2NhcmRhbm9fcGF5bG9hZF91bmRlcnBhaWQiLCJlcnJvck1lc3NhZ2UiOiJvdXRwdXQgMCBwYXlzIDk5OTkgPCAxMDAwMCIsInRyYW5zYWN0aW9uIjoiIiwibmV0d29yayI6ImNhcmRhbm86cHJlcHJvZCJ9"
+    },
+    {
+      "name": "pending",
+      "value": {
+        "success": false,
+        "errorReason": "settlement_pending",
+        "transaction": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "network": "cardano:preprod",
+        "extra": {
+          "transactionId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "header": "eyJzdWNjZXNzIjpmYWxzZSwiZXJyb3JSZWFzb24iOiJzZXR0bGVtZW50X3BlbmRpbmciLCJ0cmFuc2FjdGlvbiI6ImJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJuZXR3b3JrIjoiY2FyZGFubzpwcmVwcm9kIiwiZXh0cmEiOnsidHJhbnNhY3Rpb25JZCI6ImJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIifX0="
+    }
+  ]
+}

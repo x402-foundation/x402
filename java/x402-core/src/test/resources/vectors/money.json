@@ -1,0 +1,175 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": {
+    "parseMoney": [
+      {
+        "input": "$0.01",
+        "amount": "0.01"
+      },
+      {
+        "input": "0.01",
+        "amount": "0.01"
+      },
+      {
+        "input": "$ 1.50",
+        "amount": "1.50"
+      },
+      {
+        "input": "1.50 USD",
+        "amount": "1.50"
+      },
+      {
+        "input": "1.50 usd",
+        "amount": "1.50"
+      },
+      {
+        "input": "0.50 USDM",
+        "amount": "0.50",
+        "symbol": "USDM"
+      },
+      {
+        "input": "0.50 usdm",
+        "amount": "0.50",
+        "symbol": "USDM"
+      },
+      {
+        "input": "2 USDC.e",
+        "amount": "2",
+        "symbol": "USDC.E"
+      },
+      {
+        "input": "  $3  ",
+        "amount": "3"
+      },
+      {
+        "input": "1.5 ADA",
+        "amount": "1.5",
+        "symbol": "ADA"
+      },
+      {
+        "input": "$1e3",
+        "error": "Invalid money format: $1e3"
+      },
+      {
+        "input": "1e3",
+        "error": "Invalid money format: 1e3"
+      },
+      {
+        "input": "-1",
+        "error": "Invalid money format: -1"
+      },
+      {
+        "input": "$-1",
+        "error": "Invalid money format: -1"
+      },
+      {
+        "input": "1.50USDT",
+        "error": "Invalid money format: 1.50USDT"
+      },
+      {
+        "input": "abc",
+        "error": "Invalid money format: abc"
+      },
+      {
+        "input": "",
+        "error": "Invalid money format: "
+      },
+      {
+        "input": "$.5",
+        "error": "Invalid money format: $.5"
+      },
+      {
+        "input": "0.000001",
+        "amount": "0.000001"
+      },
+      {
+        "input": 0.01,
+        "amount": "0.01"
+      },
+      {
+        "input": 1500,
+        "amount": "1500"
+      },
+      {
+        "input": 1e+21,
+        "amount": "1000000000000000000000"
+      },
+      {
+        "input": 1e-7,
+        "amount": "0.0000001"
+      },
+      {
+        "input": -1,
+        "error": "Invalid money format: -1"
+      }
+    ],
+    "convertToTokenAmount": [
+      {
+        "amount": "0.01",
+        "decimals": 6,
+        "result": "10000"
+      },
+      {
+        "amount": "1.5",
+        "decimals": 6,
+        "result": "1500000"
+      },
+      {
+        "amount": "1.1234567",
+        "decimals": 6,
+        "result": "1123456"
+      },
+      {
+        "amount": "0",
+        "decimals": 6,
+        "result": "0"
+      },
+      {
+        "amount": "0.000001",
+        "decimals": 6,
+        "result": "1"
+      },
+      {
+        "amount": "0.0000001",
+        "decimals": 6,
+        "result": "0"
+      },
+      {
+        "amount": "100",
+        "decimals": 0,
+        "result": "100"
+      },
+      {
+        "amount": "007.50",
+        "decimals": 2,
+        "result": "750"
+      },
+      {
+        "amount": "1.",
+        "decimals": 6,
+        "result": "1000000"
+      },
+      {
+        "amount": "-1.5",
+        "decimals": 6,
+        "result": "-1500000"
+      },
+      {
+        "amount": "1e3",
+        "decimals": 6,
+        "error": "Invalid amount: 1e3 — use decimal notation, not scientific notation"
+      },
+      {
+        "amount": "1,5",
+        "decimals": 6,
+        "error": "Invalid amount: 1,5"
+      },
+      {
+        "amount": ".5",
+        "decimals": 6,
+        "error": "Invalid amount: .5"
+      }
+    ]
+  }
+}

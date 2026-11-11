@@ -114,7 +114,7 @@ When triggered by GitHub Actions or other automated workflows:
 | `go/*.go` API changes | Go SDK reference |
 | `go/mechanisms/**/*.go` API changes | Payment Schemes docs, SDK Features |
 | `go/extensions/*.go` Extensions changes | Extensions docs |
-| `java/src/**/*.java` API changes | Java SDK reference |
+| `java/x402-*/src/main/**/*.java` API changes | Java SDK reference |
 | `specs/schemes/*.md` protocol changes | Payment Schemes docs |
 | `specs/*.md` protocol changes | Core Concepts docs |
 | `specs/extensions/*.md` Extensions changes | Extensions docs (only if SDK implementation exists) |

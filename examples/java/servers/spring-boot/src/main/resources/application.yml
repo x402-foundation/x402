@@ -1,0 +1,44 @@
+# x402 example resource server (Cardano preprod).
+# Everything x402 needs is below; the Java side is one @X402Payment annotation per endpoint.
+# Every key, with its default, is listed in application-reference.yml.
+
+server:
+  port: 8080
+
+x402:
+  facilitators:
+    # examples/java/facilitator/spring-boot, started locally. Any x402 facilitator that lists Cardano works.
+    - url: "${FACILITATOR_URL:http://127.0.0.1:8402/x402}"
+      headers:
+        # The example facilitator protects /verify and /settle with HTTP Basic (Spring Security).
+        verify: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+        settle: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+
+  accounts:                       # where you get paid; options reference these names
+    preprod:                      # plain transfers to your wallet
+      network: "cardano:preprod"
+      pay-to: "${PREPROD_PAY_TO}"
+    preprod-escrow:               # Masumi escrow on the same network
+      network: "cardano:preprod"
+      extra: { assetTransferMethod: masumi }
+      # no pay-to: the escrow address of the canonical Masumi deployment is derived
+      cardano:
+        masumi:
+          seller-mnemonic: "${SELLER_MNEMONIC}"   # signs the Masumi quotes
+
+  routes:
+    weather:                      # @X402Payment("weather")
+      description: Current weather
+      mime-type: application/json
+      accepts:
+        # "$" = the network's default stablecoin at 1:1, no exchange rate: USDM on Cardano.
+        # "$0.01" = 0.01 USDM = amount 10000 (6 decimals). "0.01 USDM" means the same.
+        - { account: preprod, price: "$0.01" }
+
+    report:                       # @X402Payment("report"); the buyer picks one option
+      description: Cardano market report
+      mime-type: application/json
+      accepts:                    # your order of preference
+        - { account: preprod, price: "$0.50" }                                  # 0.50 USDM
+        - { account: preprod, price: { amount: "1500000", asset: lovelace } }   # 1.5 ADA, in lovelace
+        - { account: preprod-escrow, price: "$0.50" }                           # 0.50 USDM via Masumi escrow

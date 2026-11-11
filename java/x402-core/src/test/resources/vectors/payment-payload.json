@@ -1,0 +1,59 @@
+{
+  "generatedFrom": "typescript/packages/core",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "with-resource-and-extensions",
+      "value": {
+        "x402Version": 2,
+        "resource": {
+          "url": "https://api.example.com/weather",
+          "description": "Weather API",
+          "mimeType": "application/json"
+        },
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d",
+          "amount": "10000",
+          "payTo": "addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false
+          }
+        },
+        "payload": {
+          "transaction": "hKYAgYJYIC1lLQ==",
+          "nonce": "2d652d0000000000000000000000000000000000000000000000000000000000#0"
+        },
+        "extensions": {
+          "payment-identifier": {
+            "id": "pay_123"
+          }
+        }
+      },
+      "header": "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vd2VhdGhlciIsImRlc2NyaXB0aW9uIjoiV2VhdGhlciBBUEkiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24ifSwiYWNjZXB0ZWQiOnsic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiY2FyZGFubzpwcmVwcm9kIiwiYXNzZXQiOiIxNmE1NWIyYTM0OTM2MWZmODhjMDM3ODhmOTNlMWU5NjZlNWQ2ODk2MDVkMDQ0ZmVmNzIyZGRkZTAwMTRkZjEwNzQ1NTUzNDQ0ZCIsImFtb3VudCI6IjEwMDAwIiwicGF5VG8iOiJhZGRyX3Rlc3QxcXB3MGRqZ2oweDU5bmdyanZxdGhuN2VuaHZydXhuc2F2c3c1dGg2M2xhM21qZWwzdGtjOTc0c3IyM2ptbHpncTV6ZGE0Z3R2OGs5Y3kzODc1NnI5eTNxZ21rcXFqejZhYTciLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJhc3NldFRyYW5zZmVyTWV0aG9kIjoiZGVmYXVsdCIsImFyZUZlZXNTcG9uc29yZWQiOmZhbHNlfX0sInBheWxvYWQiOnsidHJhbnNhY3Rpb24iOiJoS1lBZ1lKWUlDMWxMUT09Iiwibm9uY2UiOiIyZDY1MmQwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIzAifSwiZXh0ZW5zaW9ucyI6eyJwYXltZW50LWlkZW50aWZpZXIiOnsiaWQiOiJwYXlfMTIzIn19fQ=="
+    },
+    {
+      "name": "minimal",
+      "value": {
+        "x402Version": 2,
+        "accepted": {
+          "scheme": "exact",
+          "network": "cardano:preprod",
+          "asset": "16a55b2a349361ff88c03788f93e1e966e5d689605d044fef722ddde0014df10745553444d",
+          "amount": "10000",
+          "payTo": "addr_test1qpw0djgj0x59ngrjvqthn7enhvruxnsavsw5th63la3mjel3tkc974sr23jmlzgq5zda4gtv8k9cy38756r9y3qgmkqqjz6aa7",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "assetTransferMethod": "default",
+            "areFeesSponsored": false
+          }
+        },
+        "payload": {}
+      },
+      "header": "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0ZWQiOnsic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiY2FyZGFubzpwcmVwcm9kIiwiYXNzZXQiOiIxNmE1NWIyYTM0OTM2MWZmODhjMDM3ODhmOTNlMWU5NjZlNWQ2ODk2MDVkMDQ0ZmVmNzIyZGRkZTAwMTRkZjEwNzQ1NTUzNDQ0ZCIsImFtb3VudCI6IjEwMDAwIiwicGF5VG8iOiJhZGRyX3Rlc3QxcXB3MGRqZ2oweDU5bmdyanZxdGhuN2VuaHZydXhuc2F2c3c1dGg2M2xhM21qZWwzdGtjOTc0c3IyM2ptbHpncTV6ZGE0Z3R2OGs5Y3kzODc1NnI5eTNxZ21rcXFqejZhYTciLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJhc3NldFRyYW5zZmVyTWV0aG9kIjoiZGVmYXVsdCIsImFyZUZlZXNTcG9uc29yZWQiOmZhbHNlfX0sInBheWxvYWQiOnt9fQ=="
+    }
+  ]
+}

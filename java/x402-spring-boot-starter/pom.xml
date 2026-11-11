@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.x402</groupId>
+    <artifactId>x402-parent</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>x402-spring-boot-starter</artifactId>
+  <name>x402-spring-boot-starter</name>
+  <description>Spring Boot starter for x402: auto-configuration, core and extensions. Add the payment mechanisms you use (e.g. x402-mechanism-cardano) as their own dependencies.</description>
+
+  <dependencies>
+    <!-- Boot's starter convention: core Boot support (auto-configuration, logging). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-spring-boot-autoconfigure</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-core</artifactId>
+    </dependency>
+    <!-- Chain-agnostic and core-only, so it is bundled: a YAML extension block must never be
+         passed through unprocessed for lack of a jar. -->
+    <dependency>
+      <groupId>org.x402</groupId>
+      <artifactId>x402-extensions</artifactId>
+    </dependency>
+    <!-- No payment mechanism: add the ones you use (org.x402:x402-mechanism-cardano, ...).
+         Configuration naming a missing one fails at startup (X402MechanismCheck). -->
+
+    <!-- Tests run on the starter's real classpath, which has no mechanism. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

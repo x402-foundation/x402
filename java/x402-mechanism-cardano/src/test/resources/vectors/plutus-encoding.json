@@ -1,0 +1,447 @@
+{
+  "tsCommit": "739dde19a21faa7cf141ceca308bbb04b1682ebb",
+  "data": [
+    {
+      "name": "intZero",
+      "data": {
+        "int": "0"
+      },
+      "cborHex": "00"
+    },
+    {
+      "name": "intMaxUint64",
+      "data": {
+        "int": "18446744073709551615"
+      },
+      "cborHex": "1bffffffffffffffff"
+    },
+    {
+      "name": "intTwo64",
+      "data": {
+        "int": "18446744073709551616"
+      },
+      "cborHex": "c249010000000000000000"
+    },
+    {
+      "name": "intNegTwo64",
+      "data": {
+        "int": "-18446744073709551616"
+      },
+      "cborHex": "c348ffffffffffffffff"
+    },
+    {
+      "name": "intNegTwo64Minus1",
+      "data": {
+        "int": "-18446744073709551617"
+      },
+      "cborHex": "c349010000000000000000"
+    },
+    {
+      "name": "int2pow70",
+      "data": {
+        "int": "1180591620717411303424"
+      },
+      "cborHex": "c249400000000000000000"
+    },
+    {
+      "name": "intNeg2pow70",
+      "data": {
+        "int": "-1180591620717411303424"
+      },
+      "cborHex": "c3493fffffffffffffffff"
+    },
+    {
+      "name": "int65ByteMagnitude",
+      "data": {
+        "int": "3432398830065304857490950399540696608634717650071652704697231729592771591698828026061279820330727277488648155695740429018560993999858321906287014145557528575"
+      },
+      "cborHex": "c25841ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "intNeg65ByteMagnitude",
+      "data": {
+        "int": "-3432398830065304857490950399540696608634717650071652704697231729592771591698828026061279820330727277488648155695740429018560993999858321906287014145557528576"
+      },
+      "cborHex": "c35841ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "bytesEmpty",
+      "data": {
+        "bytes": ""
+      },
+      "cborHex": "40"
+    },
+    {
+      "name": "bytes64",
+      "data": {
+        "bytes": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+      },
+      "cborHex": "5840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+    },
+    {
+      "name": "bytes65",
+      "data": {
+        "bytes": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+      },
+      "cborHex": "5f5840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab41abff"
+    },
+    {
+      "name": "bytes200",
+      "data": {
+        "bytes": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      },
+      "cborHex": "5f5840cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd5840cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd5840cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd48cdcdcdcdcdcdcdcdff"
+    },
+    {
+      "name": "constr0Empty",
+      "data": {
+        "constr": "0",
+        "fields": []
+      },
+      "cborHex": "d87980"
+    },
+    {
+      "name": "constr1Empty",
+      "data": {
+        "constr": "1",
+        "fields": []
+      },
+      "cborHex": "d87a80"
+    },
+    {
+      "name": "constr6",
+      "data": {
+        "constr": "6",
+        "fields": [
+          {
+            "int": "1"
+          }
+        ]
+      },
+      "cborHex": "d87f9f01ff"
+    },
+    {
+      "name": "constr7",
+      "data": {
+        "constr": "7",
+        "fields": [
+          {
+            "int": "1"
+          }
+        ]
+      },
+      "cborHex": "d905009f01ff"
+    },
+    {
+      "name": "constr127",
+      "data": {
+        "constr": "127",
+        "fields": [
+          {
+            "bytes": "00"
+          }
+        ]
+      },
+      "cborHex": "d905789f4100ff"
+    },
+    {
+      "name": "constr128",
+      "data": {
+        "constr": "128",
+        "fields": [
+          {
+            "int": "2"
+          }
+        ]
+      },
+      "cborHex": "d8669f18809f02ffff"
+    },
+    {
+      "name": "constr2pow40",
+      "data": {
+        "constr": "1099511627776",
+        "fields": []
+      },
+      "cborHex": "d8669f1b000001000000000080ff"
+    },
+    {
+      "name": "listEmpty",
+      "data": {
+        "list": []
+      },
+      "cborHex": "80"
+    },
+    {
+      "name": "listInts",
+      "data": {
+        "list": [
+          {
+            "int": "1"
+          },
+          {
+            "int": "-1"
+          },
+          {
+            "int": "18446744073709551616"
+          }
+        ]
+      },
+      "cborHex": "9f0120c249010000000000000000ff"
+    },
+    {
+      "name": "mapEmpty",
+      "data": {
+        "map": []
+      },
+      "cborHex": "a0"
+    },
+    {
+      "name": "mapIntBytes",
+      "data": {
+        "map": [
+          [
+            {
+              "int": "1"
+            },
+            {
+              "bytes": "aa"
+            }
+          ],
+          [
+            {
+              "int": "0"
+            },
+            {
+              "bytes": "bb"
+            }
+          ]
+        ]
+      },
+      "cborHex": "bf0141aa0041bbff"
+    },
+    {
+      "name": "mapNested",
+      "data": {
+        "map": [
+          [
+            {
+              "bytes": "01"
+            },
+            {
+              "list": [
+                {
+                  "int": "5"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "constr": "0",
+              "fields": []
+            },
+            {
+              "map": []
+            }
+          ]
+        ]
+      },
+      "cborHex": "bf41019f05ffd87980a0ff"
+    },
+    {
+      "name": "masumiShaped",
+      "data": {
+        "constr": "0",
+        "fields": [
+          {
+            "constr": "0",
+            "fields": [
+              {
+                "constr": "0",
+                "fields": [
+                  {
+                    "bytes": "11111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              },
+              {
+                "constr": "0",
+                "fields": [
+                  {
+                    "constr": "0",
+                    "fields": [
+                      {
+                        "constr": "0",
+                        "fields": [
+                          {
+                            "bytes": "22222222222222222222222222222222222222222222222222222222"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "constr": "0",
+            "fields": [
+              {
+                "constr": "1",
+                "fields": [
+                  {
+                    "bytes": "33333333333333333333333333333333333333333333333333333333"
+                  }
+                ]
+              },
+              {
+                "constr": "0",
+                "fields": [
+                  {
+                    "constr": "1",
+                    "fields": [
+                      {
+                        "int": "123456789"
+                      },
+                      {
+                        "int": "2"
+                      },
+                      {
+                        "int": "0"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "constr": "0",
+            "fields": [
+              {
+                "constr": "0",
+                "fields": [
+                  {
+                    "constr": "0",
+                    "fields": [
+                      {
+                        "bytes": "44444444444444444444444444444444444444444444444444444444"
+                      }
+                    ]
+                  },
+                  {
+                    "constr": "1",
+                    "fields": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "constr": "1",
+            "fields": []
+          },
+          {
+            "bytes": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          {
+            "bytes": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+          },
+          {
+            "bytes": "777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+          },
+          {
+            "int": "1785756000000"
+          },
+          {
+            "int": "0"
+          }
+        ]
+      },
+      "cborHex": "d8799fd8799fd8799f581c11111111111111111111111111111111111111111111111111111111ffd8799fd8799fd8799f581c22222222222222222222222222222222222222222222222222222222ffffffffd8799fd87a9f581c33333333333333333333333333333333333333333333333333333333ffd8799fd87a9f1a075bcd150200ffffffd8799fd8799fd8799f581c44444444444444444444444444444444444444444444444444444444ffd87a80ffffd87a80582055555555555555555555555555555555555555555555555555555555555555555840666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666665f584077777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777581a7777777777777777777777777777777777777777777777777777ff1b0000019fc75a1f0000ff"
+    }
+  ],
+  "scriptHashes": [
+    {
+      "name": "bigintPositive2pow64",
+      "extra": {
+        "script": {
+          "type": "plutusV3",
+          "code": "4d01000033222220051200120011"
+        },
+        "parameters": {
+          "p": {
+            "type": "bigint",
+            "value": "18446744073709551616"
+          }
+        }
+      },
+      "scriptHash": "6eeb78a90b2a855b88e1044048c70abf22dd21fc009c7db99f7d2a1f"
+    },
+    {
+      "name": "bigintPositive2pow70",
+      "extra": {
+        "script": {
+          "type": "plutusV3",
+          "code": "4d01000033222220051200120011"
+        },
+        "parameters": {
+          "p": {
+            "type": "bigint",
+            "value": "1180591620717411303424"
+          }
+        }
+      },
+      "scriptHash": "7bcec50592db14cbc05b76fecc28b5ea3840658a137b5ad5b2c6729c"
+    },
+    {
+      "name": "bigint65Bytes",
+      "extra": {
+        "script": {
+          "type": "plutusV3",
+          "code": "4d01000033222220051200120011"
+        },
+        "parameters": {
+          "p": {
+            "type": "bigint",
+            "value": "3432398830065304857490950399540696608634717650071652704697231729592771591698828026061279820330727277488648155695740429018560993999858321906287014145557528575"
+          }
+        }
+      },
+      "error": "Cardano integer parameter exceeds the digit limit"
+    },
+    {
+      "name": "bigintNegative65Bytes",
+      "extra": {
+        "script": {
+          "type": "plutusV3",
+          "code": "4d01000033222220051200120011"
+        },
+        "parameters": {
+          "p": {
+            "type": "bigint",
+            "value": "-3432398830065304857490950399540696608634717650071652704697231729592771591698828026061279820330727277488648155695740429018560993999858321906287014145557528576"
+          }
+        }
+      },
+      "error": "Cardano integer parameter exceeds the digit limit"
+    },
+    {
+      "name": "bytes65",
+      "extra": {
+        "script": {
+          "type": "plutusV3",
+          "code": "4d01000033222220051200120011"
+        },
+        "parameters": {
+          "p": {
+            "type": "bytes",
+            "value": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        }
+      },
+      "scriptHash": "d93fac925ce1ee691e2396152fb9d47af6a734352fc8fd44945b8eaa"
+    }
+  ]
+}

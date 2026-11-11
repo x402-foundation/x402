@@ -1,0 +1,21 @@
+# x402 example facilitator for Cardano: GET /x402/supported, POST /x402/verify, POST /x402/settle.
+# The facilitator is configured here alone; SecurityConfig protects /verify and /settle with HTTP
+# Basic: user FACILITATOR_USER (default x402), password FACILITATOR_PASSWORD (required, non-blank).
+
+server:
+  port: 8402
+
+x402:
+  facilitator-server:
+    enabled: true
+    base-path: /x402
+    cardano:
+      confirmation-timeout: 75s   # the default; keep it below the resource servers' 90s timeout
+      networks:                   # one facilitator scheme per network
+        - network: "cardano:preprod"
+          blockfrost:
+            project-id: "${BLOCKFROST_PREPROD_PROJECT_ID}"
+            base-url: "${BLOCKFROST_PREPROD_URL:}"   # empty = Blockfrost's preprod URL
+          # Optional: a mnemonic only shows the facilitator's address in /supported.
+          # The buyer pays the fees; the facilitator needs no funds.
+          mnemonic: "${FACILITATOR_MNEMONIC:}"

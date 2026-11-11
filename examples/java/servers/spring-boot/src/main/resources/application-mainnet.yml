@@ -1,0 +1,15 @@
+# Profile "mainnet": one offer accepting preprod and mainnet, each paid to its own account.
+# Run with --spring.profiles.active=mainnet. The facilitator must list cardano:mainnet too.
+
+x402:
+  accounts:                       # merged with the accounts of application.yml
+    mainnet:
+      network: "cardano:mainnet"
+      pay-to: "${MAINNET_PAY_TO}"
+  routes:
+    market:                       # @X402Payment("market") on MarketController (this profile only)
+      description: Market data
+      mime-type: application/json
+      accepts:
+        - { account: preprod, price: "$0.25" }   # 0.25 USDM on preprod
+        - { account: mainnet, price: "$0.25" }   # 0.25 USDM on mainnet, to the mainnet wallet

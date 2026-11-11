@@ -1,0 +1,14 @@
+{
+  "name": "x402-java-ts-vectors",
+  "private": true,
+  "type": "module",
+  "description": "Exports TS reference behaviour as JSON fixtures for the Java v2 tests. Runs with the TS workspace's tsx and imports TS sources by relative path, so it needs no install of its own and never edits TypeScript.",
+  "scripts": {
+    "export:core": "../../../typescript/node_modules/.bin/tsx export-core.ts",
+    "export:bazaar": "../../../typescript/node_modules/.bin/tsx export-bazaar.ts",
+    "export:cardano": "../../../typescript/packages/mechanisms/cardano/node_modules/.bin/tsx export-cardano.ts",
+    "export:facilitator": "../../../typescript/node_modules/.bin/tsx export-facilitator.ts",
+    "export": "npm run export:core && npm run export:bazaar && npm run export:cardano && npm run export:facilitator && npm run export:plutus",
+    "export:plutus": "../../../typescript/packages/mechanisms/cardano/node_modules/.bin/tsx export-plutus.ts"
+  }
+}

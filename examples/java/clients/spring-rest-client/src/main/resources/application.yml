@@ -1,0 +1,29 @@
+# x402 example client: RestClient / @HttpExchange paying on Cardano preprod.
+
+spring:
+  main:
+    web-application-type: none    # a command-line app
+  http:
+    client:
+      redirects: dont-follow      # optional: the first (unpaid) request doesn't follow redirects
+                                  # either; the paid retry never does, whatever this says
+
+example:
+  base-url: "${RESOURCE_SERVER_URL:http://127.0.0.1:8080}"   # servers/spring-boot
+  endpoint: "${ENDPOINT:weather}"                            # weather or report
+
+x402:
+  client:
+    enabled: true
+    hosts: ["127.0.0.1", "localhost"]   # only these hosts may charge you; empty = no payments
+    spend-controls:
+      allowed-assets:             # lovelace is refused unless listed here (cap in lovelace)
+        - { network: "cardano:preprod", asset: lovelace, max-amount-per-payment: "2000000" }
+      max-amount-per-payment: "$1"   # USD cap for USDM, the default ("$1" = 1 USDM)
+    prefer:
+      networks: ["cardano:preprod"]
+    cardano:
+      mnemonic: "${BUYER_MNEMONIC}"
+      networks:                   # one wallet per network; only these networks are paid
+        - network: "cardano:preprod"
+          blockfrost: { project-id: "${BLOCKFROST_PREPROD_PROJECT_ID}" }

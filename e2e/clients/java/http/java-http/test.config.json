@@ -1,0 +1,9 @@
+{
+  "name": "java/http/java-http",
+  "type": "client",
+  "language": "java",
+  "transport": "http",
+  "x402Versions": [
+    2
+  ]
+}

@@ -1,0 +1,3034 @@
+{
+  "generatedFrom": "typescript/packages/extensions/src/bazaar",
+  "tsCommit": "f8f83309706b14cc696962f0a002eeeb66c3dc26",
+  "cases": [
+    {
+      "name": "e2e paid route (GET, output only)",
+      "kind": "declare",
+      "config": {
+        "output": {
+          "example": {
+            "message": "Protected endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z"
+          },
+          "schema": {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "timestamp"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET with explicit method and no output",
+      "kind": "declare",
+      "config": {
+        "method": "GET"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {}
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET with query params and schema",
+      "kind": "declare",
+      "config": {
+        "method": "GET",
+        "input": {
+          "city": "Zurich"
+        },
+        "inputSchema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        },
+        "output": {
+          "example": {
+            "temp": 12
+          }
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {
+              "city": "Zurich"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "temp": 12
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET with path params schema",
+      "kind": "declare",
+      "config": {
+        "method": "GET",
+        "pathParams": {
+          "id": "42"
+        },
+        "pathParamsSchema": {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ]
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {},
+            "pathParams": {
+              "id": "42"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "DELETE with schema overriding type",
+      "kind": "declare",
+      "config": {
+        "method": "DELETE",
+        "inputSchema": {
+          "type": "string",
+          "properties": {}
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "DELETE",
+            "queryParams": {}
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "string",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "POST with JSON body",
+      "kind": "declare",
+      "config": {
+        "method": "POST",
+        "bodyType": "json",
+        "input": {
+          "name": "John",
+          "age": 30
+        },
+        "inputSchema": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "age": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "output": {
+          "example": {
+            "success": true,
+            "id": "123"
+          },
+          "schema": {
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "POST",
+            "bodyType": "json",
+            "body": {
+              "name": "John",
+              "age": 30
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "success": true,
+              "id": "123"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "POST",
+                    "PUT",
+                    "PATCH"
+                  ]
+                },
+                "bodyType": {
+                  "type": "string",
+                  "enum": [
+                    "json",
+                    "form-data",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "age": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "bodyType",
+                "body"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "PUT with default body",
+      "kind": "declare",
+      "config": {
+        "method": "PUT",
+        "bodyType": "text"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "PUT",
+            "bodyType": "text",
+            "body": {}
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "POST",
+                    "PUT",
+                    "PATCH"
+                  ]
+                },
+                "bodyType": {
+                  "type": "string",
+                  "enum": [
+                    "json",
+                    "form-data",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "bodyType",
+                "body"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "body without method, with path params",
+      "kind": "declare",
+      "config": {
+        "bodyType": "form-data",
+        "pathParams": {
+          "a": "b"
+        },
+        "pathParamsSchema": {}
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "bodyType": "form-data",
+            "body": {},
+            "pathParams": {
+              "a": "b"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "POST",
+                    "PUT",
+                    "PATCH"
+                  ]
+                },
+                "bodyType": {
+                  "type": "string",
+                  "enum": [
+                    "json",
+                    "form-data",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "bodyType",
+                "body"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "falsy example omits output",
+      "kind": "declare",
+      "config": {
+        "method": "GET",
+        "output": {
+          "example": 0
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {}
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "MCP tool with all optional fields",
+      "kind": "declare",
+      "config": {
+        "toolName": "financial_analysis",
+        "description": "Analyze financial data",
+        "transport": "streamable-http",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ticker": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ticker"
+          ]
+        },
+        "example": {
+          "ticker": "AAPL"
+        },
+        "output": {
+          "example": {
+            "pe_ratio": 28.5
+          },
+          "schema": {
+            "properties": {
+              "pe_ratio": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "mcp",
+            "toolName": "financial_analysis",
+            "description": "Analyze financial data",
+            "transport": "streamable-http",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "ticker": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ticker"
+              ]
+            },
+            "example": {
+              "ticker": "AAPL"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "pe_ratio": 28.5
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcp"
+                },
+                "toolName": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string",
+                  "enum": [
+                    "streamable-http"
+                  ]
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "example": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "toolName",
+                "inputSchema"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "pe_ratio": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "MCP tool e2e shape",
+      "kind": "declare",
+      "config": {
+        "toolName": "protected",
+        "transport": "sse",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "output": {
+          "example": {
+            "message": "Protected endpoint accessed successfully",
+            "timestamp": "2024-01-01T00:00:00Z"
+          },
+          "schema": {
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "timestamp"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "mcp",
+            "toolName": "protected",
+            "transport": "sse",
+            "inputSchema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcp"
+                },
+                "toolName": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string",
+                  "enum": [
+                    "sse"
+                  ]
+                },
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "toolName",
+                "inputSchema"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "MCP tool minimal with unknown transport",
+      "kind": "declare",
+      "config": {
+        "toolName": "t",
+        "transport": "websocket",
+        "inputSchema": {
+          "type": "object"
+        }
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "mcp",
+            "toolName": "t",
+            "transport": "websocket",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcp"
+                },
+                "toolName": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string"
+                },
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "toolName",
+                "inputSchema"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "e2e paid route narrows to GET",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/protected",
+        "routePattern": "/protected"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET"
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "POST body route narrows to POST",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "POST",
+            "bodyType": "json",
+            "body": {
+              "name": "John",
+              "age": 30
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "success": true,
+              "id": "123"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "POST",
+                    "PUT",
+                    "PATCH"
+                  ]
+                },
+                "bodyType": {
+                  "type": "string",
+                  "enum": [
+                    "json",
+                    "form-data",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "age": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "bodyType",
+                "body"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "POST",
+        "path": "/orders"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "POST",
+            "bodyType": "json",
+            "body": {
+              "name": "John",
+              "age": 30
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "success": true,
+              "id": "123"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "POST"
+                  ]
+                },
+                "bodyType": {
+                  "type": "string",
+                  "enum": [
+                    "json",
+                    "form-data",
+                    "text"
+                  ]
+                },
+                "body": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "age": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "bodyType",
+                "body"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "bracket param route",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/users/123",
+        "routePattern": "/users/[userId]"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {
+              "userId": "123"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/users/:userId"
+      }
+    },
+    {
+      "name": "colon param route",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/users/123/posts/9",
+        "routePattern": "/users/:userId/posts/:postId"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {
+              "userId": "123",
+              "postId": "9"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/users/:userId/posts/:postId"
+      }
+    },
+    {
+      "name": "mixed bracket and colon",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/a/1/b/2",
+        "routePattern": "/a/[x]/b/:y"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {
+              "x": "1",
+              "y": "2"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/a/:x/b/:y"
+      }
+    },
+    {
+      "name": "dot in literal is not a wildcard",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/api/v1X0/123",
+        "routePattern": "/api/v1.0/[id]"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/api/v1.0/:id"
+      }
+    },
+    {
+      "name": "param route, path does not match",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/other",
+        "routePattern": "/users/:id"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/users/:id"
+      }
+    },
+    {
+      "name": "wildcard segments become varN",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/files/x/y",
+        "routePattern": "/files/*/*"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET",
+            "pathParams": {
+              "var1": "x",
+              "var2": "y"
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/files/:var1/:var2"
+      }
+    },
+    {
+      "name": "bare wildcard gets no template",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/anything",
+        "routePattern": "*"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {},
+            "method": "GET"
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "schema already has pathParams",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {}
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/users/7",
+        "routePattern": "/users/:id"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "queryParams": {},
+            "pathParams": {
+              "id": "7"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                },
+                "pathParams": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input"
+          ]
+        },
+        "routeTemplate": "/users/:id"
+      }
+    },
+    {
+      "name": "mcp declaration untouched",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "mcp",
+            "toolName": "protected",
+            "transport": "sse",
+            "inputSchema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcp"
+                },
+                "toolName": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string",
+                  "enum": [
+                    "sse"
+                  ]
+                },
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "toolName",
+                "inputSchema"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": {
+        "method": "POST",
+        "path": "/mcp",
+        "routePattern": "/mcp"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "mcp",
+            "toolName": "protected",
+            "transport": "sse",
+            "inputSchema": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "mcp"
+                },
+                "toolName": {
+                  "type": "string"
+                },
+                "transport": {
+                  "type": "string",
+                  "enum": [
+                    "sse"
+                  ]
+                },
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "toolName",
+                "inputSchema"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    },
+    {
+      "name": "declaration without schema",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http"
+          }
+        }
+      },
+      "context": {
+        "method": "GET",
+        "path": "/x"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET"
+          }
+        },
+        "schema": {
+          "properties": {
+            "input": {
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                }
+              },
+              "required": [
+                "method"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "empty declaration",
+      "kind": "enrich",
+      "declaration": {},
+      "context": {
+        "method": "GET",
+        "path": "/x"
+      },
+      "expected": {
+        "info": {
+          "input": {
+            "method": "GET"
+          }
+        },
+        "schema": {
+          "properties": {
+            "input": {
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET"
+                  ]
+                }
+              },
+              "required": [
+                "method"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "non-HTTP transport context",
+      "kind": "enrich",
+      "declaration": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      },
+      "context": null,
+      "expected": {
+        "info": {
+          "input": {
+            "type": "http",
+            "queryParams": {}
+          },
+          "output": {
+            "type": "json",
+            "example": {
+              "message": "Protected endpoint accessed successfully",
+              "timestamp": "2024-01-01T00:00:00Z"
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "http"
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "DELETE"
+                  ]
+                },
+                "queryParams": {
+                  "type": "object",
+                  "properties": {}
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message",
+                    "timestamp"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input"
+          ]
+        }
+      }
+    }
+  ]
+}

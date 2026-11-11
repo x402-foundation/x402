@@ -1,0 +1,39 @@
+# Profile "multi-facilitator": two facilitators, one pinned option, verify failover.
+# Run a second example facilitator on port 8403 and start with
+# --spring.profiles.active=multi-facilitator (see README).
+
+x402:
+  facilitators:                   # replaces the list of application.yml; order = precedence
+    - url: "${FACILITATOR_URL:http://127.0.0.1:8402/x402}"
+      identifier: primary         # optional name for logs, health and pins (default: the url)
+      headers:
+        verify: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+        settle: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+    - url: "${BACKUP_FACILITATOR_URL:http://127.0.0.1:8403/x402}"
+      identifier: backup
+      verify-timeout: 10s         # /verify only; settle and /supported use timeout (90s)
+      headers:
+        verify: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+        settle: { Authorization: "${FACILITATOR_AUTHORIZATION:}" }
+
+  routes:
+    report:
+      failover: true              # unpinned options may verify on the next facilitator (one hop)
+      accepts:                    # replaces the list of application.yml
+        - { account: preprod, price: "$0.50" }                                  # unpinned: primary, else backup
+        - { account: preprod, price: { amount: "1500000", asset: lovelace } }   # unpinned
+        - { account: preprod-escrow, price: "$0.50", facilitator: backup }      # pinned: only backup, never fails over
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always        # demo only: shows each facilitator's state; restrict in production
+      probes:
+        enabled: true             # /actuator/health/readiness and /liveness
+      group:
+        readiness:
+          include: readinessState, x402
