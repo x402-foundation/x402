@@ -1236,8 +1236,6 @@ def _permit2612_v(call_args: tuple[Any, ...]) -> int:
 
 
 class TestUptoEip2612RecoveryByte:
-    """Verify simulation and settle must send v in 27/28 for a raw y-parity byte."""
-
     @pytest.mark.parametrize(
         ("signature", "expected_v"),
         [

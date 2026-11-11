@@ -1022,8 +1022,6 @@ def _permit2612_components(call_args: tuple[Any, ...]) -> tuple[bytes, bytes, in
 
 
 class TestEip2612RecoveryByte:
-    """settleWithPermit must send v in 27/28, including a raw y-parity byte."""
-
     @pytest.mark.parametrize(
         ("signature", "expected_v"),
         [
