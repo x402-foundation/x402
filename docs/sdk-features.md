@@ -32,7 +32,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | avm (Algorand) | ✅ | ❌ | ❌ |
 | stellar | ✅ | ❌ | ❌ |
 | aptos | ✅ | ❌ | ❌ |
-| casper | ✅ | ❌ | ❌ |
+| casper | ✅ | ✅ | ❌ |
 | hedera | ✅ | ❌ | ❌ |
 | keeta | ✅ | ❌ | ❌ |
 | near | ✅ | ❌ | ❌ |
