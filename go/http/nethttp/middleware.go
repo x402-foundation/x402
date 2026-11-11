@@ -264,9 +264,7 @@ func createMiddlewareHandler(server *x402http.HTTPServer, config *MiddlewareConf
 
 // handlePaymentError writes a payment error response (typically 402).
 func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseInstructions) {
-	for key, value := range response.Headers {
-		w.Header().Set(key, value)
-	}
+	x402http.ApplyPaymentResponseHeaders(w.Header(), response.Headers)
 
 	contentType := response.Headers["Content-Type"]
 	if contentType == "" {
@@ -347,9 +345,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 						result.PaymentPayload,
 						w.Header().Get("Cache-Control"),
 					); headers != nil {
-						for key, value := range headers {
-							w.Header().Set(key, value)
-						}
+						x402http.ApplyPaymentResponseHeaders(w.Header(), headers)
 					}
 					panic(rec)
 				}
@@ -373,9 +369,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 			result.PaymentPayload,
 			capture.Header().Get("Cache-Control"),
 		); headers != nil {
-			for key, value := range headers {
-				w.Header().Set(key, value)
-			}
+			x402http.ApplyPaymentResponseHeaders(w.Header(), headers)
 		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
@@ -399,9 +393,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 
 	if !settleResult.Success {
 		// Always set PAYMENT-RESPONSE header on settlement failure
-		for key, value := range settleResult.Headers {
-			w.Header().Set(key, value)
-		}
+		x402http.ApplyPaymentResponseHeaders(w.Header(), settleResult.Headers)
 		switch {
 		case config.ErrorHandler != nil:
 			errorReason := settleResult.ErrorReason
@@ -420,9 +412,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 	}
 
 	// Add settlement headers
-	for key, value := range settleResult.Headers {
-		w.Header().Set(key, value)
-	}
+	x402http.ApplyPaymentResponseHeaders(w.Header(), settleResult.Headers)
 	w.Header().Set("Cache-Control", x402http.WithPrivateCacheControl(w.Header().Get("Cache-Control")))
 
 	// Call settlement handler if configured

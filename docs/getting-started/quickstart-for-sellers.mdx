@@ -1012,6 +1012,19 @@ To verify:
 4. Retry the request, this time including the `PAYMENT-SIGNATURE` header containing the cryptographic proof of payment.
 5. The server verifies the payment via the facilitator and, if valid, returns your actual API response (e.g., `{ "data": "Your paid API response." }`).
 
+#### Browser clients (CORS)
+
+If a web page on another origin calls your endpoint, CORS decides what that page can see:
+
+* **Exposed headers.** `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` are not CORS-safelisted, so a cross-origin `fetch()` can only read them when the response names them in `Access-Control-Expose-Headers`. The x402 middleware adds both names to every response that carries one of them, merged with any list your app already set. It does not set `Access-Control-Allow-Origin`: that comes from your CORS configuration, which must also run on the 402.
+* **Allowed request headers.** The paid retry sends `PAYMENT-SIGNATURE`, which triggers a preflight. Name `PAYMENT-SIGNATURE` explicitly in `Access-Control-Allow-Headers`. `*` is only a wildcard for requests without credentials; with cookies or `Authorization` it is read as a literal header name.
+* **Preflight.** Your CORS layer must answer the `OPTIONS` preflight with a 2xx, and it must never require payment. Key paid routes with their method (for example `"GET /weather"`) so `OPTIONS` falls through to your CORS layer.
+* **Caching.** If you reflect the request's `Origin` in `Access-Control-Allow-Origin` instead of sending `*`, also send `Vary: Origin`, otherwise a CDN or shared cache can serve a response built for one origin to another, and the browser then sees no exposed headers. Paid responses should also stay out of shared caches (`Cache-Control: private, no-store`).
+
+Register CORS so it wraps the payment middleware (for example `app.use(cors())` before `paymentMiddleware` in Express, or `add_middleware(CORSMiddleware, ...)` after the payment middleware in FastAPI). If your CORS layer writes its own expose list after the payment middleware, as Starlette's `CORSMiddleware` does with `expose_headers`, include `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` in it. In Flask, the payment middleware replaces `app.wsgi_app`, so the 402 is returned before `after_request` hooks run and flask-cors never sees it; add CORS at the WSGI level instead (see the [Python middleware README](https://github.com/x402-foundation/x402/tree/main/python/x402/http/middleware#browser-clients-cors)).
+
+When testing with `curl`, send an `Origin` header; without it most CORS layers add nothing.
+
 ### 4. Enhance Discovery with Metadata (Recommended)
 
 When using a facilitator that supports the Bazaar extension, your endpoints can be listed in the [x402 Bazaar](/extensions/bazaar), the discovery layer that helps buyers and AI agents find services.
