@@ -933,11 +933,11 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		holder, reserved, err := scheme.duplicateStore.Reserve(context.Background(), key, "other", ReservationTTL)
 		require.NoError(t, err)
 		require.False(t, reserved)
-		require.Equal(t, tx, holder)
+		require.Equal(t, tx, holder, "the reservation holds the record without the transaction")
 		got, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.Equal(t, tx, got)
+		require.Equal(t, encodeBroadcastRecord(tx, "", "wire"), got)
 	})
 
 	t.Run("fails terminally with the signature when the pending record cannot be stored and bounds postcondition polling", func(t *testing.T) {

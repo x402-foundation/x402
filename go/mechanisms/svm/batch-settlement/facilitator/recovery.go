@@ -34,24 +34,32 @@ func recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) 
 	return context.WithDeadline(detached, deadline.Add(recoveryGrace))
 }
 
-// broadcastRecordSeparator splits a signature from the blockhash it was signed with.
-// Base58 has no ':', so a bare signature is also a valid record.
+// broadcastRecordSeparator splits a signature, the blockhash it was signed with and
+// the signed transaction. Neither base58 nor base64 has ':', so a bare signature
+// and a signature:blockhash pair are also valid records.
 const broadcastRecordSeparator = ":"
 
 // encodeBroadcastRecord is the value held under an operation key while a broadcast
 // is unresolved. The blockhash lets a retry tell a broadcast that can no longer
-// land from one still in flight. An empty blockhash yields the bare signature.
-func encodeBroadcastRecord(signature, blockhash string) string {
-	if blockhash == "" {
+// land from one still in flight. The wire, kept only once a confirmation timed
+// out, lets that retry send the same transaction again. Empty trailing parts are
+// omitted.
+func encodeBroadcastRecord(signature, blockhash, wire string) string {
+	switch {
+	case wire != "":
+		return signature + broadcastRecordSeparator + blockhash + broadcastRecordSeparator + wire
+	case blockhash != "":
+		return signature + broadcastRecordSeparator + blockhash
+	default:
 		return signature
 	}
-	return signature + broadcastRecordSeparator + blockhash
 }
 
-// parseBroadcastRecord splits a broadcast record into its signature and blockhash.
-func parseBroadcastRecord(record string) (signature, blockhash string) {
-	signature, blockhash, _ = strings.Cut(record, broadcastRecordSeparator)
-	return signature, blockhash
+// parseBroadcastRecord splits a broadcast record into its signature, blockhash and wire.
+func parseBroadcastRecord(record string) (signature, blockhash, wire string) {
+	signature, rest, _ := strings.Cut(record, broadcastRecordSeparator)
+	blockhash, wire, _ = strings.Cut(rest, broadcastRecordSeparator)
+	return signature, blockhash, wire
 }
 
 // blockhashOfWire returns the recent blockhash of a base64 transaction, or "" when it cannot be decoded.
@@ -61,6 +69,20 @@ func blockhashOfWire(wire string) string {
 		return ""
 	}
 	return tx.Message.RecentBlockhash.String()
+}
+
+// resendKept sends a kept transaction again, so a broadcast that never reached
+// a leader can still land before its blockhash expires. Errors are ignored:
+// the confirmation that follows decides the outcome.
+func (f *BatchSvmScheme) resendKept(ctx context.Context, signature solana.Signature, wire, network string) {
+	if wire == "" {
+		return
+	}
+	tx, err := svm.DecodeTransaction(wire)
+	if err != nil || len(tx.Signatures) == 0 || tx.Signatures[0] != signature {
+		return
+	}
+	_, _ = f.raw.SendTransaction(ctx, tx, network)
 }
 
 // expiredWithoutLanding reports whether a broadcast whose confirmation was never

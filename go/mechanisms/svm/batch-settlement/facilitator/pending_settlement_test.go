@@ -196,10 +196,11 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result.Response)
 		assert.Equal(t, x402.ErrSettlementPending, result.Response.ErrorReason)
+		assert.Equal(t, recordedSignature, result.Response.Transaction)
 		got, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
 		assert.True(t, ok)
-		assert.Equal(t, recordedSignature, got)
+		assert.Equal(t, encodeBroadcastRecord(recordedSignature, "", "wire"), got, "the timeout record keeps the signed transaction")
 	})
 }
 
