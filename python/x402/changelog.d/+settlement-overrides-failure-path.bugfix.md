@@ -1,0 +1,1 @@
+The Flask and FastAPI middlewares no longer send the internal `Settlement-Overrides` header to the client when the route handler returns an error status. Overrides only apply when a settlement runs, so the header is now stripped on that failure path too, matching the TypeScript and Go adapters.
