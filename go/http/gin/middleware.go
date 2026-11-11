@@ -427,24 +427,6 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		}()
 	}
 
-	// Check if aborted by the handler (SkipHandler is an intentional bypass, not a failure).
-	if !skipHandler && c.IsAborted() {
-		headers := server.ResolveCancelledSettlement(
-			result.CancellationDispatcher,
-			x402.VerifiedPaymentCancelOptions{
-				Reason:         x402.CancellationReasonHandlerFailed,
-				ResponseStatus: writer.statusCode,
-			},
-			result.BeforeHandlerSettlement,
-			result.PaymentPayload,
-			writer.Header(),
-		)
-		for key, value := range headers {
-			c.Header(key, value)
-		}
-		return
-	}
-
 	// Restore original writer
 	c.Writer = writer.ResponseWriter
 
