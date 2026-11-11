@@ -1996,3 +1996,105 @@ func TestPaymentMiddleware_LiteralRoutePercentEncodedSeparatorBypass(t *testing.
 		}
 	})
 }
+
+// The internal Settlement-Overrides header only applies when a settlement runs.
+// On the handler-failure path nothing settles, so the middleware must strip it
+// rather than forward it to the client. Mirrors the net/http test: this is the
+// only check that the adapter passes the same header map it writes the client
+// response to.
+func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerFailure(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	r := gin.New()
+	r.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+	r.GET("/api", func(c *gin.Context) {
+		SetSettlementOverrides(c, &x402.SettlementOverrides{})
+		c.Status(http.StatusInternalServerError)
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status 500, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get(x402http.SettlementOverridesHeader); got != "" {
+		t.Errorf("Expected Settlement-Overrides to be stripped, got %q", got)
+	}
+}
+
+// A handler can decline a verified request by aborting rather than returning.
+// However the middleware routes that — its own abort branch, or the >= 400 path
+// once #4188 removes the branch — the internal override header must not survive.
+// No other Gin test reaches this with overrides set.
+func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerAbort(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	r := gin.New()
+	r.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+	r.GET("/api", func(c *gin.Context) {
+		SetSettlementOverrides(c, &x402.SettlementOverrides{})
+		c.AbortWithStatus(http.StatusForbidden)
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// The aborted handler's status/body delivery is #4188's concern; this asserts
+	// only the header contract this branch owns.
+	if got := w.Header().Get(x402http.SettlementOverridesHeader); got != "" {
+		t.Errorf("Expected Settlement-Overrides to be stripped on abort, got %q", got)
+	}
+}
