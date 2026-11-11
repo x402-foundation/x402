@@ -23,6 +23,8 @@ V1_NETWORKS = [
     "stable",
     "stable-testnet",
     "celo",
+    "ethereum",
+    "flare",
 ]
 
 # V1 network name to chain ID mapping

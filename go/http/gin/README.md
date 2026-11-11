@@ -229,6 +229,25 @@ r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
 ))
 ```
 
+### Declining a Paid Request
+
+Settlement is decided by the response status, not by `c.Abort()`. To decline a
+paid request and withhold settlement, respond with a status of `400` or higher:
+
+```go
+func authMiddleware(c *gin.Context) {
+	if !validToken(c) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+	c.Next()
+}
+```
+
+Any response below `400` settles, including one that aborts after writing a
+successful response, because the resource has been delivered either way. This
+matches the Echo, net/http and TypeScript adapters.
+
 ## Complete Example
 
 ```go

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from x402.extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING_KEY
 from x402.mechanisms.evm import get_default_asset
 from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
@@ -26,6 +28,7 @@ from x402.mechanisms.evm.constants import (
     ERR_UPTO_NETWORK_MISMATCH,
     ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT,
     ERR_UPTO_TRANSACTION_FAILED,
+    PERMIT2_ADDRESS,
     X402_UPTO_PERMIT2_PROXY_ADDRESS,
 )
 from x402.mechanisms.evm.types import (
@@ -1194,3 +1197,89 @@ class TestUptoPermit2PendingSettlementStore:
 
         assert result.success is False
         assert facilitator._pending_store.entries == {}
+
+
+class _RecordingReadSigner(MockFacilitatorSigner):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.read_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def read_contract(self, address: str, abi: list[dict], function_name: str, *args: Any) -> Any:
+        self.read_calls.append((function_name, args))
+        return super().read_contract(address, abi, function_name, *args)
+
+
+def _upto_eip2612_payload(signature: str) -> PaymentPayload:
+    now = int(time.time())
+    return make_payment_payload().model_copy(
+        update={
+            "extensions": {
+                EIP2612_GAS_SPONSORING_KEY: {
+                    "info": {
+                        "from": PAYER,
+                        "asset": TOKEN_ADDRESS,
+                        "spender": PERMIT2_ADDRESS,
+                        "amount": str(2**256 - 1),
+                        "nonce": "0",
+                        "deadline": str(now + 3600),
+                        "signature": signature,
+                        "version": "1",
+                    }
+                }
+            }
+        }
+    )
+
+
+def _permit2612_v(call_args: tuple[Any, ...]) -> int:
+    return call_args[0][4]
+
+
+class TestUptoEip2612RecoveryByte:
+    @pytest.mark.parametrize(
+        ("signature", "expected_v"),
+        [
+            pytest.param("0x" + "aa" * 64 + "00", 27, id="raw-0"),
+            pytest.param("0x" + "aa" * 64 + "01", 28, id="raw-1"),
+            pytest.param("0x" + "aa" * 64 + "1b", 27, id="v-27"),
+            pytest.param("0x" + "aa" * 64 + "1c", 28, id="v-28"),
+        ],
+    )
+    def test_verify_simulation_normalizes_recovery_byte(self, signature: str, expected_v: int):
+        signer = _RecordingReadSigner(sig_valid=True)
+        facilitator = UptoEvmFacilitatorScheme(signer)
+
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.verify(_upto_eip2612_payload(signature), make_requirements())
+
+        assert result.is_valid is True
+        permit_calls = [args for name, args in signer.read_calls if name == "settleWithPermit"]
+        assert len(permit_calls) == 1
+        assert _permit2612_v(permit_calls[0]) == expected_v
+
+    @pytest.mark.parametrize(
+        ("signature", "expected_v"),
+        [
+            pytest.param("0x" + "aa" * 64 + "00", 27, id="raw-0"),
+            pytest.param("0x" + "aa" * 64 + "1c", 28, id="v-28"),
+        ],
+    )
+    def test_settle_normalizes_recovery_byte(self, signature: str, expected_v: int):
+        signer = MockFacilitatorSigner(sig_valid=True)
+        facilitator = UptoEvmFacilitatorScheme(signer)
+
+        with patch(
+            "x402.mechanisms.evm.upto.permit2_utils._verify_upto_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(_upto_eip2612_payload(signature), make_requirements())
+
+        assert result.success is True
+        permit_writes = [
+            args for _address, name, args in signer.write_calls if name == "settleWithPermit"
+        ]
+        assert len(permit_writes) == 1
+        assert _permit2612_v(permit_writes[0]) == expected_v
