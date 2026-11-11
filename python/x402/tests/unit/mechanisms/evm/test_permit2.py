@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from x402.extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING_KEY
 from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
@@ -26,6 +27,7 @@ from x402.mechanisms.evm.constants import (
     ERR_SETTLEMENT_PENDING,
     ERR_TRANSACTION_FAILED,
     ERR_UNSUPPORTED_SCHEME,
+    PERMIT2_ADDRESS,
     X402_EXACT_PERMIT2_PROXY_ADDRESS,
 )
 from x402.mechanisms.evm.exact import ExactEvmClientScheme, ExactEvmFacilitatorScheme
@@ -994,3 +996,82 @@ class TestVerifyPermit2WithExtensions:
 
         assert result.is_valid is False
         assert "spender_not_permit2" in result.invalid_reason
+
+
+def _eip2612_extension(signature: str) -> dict[str, Any]:
+    now = int(time.time())
+    return {
+        EIP2612_GAS_SPONSORING_KEY: {
+            "info": {
+                "from": PAYER,
+                "asset": TOKEN_ADDRESS,
+                "spender": PERMIT2_ADDRESS,
+                "amount": str(2**256 - 1),
+                "nonce": "0",
+                "deadline": str(now + 3600),
+                "signature": signature,
+                "version": "1",
+            }
+        }
+    }
+
+
+def _permit2612_components(call_args: tuple[Any, ...]) -> tuple[bytes, bytes, int]:
+    permit = call_args[0]
+    return permit[2], permit[3], permit[4]
+
+
+class TestEip2612RecoveryByte:
+    """settleWithPermit must send v in 27/28, including a raw y-parity byte."""
+
+    @pytest.mark.parametrize(
+        ("signature", "expected_v"),
+        [
+            pytest.param("aa" * 64 + "00", 27, id="raw-0"),
+            pytest.param("aa" * 64 + "01", 28, id="raw-1"),
+            pytest.param("0x" + "aa" * 64 + "00", 27, id="prefixed-raw-0"),
+            pytest.param("aa" * 64 + "1b", 27, id="v-27"),
+            pytest.param("aa" * 64 + "1c", 28, id="v-28"),
+            pytest.param("0x" + "aa" * 64 + "1b", 27, id="prefixed-v-27"),
+        ],
+    )
+    def test_exact_settle_normalizes_recovery_byte(self, signature: str, expected_v: int):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+        payload = make_payment_payload().model_copy(
+            update={"extensions": _eip2612_extension(signature)}
+        )
+
+        with patch(
+            "x402.mechanisms.evm.exact.permit2_utils._verify_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(payload, make_requirements())
+
+        assert result.success is True
+        assert len(signer.write_calls) == 1
+        _address, function_name, args = signer.write_calls[0]
+        assert function_name == "settleWithPermit"
+        r, s, v = _permit2612_components(args)
+        assert r == bytes.fromhex("aa" * 32)
+        assert s == bytes.fromhex("aa" * 32)
+        assert v == expected_v
+
+    def test_exact_settle_rejects_short_eip2612_signature(self):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+        payload = make_payment_payload().model_copy(
+            update={"extensions": _eip2612_extension("0xab")}
+        )
+
+        with patch(
+            "x402.mechanisms.evm.exact.permit2_utils._verify_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(payload, make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_TRANSACTION_FAILED
+        assert result.error_message is not None
+        assert "65 bytes" in result.error_message
+        assert signer.write_calls == []
