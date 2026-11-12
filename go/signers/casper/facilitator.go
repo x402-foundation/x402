@@ -128,10 +128,7 @@ func (s *FacilitatorSigner) VerifyEIP712Signature(digest [32]byte, sig [65]byte,
 		return false, err
 	}
 	err = pk.VerifySignature(digest[:], sig[:])
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return err == nil, err
 }
 
 func (s *FacilitatorSigner) SignTransaction(transaction *types.TransactionV1, network string) error {
@@ -153,11 +150,7 @@ func (s *FacilitatorSigner) SignDeploy(deploy *types.Deploy, network string) err
 }
 
 func (s *FacilitatorSigner) GetSpeculativeRpcUrl(network string) string {
-	url, ok := s.speculativeRpcURLs[network]
-	if !ok {
-		return ""
-	}
-	return url
+	return s.speculativeRpcURLs[network]
 }
 
 func (s *FacilitatorSigner) PutTransaction(ctx context.Context, network string, transaction types.TransactionV1) (string, error) {

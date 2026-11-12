@@ -202,8 +202,8 @@ func validateAssetAmount(amount x402.AssetAmount) error {
 	if !casper.IsValidContractPackageHash(amount.Asset) {
 		return fmt.Errorf("%s: %s", ErrInvalidAsset, amount.Asset)
 	}
-	value, ok := new(big.Int).SetString(amount.Amount, 10)
-	if !casper.IsValidAmountFormat(amount.Amount) || !ok || value.BitLen() > 256 {
+	value, _ := new(big.Int).SetString(amount.Amount, 10)
+	if !casper.IsValidAmountFormat(amount.Amount) || value.BitLen() > 256 {
 		return fmt.Errorf("%s: amount must be a positive U256 integer in atomic units", ErrFailedToParseAmount)
 	}
 	return nil

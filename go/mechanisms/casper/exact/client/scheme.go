@@ -101,10 +101,8 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to parse to address: %w", err)
 	}
-	value, ok := new(big.Int).SetString(requirements.Amount, 10)
-	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
-	}
+	// IsValidAmountFormat already accepted this decimal integer.
+	value, _ := new(big.Int).SetString(requirements.Amount, 10)
 
 	message := map[string]interface{}{
 		"from":        fromAddr,

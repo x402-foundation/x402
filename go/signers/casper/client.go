@@ -36,22 +36,11 @@ func NewClientSignerFromKeyFile(path, algo string) (*ClientSigner, error) {
 // NewClientSignerFromSecret loads a Casper private key from a hex string.
 // algo must be "ed25519" or "secp256k1".
 func NewClientSignerFromSecret(privateKeyHex string, algo string) (*ClientSigner, error) {
-	switch algo {
-	case "ed25519", "":
-		key, err := keypair.NewPrivateKeyFromSeedHex(privateKeyHex, keypair.ED25519)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load ed25519 key: %w", err)
-		}
-		return &ClientSigner{key: key}, nil
-	case "secp256k1":
-		key, err := keypair.NewPrivateKeyFromHex(privateKeyHex, keypair.SECP256K1)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load secp256k1 key: %w", err)
-		}
-		return &ClientSigner{key: key}, nil
-	default:
-		return nil, fmt.Errorf("unsupported key algorithm: %q, must be 'ed25519' or 'secp256k1'", algo)
+	key, err := NewPrivateKeyFromSecret(privateKeyHex, algo)
+	if err != nil {
+		return nil, err
 	}
+	return &ClientSigner{key: *key}, nil
 }
 
 // AccountAddress returns the payer's Casper account hash as a 66-char hex string

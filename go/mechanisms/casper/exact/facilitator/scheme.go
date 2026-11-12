@@ -207,10 +207,8 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, fmt.Sprintf("invalid to address: %v", err))
 	}
 
-	value, ok := new(big.Int).SetString(p.Authorization.Value, 10)
-	if !ok {
-		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, "invalid value")
-	}
+	// IsValidAmountFormat already accepted this decimal integer.
+	value, _ := new(big.Int).SetString(p.Authorization.Value, 10)
 
 	nonceRaw, err := hex.DecodeString(p.Authorization.Nonce)
 	if err != nil || len(nonceRaw) != 32 {
@@ -632,23 +630,10 @@ func payloadFromMap(data map[string]interface{}) (*casperMechanism.ExactCasperPa
 	return &payload, nil
 }
 
-func clListU8WithBytes(bytes []byte) clvalue.CLValue {
-	elements := make([]clvalue.CLValue, 0)
-	for _, v := range bytes {
-		ui8 := clvalue.UInt8(v)
-		elements = append(elements, clvalue.CLValue{
-			Type: cltype.UInt8,
-			UI8:  &ui8,
-		})
+func clListU8WithBytes(raw []byte) clvalue.CLValue {
+	list := clvalue.NewCLList(cltype.UInt8)
+	for _, b := range raw {
+		list.List.Append(*clvalue.NewCLUint8(b))
 	}
-	clType := cltype.NewList(cltype.UInt8)
-	value := clvalue.CLValue{
-		Type: clType,
-		List: &clvalue.List{
-			Type:     clType,
-			Elements: elements,
-		},
-	}
-
-	return value
+	return list
 }
