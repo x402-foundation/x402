@@ -43,9 +43,7 @@ func NewClientSignerFromSecret(privateKeyHex string, algo string) (*ClientSigner
 	return &ClientSigner{key: *key}, nil
 }
 
-// AccountAddress returns the payer's Casper account hash as a 66-char hex string
-// with a "00" prefix, e.g. "00aabb...". This format is required by the
-// casper.ClientCasperSigner interface and validated by casper.IsValidAddress.
+// AccountAddress returns the account hash as 66 hex chars with a "00" prefix.
 func (s *ClientSigner) AccountAddress() string {
 	return "00" + s.key.PublicKey().AccountHash().ToHex()
 }
@@ -56,9 +54,8 @@ func (s *ClientSigner) PublicKey() string {
 	return s.key.PublicKey().ToHex()
 }
 
-// SignEIP712 signs a 32-byte EIP-712 digest and returns a 65-byte signature.
-// The signature format is [algo_byte][64_raw_sig_bytes], compatible with
-// keypair.PublicKey.VerifySignature used by the Casper facilitator.
+// SignEIP712 signs a 32-byte digest and returns a 65-byte signature.
+// Byte 0 is the algorithm tag, followed by 64 signature bytes.
 func (s *ClientSigner) SignEIP712(digest [32]byte) ([65]byte, error) {
 	sig, err := s.key.Sign(digest[:])
 	if err != nil {

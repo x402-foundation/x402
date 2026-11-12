@@ -87,9 +87,7 @@ func (f *ExactCasperScheme) CaipFamily() string {
 	return "casper:*"
 }
 
-// GetExtra returns mechanism-specific extra data for the supported kinds endpoint.
-// For Casper, no extra data is needed: the client signs only the CEP-3009
-// authorization, which does not name the facilitator that relays it.
+// GetExtra returns nil. The CEP-3009 authorization does not name the facilitator.
 func (f *ExactCasperScheme) GetExtra(_ x402.Network) map[string]interface{} {
 	return nil
 }
@@ -145,8 +143,7 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, requirements.Asset)
 	}
 
-	// CEP-3009 passes both bounds as U64 runtime args; parse them the same way
-	// settlement does so a value verify accepts can always be submitted.
+	// validAfter and validBefore are U64 runtime args, so a value accepted here can be submitted.
 	validAfter, err := strconv.ParseUint(p.Authorization.ValidAfter, 10, 64)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validAfter: must be an unsigned 64-bit integer")
@@ -166,7 +163,6 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrExpired, payer, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
 	}
 
-	// verify we have a signer for the network in requirements
 	cfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrNetworkMismatch, payer, err.Error())
@@ -262,9 +258,8 @@ func (f *ExactCasperScheme) Verify(
 	return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 }
 
-// validatePreflight runs a live preflight check against the network when a speculative
-// execution endpoint is configured for the payment network; otherwise it falls back to
-// targeted state checks over the regular RPC URL.
+// validatePreflight uses speculative execution when that RPC URL is set,
+// and otherwise checks token, balance, and nonce state at one block.
 func (f *ExactCasperScheme) validatePreflight(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -278,10 +273,8 @@ func (f *ExactCasperScheme) validatePreflight(
 	return f.validateTargetedPreflight(ctx, p, requirements, networkCfg)
 }
 
-// validateSpeculativeExecution builds a Casper 1.5 deploy equivalent to the settlement
-// transaction, signs it with the facilitator key, and runs speculative_exec against the
-// configured speculative RPC endpoint. The deploy is never broadcast; it is only used
-// to confirm the authorization would succeed end-to-end before settlement.
+// validateSpeculativeExecution signs an unsigned deploy and runs speculative_exec.
+// The deploy is not broadcast.
 func (f *ExactCasperScheme) validateSpeculativeExecution(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -392,10 +385,8 @@ func (f *ExactCasperScheme) buildTransferWithAuthorizationArgs(p *casperMechanis
 	return args, nil
 }
 
-// buildTransferWithAuthorizationDeploy builds a Casper 1.5 deploy (not a
-// TransactionV1) that targets the transfer_with_authorization entry point with the
-// runtime args derived from the payload. The deploy is unsigned; the caller signs it
-// before passing it to a speculative execution endpoint.
+// buildTransferWithAuthorizationDeploy builds an unsigned Casper 1.5 deploy
+// for transfer_with_authorization. The caller signs it before speculative_exec.
 func (f *ExactCasperScheme) buildTransferWithAuthorizationDeploy(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -504,7 +495,6 @@ func (f *ExactCasperScheme) Settle(
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
-	// verify we have a signer for this network before proceeding
 	networkCfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())

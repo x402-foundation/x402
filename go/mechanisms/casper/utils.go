@@ -96,9 +96,8 @@ func ParseAmount(amount string, decimals int) (uint64, error) {
 	return strconv.ParseUint(atomic, 10, 64)
 }
 
-// ValidateSignatureFormat checks Casper's algorithm tag and requires canonical
-// secp256k1 scalars: 0 < r < n and 0 < s <= n/2. Cryptographic verification must
-// follow this check. Ed25519 signatures have their own encoding rules.
+// ValidateSignatureFormat checks the algorithm tag and, for secp256k1, canonical low-s scalars.
+// Ed25519 is not interpreted as secp256k1. Verify the signature after this check.
 func ValidateSignatureFormat(signature [65]byte) error {
 	switch signature[0] {
 	case byte(keypair.ED25519):

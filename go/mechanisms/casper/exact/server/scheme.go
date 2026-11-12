@@ -51,52 +51,15 @@ func (s *ExactCasperScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
 	}
 }
 
-// RegisterMoneyParser registers a custom money parser in the parser chain.
-// Multiple parsers can be registered - they will be tried in registration order.
-// Each parser receives a decimal string (e.g., "1.50" for $1.50).
-// If a parser returns nil, the next parser in the chain will be tried.
-// The default parser is always the final fallback.
-//
-// Args:
-//
-//	parser: Custom function to convert amount to AssetAmount (or nil to skip)
-//
-// Returns:
-//
-//	The server instance for chaining
-//
-// Example:
-//
-//	casperServer.RegisterMoneyParser(func(amount string, network x402.Network) (*x402.AssetAmount, error) {
-//	    tokenAmount, err := x402.ConvertToTokenAmount(amount, 9)
-//	    if err != nil {
-//	        return nil, err
-//	    }
-//	    return &x402.AssetAmount{
-//	        Amount: tokenAmount,
-//	        Asset:  "aabbccddeeff0011223344556677889900aabbccddeeff001122334455667788",
-//	        Extra:  map[string]interface{}{"name": "CustomToken", "version": "1"},
-//	    }, nil
-//	})
+// RegisterMoneyParser appends a parser tried before the default money conversion.
+// A nil result skips to the next parser.
 func (s *ExactCasperScheme) RegisterMoneyParser(parser x402.MoneyParser) *ExactCasperScheme {
 	s.moneyParsers = append(s.moneyParsers, parser)
 	return s
 }
 
-// ParsePrice parses a price and converts it to an asset amount (V2)
-// Explicit asset amounts must be positive U256 integers in atomic units.
-// If price is Money (string | number), parses to decimal and tries custom parsers.
-// Falls back to default conversion if all custom parsers return nil. Money prices
-// that require fractional atomic units are rejected rather than rounded.
-//
-// Args:
-//
-//	price: The price to parse (string, number, AssetAmount, or asset/amount map)
-//	network: The network identifier
-//
-// Returns:
-//
-//	AssetAmount with amount, asset, and optional extra fields
+// ParsePrice converts a price to atomic units. Explicit amounts must be positive U256 integers.
+// Money values try custom parsers, then the default asset, and reject fractional atomic units.
 func (s *ExactCasperScheme) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
 	if amount, ok := price.(x402.AssetAmount); ok {
 		if err := validateAssetAmount(amount); err != nil {
@@ -218,7 +181,6 @@ func (s *ExactCasperScheme) EnhancePaymentRequirements(
 ) (types.PaymentRequirements, error) {
 	networkStr := string(requirements.Network)
 
-	// No asset specified: use the network's default asset
 	if requirements.Asset == "" {
 		assetInfo, err := casper.GetAssetInfo(networkStr, "")
 		if err != nil {

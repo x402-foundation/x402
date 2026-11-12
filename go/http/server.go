@@ -966,9 +966,8 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
 	}
 
-	// Overrides only apply when a settle runs below, and the internal header must
-	// never reach the client. Read it before the early return so the echo-only path
-	// strips it too.
+	// When overrides is nil, read and delete Settlement-Overrides so a skipped
+	// settle cannot send the internal header to the client.
 	resolved := overrides
 	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
 		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {

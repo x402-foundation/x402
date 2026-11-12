@@ -43,8 +43,6 @@ func validRequirements() types.PaymentRequirements {
 	}
 }
 
-// === Scheme identity ===
-
 func TestScheme_ReturnsExact(t *testing.T) {
 	s := NewExactCasperScheme()
 	assert.Equal(t, casper.SchemeExact, s.Scheme())
@@ -102,8 +100,6 @@ func TestFindMatchingRequirements_RequiresDomainExtra(t *testing.T) {
 	}
 }
 
-// === GetAssetDecimals ===
-
 func TestGetAssetDecimals_KnownDefaultAsset(t *testing.T) {
 	s := NewExactCasperScheme()
 
@@ -125,8 +121,6 @@ func TestGetAssetDecimals_UnknownNetwork(t *testing.T) {
 	_, ok := s.GetAssetDecimals(testCSPRUSD, "casper:nope")
 	assert.False(t, ok)
 }
-
-// === ParsePrice — explicit price map ===
 
 func TestParsePrice_ExplicitAssetAmount(t *testing.T) {
 	s := NewExactCasperScheme()
@@ -183,8 +177,6 @@ func TestParsePrice_AmountMustBeString(t *testing.T) {
 	assert.ErrorContains(t, err, ErrAmountMustBeString)
 }
 
-// === ParsePrice — money fallback to default asset ===
-
 func TestParsePrice_MoneyString_UsesDefaultAsset(t *testing.T) {
 	s := NewExactCasperScheme()
 
@@ -232,8 +224,6 @@ func TestParsePrice_MoneyUnsupportedNetwork(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no default asset configured")
 }
-
-// === ParsePrice — custom parser chain ===
 
 func TestParsePrice_WithCustomMoneyParser(t *testing.T) {
 	s := NewExactCasperScheme()
@@ -300,8 +290,6 @@ func TestRegisterMoneyParser_Chainability(t *testing.T) {
 
 	assert.Same(t, s, result)
 }
-
-// === EnhancePaymentRequirements — happy path ===
 
 func TestEnhancePaymentRequirements_HappyPath(t *testing.T) {
 	s := NewExactCasperScheme()
@@ -377,8 +365,6 @@ func TestEnhancePaymentRequirements_PayToWith01Prefix(t *testing.T) {
 	assert.Equal(t, testPayToAlt, result.PayTo)
 }
 
-// === EnhancePaymentRequirements — amount conversion ===
-
 func TestEnhancePaymentRequirements_ConvertsDecimalAmount(t *testing.T) {
 	s := NewExactCasperScheme()
 	req := validRequirements()
@@ -442,12 +428,8 @@ func TestEnhancePaymentRequirements_InvalidDecimalAmount(t *testing.T) {
 	assert.ErrorContains(t, err, ErrFailedToParseAmount)
 }
 
-// === EnhancePaymentRequirements — extra map ===
-
 func TestEnhancePaymentRequirements_NilExtraStillFailsTokenMetadataCheck(t *testing.T) {
-	// The scheme materialises an empty extra map when callers pass nil, but the
-	// subsequent token-metadata check still runs against the now-empty map and
-	// rejects the requirements. This documents the deliberate "fail loud" path.
+	// Nil extra on an unregistered asset stays empty, so token metadata still rejects it.
 	s := NewExactCasperScheme()
 	req := validRequirements()
 	req.Extra = nil
@@ -455,8 +437,6 @@ func TestEnhancePaymentRequirements_NilExtraStillFailsTokenMetadataCheck(t *test
 	_, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
 	assert.ErrorContains(t, err, ErrMissingTokenName)
 }
-
-// === EnhancePaymentRequirements — token metadata validation ===
 
 func TestEnhancePaymentRequirements_MissingTokenName(t *testing.T) {
 	s := NewExactCasperScheme()
@@ -503,8 +483,6 @@ func TestEnhancePaymentRequirements_EmptyTokenVersion(t *testing.T) {
 	assert.ErrorContains(t, err, ErrMissingTokenVersion)
 }
 
-// === EnhancePaymentRequirements — address validation ===
-
 func TestEnhancePaymentRequirements_InvalidAsset(t *testing.T) {
 	s := NewExactCasperScheme()
 	req := validRequirements()
@@ -522,8 +500,6 @@ func TestEnhancePaymentRequirements_InvalidPayTo(t *testing.T) {
 	_, err := s.EnhancePaymentRequirements(context.Background(), req, types.SupportedKind{}, nil)
 	assert.ErrorContains(t, err, ErrInvalidPayTo)
 }
-
-// === EnhancePaymentRequirements — supportedKind extensions ===
 
 func TestEnhancePaymentRequirements_ExtensionKeysForwarded(t *testing.T) {
 	s := NewExactCasperScheme()

@@ -26,15 +26,8 @@ type FacilitatorSigner struct {
 	transactionPollInterval time.Duration
 }
 
-// FacilitatorSignerConfig is the configuration for constructing a FacilitatorSigner.
-// RpcURLs maps each network identifier to its primary JSON-RPC endpoint.
-// SpeculativeRpcURLs optionally maps each network identifier to a speculative
-// execution endpoint; when set for a network, facilitators can use it to
-// in the verify step to validate payments requirements.
-// TransactionWaitTimeout bounds how long WaitForTransaction polls for execution
-// (default DefaultTransactionWaitTimeout); it should stay below
-// x402Casper.SettlementTTL. TransactionPollInterval defaults to
-// DefaultTransactionPollInterval.
+// FacilitatorSignerConfig uses the default durations when those fields are zero.
+// Wait timeout should stay below x402Casper.SettlementTTL.
 type FacilitatorSignerConfig struct {
 	Keys                    map[string]keypair.PrivateKey
 	RpcURLs                 map[string]string
