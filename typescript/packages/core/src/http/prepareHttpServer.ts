@@ -8,19 +8,18 @@ export interface PreparedHttpServer {
   httpServer: x402HTTPResourceServer;
 
   /**
-   * Initializes the facilitator once, retrying after a failure.
+   * Initializes the facilitator once. A rejection leaves the next call free to retry.
    *
-   * @returns Resolves once the server has initialized
+   * @returns Resolves after initialization succeeds
    */
   init: () => Promise<void>;
 }
 
 /**
- * Registers the paywall provider and wires up facilitator initialization.
+ * Registers an optional paywall and wires facilitator initialization.
  *
- * The first protected request initializes the server. A retryable failure (for example a
- * facilitator timeout) is retried on the next protected request; a fatal capability or
- * route mismatch exits the process instead of leaving a misconfigured server listening.
+ * A retryable failure is retried on the next `init()` call. A fatal error from
+ * the startup `initialize()` call exits the process.
  *
  * @param httpServer - Pre-configured x402HTTPResourceServer instance
  * @param paywall - Optional paywall provider for custom payment UI
@@ -36,11 +35,7 @@ export function prepareHttpServer(
     httpServer.registerPaywallProvider(paywall);
   }
 
-  // Store the promise rather than its result: initialize() fetches facilitator support and
-  // validates routes, and every protected request must observe a retryable failure.
   let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled rejections;
-  // the original promise is still awaited on the first protected request.
   attachBackgroundInitHandler(initPromise);
   let isInitialized = false;
 

@@ -129,7 +129,6 @@ export function paymentMiddlewareFromHTTPServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): MiddlewareHandler {
-  // Register the paywall provider and wire up retryable facilitator initialization.
   const { init: initializeHttpServer } = prepareHttpServer(
     httpServer,
     paywall,

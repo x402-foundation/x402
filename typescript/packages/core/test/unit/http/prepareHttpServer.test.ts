@@ -2,12 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareHttpServer } from "../../../src/http/prepareHttpServer";
 import type { x402HTTPResourceServer } from "../../../src/http/x402HTTPResourceServer";
 
-/**
- * Builds an HTTP resource server double.
- *
- * @param initialize - Initialization implementation under test
- * @returns A minimal HTTP resource server double
- */
 function createHttpServer(initialize: () => Promise<void>): x402HTTPResourceServer {
   return {
     initialize,
@@ -78,7 +72,6 @@ describe("prepareHttpServer", () => {
       .mockResolvedValueOnce(undefined);
     const { init } = prepareHttpServer(createHttpServer(initialize), undefined, true);
 
-    // The first protected request observes the eager failure, then retries.
     await expect(init()).rejects.toThrow("facilitator request timed out");
     await expect(init()).resolves.toBeUndefined();
     expect(initialize).toHaveBeenCalledTimes(2);

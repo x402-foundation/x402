@@ -293,7 +293,6 @@ export function paymentMiddlewareFromHTTPServer(
   app.decorateRequest("x402Context", undefined);
   app.decorateRequest("x402RawGuard", undefined);
 
-  // Register the paywall provider and wire up retryable facilitator initialization.
   const { init: initializeHttpServer } = prepareHttpServer(
     httpServer,
     paywall,
