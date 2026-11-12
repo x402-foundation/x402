@@ -88,6 +88,7 @@ import {
   ErrAuthorizationUsed,
   ErrInsufficientBalance,
   ErrNetworkMismatch,
+  ErrPreflightFailed,
   ErrSpeculativeExecutionFailed,
   ErrUnsupportedAsset,
   ExactCasperScheme,
@@ -285,10 +286,33 @@ describe("ExactCasperScheme facilitator preflight", () => {
     });
   });
 
-  it("maps token package lookup failures to unsupported asset", async () => {
+  it("maps token package lookup failures to preflight failed", async () => {
     rpcClient.queryLatestGlobalState
       .mockReset()
       .mockRejectedValueOnce(new Error("rpc unavailable"));
+    const payload = await createValidPayload();
+    const signer = createMockSigner();
+    const scheme = new ExactCasperScheme(signer);
+    const payment = buildPaymentPayload(payload);
+
+    await expect(scheme.verify(payment, buildRequirements())).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPreflightFailed,
+      invalidMessage: "rpc unavailable",
+      payer: payload.authorization.from,
+    });
+    await expect(scheme.settle(payment, buildRequirements())).resolves.toMatchObject({
+      success: false,
+      errorReason: ErrPreflightFailed,
+      errorMessage: "rpc unavailable",
+      payer: payload.authorization.from,
+      transaction: "",
+    });
+    expect(signer.putTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps a non-package asset as unsupported", async () => {
+    rpcClient.queryLatestGlobalState.mockReset().mockResolvedValueOnce({ storedValue: {} });
     const payload = await createValidPayload();
     const scheme = new ExactCasperScheme(createMockSigner());
 
@@ -297,12 +321,12 @@ describe("ExactCasperScheme facilitator preflight", () => {
     ).resolves.toMatchObject({
       isValid: false,
       invalidReason: ErrUnsupportedAsset,
-      invalidMessage: "rpc unavailable",
+      invalidMessage: "token package not found",
       payer: payload.authorization.from,
     });
   });
 
-  it("maps malformed balance dictionary values to insufficient balance", async () => {
+  it("maps malformed balance dictionary values to preflight failed", async () => {
     rpcClient.getDictionaryItemByIdentifier
       .mockReset()
       .mockResolvedValueOnce(dictionaryU256("not-a-number"));
@@ -313,8 +337,41 @@ describe("ExactCasperScheme facilitator preflight", () => {
       scheme.verify(buildPaymentPayload(payload), buildRequirements()),
     ).resolves.toMatchObject({
       isValid: false,
-      invalidReason: ErrInsufficientBalance,
+      invalidReason: ErrPreflightFailed,
       invalidMessage: "invalid U256 dictionary value",
+      payer: payload.authorization.from,
+    });
+  });
+
+  it("maps balance read failures to preflight failed", async () => {
+    rpcClient.getDictionaryItemByIdentifier
+      .mockReset()
+      .mockRejectedValueOnce(new Error("rpc unavailable"));
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPreflightFailed,
+      invalidMessage: "rpc unavailable",
+      payer: payload.authorization.from,
+    });
+  });
+
+  it("maps a missing balance to insufficient balance", async () => {
+    rpcClient.getDictionaryItemByIdentifier
+      .mockReset()
+      .mockRejectedValueOnce({ sourceErr: { data: "dictionary URef not found" } });
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrInsufficientBalance,
       payer: payload.authorization.from,
     });
   });
@@ -352,7 +409,7 @@ describe("ExactCasperScheme facilitator preflight", () => {
     });
   });
 
-  it("maps nonce dictionary read failures to authorization-used errors", async () => {
+  it("maps nonce dictionary read failures to preflight failed", async () => {
     rpcClient.getDictionaryItemByIdentifier
       .mockReset()
       .mockResolvedValueOnce(dictionaryU256("1000000"))
@@ -364,8 +421,26 @@ describe("ExactCasperScheme facilitator preflight", () => {
       scheme.verify(buildPaymentPayload(payload), buildRequirements()),
     ).resolves.toMatchObject({
       isValid: false,
-      invalidReason: ErrAuthorizationUsed,
+      invalidReason: ErrPreflightFailed,
       invalidMessage: "dictionary seed URef not found",
+      payer: payload.authorization.from,
+    });
+  });
+
+  it("maps malformed nonce dictionary values to preflight failed", async () => {
+    rpcClient.getDictionaryItemByIdentifier
+      .mockReset()
+      .mockResolvedValueOnce(dictionaryU256("1000000"))
+      .mockResolvedValueOnce({ storedValue: { clValue: {} } });
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPreflightFailed,
+      invalidMessage: "invalid used_nonces dictionary value",
       payer: payload.authorization.from,
     });
   });

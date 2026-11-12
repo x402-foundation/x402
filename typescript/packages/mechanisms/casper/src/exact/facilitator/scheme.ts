@@ -41,6 +41,7 @@ import {
 
 export const ErrInvalidScheme = "invalid_exact_casper_facilitator_invalid_scheme";
 export const ErrNetworkMismatch = "invalid_exact_casper_facilitator_network_mismatch";
+export const ErrMalformedPayload = "invalid_exact_casper_facilitator_malformed_payload";
 export const ErrInvalidAsset = "invalid_exact_casper_facilitator_invalid_asset";
 export const ErrInvalidPayTo = "invalid_exact_casper_facilitator_invalid_payto";
 export const ErrInvalidPayer = "invalid_exact_casper_facilitator_invalid_payer";
@@ -61,6 +62,7 @@ export const ErrAuthorizationUsed =
 export const ErrUnsupportedAsset = "invalid_exact_casper_facilitator_unsupported_asset";
 export const ErrSpeculativeExecutionFailed =
   "invalid_exact_casper_facilitator_speculative_execution_failed";
+export const ErrPreflightFailed = "invalid_exact_casper_facilitator_preflight_failed";
 
 const TRANSFER_WITH_AUTHORIZATION_ENTRY_POINT = "transfer_with_authorization";
 const BALANCES_DICTIONARY = "balances";
