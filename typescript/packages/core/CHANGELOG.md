@@ -1,5 +1,12 @@
 # @x402/core Changelog
 
+## 2.31.0
+
+### Patch Changes
+
+- [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d): Export `prepareHttpServer` and `PreparedHttpServer` from `@x402/core/server` and `@x402/core/http`. The helper owns the facilitator initialization the Express, Fastify, Hono, and Next middlewares previously duplicated: the eager `initialize()` promise shared with the first protected request, the retry after a retryable failure, and the fatal startup exit. Paywall registration is unchanged. The four adapters now share it, and their behavior is unchanged. ([#4183](https://github.com/x402-foundation/x402/pull/4183)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+- [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65): Facilitator before-verify and before-settle hooks can return an optional `message` with an abort. Verify copies it to `invalidMessage`. Settle resolves with `success: false` and copies it to `errorMessage`, including when the message is an empty string. An omitted message leaves that field undefined. `settle()` no longer rejects with `Settlement aborted:` when a before-settle hook aborts. ([#4099](https://github.com/x402-foundation/x402/pull/4099)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
 ## 2.30.0
 
 ### Minor Changes
