@@ -37,6 +37,7 @@ import {
   isMissingDictionaryItem,
   readDictionaryBool,
   readDictionaryU256OrDefault,
+  UnsupportedCasperAssetError,
 } from "../../contracts";
 
 export const ErrInvalidScheme = "invalid_exact_casper_facilitator_invalid_scheme";
@@ -156,7 +157,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
 
     const exactPayload = this.extractPayload(payload);
     if (!exactPayload) {
-      return invalid(ErrInvalidScheme, undefined, "malformed payload");
+      return invalid(ErrMalformedPayload, undefined, "malformed payload");
     }
     const payer = exactPayload.authorization.from;
 
@@ -537,7 +538,9 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return invalid(ErrUnsupportedAsset, payer, message);
+      const reason =
+        error instanceof UnsupportedCasperAssetError ? ErrUnsupportedAsset : ErrPreflightFailed;
+      return invalid(reason, payer, message);
     }
 
     try {
@@ -552,7 +555,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return invalid(ErrInsufficientBalance, payer, message);
+      return invalid(ErrPreflightFailed, payer, message);
     }
 
     try {
@@ -568,7 +571,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
     } catch (error) {
       if (!isMissingDictionaryItem(error)) {
         const message = error instanceof Error ? error.message : String(error);
-        return invalid(ErrAuthorizationUsed, payer, message);
+        return invalid(ErrPreflightFailed, payer, message);
       }
     }
 

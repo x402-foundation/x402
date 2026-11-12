@@ -287,9 +287,7 @@ describe("ExactCasperScheme facilitator preflight", () => {
   });
 
   it("maps token package lookup failures to preflight failed", async () => {
-    rpcClient.queryLatestGlobalState
-      .mockReset()
-      .mockRejectedValueOnce(new Error("rpc unavailable"));
+    rpcClient.queryLatestGlobalState.mockReset().mockRejectedValue(new Error("rpc unavailable"));
     const payload = await createValidPayload();
     const signer = createMockSigner();
     const scheme = new ExactCasperScheme(signer);
@@ -309,6 +307,46 @@ describe("ExactCasperScheme facilitator preflight", () => {
       transaction: "",
     });
     expect(signer.putTransaction).not.toHaveBeenCalled();
+  });
+
+  it("maps active contract read failures to preflight failed", async () => {
+    rpcClient.queryLatestGlobalState.mockReset().mockImplementation(async (key: string) => {
+      if (key === `hash-${testAsset}`) {
+        return tokenPackage;
+      }
+      throw new Error("rpc unavailable");
+    });
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPreflightFailed,
+      invalidMessage: "failed to get active contract for token: rpc unavailable",
+      payer: payload.authorization.from,
+    });
+  });
+
+  it("keeps a missing active contract as unsupported", async () => {
+    rpcClient.queryLatestGlobalState.mockReset().mockImplementation(async (key: string) => {
+      if (key === `hash-${testAsset}`) {
+        return tokenPackage;
+      }
+      return { storedValue: {} };
+    });
+    const payload = await createValidPayload();
+    const scheme = new ExactCasperScheme(createMockSigner());
+
+    await expect(
+      scheme.verify(buildPaymentPayload(payload), buildRequirements()),
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrUnsupportedAsset,
+      invalidMessage: "failed to get active contract for token: active contract not found",
+      payer: payload.authorization.from,
+    });
   });
 
   it("keeps a non-package asset as unsupported", async () => {
