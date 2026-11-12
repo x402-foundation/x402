@@ -1,3 +1,0 @@
-kind: fixed
-body: 'EIP-2612 permit signatures with a raw y-parity recovery byte are normalized to 27 or 28 before exact, upto, and batch-settlement permit settlement.'
-time: 2026-11-11T08:30:00Z
