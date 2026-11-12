@@ -1,5 +1,18 @@
 # @x402/casper
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [da08c70](https://github.com/x402-foundation/x402/commit/da08c70): The exact Casper facilitator now returns `invalid_exact_casper_facilitator_malformed_payload` when a payload cannot be parsed, and `invalid_exact_casper_facilitator_preflight_failed` when a targeted preflight read fails or a dictionary value is malformed. A missing balance, a used nonce, and an asset that cannot run `transfer_with_authorization` keep their existing reasons. Settle reports the same reason and payer. ([#4233](https://github.com/x402-foundation/x402/pull/4233)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [96d6440](https://github.com/x402-foundation/x402/commit/96d6440): The `exact` Casper facilitator now returns the transaction hash in `transaction` when settlement fails after the transaction was submitted, for example when it reverts on chain or the wait for its result times out. `transaction` stays empty when no transaction was submitted. ([#4155](https://github.com/x402-foundation/x402/pull/4155)) - Thanks [@davidatwhiletrue](https://github.com/davidatwhiletrue) and [@claude](https://github.com/claude)!
+
 ## 2.30.0
 
 ### Minor Changes

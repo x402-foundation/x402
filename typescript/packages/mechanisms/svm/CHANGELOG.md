@@ -1,5 +1,18 @@
 # @x402/svm Changelog
 
+## 2.31.0
+
+### Minor Changes
+
+- [4f64aba](https://github.com/x402-foundation/x402/commit/4f64aba): Added an optional preflight/postflight instruction-tuple allowlist to the exact SVM facilitator's Path 1 (static layout) verification. `ExactSvmSchemeOptions.preflightInstructionAllowlist`/`postflightInstructionAllowlist` each accept a list of instruction tuples (program address + discriminator identities) that may match as a contiguous block immediately before/after the required protocol instructions - e.g. atomically channeling funds from an out-of-band mechanism into the same transaction as the merchant transfer. Guard (Lighthouse) instructions may be interspersed within a matched block. A matched block is fee-payer-isolation-checked before being accepted, reusing the same isolation check as Path 2 smart-wallet verification. An empty tuple or empty discriminator never matches (fail closed). Both allowlists default to empty, which is a strict no-op: existing behavior is unchanged unless explicitly configured. ([#3615](https://github.com/x402-foundation/x402/pull/3615)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [4f64aba](https://github.com/x402-foundation/x402/commit/4f64aba): Fixed exact SVM Path 1 rejecting wallet-injected Lighthouse assertion guards before the compute-budget/`TransferChecked` sequence or beyond the old instruction-count cap. Instructions are classified by program ID and discriminator, preserving protocol relative order while allowing assertions anywhere without a count cap. Only Lighthouse assertion discriminators `2..=17` are accepted, and every guard must isolate the facilitator fee payer. MemoryWrite, MemoryClose, empty data, and unknown variants are rejected without smart-wallet fallback. Previously accepted unsafe Lighthouse instructions are intentionally no longer accepted. Configured preflight/postflight blocks cannot hide top-level `TransferChecked` instructions; their CPI effects remain operator-trusted. Existing error constants remain exported, but Path 1 no longer emits `invalid_exact_svm_payload_transaction_instructions_length` or `invalid_exact_svm_payload_unknown_{fourth,fifth,sixth,seventh}_instruction`. Callers branching on those strings must handle the new `invalid_exact_svm_payload_unknown_instruction` and `invalid_exact_svm_payload_transaction_instructions_order` reasons instead. ([#3615](https://github.com/x402-foundation/x402/pull/3615)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+
 ## 2.30.0
 
 ### Minor Changes
