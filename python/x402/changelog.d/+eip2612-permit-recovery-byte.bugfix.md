@@ -1,1 +1,0 @@
-Fixed exact and upto EIP-2612 `settleWithPermit` so a raw y-parity recovery byte (0 or 1) is sent as 27 or 28. Those KMS and HSM signatures no longer revert on exact settle or on upto verify simulation and settle.
