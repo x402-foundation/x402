@@ -1,0 +1,3 @@
+kind: added
+body: 'SVM payment-channel rent cleanup: optional `BeforeCloseOrDistribute func(ctx, candidate) error` on `paymentchannels.RentCleanupOptions` and the `upto` and `batch-settlement` `CleanupOptions`, called with `ChannelID`, `Payer`, `PayTo` and `Action` before an abandon-close, forced close or distribute is built. A non-nil error skips the channel, is reported through `OnError`, and does not consume a `MaxClosesPerRun` slot. Reclaim does not call it. Nil keeps the existing behavior; wire format unchanged.'
+time: 2026-11-09T19:30:00Z
