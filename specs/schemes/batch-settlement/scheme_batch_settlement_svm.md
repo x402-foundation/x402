@@ -1950,7 +1950,10 @@ answers for everything else. A remembered broadcast whose blockhash is no longer
 valid and that the network has no record of MUST be dropped, so a retry
 broadcasts afresh instead of staying `settlement_pending`. A retry of a
 completed `seal`, refund, or `distribute` MAY be answered from the observed
-channel status without a transaction signature. A facilitator that exposes a
+channel status without a transaction signature. A retry of a deposit whose
+`open` timed out and has since landed MUST be answered only from its remembered
+broadcast, once, and only for the caller that opened a delegated channel;
+without one it is judged as a `top_up`. A facilitator that exposes a
 payout hook MUST instead keep the confirmed payout, from the moment the
 transaction confirms, until the hook has run. The hook is at-least-once and MUST
 be idempotent per transaction.

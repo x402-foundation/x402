@@ -532,7 +532,7 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 		require.ErrorAs(t, err, &pending)
 		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 		require.NotEmpty(t, pending.Transaction)
-		key := "batch:deposit:" + network + ":" + channelID
+		key := depositKey(network, channelID)
 		_, recorded, getErr := fixture.scheme.pendingStore.Get(ctx, key)
 		require.NoError(t, getErr)
 		require.True(t, recorded)
@@ -556,7 +556,7 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 	t.Run("does not treat the open as a retry once the channel has settled claims", func(t *testing.T) {
 		channelID, payment, req := openedDeposit(t)
 		fixture := facilitatorFor(nil, nil)
-		require.NoError(t, fixture.scheme.pendingStore.Set(ctx, "batch:deposit:"+network+":"+channelID, solana.Signature{1}.String()))
+		require.NoError(t, fixture.scheme.pendingStore.Set(ctx, depositKey(network, channelID), solana.Signature{1}.String()))
 		sent := len(fixture.signer.sentTransactions())
 		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			channel := liveChannel()

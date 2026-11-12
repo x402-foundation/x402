@@ -335,6 +335,9 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 	}
 	key := depositKey(requirements.Network, validated.ChannelID)
 	if validated.Existing != nil && !validated.IsTopUp {
+		if err := f.assertOpenReplayCaller(ctx, validated, requirements, facilitatorContext); err != nil {
+			return nil, err
+		}
 		return f.settleOpenReplay(ctx, key, validated, requirements)
 	}
 	var topUp *solana.Transaction
@@ -344,7 +347,7 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 			return nil, fmt.Errorf("%s: %s", batchsettlement.ErrSettlementSimulation, err.Error())
 		}
 		topUp = decoded
-		key = "batch:topup:" + requirements.Network + ":" + hash
+		key = topUpKey(requirements.Network, hash)
 	}
 	feePayer, err := solana.PublicKeyFromBase58(validated.Terms.FeePayer)
 	if err != nil {
@@ -437,16 +440,35 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 	return DepositResponse(validated.ChannelID, settled.channel.(*generated.Channel), x402.Network(requirements.Network), settled.signature, validated.Deposit), nil
 }
 
-// depositKey identifies the open of a channel for pending reconciliation.
 func depositKey(network, channelID string) string {
 	return "batch:deposit:" + network + ":" + channelID
+}
+
+func topUpKey(network, messageHash string) string {
+	return "batch:topup:" + network + ":" + messageHash
+}
+
+// assertOpenReplayCaller lets only the caller that opened a delegated channel consume its pending open signature.
+func (f *BatchSvmScheme) assertOpenReplayCaller(ctx context.Context, validated ValidatedDeposit, requirements types.PaymentRequirements, facilitatorContext any) error {
+	identity, err := DelegatedIdentityForOpen(ctx, f.delegated, validated.Terms.ReceiverAuthorizer, validated.ChannelID, validated.Payload.ChannelConfig.Payer, requirements, facilitatorContext)
+	if err != nil || identity == "" {
+		return err
+	}
+	record, err := f.channelStorage.Get(ctx, requirements.Network, validated.ChannelID)
+	if err != nil {
+		return err
+	}
+	if record != nil && record.CallerIdentity != "" && record.CallerIdentity != identity {
+		return fmt.Errorf("%s: caller identity does not match the channel binding", batchsettlement.ErrDelegatedUnauthenticated)
+	}
+	return nil
 }
 
 // settleOpenReplay reconciles the pending signature of an open under key and never
 // broadcasts. A record consumed since validation is a duplicate.
 func (f *BatchSvmScheme) settleOpenReplay(ctx context.Context, key string, validated ValidatedDeposit, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
-	network := x402.Network(requirements.Network)
-	channel, signature, response, err := f.settleDurably(ctx, durableArgs{
+	var channel *generated.Channel
+	_, signature, response, err := f.settleDurably(ctx, durableArgs{
 		key:     key,
 		network: requirements.Network,
 		payer:   validated.Payload.ChannelConfig.Payer,
@@ -454,17 +476,17 @@ func (f *BatchSvmScheme) settleOpenReplay(ctx context.Context, key string, valid
 			return nil, fmt.Errorf("%s: open already reconciled", ChannelBusy)
 		},
 		postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
-			channel, err := f.fetchDepositChannel(ctx, validated, requirements)
-			return channel, nil, err
+			var err error
+			channel, err = f.fetchDepositChannel(ctx, validated, requirements)
+			return nil, nil, err
 		},
 	})
 	if err != nil || response != nil {
 		return response, err
 	}
-	return DepositResponse(validated.ChannelID, channel.(*generated.Channel), network, signature, validated.Deposit), nil
+	return DepositResponse(validated.ChannelID, channel, x402.Network(requirements.Network), signature, validated.Deposit), nil
 }
 
-// fetchDepositChannel reads the channel and asserts it holds the validated deposit.
 func (f *BatchSvmScheme) fetchDepositChannel(ctx context.Context, validated ValidatedDeposit, requirements types.PaymentRequirements) (*generated.Channel, error) {
 	channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
 	if err != nil {
