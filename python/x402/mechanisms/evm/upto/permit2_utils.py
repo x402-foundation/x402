@@ -60,6 +60,7 @@ from ..erc6492 import parse_erc6492_signature  # noqa: E402
 
 # Reuse exact's allowance verification, pending-settlement reconciliation, and settle error mapping
 from ..exact.permit2_utils import (  # noqa: E402
+    _split_eip2612_signature,
     _verify_permit2_allowance,
     reconcile_pending_permit2,
 )
@@ -346,12 +347,7 @@ def _simulate_upto_settle_with_eip2612(
         permit_tuple, amount, owner_addr, witness_tuple, sig_bytes = (
             _build_upto_permit2_settle_args(permit2_payload, settlement_amount)
         )
-        sig_raw = hex_to_bytes(eip2612_info.signature)
-        if len(sig_raw) != 65:
-            return False
-        r = sig_raw[:32]
-        s = sig_raw[32:64]
-        v = sig_raw[64]
+        v, r, s = _split_eip2612_signature(eip2612_info.signature)
         permit2612_tuple = (
             int(eip2612_info.amount),
             int(eip2612_info.deadline),
@@ -743,15 +739,7 @@ def _settle_upto_with_eip2612(
             _build_upto_permit2_settle_args(permit2_payload, settlement_amount)
         )
 
-        sig_hex = eip2612_info.signature
-        sig_raw = hex_to_bytes(sig_hex)
-        if len(sig_raw) != 65:
-            return _map_upto_settle_error(
-                ValueError("EIP-2612 signature must be 65 bytes"), network, payer
-            )
-        r = sig_raw[:32]
-        s = sig_raw[32:64]
-        v = sig_raw[64]
+        v, r, s = _split_eip2612_signature(eip2612_info.signature)
 
         permit2612_tuple = (
             int(eip2612_info.amount),

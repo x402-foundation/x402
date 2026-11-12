@@ -15,6 +15,7 @@ from .....schemas import (
 from .....server_base import FacilitatorClient, FacilitatorClientSync
 from ..constants import SCHEME_BATCH_SETTLEMENT
 from ..types import VoucherClaim
+from ..utils import channel_id_binding_error
 from .storage import Channel
 
 if TYPE_CHECKING:
@@ -91,6 +92,21 @@ class RefundResult:
     transaction: str
 
 
+class BatchClaimError(RuntimeError):
+    """Failed claim batches together with the results of batches that succeeded."""
+
+    def __init__(
+        self,
+        errors: list[BaseException],
+        results: list[ClaimResult],
+        settle: SettleResult | None = None,
+    ) -> None:
+        super().__init__("; ".join(str(error) for error in errors))
+        self.errors = errors
+        self.results = results
+        self.settle = settle
+
+
 @dataclass
 class AutoSettlementConfig:
     claim_interval_secs: int | None = None
@@ -118,6 +134,23 @@ def format_facilitator_failure(operation: str, response: SettleResponse) -> str:
 
 def has_live_pending_request(channel: Channel, now_ms: int) -> bool:
     return channel.pending_request is not None and channel.pending_request.expires_at > now_ms
+
+
+def has_refundable_balance(channel: Channel) -> bool:
+    return int(channel.balance) > int(channel.charged_cumulative_amount)
+
+
+def filter_in_network(channels: list[Channel], network: str) -> list[Channel]:
+    """Keep channels bound to `network`, falling back to the channel-id binding for legacy rows."""
+    return [
+        c
+        for c in channels
+        if (
+            c.network.lower() == network.lower()
+            if c.network
+            else channel_id_binding_error(c.channel_config, c.channel_id, network) is None
+        )
+    ]
 
 
 def get_claimable_vouchers_from_channels(
@@ -240,6 +273,7 @@ __all__ = [
     "AutoJob",
     "AutoSettlementConfig",
     "AutoSettlementContext",
+    "BatchClaimError",
     "ChannelManagerConfig",
     "ChannelManagerConfigSync",
     "ClaimChannelSelector",
@@ -256,9 +290,11 @@ __all__ = [
     "build_refund_claims",
     "build_refund_payment_payload",
     "build_settle_payment_payload",
+    "filter_in_network",
     "format_facilitator_failure",
     "get_claimable_vouchers_from_channels",
     "get_idle_channels_for_refund",
     "has_live_pending_request",
+    "has_refundable_balance",
     "now_ms",
 ]

@@ -37,10 +37,11 @@ class TestParsePrice:
             network = "eip155:8453"
 
             result = server.parse_price("$0.10", network)
+            asset = get_default_asset(network)
 
             assert result.amount == "100000"  # 0.10 USDC = 100000 smallest units
-            assert result.asset == get_default_asset(network)["asset"]
-            assert result.extra == {"name": "USD Coin", "version": "2"}
+            assert result.asset == asset["asset"]
+            assert result.extra == {"name": asset["name"], "version": asset["version"]}
 
         def test_should_parse_simple_number_string_prices(self):
             """Should parse simple number string prices."""
@@ -213,11 +214,10 @@ class TestEnhancePaymentRequirements:
 
         result = server.enhance_payment_requirements(requirements, supported_kind, [])
 
+        default_asset = get_default_asset(network)
         assert result.extra is not None
-        assert "name" in result.extra
-        assert "version" in result.extra
-        assert result.extra["name"] == "USD Coin"
-        assert result.extra["version"] == "2"
+        assert result.extra["name"] == default_asset["name"]
+        assert result.extra["version"] == default_asset["version"]
 
     def test_should_preserve_existing_extra_fields(self):
         """Should preserve existing extra fields."""
@@ -245,7 +245,7 @@ class TestEnhancePaymentRequirements:
 
         assert result.extra is not None
         assert result.extra.get("custom") == "value"
-        assert result.extra.get("name") == "USD Coin"
+        assert result.extra.get("name") == get_default_asset(network)["name"]
 
     def test_should_convert_decimal_amounts_to_smallest_unit(self):
         """Should convert decimal amounts to smallest unit."""

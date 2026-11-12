@@ -80,3 +80,22 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
 - `tvm:-3` — TON Testnet
 - `tvm:-239` — TON Mainnet
+
+### Cardano
+
+`all_networks.py` also supports Cardano Preprod. Install the example dependencies
+with `uv sync`, then set `CARDANO_NETWORK=cardano:preprod`. Clients use
+`CARDANO_MNEMONIC` and `BLOCKFROST_PROJECT_ID`; servers use `CARDANO_ADDRESS`;
+facilitators need only `BLOCKFROST_PROJECT_ID`. Set `FACILITATOR_URL` to your
+Cardano-enabled facilitator. The default USD price uses Preprod USDM, so the
+buyer needs that token and ADA for fees and minimum UTxO deposits.
+
+`CARDANO_RPC_URL` overrides the Preprod Blockfrost URL. When selecting another
+network, supply its matching provider URL and project ID. See the
+[Cardano mechanism guide](../../../../python/x402/mechanisms/cardano/README.md)
+for explicit ADA prices, script payments, Masumi quotes and confirmation policy.
+
+Cardano verification and settlement run in worker threads to keep the HTTP event
+loop responsive. The example's hooks execute in the same worker event loop as
+the payment operation. If a hook uses an async client, create that client within
+the worker lifecycle; do not share a client bound to the HTTP event loop.

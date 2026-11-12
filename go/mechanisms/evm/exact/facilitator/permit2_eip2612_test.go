@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,30 @@ func TestSplitEip2612Signature(t *testing.T) {
 		_, _, _, err := splitEip2612Signature("0xaabb")
 		if err == nil {
 			t.Fatal("expected error for short signature")
+		}
+	})
+
+	t.Run("adds 27 to a recovery byte below 27", func(t *testing.T) {
+		rs := strings.Repeat("aa", 64)
+		cases := []struct {
+			sig      string
+			expected uint8
+		}{
+			{sig: rs + "00", expected: 27},
+			{sig: rs + "01", expected: 28},
+			{sig: "0x" + rs + "00", expected: 27},
+			{sig: rs + "1b", expected: 27},
+			{sig: rs + "1c", expected: 28},
+			{sig: rs + "02", expected: 29},
+		}
+		for _, tc := range cases {
+			v, _, _, err := splitEip2612Signature(tc.sig)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.sig[len(tc.sig)-2:], err)
+			}
+			if v != tc.expected {
+				t.Errorf("%s: expected v=%d, got %d", tc.sig[len(tc.sig)-2:], tc.expected, v)
+			}
 		}
 	})
 }

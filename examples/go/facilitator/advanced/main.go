@@ -40,6 +40,7 @@ func main() {
 	// Get configuration
 	evmPrivateKey := os.Getenv("EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("SVM_PRIVATE_KEY")
+	casperPrivateKey := os.Getenv("CASPER_PRIVATE_KEY")
 
 	if pattern == "gas-extensions" {
 		if evmPrivateKey == "" {
@@ -54,15 +55,15 @@ func main() {
 	}
 
 	// Validate at least one private key is provided
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		fmt.Println("❌ At least one of EVM_PRIVATE_KEY or SVM_PRIVATE_KEY is required")
+	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
+		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or CASPER_PRIVATE_KEY is required")
 		os.Exit(1)
 	}
 
 	// Run the selected example
 	switch pattern {
 	case "all-networks":
-		if err := runAllNetworksExample(evmPrivateKey, svmPrivateKey); err != nil {
+		if err := runAllNetworksExample(evmPrivateKey, svmPrivateKey, casperPrivateKey); err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}

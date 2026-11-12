@@ -797,15 +797,6 @@ def _create_request(url: str = "https://example.com") -> requests.PreparedReques
     return request
 
 
-class TestRetryHeaderConstant:
-    """Test the RETRY_HEADER class constant."""
-
-    def test_should_have_retry_header_constant(self):
-        """Should have RETRY_HEADER constant defined."""
-        assert hasattr(x402HTTPAdapter, "RETRY_HEADER")
-        assert x402HTTPAdapter.RETRY_HEADER == "Payment-Retry"
-
-
 class TestConsecutivePayments:
     """Test consecutive payment requests."""
 

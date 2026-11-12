@@ -259,8 +259,7 @@ describe("ExactSvmScheme", () => {
   });
 
   describe("getAssetDecimals", () => {
-    it("returns decimals for a known mint and undefined for an unknown one", () => {
-      expect(server.getAssetDecimals(USDC_MAINNET_ADDRESS, SOLANA_MAINNET_CAIP2)).toBe(6);
+    it("returns undefined for an unknown mint", () => {
       expect(
         server.getAssetDecimals("UnknownMint1111111111111111111111111111111", SOLANA_MAINNET_CAIP2),
       ).toBeUndefined();

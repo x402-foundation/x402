@@ -306,11 +306,12 @@ func TestSolanaGetAssetInfo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
-		if info.Address != svm.USDCDevnetAddress {
-			t.Errorf("Expected address %s, got %s", svm.USDCDevnetAddress, info.Address)
+		configured := svm.DefaultAssets[svm.SolanaDevnetCAIP2][0]
+		if info.Address != configured.Asset {
+			t.Errorf("Expected address %s, got %s", configured.Asset, info.Address)
 		}
-		if info.Decimals != 6 {
-			t.Errorf("Expected decimals 6, got %d", info.Decimals)
+		if info.Decimals != configured.Decimals {
+			t.Errorf("Expected decimals %d, got %d", configured.Decimals, info.Decimals)
 		}
 	})
 

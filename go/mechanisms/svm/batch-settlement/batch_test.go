@@ -276,20 +276,21 @@ func TestBatchSettlementSVM(t *testing.T) {
 	t.Run("advertises one managed fee payer without a paymentFlow override", func(t *testing.T) {
 		facilitator := newFacilitator(t, context.Background(), feePayer, nil)
 		extra := facilitator.GetExtra(svm.SolanaDevnetCAIP2)
+		advertised := append([]int(nil), svm.AdvertisedTransactionVersions...)
 		require.Equal(t, map[string]any{
 			batchsettlement.ExtraFeePayer:          feePayer.Address().String(),
 			batchsettlement.ExtraMaxIdleSecs:       paymentchannels.DefaultMaxIdleSecs,
 			batchsettlement.ExtraMaxClaimChannels:  batchsettlement.V1MaxClaimChannels,
 			batchsettlement.ExtraMaxSettleChannels: batchsettlement.V1MaxSettleChannels,
-			svm.ExtraTransactionVersions:           []int{0, 1},
+			svm.ExtraTransactionVersions:           advertised,
 		}, extra)
 		require.Equal(t, []string{feePayer.Address().String()}, facilitator.GetSigners(svm.SolanaDevnetCAIP2))
 
 		// The advertised list is a copy, so a caller mutating it cannot change
 		// what the next /supported response advertises.
 		extra[svm.ExtraTransactionVersions].([]int)[0] = 1
-		require.Equal(t, []int{0, 1}, facilitator.GetExtra(svm.SolanaDevnetCAIP2)[svm.ExtraTransactionVersions])
-		require.Equal(t, []int{0, 1}, svm.AdvertisedTransactionVersions)
+		require.Equal(t, advertised, facilitator.GetExtra(svm.SolanaDevnetCAIP2)[svm.ExtraTransactionVersions])
+		require.Equal(t, advertised, svm.AdvertisedTransactionVersions)
 	})
 
 	t.Run("advertises the configured idle window and omits a disabled one", func(t *testing.T) {

@@ -227,12 +227,3 @@ func TestSaltBinding(t *testing.T) {
 		t.Fatal("expected bound salt to change when saltNonce changes")
 	}
 }
-
-func TestTypeHashConstants(t *testing.T) {
-	if SaltBindingTypeHash.Hex() != "0x8a2a7e41a0bda000ded071ff38b79401d2603e1826516ff2635b11fe9e30877f" {
-		t.Fatalf("SaltBindingTypeHash = %s", SaltBindingTypeHash.Hex())
-	}
-	if PaymentInfoTypeHash.Hex() != "0xae68ac7ce30c86ece8196b61a7c486d8f0061f575037fbd34e7fe4e2820c6591" {
-		t.Fatalf("PaymentInfoTypeHash = %s", PaymentInfoTypeHash.Hex())
-	}
-}

@@ -589,6 +589,53 @@ class TestHandlePaymentResponse:
         assert isinstance(result, RecoveredResponseResult)
         assert order == [1]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "returned",
+        [True, "logged", 0, {}, {"recovered": False}, {"recovered": "yes"}, object()],
+    )
+    async def test_non_recovery_return_values_are_ignored(self, returned):
+        client = x402Client()
+        order: list[int] = []
+
+        client.on_payment_response(lambda ctx: order.append(1) or returned)
+        client.on_payment_response(lambda ctx: order.append(2) or None)
+
+        result = await client.handle_payment_response(_make_payment_response_context())
+
+        assert result is None
+        assert order == [1, 2]
+
+    @pytest.mark.parametrize("returned", [True, "logged", {}, {"recovered": False}])
+    def test_sync_non_recovery_return_values_are_ignored(self, returned):
+        client = x402ClientSync()
+        order: list[int] = []
+
+        client.on_payment_response(lambda ctx: order.append(1) or returned)
+        client.on_payment_response(lambda ctx: order.append(2) or None)
+
+        result = client.handle_payment_response(_make_payment_response_context())
+
+        assert result is None
+        assert order == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_mapping_with_recovered_true_counts_as_recovery(self):
+        client = x402Client()
+        client.on_payment_response(lambda ctx: {"recovered": True})
+
+        result = await client.handle_payment_response(_make_payment_response_context())
+
+        assert isinstance(result, RecoveredResponseResult)
+
+    def test_sync_mapping_with_recovered_true_counts_as_recovery(self):
+        client = x402ClientSync()
+        client.on_payment_response(lambda ctx: {"recovered": True})
+
+        result = client.handle_payment_response(_make_payment_response_context())
+
+        assert isinstance(result, RecoveredResponseResult)
+
 
 class TestRegisterExtension:
     @pytest.mark.asyncio

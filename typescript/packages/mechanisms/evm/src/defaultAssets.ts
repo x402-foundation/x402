@@ -324,6 +324,34 @@ export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
       symbol: "USDC",
     },
   ], // Arc Testnet USDC (EIP-3009 supported)
+  "eip155:4663": [
+    {
+      asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      name: "Global Dollar",
+      version: "1",
+      decimals: 6,
+      symbol: "USDG",
+    },
+  ], // Robinhood Chain mainnet USDG (EIP-3009 supported)
+  "eip155:43111": [
+    {
+      asset: "0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA",
+      name: "Bridged USDC (Stargate)",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC.e",
+    },
+  ], // Hemi mainnet USDC.e (EIP-3009 supported)
+  "eip155:743111": [
+    {
+      asset: "0xD47971C7F5B1067d25cd45d30b2c9eb60de96443",
+      name: "USDC.e",
+      version: "1",
+      decimals: 6,
+      symbol: "USDC.e",
+      assetTransferMethod: "permit2",
+    },
+  ], // Hemi testnet USDC.e (no EIP-3009, no EIP-2612)
 };
 
 /**

@@ -184,7 +184,6 @@ class FacilitatorKeypairSigner:
 
         keypair = self._keypairs[fee_payer]
 
-        # Decode transaction
         tx_bytes = base64.b64decode(tx_base64)
         tx = VersionedTransaction.from_bytes(tx_bytes)
 
@@ -214,7 +213,6 @@ class FacilitatorKeypairSigner:
         """
         client = self._get_client(network)
 
-        # Decode transaction
         tx_bytes = base64.b64decode(tx_base64)
         tx = VersionedTransaction.from_bytes(tx_bytes)
 
@@ -255,7 +253,6 @@ class FacilitatorKeypairSigner:
         """
         client = self._get_client(network)
 
-        # Decode transaction from base64
         tx_bytes = base64.b64decode(tx_base64)
 
         # Preflight is skipped because verify() already simulated this transaction.
