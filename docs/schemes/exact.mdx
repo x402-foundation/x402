@@ -672,80 +672,163 @@ Canton Coin (`CC`) is the native unit (1 CC = 1e10 atomic units). Dollar-string 
 
 The Cardano implementation uses a client-signed, facilitator-submitted model: the client builds and signs the complete transaction but never broadcasts it. The facilitator verifies and submits it after the resource handler runs.
 
-Install the Cardano package:
-
-```bash
-npm install @x402/cardano
-```
-
 **Server**
 
-```typescript
-import { x402ResourceServer } from "@x402/core/server";
-import { ExactCardanoScheme } from "@x402/cardano/exact/server";
-import { masumiEscrowAddress, toMasumiSellerSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    Install the Cardano package:
 
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("cardano:*", new ExactCardanoScheme());
+    ```bash
+    npm install @x402/cardano
+    ```
 
-// Address-to-address payment
-{
-  "GET /data": {
-    accepts: [
-      {
-        scheme: "exact",
-        price: {
-          amount: "1000000", // 1 USDM (6 decimals)
-          asset: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
-        },
-        network: "cardano:mainnet",
-        payTo: "addr1YourCardanoAddress",
-        maxTimeoutSeconds: 600,
+    ```typescript
+    import { x402ResourceServer } from "@x402/core/server";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("cardano:*", new ExactCardanoScheme());
+
+    // Address-to-address payment
+    {
+      "GET /data": {
+        accepts: [
+          {
+            scheme: "exact",
+            price: {
+              amount: "1000000", // 1 USDM (6 decimals)
+              asset: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+            },
+            network: "cardano:mainnet",
+            payTo: "addr1YourCardanoAddress",
+            maxTimeoutSeconds: 600,
+          },
+        ],
       },
-    ],
-  },
-}
-```
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    Install the Cardano extras:
+
+    ```bash
+    pip install 'x402[cardano]'
+    ```
+
+    ```python
+    from x402 import x402ResourceServerSync
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
+    from x402.mechanisms.cardano.exact import ExactCardanoServerScheme
+
+    facilitator = HTTPFacilitatorClientSync(FacilitatorConfig(url="https://x402.org/facilitator"))
+    server = x402ResourceServerSync(facilitator)
+    server.register("cardano:*", ExactCardanoServerScheme())
+    server.initialize()
+    ```
+
+    Use `cardano:mainnet`, `cardano:preprod`, or `cardano:preview`. Dollar prices resolve to USDM on mainnet and preprod; preview requires an explicit asset. An explicit ADA price is `{"asset": "lovelace", "amount": "5000000"}`. Native tokens use `<56-char policy hex>.<asset-name hex>` with atomic integer amounts.
+  </Tab>
+</Tabs>
 
 **Client**
 
-```typescript
-import { x402Client } from "@x402/core/client";
-import { ExactCardanoScheme } from "@x402/cardano/exact/client";
-import { toClientCardanoSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/client";
+    import { toClientCardanoSigner } from "@x402/cardano";
 
-const provider = {
-  blockfrost: {
-    baseUrl: process.env.BLOCKFROST_PREPROD_URL!,
-    projectId: process.env.BLOCKFROST_PROJECT_ID!,
-  },
-};
+    const provider = {
+      blockfrost: {
+        baseUrl: process.env.BLOCKFROST_PREPROD_URL!,
+        projectId: process.env.BLOCKFROST_PROJECT_ID!,
+      },
+    };
 
-const clientSigner = toClientCardanoSigner({
-  mnemonic: process.env.CARDANO_MNEMONIC!,
-  network: "cardano:preprod",
-  provider,
-});
+    const clientSigner = toClientCardanoSigner({
+      mnemonic: process.env.CARDANO_MNEMONIC!,
+      network: "cardano:preprod",
+      provider,
+    });
 
-const client = new x402Client();
-client.register("cardano:*", new ExactCardanoScheme(clientSigner));
-```
+    const client = new x402Client();
+    client.register("cardano:*", new ExactCardanoScheme(clientSigner));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import os
+
+    from x402 import x402ClientSync
+    from x402.mechanisms.cardano import (
+        BlockfrostConfig,
+        CardanoProviderConfig,
+        ClientCardanoSignerConfig,
+        to_client_cardano_signer,
+    )
+    from x402.mechanisms.cardano.exact import ExactCardanoClientScheme
+
+    provider = CardanoProviderConfig(
+        blockfrost=BlockfrostConfig(
+            "https://cardano-preprod.blockfrost.io/api/v0",
+            os.environ["BLOCKFROST_PROJECT_ID"],
+        )
+    )
+    signer = to_client_cardano_signer(
+        ClientCardanoSignerConfig(
+            mnemonic=os.environ["CARDANO_MNEMONIC"],
+            network="cardano:preprod",
+            provider=provider,
+        )
+    )
+    client = x402ClientSync().register("cardano:*", ExactCardanoClientScheme(signer))
+    ```
+
+    Pass this client to the existing `requests`, `httpx`, or MCP adapter. Close the signer when the application shuts down.
+  </Tab>
+</Tabs>
 
 **Facilitator**
 
-```typescript
-import { x402Facilitator } from "@x402/core/facilitator";
-import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
-import { toFacilitatorCardanoSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Facilitator } from "@x402/core/facilitator";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
+    import { toFacilitatorCardanoSigner } from "@x402/cardano";
 
-const facilitatorSigner = toFacilitatorCardanoSigner({
-  network: "cardano:preprod",
-  provider,
-});
+    const facilitatorSigner = toFacilitatorCardanoSigner({
+      network: "cardano:preprod",
+      provider,
+    });
 
-const facilitator = new x402Facilitator()
-  .register("cardano:preprod", new ExactCardanoScheme(facilitatorSigner));
-```
+    const facilitator = new x402Facilitator()
+      .register("cardano:preprod", new ExactCardanoScheme(facilitatorSigner));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402FacilitatorSync
+    from x402.mechanisms.cardano import (
+        FacilitatorCardanoSignerConfig,
+        to_facilitator_cardano_signer,
+    )
+    from x402.mechanisms.cardano.exact import ExactCardanoFacilitatorScheme
+
+    relay = to_facilitator_cardano_signer(
+        FacilitatorCardanoSignerConfig(
+            network="cardano:preprod", provider=provider, await_confirmation=False
+        )
+    )
+    facilitator = x402FacilitatorSync().register(
+        ["cardano:preprod"], ExactCardanoFacilitatorScheme(relay)
+    )
+    ```
+
+    A facilitator needs no mnemonic or funds. Blockfrost supplies transaction inclusion and confirmation depth; Koios is also supported via `KoiosConfig`. Verification, submission, and confirmation polling are synchronous — in an async HTTP application, offload with `asyncio.to_thread`.
+  </Tab>
+</Tabs>
 
 The facilitator only broadcasts the client's signed transaction — it requires no funded wallet.
 
