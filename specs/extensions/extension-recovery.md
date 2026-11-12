@@ -100,6 +100,12 @@ The idempotency key is the **caller's secret**: whoever presents it can replay t
 free within the window. Callers MUST NOT log it publicly. Callers SHOULD prefer presenting
 it only to the service that issued the protected resource.
 
+The credential MAY also be **server-issued**: a value returned in the response and echoed by
+the client on retry is a valid replay credential, and stock clients can echo it through the
+extension's `dynamicInfoFields` without any client change. A server-issued bearer value is
+still a bearer secret, not proof of payer control, and it does not replace the verified-scope
+requirement in §5.2 when the rail exposes a payer identity.
+
 A key is bound to ONE operation: the canonical request fingerprint plus, where the rail
 exposes it, the payer's authorization scope. Spectators cannot recover another caller's
 result by guessing a key, and the key cannot be replayed across a different payer (see §5.2).
@@ -166,6 +172,14 @@ The projection MUST be identical across: the first paid response, any free repla
 internal record keeping. One projection, one number everywhere. Evidence-bundle fields other
 than the hashes are informational.
 
+**The guarantee covers the projection, not the transport.** A replay reproduces the declared
+body projection and therefore `responseHash`. HTTP status, headers, and non-JSON or streamed
+bodies are reproduced only if the implementation records them. The stock x402 skip-handler
+path serialises a 200 body as JSON or HTML, so it cannot reproduce an arbitrary status, header
+set, or binary body. An implementation that advertises byte-identical HTTP responses MUST
+carry the original status and headers itself; one that reproduces only the projection MUST say
+so.
+
 **5. Recovery Semantics (Normative)**
 
 **5.1 Stage-then-promote**
@@ -211,6 +225,16 @@ The following are normative consequences:
    an unsettled verdict is not a lost verdict, so no typed signal is owed.
 5. **Save-failure policy is fail-closed.** If the promotion step itself errors, the entry
    stays staged. Implementations SHOULD log the error; they MUST NOT silently promote.
+6. **One claim per operation, taken before the handler.** Implementations MUST take an atomic
+   claim on the operation key before executing the handler, so concurrent copies of one signed
+   payment cannot each run it. A copy that arrives while the claim is held MUST either wait for
+   the promoted record and return its projection, or be rejected with the typed `409` conflict
+   before the handler. Read-only verification is not a claim. Implementations MUST name the
+   primitive (unique constraint, conditional write, or lease), MUST expire a lease so a crash
+   cannot block a retry forever, and MUST release the claim on handler or settlement failure.
+   (Reference implementation: `reserveRecovery` takes the claim before the paywall and answers
+   `409 operation_in_flight`; corroborated by Hitek-cel, who observed three handler runs and one
+   settlement on `@x402` 2.30.0 without a claim.)
 
 > **Two mechanisms satisfy §5.1; the architecture chooses.** The stage-then-promote pattern
 > above is required when settlement confirmation is *asynchronous* — it can only arrive via a
@@ -321,6 +345,10 @@ looking but incorrect implementation silently violates:
    with P's address but missing or invalid proof of control, MUST NOT return the cached
    result. A retry that proves control of P's scope MUST recover the settled result without a
    second payment.
+9. **Concurrent copies run the handler once.** With a claim in place, submit three copies of
+   one signed payment concurrently. Exactly one handler execution may occur; every response
+   must carry the same `responseHash`, and a copy that did not run the handler must be marked
+   `replayed` or receive the typed in-flight conflict. Three handler runs fail this control.
 
 **6. Protocol Integration**
 
@@ -410,3 +438,4 @@ that CAN be signed well-defined.
 | 0.2     | 2026-10-19 | Addresses review by NSPG13 (x402-foundation/x402#3848, at `d97ebfa3`). Promotion now keys on a server-generated operation identity plus a confirmed settlement reference, with the projection hash as an additional check (§5.1) — output equality alone no longer identifies an operation. Added key/scope conflict semantics resolved before payment or replay (§5.2), scoped the content companion so equal content is not permission (§3.2, §7), and added a required self-test control set including the identical-output cross-promotion case (§5.4). | a32116150-ctrl (verify402) |
 | 0.3     | 2026-10-19 | Names both mechanisms that satisfy §5.1 — async stage-then-promote and synchronous write-after-settle — since the choice is determined by whether settlement confirmation can complete before the response is built. Prompted by production corroboration from scvd.store on x402-foundation/x402#3847 (request-identity keying, scope-bound cache keys, no speculative write). | a32116150-ctrl (verify402) |
 | 0.4     | 2026-10-20 | Requires a **verified** payer scope before replay, not merely a declared or matching address. §5.2 names acceptable proof-of-control mechanisms and forbids returning a cached result on missing or invalid proof; §5.4 adds the unverified-scope control. Prompted by NSPG13's review at `2a03ad6` (x402-foundation/x402#3848). | a32116150-ctrl (verify402) |
+| 0.5     | 2026-11-12 | Three clarifications from an independent implementation (Hitek-cel/latch402, exercised against `@x402/hono` and `@x402/fetch` 2.30.0 with only the chain faked): a server-issued bearer credential is a valid replay key but not proof of payer control (§3.1); recovery reproduces the declared projection, not status, headers, or non-JSON bodies (§4); and an atomic claim MUST be taken before the handler, because read-only verification lets concurrent copies run it once each (§5.1, §5.4 control 9). | a32116150-ctrl (verify402) |
