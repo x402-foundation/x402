@@ -1,3 +1,0 @@
-kind: fixed
-body: 'SVM batch-settlement facilitator: a settle failure that already broadcast a transaction (settlement_pending, transaction_failed, payout_attribution_ambiguous) is returned as an x402.SettleError carrying the signature instead of a success:false response. Failures before a broadcast, including channel_closing, stay responses. The channel manager maps a SettleError back to the failed response, so claim, seal and distribute behave as before. Wire format unchanged.'
-time: 2026-11-06T13:45:00Z
