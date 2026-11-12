@@ -409,6 +409,16 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
     cleanup.Start(ctx, uptosvm.StartConfig{
         Interval:          5 * time.Minute,
         DiscoveryInterval: 24 * time.Hour,
+        CleanupOptions: uptosvm.CleanupOptions{
+            // Optional: called before each abandon-close or distribute within
+            // MaxClosesPerRun. Return a non-nil error to skip the channel; the
+            // error is reported through OnError and does not consume a
+            // MaxClosesPerRun slot. Reclaim never calls this hook.
+            // BeforeCloseOrDistribute: func(ctx context.Context, c uptosvm.CloseCandidate) error {
+            //     log.Printf("closing channel %s (action: %s)", c.ChannelID, c.Action)
+            //     return nil
+            // },
+        },
     })
     defer cleanup.Stop()
     ```
