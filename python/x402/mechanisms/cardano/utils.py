@@ -30,7 +30,6 @@ from .constants import (
 from .limits import MAX_CARDANO_TRANSACTION_BYTES
 from .types import CardanoUtxoOutput, DecodedCardanoTransaction, ExactCardanoPayload
 
-# Shelley-era slot origins used by the TypeScript reference signer.
 _SLOT_CONFIG = {
     CARDANO_MAINNET_CAIP2: (1_596_059_091_000, 4_492_800),
     CARDANO_PREPROD_CAIP2: (1_655_769_600_000, 86_400),
@@ -119,11 +118,9 @@ def _chunk_long_bytes(value: Any) -> Any:
 
 
 class ChunkedPlutusData(RawPlutusData):  # type: ignore[misc]
-    """Plutus data that keeps bytestrings over 64 bytes chunked when copied.
+    """Keep bytestrings over 64 bytes chunked across deepcopy.
 
-    PyCardano's ``RawPlutusData`` loses the chunking on ``deepcopy``, which
-    ``TransactionBuilder`` applies to every output, and the ledger rejects the
-    resulting definite-length bytestring (Python-Cardano/pycardano#507).
+    TransactionBuilder copies every output, and the ledger rejects a definite bytestring.
     """
 
     def to_primitive(self) -> Any:

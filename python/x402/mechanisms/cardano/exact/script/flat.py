@@ -1,9 +1,6 @@
-"""Apply data arguments without changing embedded FLAT constants.
+"""Apply data arguments by rewriting FLAT alignment around embedded constants.
 
-FLAT byte strings are aligned to byte boundaries. Prepending application tags
-therefore requires rewriting alignment, while preserving the original data CBOR.
-The iterative walk also handles large validators without changing Python's global
-recursion limit.
+The walk is iterative so large validators stay under the recursion limit.
 """
 
 from typing import TypeAlias, cast
@@ -139,7 +136,7 @@ def apply_data_parameters(code: bytes, parameters: list[bytes]) -> bytes:
     """Return single-CBOR-wrapped FLAT with ordered Plutus data arguments."""
     if not code or len(code) > MAX_CARDANO_SCRIPT_BYTES:
         raise ValueError("Cardano script exceeds the byte limit")
-    # Accept raw, single- and double-CBOR encodings, like the reference SDK.
+    # Accept raw, single-wrapped, and double-wrapped CBOR.
     for _ in range(2):
         try:
             decoded = decode_cbor(code)

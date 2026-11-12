@@ -137,7 +137,7 @@ class CardanoProvider(ChainContext):  # type: ignore[misc]  # PyCardano does not
 
     @property
     def last_block_slot(self) -> int:
-        # The reference signer uses the network's slot clock, not a lagging provider tip.
+        # Slot time comes from the network clock, not the provider tip.
         return (int(time.time() * 1000) - slot_to_posix_ms(self.network_name, 0)) // 1000
 
     @property

@@ -65,15 +65,6 @@ __all__ = [
 
 
 def _signals_recovery(result: Any) -> bool:
-    """Whether an on_payment_response hook result asks the transport to retry.
-
-    Only an explicit ``recovered=True`` counts, as a RecoveredResponseResult or
-    as a mapping (extension hooks return dicts). Any other return value is
-    ignored, so a hook that happens to return something cannot trigger a
-    second payment.
-    """
-    if result is None:
-        return False
     if isinstance(result, Mapping):
         return result.get("recovered") is True
     return getattr(result, "recovered", None) is True

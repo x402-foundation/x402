@@ -1,8 +1,4 @@
-"""Canonical Masumi vested_pay.vested_pay.spend Plutus v3 artifact.
-
-Copied verbatim from the TypeScript reference, sourced from masumi-payment-service
-commit d74b2c319228bcbef36632de37875c388dcee7ce, smart-contracts/payment-v2/plutus.json.
-"""
+"""Canonical Masumi vested_pay.vested_pay.spend Plutus v3 artifact."""
 
 MASUMI_VESTED_PAY_COMPILED_CODE = (
     "5926a101010022229800aba4aba2aba1aba0aab9faab9eaab9dab9a9bad0049bac0039bad00248888888888966002646"
