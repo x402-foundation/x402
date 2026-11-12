@@ -87,8 +87,8 @@ type CleanupOptions struct {
 	MaxTxsPerSigner int
 	MaxClosesPerRun int
 
-	// BeforeCloseOrDistribute runs before a close or distribute is built; an
-	// error skips the channel and reports it to OnError. Reclaim never calls it.
+	// BeforeCloseOrDistribute runs before each close or distribute within MaxClosesPerRun;
+	// an error skips the channel and reports to OnError. Reclaim never calls it.
 	BeforeCloseOrDistribute func(ctx context.Context, candidate CloseCandidate) error
 
 	OnClose   func(result CloseResult)

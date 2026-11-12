@@ -398,6 +398,31 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, 3, mintReads(failing))
 	})
 
+	t.Run("bounds the mint owner cache", func(t *testing.T) {
+		var cache mintOwnerCache
+		now := int64(1_000)
+
+		for i := 0; i < mintOwnerCacheMaxEntries; i++ {
+			cache.remember(fmt.Sprintf("expired-%d", i), now)
+		}
+		require.Len(t, cache.verified, mintOwnerCacheMaxEntries)
+
+		now += mintOwnerTTLSeconds
+		cache.remember("fresh", now)
+		require.True(t, cache.fresh("fresh", now), "expired entries are swept to make room")
+		require.Len(t, cache.verified, 1)
+
+		for i := 0; i < 2*mintOwnerCacheMaxEntries; i++ {
+			cache.remember(fmt.Sprintf("live-%d", i), now)
+		}
+		require.LessOrEqual(t, len(cache.verified), mintOwnerCacheMaxEntries, "live entries never exceed the cap")
+		require.True(t, cache.fresh("fresh", now), "a full cache keeps its existing entries")
+		require.False(t, cache.fresh(fmt.Sprintf("live-%d", 2*mintOwnerCacheMaxEntries-1), now), "a full cache skips new entries")
+
+		cache.remember("fresh", now+1)
+		require.Equal(t, now+1+mintOwnerTTLSeconds, cache.verified["fresh"], "refreshing an existing key works when full")
+	})
+
 	t.Run("identifies a settlement ATA owned by the wrong token program", func(t *testing.T) {
 		signer := newSigner(t, func(s *lifecycleSigner) {
 			s.owner = solana.Token2022ProgramID

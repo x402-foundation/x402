@@ -18,9 +18,13 @@ import (
 // noticed soon, and long enough to take the read off the warm path.
 const mintOwnerTTLSeconds int64 = 600
 
+// mintOwnerCacheMaxEntries caps the cache; entries are written before the
+// request is fully validated. A full cache skips remembering.
+const mintOwnerCacheMaxEntries = 4096
+
 // mintOwnerCache remembers mints whose owner matched the advertised token
 // program. Only positive matches are stored; a mismatch or a read error is
-// always re-read. The zero value is ready to use.
+// always re-read. Expired entries are swept when full. The zero value is ready to use.
 type mintOwnerCache struct {
 	mu       sync.Mutex
 	verified map[string]int64
@@ -49,6 +53,16 @@ func (c *mintOwnerCache) remember(key string, now int64) {
 	defer c.mu.Unlock()
 	if c.verified == nil {
 		c.verified = map[string]int64{}
+	}
+	if _, refresh := c.verified[key]; !refresh && len(c.verified) >= mintOwnerCacheMaxEntries {
+		for k, expiry := range c.verified {
+			if now >= expiry {
+				delete(c.verified, k)
+			}
+		}
+		if len(c.verified) >= mintOwnerCacheMaxEntries {
+			return
+		}
 	}
 	c.verified[key] = now + mintOwnerTTLSeconds
 }

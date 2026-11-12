@@ -119,8 +119,8 @@ type RentCleanupOptions struct {
 	MaxTxsPerRun     int
 	MaxTxsPerSigner  int
 	MaxClosesPerRun  int
-	// BeforeCloseOrDistribute runs before a close or distribute is built; an
-	// error skips the channel and reports it to OnError. Reclaim never calls it.
+	// BeforeCloseOrDistribute runs before each close or distribute within MaxClosesPerRun;
+	// an error skips the channel and reports to OnError. Reclaim never calls it.
 	BeforeCloseOrDistribute func(ctx context.Context, candidate RentCleanupCloseCandidate) error
 	OnClose                 func(RentCleanupCloseResult)
 	OnReclaim               func(RentCleanupReclaimResult)
@@ -412,6 +412,11 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 			if status == generated.ChannelStatus_Closing && now < channel.ClosureStartedAt+int64(channel.GracePeriod) {
 				continue
 			}
+			// Checked first so a channel that cannot close this pass is never
+			// screened by the hook; the scan continues for reclaim candidates.
+			if closesUsed >= opts.MaxClosesPerRun {
+				continue
+			}
 			if record.PayTo == "" {
 				opts.reportError(fmt.Errorf("channel %s has no stored payTo; cannot rebuild its distribution", record.ChannelID), record.ChannelID)
 				continue
@@ -426,9 +431,6 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 					opts.reportError(err, record.ChannelID)
 					continue
 				}
-			}
-			if closesUsed >= opts.MaxClosesPerRun {
-				continue
 			}
 			signature, err := m.submitCloseOrDistribute(ctx, record, channel, channelID)
 			if err != nil {
