@@ -24,6 +24,8 @@ export const EVM_NETWORK_CHAIN_ID_MAP = {
   "stable-testnet": 2201,
   celo: 42220,
   flare: 14,
+  hemi: 43111,
+  "hemi-testnet": 743111,
 } as const;
 
 export type EvmNetworkV1 = keyof typeof EVM_NETWORK_CHAIN_ID_MAP;

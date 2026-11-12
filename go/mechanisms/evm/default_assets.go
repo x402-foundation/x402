@@ -118,6 +118,12 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	"eip155:4663": {
 		{Asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", Name: "Global Dollar", Version: "1", Decimals: 6, Symbol: "USDG"},
 	},
+	"eip155:43111": {
+		{Asset: "0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA", Name: "Bridged USDC (Stargate)", Version: "2", Decimals: 6, Symbol: "USDC.e"},
+	},
+	"eip155:743111": {
+		{Asset: "0xD47971C7F5B1067d25cd45d30b2c9eb60de96443", Name: "USDC.e", Version: "1", Decimals: 6, Symbol: "USDC.e", AssetTransferMethod: AssetTransferMethodPermit2},
+	},
 }
 
 // legacyNetworkChainIDs maps v1 network names to chain IDs (mirrors v1.NetworkChainIDs).
@@ -146,6 +152,8 @@ var legacyNetworkChainIDs = map[string]int64{
 	"stable-testnet":     2201,
 	"celo":               42220,
 	"flare":              14,
+	"hemi":               43111,
+	"hemi-testnet":       743111,
 }
 
 func resolveNetworkKey(network string) string {

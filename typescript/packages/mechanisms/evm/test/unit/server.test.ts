@@ -80,6 +80,29 @@ describe("ExactEvmScheme (Server)", () => {
       });
     });
 
+    describe("Hemi network", () => {
+      const network = "eip155:43111";
+
+      it("should use Hemi mainnet USDC.e with its EIP-712 domain", async () => {
+        const result = await server.parsePrice("$0.001", network);
+        expect(result.asset).toBe("0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA");
+        expect(result.amount).toBe("1000");
+        expect(result.extra).toEqual({ name: "Bridged USDC (Stargate)", version: "2" });
+        expect(result.extra).not.toHaveProperty("assetTransferMethod");
+      });
+    });
+
+    describe("Hemi testnet network", () => {
+      const network = "eip155:743111";
+
+      it("should use Permit2 and omit the EIP-712 domain for a token without EIP-2612", async () => {
+        const result = await server.parsePrice("$0.001", network);
+        expect(result.asset).toBe("0xD47971C7F5B1067d25cd45d30b2c9eb60de96443");
+        expect(result.amount).toBe("1000");
+        expect(result.extra).toEqual({ assetTransferMethod: "permit2" });
+      });
+    });
+
     describe("pre-parsed price objects", () => {
       it("should handle pre-parsed price objects with asset", async () => {
         const result = await server.parsePrice(

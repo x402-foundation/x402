@@ -15,6 +15,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	exactcasper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/client"
 	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
@@ -25,6 +26,7 @@ import (
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
+	casperSigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -101,8 +103,12 @@ func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientCont
 	if opts.SvmOnly && svmPrivateKey == "" {
 		log.Fatal("CLIENT_SVM_PRIVATE_KEY is required")
 	}
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
+	casperPrivateKey := os.Getenv("CLIENT_CASPER_PRIVATE_KEY")
+	if opts.SvmOnly {
+		casperPrivateKey = ""
+	}
+	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
+		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, or CLIENT_CASPER_PRIVATE_KEY is required")
 	}
 
 	x402Client := x402.Newx402Client().DisableSpendControls()
@@ -221,6 +227,18 @@ func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientCont
 	batchPhase := strings.TrimSpace(os.Getenv("BATCH_SETTLEMENT_PHASE"))
 	if batchPhase == "" {
 		batchPhase = strings.TrimSpace(os.Getenv("EVM_BATCH_SETTLEMENT_PHASE"))
+	}
+
+	if casperPrivateKey != "" {
+		casperAlgo := os.Getenv("CLIENT_CASPER_PRIVATE_KEY_ALGORITHM")
+		casperSigner, err := casperSigners.NewClientSignerFromSecret(casperPrivateKey, casperAlgo)
+		if err != nil {
+			OutputError(fmt.Sprintf("Failed to create Casper signer: %v", err))
+			return nil
+		}
+
+		casperPattern := x402.Network(networkCaip2Pattern("casper"))
+		x402Client.Register(casperPattern, exactcasper.NewExactCasperScheme(casperSigner))
 	}
 
 	return &PaymentClientContext{

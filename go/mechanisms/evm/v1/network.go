@@ -30,6 +30,8 @@ var NetworkChainIDs = map[string]*big.Int{
 	"stable-testnet":     big.NewInt(2201),
 	"celo":               big.NewInt(42220),
 	"flare":              big.NewInt(14),
+	"hemi":               big.NewInt(43111),
+	"hemi-testnet":       big.NewInt(743111),
 }
 
 // Networks is the list of all v1 network names.
