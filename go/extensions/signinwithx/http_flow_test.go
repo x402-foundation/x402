@@ -95,8 +95,16 @@ func TestSIWXHTTPSettlementFlowsUseServerPath(t *testing.T) {
 		{"upfront-cancel", x402.PaymentFlowUpfront, true, 2},
 		{"escrow-cancel", x402.PaymentFlowEscrow, true, 2},
 	} {
-		for _, payloadPath := range []string{"/joke", "/weather"} {
-			t.Run(tc.name+payloadPath, func(t *testing.T) {
+		for _, resource := range []struct {
+			name string
+			info *types.ResourceInfo
+		}{
+			{"/joke", &types.ResourceInfo{URL: testSIWXOrigin + "/joke"}},
+			{"/weather", &types.ResourceInfo{URL: testSIWXOrigin + "/weather"}},
+			{"/missing-resource", nil},
+			{"/empty-resource", &types.ResourceInfo{}},
+		} {
+			t.Run(tc.name+resource.name, func(t *testing.T) {
 				ctx := context.Background()
 				key, err := crypto.GenerateKey()
 				if err != nil {
@@ -140,7 +148,7 @@ func TestSIWXHTTPSettlementFlowsUseServerPath(t *testing.T) {
 				if required.Accepts[0].Amount != "1000" {
 					t.Fatalf("wrong fixture amount: %v", required.Accepts[0].Amount)
 				}
-				payload := types.PaymentPayload{X402Version: 2, Accepted: required.Accepts[0], Payload: map[string]interface{}{}, Resource: &types.ResourceInfo{URL: testSIWXOrigin + payloadPath}}
+				payload := types.PaymentPayload{X402Version: 2, Accepted: required.Accepts[0], Payload: map[string]interface{}{}, Resource: resource.info}
 				encoded, err := json.Marshal(payload)
 				if err != nil {
 					t.Fatal(err)
