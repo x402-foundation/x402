@@ -124,6 +124,7 @@ import {
   ErrInvalidPayTo,
   ErrInvalidScheme,
   ErrInvalidSignature,
+  ErrMalformedPayload,
   ErrMissingTokenName,
   ErrMissingTokenVersion,
   ErrNetworkMismatch,
@@ -237,42 +238,75 @@ describe("ExactCasperScheme facilitator", () => {
     const payload = await createValidPayload();
     const scheme = new ExactCasperScheme(createMockSigner());
 
-    await expect(
-      scheme.verify(buildPaymentPayload(payload), buildRequirements({ scheme: "upto" })),
-    ).resolves.toMatchObject({
+    const wrongScheme = await scheme.verify(
+      buildPaymentPayload(payload),
+      buildRequirements({ scheme: "upto" }),
+    );
+    expect(wrongScheme).toMatchObject({
       isValid: false,
       invalidReason: ErrInvalidScheme,
     });
-    await expect(
-      scheme.verify(buildPaymentPayload(payload), buildRequirements({ network: "casper:other" })),
-    ).resolves.toMatchObject({
+    expect(wrongScheme.payer).toBeUndefined();
+
+    const wrongNetwork = await scheme.verify(
+      buildPaymentPayload(payload),
+      buildRequirements({ network: "casper:other" }),
+    );
+    expect(wrongNetwork).toMatchObject({
       isValid: false,
       invalidReason: ErrNetworkMismatch,
     });
+    expect(wrongNetwork.payer).toBeUndefined();
+
     await expect(
       scheme.verify(
         buildPaymentPayload(payload),
         buildRequirements({ payTo: "00".padEnd(66, "0") }),
       ),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: ErrPayToMismatch });
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPayToMismatch,
+      payer: payload.authorization.from,
+    });
     await expect(
       scheme.verify(buildPaymentPayload(payload), buildRequirements({ amount: "2000000" })),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: ErrAmountMismatch });
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrAmountMismatch,
+      payer: payload.authorization.from,
+    });
     await expect(
       scheme.verify(buildPaymentPayload(payload), buildRequirements({ asset: "bad" })),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: ErrInvalidAsset });
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrInvalidAsset,
+      payer: payload.authorization.from,
+    });
   });
 
   it("rejects malformed payload shapes", async () => {
-    const scheme = new ExactCasperScheme(createMockSigner());
+    const signer = createMockSigner();
+    const scheme = new ExactCasperScheme(signer);
     const payment = buildPaymentPayload(await createValidPayload());
     payment.payload = { signature: "01" };
 
-    await expect(scheme.verify(payment, buildRequirements())).resolves.toMatchObject({
+    const verified = await scheme.verify(payment, buildRequirements());
+    expect(verified).toMatchObject({
       isValid: false,
-      invalidReason: ErrInvalidScheme,
+      invalidReason: ErrMalformedPayload,
       invalidMessage: "malformed payload",
     });
+    expect(verified.payer).toBeUndefined();
+
+    await expect(scheme.settle(payment, buildRequirements())).resolves.toMatchObject({
+      success: false,
+      errorReason: ErrMalformedPayload,
+      errorMessage: "malformed payload",
+      transaction: "",
+      network: testNetwork,
+    });
+    expect(signer.signTransaction).not.toHaveBeenCalled();
+    expect(signer.putTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects invalid authorization fields", async () => {
@@ -314,7 +348,11 @@ describe("ExactCasperScheme facilitator", () => {
     invalidPayer.authorization.from = `01${"a".repeat(64)}`;
     await expect(
       scheme.verify(buildPaymentPayload(invalidPayer), buildRequirements()),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: ErrInvalidPayer });
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrInvalidPayer,
+      payer: invalidPayer.authorization.from,
+    });
 
     const zeroAmount = structuredClone(payload);
     zeroAmount.authorization.value = "0";
@@ -392,7 +430,11 @@ describe("ExactCasperScheme facilitator", () => {
     wrongPublicKey.publicKey = PrivateKey.generate(KeyAlgorithm.ED25519).publicKey.toHex();
     await expect(
       scheme.verify(buildPaymentPayload(wrongPublicKey), buildRequirements()),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: ErrPublicKeyMismatch });
+    ).resolves.toMatchObject({
+      isValid: false,
+      invalidReason: ErrPublicKeyMismatch,
+      payer: payload.authorization.from,
+    });
 
     const invalidSignature = structuredClone(payload);
     invalidSignature.signature = "01" + "0".repeat(128);
@@ -521,6 +563,7 @@ describe("ExactCasperScheme facilitator", () => {
       errorReason: ErrAmountMismatch,
       transaction: "",
       network: testNetwork,
+      payer: payload.authorization.from,
     });
   });
 
