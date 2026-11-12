@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Sign-in-with-x SIWS messages without a statement no longer carry an extra blank line before the URI field, so Go verifies Solana sign-ins signed by TypeScript and Python clients and its own signatures verify there.'
+time: 2026-11-12T12:00:00Z
