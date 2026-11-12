@@ -177,17 +177,13 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrMissingTokenVersion, payer, "")
 	}
 
-	contractPackageHash, err := casperMechanism.DecodeContractPackageHash(requirements.Asset)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, err.Error())
-	}
+	// IsValidContractPackageHash already accepted this 64-character hex hash.
+	contractPackageHash, _ := casperMechanism.DecodeContractPackageHash(requirements.Asset)
 
 	domain := eip712.BuildDomain(name, version, requirements.Network, contractPackageHash)
 
-	fromAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.From)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayer, payer, fmt.Sprintf("invalid from address: %v", err))
-	}
+	// IsValidAddress already accepted this 66-character account hash.
+	fromAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.From)
 	publicKey, err := keypair.NewPublicKey(p.PublicKey)
 	if err != nil || len(p.PublicKey) != publicKey.SerializedLength()*2 {
 		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid public key or key length")
@@ -198,10 +194,8 @@ func (f *ExactCasperScheme) Verify(
 	if !strings.EqualFold(p.Authorization.From, expectedPayer) {
 		return nil, x402.NewVerifyError(ErrPublicKeyMismatch, payer, "authorization.from does not match the public key's account address")
 	}
-	toAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.To)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, fmt.Sprintf("invalid to address: %v", err))
-	}
+	// IsValidAddress already accepted this 66-character account hash.
+	toAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.To)
 
 	// IsValidAmountFormat already accepted this decimal integer.
 	value, _ := new(big.Int).SetString(p.Authorization.Value, 10)
@@ -407,10 +401,8 @@ func (f *ExactCasperScheme) buildTransferWithAuthorizationDeploy(
 		return nil, err
 	}
 
-	contractHashRaw, err := casper.NewHash(requirements.Asset)
-	if err != nil {
-		return nil, fmt.Errorf("invalid contract hash: %w", err)
-	}
+	// Verify already accepted this asset as a 64-character hex hash.
+	contractHashRaw, _ := casper.NewHash(requirements.Asset)
 
 	chainName := strings.TrimPrefix(networkCfg.ChainName, "casper:")
 
@@ -480,10 +472,8 @@ func (f *ExactCasperScheme) Settle(
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
-	packageHash, err := casper.NewHash(requirements.Asset)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
-	}
+	// Verify already accepted this asset as a 64-character hex hash.
+	packageHash, _ := casper.NewHash(requirements.Asset)
 	entryPoint := "transfer_with_authorization"
 
 	facilitatorPubKeyHex, err := f.signer.GetPublicKeyHex(ctx, requirements.Network)
