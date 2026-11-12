@@ -2624,8 +2624,6 @@ describe("ExactEvmScheme (Facilitator)", () => {
 
 describe("shared Permit2 helpers", () => {
   it("splitEip2612Signature normalizes a raw y-parity recovery byte to 27/28", () => {
-    // Some signers (e.g. KMS/HSM backends) return the recovery byte as the raw y-parity (0/1),
-    // but ecrecover-based permit() implementations only accept 27/28.
     const rs = "aa".repeat(64);
     expect(splitEip2612Signature(`${rs}00`).v).toBe(27);
     expect(splitEip2612Signature(`${rs}01`).v).toBe(28);

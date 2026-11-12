@@ -663,8 +663,7 @@ export class BatchSettlementChannelManager {
   }
 
   /**
-   * Refunds each eligible channel independently. Channels whose balance is already
-   * fully charged are skipped: the contract reverts a zero-amount refund (`ZeroRefund`).
+   * Refunds each eligible channel. A fully charged channel is skipped (`ZeroRefund`).
    *
    * @param channels - Channels to refund.
    * @returns Successful refund results.
