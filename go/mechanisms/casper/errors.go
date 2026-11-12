@@ -5,9 +5,8 @@ import "errors"
 // ErrNonCanonicalSignature identifies a secp256k1 signature with a high-s scalar.
 var ErrNonCanonicalSignature = errors.New("secp256k1 signature must use low-s")
 
-// TransactionExecutionError reports that a transaction was included in a block
-// but its execution failed. It is terminal: unlike a confirmation timeout,
-// waiting again cannot change the outcome.
+// TransactionExecutionError reports an included transaction whose execution failed.
+// The outcome is terminal; waiting again cannot change it.
 type TransactionExecutionError struct {
 	Message string
 }

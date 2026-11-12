@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// SettlementCache is a thread-safe in-memory cache for deduplicating concurrent
-// settlement requests for the same CEP-3009 authorization. Without it, two
-// concurrent settles both pass verify (the nonce is still unused on chain) and
-// both broadcast, with the facilitator paying gas for the one that fails.
+// SettlementCache records an authorization so callers can reject a second settle.
+// Delete drops the key before broadcast; otherwise it expires at SettlementTTL.
 type SettlementCache struct {
 	mu      sync.Mutex
 	entries map[string]time.Time
@@ -29,9 +27,8 @@ func (c *SettlementCache) Delete(key string) {
 	delete(c.entries, key)
 }
 
-// IsDuplicate returns true if key is already pending settlement (duplicate).
-// Otherwise it records the key as newly pending and returns false.
-// Callers should reject the settlement when this returns true.
+// IsDuplicate reports whether key is already pending. A new key is recorded
+// and returns false; callers reject the settlement when this returns true.
 func (c *SettlementCache) IsDuplicate(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -68,10 +68,8 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	if !casper.IsValidAmountFormat(requirements.Amount) {
 		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
 	}
-	contractPackageHash, err := casper.DecodeContractPackageHash(requirements.Asset)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("%s: %w", ErrInvalidAsset, err)
-	}
+	// IsValidContractPackageHash already accepted this 64-character hex hash.
+	contractPackageHash, _ := casper.DecodeContractPackageHash(requirements.Asset)
 
 	name, _ := requirements.Extra["name"].(string)
 	version, _ := requirements.Extra["version"].(string)
@@ -97,14 +95,10 @@ func (c *ExactCasperScheme) CreatePaymentPayload(
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf("failed to parse from address: %w", err)
 	}
-	toAddr, err := eip712.NewAddressFromHex("0x" + requirements.PayTo)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to parse to address: %w", err)
-	}
-	value, ok := new(big.Int).SetString(requirements.Amount, 10)
-	if !ok {
-		return types.PaymentPayload{}, fmt.Errorf("invalid amount: %s", requirements.Amount)
-	}
+	// IsValidAddress already accepted this 66-character account hash.
+	toAddr, _ := eip712.NewAddressFromHex("0x" + requirements.PayTo)
+	// IsValidAmountFormat already accepted this decimal integer.
+	value, _ := new(big.Int).SetString(requirements.Amount, 10)
 
 	message := map[string]interface{}{
 		"from":        fromAddr,

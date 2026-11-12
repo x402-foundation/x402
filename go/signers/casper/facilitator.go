@@ -26,15 +26,8 @@ type FacilitatorSigner struct {
 	transactionPollInterval time.Duration
 }
 
-// FacilitatorSignerConfig is the configuration for constructing a FacilitatorSigner.
-// RpcURLs maps each network identifier to its primary JSON-RPC endpoint.
-// SpeculativeRpcURLs optionally maps each network identifier to a speculative
-// execution endpoint; when set for a network, facilitators can use it to
-// in the verify step to validate payments requirements.
-// TransactionWaitTimeout bounds how long WaitForTransaction polls for execution
-// (default DefaultTransactionWaitTimeout); it should stay below
-// x402Casper.SettlementTTL. TransactionPollInterval defaults to
-// DefaultTransactionPollInterval.
+// FacilitatorSignerConfig uses the default durations when those fields are zero.
+// Wait timeout should stay below x402Casper.SettlementTTL.
 type FacilitatorSignerConfig struct {
 	Keys                    map[string]keypair.PrivateKey
 	RpcURLs                 map[string]string
@@ -128,10 +121,7 @@ func (s *FacilitatorSigner) VerifyEIP712Signature(digest [32]byte, sig [65]byte,
 		return false, err
 	}
 	err = pk.VerifySignature(digest[:], sig[:])
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return err == nil, err
 }
 
 func (s *FacilitatorSigner) SignTransaction(transaction *types.TransactionV1, network string) error {
@@ -153,11 +143,7 @@ func (s *FacilitatorSigner) SignDeploy(deploy *types.Deploy, network string) err
 }
 
 func (s *FacilitatorSigner) GetSpeculativeRpcUrl(network string) string {
-	url, ok := s.speculativeRpcURLs[network]
-	if !ok {
-		return ""
-	}
-	return url
+	return s.speculativeRpcURLs[network]
 }
 
 func (s *FacilitatorSigner) PutTransaction(ctx context.Context, network string, transaction types.TransactionV1) (string, error) {

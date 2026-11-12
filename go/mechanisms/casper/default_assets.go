@@ -45,7 +45,7 @@ func GetDefaultAsset(network string, symbol string) (*CasperDefaultAsset, error)
 	return nil, fmt.Errorf("no %s default asset configured for network %s", symbol, network)
 }
 
-// FindDefaultAsset reverse-looks up by mint address and CAIP-2 network.
+// FindDefaultAsset reverse-looks up by contract package hash and CAIP-2 network.
 func FindDefaultAsset(asset string, network string) *CasperDefaultAsset {
 	assets := DefaultAssets[network]
 	if len(assets) == 0 {
