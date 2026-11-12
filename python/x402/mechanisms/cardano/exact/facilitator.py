@@ -610,7 +610,3 @@ class ExactCardanoScheme:
             if time.monotonic() + self._confirmation_poll_ms / 1000 >= deadline:
                 return latest
             time.sleep(self._confirmation_poll_ms / 1000)
-
-
-def supported_cardano_networks() -> tuple[str, ...]:
-    return c.CARDANO_NETWORKS

@@ -72,8 +72,6 @@ def _signals_recovery(result: Any) -> bool:
     ignored, so a hook that happens to return something cannot trigger a
     second payment.
     """
-    if result is None:
-        return False
     if isinstance(result, Mapping):
         return result.get("recovered") is True
     return getattr(result, "recovered", None) is True

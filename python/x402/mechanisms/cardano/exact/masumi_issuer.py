@@ -49,8 +49,6 @@ def is_masumi_template(extra: Any) -> bool:
 
 
 def payment_payload_from_transport_context(context: Any) -> PaymentPayload | None:
-    if context is None:
-        return None
     request = (
         context.get("request") if isinstance(context, dict) else getattr(context, "request", None)
     )
