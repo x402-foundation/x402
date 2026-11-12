@@ -174,6 +174,22 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 		if err := f.assertClaimChannel(existing, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open}); err != nil {
 			return ValidatedDeposit{}, err
 		}
+		// The payer-signed open of this channel for exactly its deposit, with a pending
+		// signature recorded, is the retry of an open that timed out, not a top-up.
+		if existing.Deposit == deposit && existing.Settlement.Settled == 0 &&
+			f.verifyOpenTransaction(payload, requirements, terms, channelID, deposit, nil) == nil {
+			_, pending, err := f.pendingStore.Get(ctx, depositKey(requirements.Network, channelID))
+			if err != nil {
+				return ValidatedDeposit{}, err
+			}
+			if pending {
+				if err := AssertDepositProof(proof.Signer, proofAmount, charge, deposit, nil); err != nil {
+					return ValidatedDeposit{}, err
+				}
+				validated.ExpectedDeposit = deposit
+				return validated, nil
+			}
+		}
 		expected := existing.Deposit + deposit
 		settled := existing.Settlement.Settled
 		if err := AssertDepositProof(proof.Signer, proofAmount, charge, expected, &settled); err != nil {
@@ -234,6 +250,31 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 }
 
 func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement.ParsedBatchPayload, requirements types.PaymentRequirements, terms BatchTerms, channelID string, deposit uint64, slotRead *clusterSlotRead) error {
+	recent, err := recentSlotHint(requirements)
+	if err != nil {
+		return err
+	}
+	// The program accepts an open only within its slot window of the cluster
+	// slot it lands at, so the window is judged against the challenge's
+	// recentSlot or, without one, the cluster's own slot.
+	if recent == nil {
+		var slot uint64
+		if slotRead != nil {
+			slot, err = slotRead.result(ctx)
+		} else {
+			slot, err = f.signer.GetSlot(ctx, requirements.Network, paymentchannels.SlotCommitment)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
+		}
+		recent = &slot
+	}
+	return f.verifyOpenTransaction(payload, requirements, terms, channelID, deposit, recent)
+}
+
+// verifyOpenTransaction checks the deposit transaction as the open of channelID.
+// A nil recent skips the open-slot window, which only applies to an open yet to land.
+func (f *BatchSvmScheme) verifyOpenTransaction(payload batchsettlement.ParsedBatchPayload, requirements types.PaymentRequirements, terms BatchTerms, channelID string, deposit uint64, recent *uint64) error {
 	feePayer, err := solana.PublicKeyFromBase58(terms.FeePayer)
 	if err != nil {
 		return err
@@ -257,25 +298,6 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	openSlot, err := paymentchannels.ParseU64(payload.ChannelConfig.OpenSlot, "channelConfig.openSlot")
 	if err != nil {
 		return err
-	}
-	recent, err := recentSlotHint(requirements)
-	if err != nil {
-		return err
-	}
-	// The program accepts an open only within its slot window of the cluster
-	// slot it lands at, so the window is judged against the challenge's
-	// recentSlot or, without one, the cluster's own slot.
-	if recent == nil {
-		var slot uint64
-		if slotRead != nil {
-			slot, err = slotRead.result(ctx)
-		} else {
-			slot, err = f.signer.GetSlot(ctx, requirements.Network, paymentchannels.SlotCommitment)
-		}
-		if err != nil {
-			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
-		}
-		recent = &slot
 	}
 	binding := batchsettlement.EncodeReceiverBindingMemo(terms.ReceiverAuthorizer)
 	open, err := paymentchannels.VerifyOpenTransaction(payload.Deposit.Transaction, paymentchannels.VerifyOpenExpected{
@@ -303,7 +325,6 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if open.ChannelID.String() != channelID {
 		return fmt.Errorf("%s: setup transaction channel mismatch", batchsettlement.ErrChannelIDMismatch)
 	}
-	_ = ctx
 	return nil
 }
 
@@ -312,17 +333,10 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 	if err != nil {
 		return nil, err
 	}
+	key := depositKey(requirements.Network, validated.ChannelID)
 	if validated.Existing != nil && !validated.IsTopUp {
-		channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
-		if err != nil {
-			return nil, err
-		}
-		if err := f.assertDepositChannel(channel, validated, requirements); err != nil {
-			return nil, err
-		}
-		return DepositResponse(validated.ChannelID, channel, x402.Network(requirements.Network), "", validated.Deposit), nil
+		return f.settleOpenReplay(ctx, key, validated, requirements)
 	}
-	key := "batch:deposit:" + requirements.Network + ":" + validated.ChannelID
 	var topUp *solana.Transaction
 	if validated.IsTopUp {
 		decoded, hash, err := decodeWithMessageHash(payload.Deposit.Transaction)
@@ -391,14 +405,8 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 					return signature, nil
 				},
 				postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
-					channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
-					if err != nil {
-						return nil, nil, err
-					}
-					if err := f.assertDepositChannel(channel, validated, requirements); err != nil {
-						return nil, nil, err
-					}
-					return channel, nil, nil
+					channel, err := f.fetchDepositChannel(ctx, validated, requirements)
+					return channel, nil, err
 				},
 			})
 			if err != nil {
@@ -427,6 +435,45 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 		return settled.response, nil
 	}
 	return DepositResponse(validated.ChannelID, settled.channel.(*generated.Channel), x402.Network(requirements.Network), settled.signature, validated.Deposit), nil
+}
+
+// depositKey identifies the open of a channel for pending reconciliation.
+func depositKey(network, channelID string) string {
+	return "batch:deposit:" + network + ":" + channelID
+}
+
+// settleOpenReplay reconciles the pending signature of an open under key and never
+// broadcasts. A record consumed since validation is a duplicate.
+func (f *BatchSvmScheme) settleOpenReplay(ctx context.Context, key string, validated ValidatedDeposit, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+	network := x402.Network(requirements.Network)
+	channel, signature, response, err := f.settleDurably(ctx, durableArgs{
+		key:     key,
+		network: requirements.Network,
+		payer:   validated.Payload.ChannelConfig.Payer,
+		beforeSend: func() (*x402.SettleResponse, error) {
+			return nil, fmt.Errorf("%s: open already reconciled", ChannelBusy)
+		},
+		postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
+			channel, err := f.fetchDepositChannel(ctx, validated, requirements)
+			return channel, nil, err
+		},
+	})
+	if err != nil || response != nil {
+		return response, err
+	}
+	return DepositResponse(validated.ChannelID, channel.(*generated.Channel), network, signature, validated.Deposit), nil
+}
+
+// fetchDepositChannel reads the channel and asserts it holds the validated deposit.
+func (f *BatchSvmScheme) fetchDepositChannel(ctx context.Context, validated ValidatedDeposit, requirements types.PaymentRequirements) (*generated.Channel, error) {
+	channel, err := f.fetchChannel(ctx, requirements.Network, validated.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.assertDepositChannel(channel, validated, requirements); err != nil {
+		return nil, err
+	}
+	return channel, nil
 }
 
 func (f *BatchSvmScheme) simulateOpen(ctx context.Context, validated ValidatedDeposit, requirements types.PaymentRequirements, feePayer solana.PublicKey) error {

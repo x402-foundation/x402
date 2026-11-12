@@ -683,15 +683,27 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		garbage.Deposit.Transaction = "AAAA"
 		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(garbage))
 
-		// An open transaction submitted against an existing channel is not a top_up.
-		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			return channel(func(c *generated.Channel) {
-				c.AuthorizedSigner = payer.Address()
-				c.OpenSlot = 123
-				c.Salt = mustParseU64(t, actualDeposit.ChannelConfig.Salt)
-			}), nil
+		// An open against an existing channel is a retry only with a pending signature,
+		// exactly the channel's deposit and nothing settled; otherwise it is judged as a top_up.
+		existing := func(overrides ...func(*generated.Channel)) {
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return channel(append([]func(*generated.Channel){func(c *generated.Channel) {
+					c.AuthorizedSigner = payer.Address()
+					c.OpenSlot = 123
+					c.Salt = mustParseU64(t, actualDeposit.ChannelConfig.Salt)
+				}}, overrides...)...), nil
+			}
 		}
+		existing(func(c *generated.Channel) { c.Deposit = 20_000 })
 		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(actualDeposit))
+		existing(func(c *generated.Channel) { c.Settlement.Settled = 1_000 })
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, verifyDeposit(actualDeposit))
+		existing()
+		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(actualDeposit))
+		require.NoError(t, scheme.pendingStore.Set(ctx, depositKey(network, actualChannelID), fixedSigStr))
+		replayed, err := scheme.Verify(ctx, payment(actualDeposit, req), req, nil)
+		require.NoError(t, err)
+		require.True(t, replayed.IsValid, replayed.InvalidReason)
 
 		for _, tc := range []struct {
 			err    error
@@ -1318,6 +1330,10 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			return channel(), nil
 		}
+		scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
+			return durableResult{OK: true, Signature: fixedSigStr}, nil
+		}
+		require.NoError(t, scheme.pendingStore.Set(ctx, depositKey(req.Network, channelID), fixedSigStr))
 		depositResult, err := scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
 			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
 			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
@@ -1475,10 +1491,22 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			}, nil
 		}
 		scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return channel(), nil }
-		idempotent, err := scheme.settleDeposit(ctx, deposit, req, nil)
+		scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
+			return durableResult{OK: true, Signature: fixedSigStr}, nil
+		}
+		openKey := depositKey(network, channelID)
+		_, err = scheme.settleDeposit(ctx, deposit, req, nil)
+		require.ErrorContains(t, err, ChannelBusy, "an open replay without a pending signature is a duplicate")
+		require.NoError(t, scheme.pendingStore.Set(ctx, openKey, fixedSigStr))
+		replayed, err := scheme.settleDeposit(ctx, deposit, req, nil)
 		require.NoError(t, err)
-		require.True(t, idempotent.Success)
-		require.Equal(t, "", idempotent.Transaction)
+		require.True(t, replayed.Success)
+		require.Equal(t, fixedSigStr, replayed.Transaction)
+		_, stillPending, err := scheme.pendingStore.Get(ctx, openKey)
+		require.NoError(t, err)
+		require.False(t, stillPending)
+		_, err = scheme.settleDeposit(ctx, deposit, req, nil)
+		require.ErrorContains(t, err, ChannelBusy, "the pending signature answers one retry")
 
 		voucherSettle, err := scheme.Settle(ctx, payment(batchsettlement.BatchVoucherPayload{
 			Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
