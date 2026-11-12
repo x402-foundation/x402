@@ -127,18 +127,13 @@ class MasumiQuoteIssuer:
 
     @staticmethod
     def commitment_digest(parts: list[dict[str, Any]]) -> str:
-        manifest = [
+        return compute_input_hash(
             {
-                **{
-                    key: part[key]
-                    for key in ("name", "canonicalization", "mediaType")
-                    if key in part
-                },
-                "digest": commitment_part_digest(part),
+                "version": "1",
+                "algorithm": "sha256",
+                "parts": [{**part, "digest": commitment_part_digest(part)} for part in parts],
             }
-            for part in parts
-        ]
-        return compute_input_hash({"version": "1", "algorithm": "sha256", "parts": manifest})
+        )
 
     def issue(
         self,
