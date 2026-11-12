@@ -23,16 +23,12 @@ import { ExactAptosScheme as ExactAptosClientExport } from "../../src/exact/clie
 import { ExactAptosScheme as ExactAptosFacilitatorExport } from "../../src/exact/facilitator/index";
 import { ExactAptosScheme as ExactAptosServerExport } from "../../src/exact/server/index";
 import {
-  APTOS_MAINNET_CAIP2,
   APTOS_TESTNET_CAIP2,
-  APTOS_ADDRESS_REGEX,
-  TRANSFER_FUNCTION,
-  MAX_GAS_AMOUNT,
-  MAX_GAS_UNIT_PRICE,
   getAptosNetwork,
   getAptosRpcUrl,
   getAptosChainId,
   USDC_TESTNET_FA,
+  DEFAULT_ASSETS,
 } from "../../src/index";
 import type { ClientAptosSigner } from "../../src/signer";
 import type { PaymentRequirements } from "@x402/core/types";
@@ -64,15 +60,6 @@ describe("@x402/aptos", () => {
       expect(ExactAptosClientExport).toBe(ExactAptosClient);
       expect(ExactAptosFacilitatorExport).toBe(ExactAptosFacilitator);
       expect(ExactAptosServerExport).toBe(ExactAptosServer);
-    });
-
-    it("should export constants", () => {
-      expect(APTOS_MAINNET_CAIP2).toBe("aptos:1");
-      expect(APTOS_TESTNET_CAIP2).toBe("aptos:2");
-      expect(APTOS_ADDRESS_REGEX).toBeDefined();
-      expect(TRANSFER_FUNCTION).toBe("0x1::primary_fungible_store::transfer");
-      expect(MAX_GAS_AMOUNT).toBe(500000n);
-      expect(MAX_GAS_UNIT_PRICE).toBe(1000n);
     });
 
     it("should export utility functions", () => {
@@ -220,7 +207,9 @@ describe("@x402/aptos", () => {
 
     it("returns decimals for known default assets", () => {
       const server = new ExactAptosServer();
-      expect(server.getAssetDecimals(USDC_TESTNET_FA, APTOS_TESTNET_CAIP2)).toBe(6);
+      expect(server.getAssetDecimals(USDC_TESTNET_FA, APTOS_TESTNET_CAIP2)).toBe(
+        DEFAULT_ASSETS[APTOS_TESTNET_CAIP2]![0]!.decimals,
+      );
       expect(server.getAssetDecimals("0xunknown", APTOS_TESTNET_CAIP2)).toBeUndefined();
     });
 

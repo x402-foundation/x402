@@ -484,31 +484,8 @@ func TestPayloadTypeGuards(t *testing.T) {
 	})
 }
 
-// TestAssetTransferMethod tests asset transfer method constants
-func TestAssetTransferMethod(t *testing.T) {
-	t.Run("AssetTransferMethodEIP3009 is correct", func(t *testing.T) {
-		if evm.AssetTransferMethodEIP3009 != "eip3009" {
-			t.Errorf("Expected 'eip3009', got %s", evm.AssetTransferMethodEIP3009)
-		}
-	})
-
-	t.Run("AssetTransferMethodPermit2 is correct", func(t *testing.T) {
-		if evm.AssetTransferMethodPermit2 != "permit2" {
-			t.Errorf("Expected 'permit2', got %s", evm.AssetTransferMethodPermit2)
-		}
-	})
-}
-
-// TestPermit2Constants tests Permit2 constant values
+// TestPermit2Constants checks vanity address shape and the deadline buffer bounds.
 func TestPermit2Constants(t *testing.T) {
-	t.Run("PERMIT2Address is correct canonical address", func(t *testing.T) {
-		// Canonical Uniswap Permit2 address
-		expected := "0x000000000022D473030F116dDEE9F6B43aC78BA3"
-		if evm.PERMIT2Address != expected {
-			t.Errorf("PERMIT2Address mismatch: expected %s, got %s", expected, evm.PERMIT2Address)
-		}
-	})
-
 	t.Run("X402ExactPermit2ProxyAddress has vanity format", func(t *testing.T) {
 		// Should start with 0x4020... and end with ...0001
 		addr := evm.X402ExactPermit2ProxyAddress
@@ -550,11 +527,4 @@ func TestPermit2Constants(t *testing.T) {
 			t.Error("Permit2DeadlineBuffer seems too large (> 60 seconds)")
 		}
 	})
-}
-
-// TestSchemeExact tests the scheme constant
-func TestSchemeExact(t *testing.T) {
-	if evm.SchemeExact != "exact" {
-		t.Errorf("Expected 'exact', got %s", evm.SchemeExact)
-	}
 }

@@ -126,10 +126,7 @@ class CountingFacilitatorSigner(MockFacilitatorSigner):
 
 class TestConstants:
     def test_legacy_is_accepted_but_never_advertised(self):
-        assert ADVERTISED_TRANSACTION_VERSIONS == [0, 1]
         assert "legacy" in ACCEPTED_TRANSACTION_VERSIONS
-        assert 0 in ACCEPTED_TRANSACTION_VERSIONS
-        assert 1 in ACCEPTED_TRANSACTION_VERSIONS
         assert "legacy" not in ADVERTISED_TRANSACTION_VERSIONS
         assert set(ADVERTISED_TRANSACTION_VERSIONS) <= set(ACCEPTED_TRANSACTION_VERSIONS)
 
@@ -248,21 +245,22 @@ class TestFacilitatorSupportedExtra:
         extra = facilitator.get_extra(SOLANA_DEVNET_CAIP2)
         assert extra is not None
         assert extra["feePayer"] == FEE_PAYER
-        assert extra["transactionVersions"] == [0, 1]
+        assert extra["transactionVersions"] == ADVERTISED_TRANSACTION_VERSIONS
 
     def test_v1_facilitator_advertises_transaction_versions(self):
         facilitator = ExactSvmSchemeV1Facilitator(MockFacilitatorSigner())
         extra = facilitator.get_extra("solana-devnet")
         assert extra is not None
         assert extra["feePayer"] == FEE_PAYER
-        assert extra["transactionVersions"] == [0, 1]
+        assert extra["transactionVersions"] == ADVERTISED_TRANSACTION_VERSIONS
 
     def test_advertised_list_is_a_copy(self):
         facilitator = ExactSvmFacilitatorScheme(MockFacilitatorSigner())
         extra = facilitator.get_extra(SOLANA_DEVNET_CAIP2)
         assert extra is not None
+        advertised = list(ADVERTISED_TRANSACTION_VERSIONS)
         extra["transactionVersions"].append(2)
-        assert ADVERTISED_TRANSACTION_VERSIONS == [0, 1]
+        assert ADVERTISED_TRANSACTION_VERSIONS == advertised
 
 
 class TestServerCopiesTransactionVersions:

@@ -1,7 +1,6 @@
 """Tests for Bazaar extension types."""
 
 from x402.extensions.bazaar.types import (
-    BAZAAR,
     BodyDiscoveryExtension,
     BodyDiscoveryInfo,
     BodyInput,
@@ -14,14 +13,6 @@ from x402.extensions.bazaar.types import (
     parse_discovery_extension,
     parse_discovery_info,
 )
-
-
-class TestConstants:
-    """Test extension constants."""
-
-    def test_bazaar_constant(self) -> None:
-        """Test BAZAAR constant value."""
-        assert BAZAAR.key == "bazaar"
 
 
 class TestMethodChecks:

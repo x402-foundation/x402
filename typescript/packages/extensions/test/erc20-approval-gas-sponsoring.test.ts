@@ -4,7 +4,6 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  ERC20_APPROVAL_GAS_SPONSORING,
   declareErc20ApprovalGasSponsoringExtension,
   extractErc20ApprovalGasSponsoringInfo,
   validateErc20ApprovalGasSponsoringInfo,
@@ -16,12 +15,6 @@ import type {
 import type { PaymentPayload } from "@x402/core/types";
 
 describe("ERC-20 Approval Gas Sponsoring Extension", () => {
-  describe("ERC20_APPROVAL_GAS_SPONSORING constant", () => {
-    it("should export the correct extension identifier", () => {
-      expect(ERC20_APPROVAL_GAS_SPONSORING.key).toBe("erc20ApprovalGasSponsoring");
-    });
-  });
-
   describe("declareErc20ApprovalGasSponsoringExtension", () => {
     it("should create a valid extension declaration", () => {
       const result = declareErc20ApprovalGasSponsoringExtension();

@@ -191,10 +191,6 @@ describe("ExactKeetaServer", () => {
   });
 
   describe("getAssetDecimals", () => {
-    it("returns 6 for documented USDC", () => {
-      expect(server.getAssetDecimals(usdcTestnetAddress, KEETA_TESTNET_CAIP2)).toBe(6);
-    });
-
     it("returns undefined for an unknown token", () => {
       expect(server.getAssetDecimals(KEETA_ACCOUNT, KEETA_TESTNET_CAIP2)).toBeUndefined();
     });

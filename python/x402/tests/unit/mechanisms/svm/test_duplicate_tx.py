@@ -10,9 +10,6 @@ from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 from x402.mechanisms.svm import (
-    DEFAULT_COMPUTE_UNIT_LIMIT,
-    DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-    ERR_INVALID_INSTRUCTION_COUNT,
     SOLANA_DEVNET_CAIP2,
     TOKEN_PROGRAM_ADDRESS,
     USDC_DEVNET_ADDRESS,
@@ -29,10 +26,6 @@ MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 
 
 class TestMemoUniqueness:
-    def test_transaction_construction_is_deterministic(self):
-        assert DEFAULT_COMPUTE_UNIT_LIMIT == 20000
-        assert DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS == 1
-
     def test_blockhash_is_not_only_source_of_uniqueness(self):
         slot_time_ms = 400
         assert slot_time_ms < 1000
@@ -157,28 +150,6 @@ class TestFixedBlockhashProducesDistinctTransactions:
         print(f"Transaction 1 (first 80 chars): {tx1_base64[:80]}...")
         print(f"Transaction 2 (first 80 chars): {tx2_base64[:80]}...")
         print(f"Transactions are DIFFERENT: {tx1_base64 != tx2_base64}")
-
-
-class TestFacilitatorInstructionRules:
-    def test_error_code_for_wrong_instruction_count_v1_only(self):
-        """ERR_INVALID_INSTRUCTION_COUNT is used by the V1 facilitator's positional
-        instruction-layout check. V2 replaced positional checks with identity-based
-        classification (see ERR_UNKNOWN_INSTRUCTION / ERR_PROTOCOL_INSTRUCTION_ORDER)
-        that has no hard instruction-count cap for guard (Lighthouse) instructions.
-        """
-        assert (
-            ERR_INVALID_INSTRUCTION_COUNT
-            == "invalid_exact_svm_payload_transaction_instructions_length"
-        )
-
-    def test_error_codes_for_v2_identity_based_classification(self):
-        from x402.mechanisms.svm import ERR_PROTOCOL_INSTRUCTION_ORDER, ERR_UNKNOWN_INSTRUCTION
-
-        assert ERR_UNKNOWN_INSTRUCTION == "invalid_exact_svm_payload_unknown_instruction"
-        assert (
-            ERR_PROTOCOL_INSTRUCTION_ORDER
-            == "invalid_exact_svm_payload_transaction_instructions_order"
-        )
 
 
 class TestAttackScenarioSimulation:

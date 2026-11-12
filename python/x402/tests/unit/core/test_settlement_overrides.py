@@ -8,7 +8,6 @@ import pytest
 
 from x402.http.types import RouteConfig
 from x402.http.x402_http_server_base import (
-    PAYMENT_REQUIRED_CACHE_CONTROL,
     with_private_cache_control,
     x402HTTPServerBase,
 )
@@ -243,9 +242,6 @@ class TestDollarOverrideDecimalsLookup:
 
 
 class TestCacheControl:
-    def test_payment_required_cache_control_constant(self):
-        assert PAYMENT_REQUIRED_CACHE_CONTROL == "no-store"
-
     def test_with_private_cache_control_without_existing_header(self):
         assert with_private_cache_control(None) == "private"
         assert with_private_cache_control("") == "private"

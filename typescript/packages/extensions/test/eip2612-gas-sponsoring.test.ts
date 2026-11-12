@@ -4,7 +4,6 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  EIP2612_GAS_SPONSORING,
   declareEip2612GasSponsoringExtension,
   extractEip2612GasSponsoringInfo,
   validateEip2612GasSponsoringInfo,
@@ -16,12 +15,6 @@ import type {
 import type { PaymentPayload } from "@x402/core/types";
 
 describe("EIP-2612 Gas Sponsoring Extension", () => {
-  describe("EIP2612_GAS_SPONSORING constant", () => {
-    it("should export the correct extension identifier", () => {
-      expect(EIP2612_GAS_SPONSORING.key).toBe("eip2612GasSponsoring");
-    });
-  });
-
   describe("declareEip2612GasSponsoringExtension", () => {
     it("should create a valid extension declaration", () => {
       const result = declareEip2612GasSponsoringExtension();

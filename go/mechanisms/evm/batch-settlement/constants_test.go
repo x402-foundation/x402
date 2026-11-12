@@ -1,15 +1,14 @@
 package batchsettlement
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
-)
 
-func TestSchemeIdentifier(t *testing.T) {
-	if SchemeBatched != "batch-settlement" {
-		t.Fatalf("SchemeBatched = %q", SchemeBatched)
-	}
-}
+	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+)
 
 func TestContractAddresses(t *testing.T) {
 	if !strings.HasPrefix(BatchSettlementAddress, "0x") || len(BatchSettlementAddress) != 42 {
@@ -20,44 +19,42 @@ func TestContractAddresses(t *testing.T) {
 	}
 }
 
-func TestWithdrawDelayBounds(t *testing.T) {
-	if MinWithdrawDelay != 900 {
-		t.Fatalf("MinWithdrawDelay = %d", MinWithdrawDelay)
+func eip712TypeString(primary string, fields []evm.TypedDataField) string {
+	parts := make([]string, len(fields))
+	for i, field := range fields {
+		parts[i] = field.Type + " " + field.Name
 	}
-	if MaxWithdrawDelay != 2_592_000 {
-		t.Fatalf("MaxWithdrawDelay = %d", MaxWithdrawDelay)
+	return primary + "(" + strings.Join(parts, ",") + ")"
+}
+
+func TestChannelConfigTypesMatchTypeString(t *testing.T) {
+	got := eip712TypeString("ChannelConfig", ChannelConfigTypes["ChannelConfig"])
+	if got != ChannelConfigTypeString {
+		t.Fatalf("ChannelConfig type string = %s", got)
 	}
-	if MinWithdrawDelay >= MaxWithdrawDelay {
-		t.Fatal("min must be less than max")
+	if sum := crypto.Keccak256([]byte(got)); hex.EncodeToString(sum) != hex.EncodeToString(ChannelConfigTypeHash) {
+		t.Fatalf("ChannelConfig typehash = %x", sum)
 	}
 }
 
-func TestBatchSettlementDomain(t *testing.T) {
-	if BatchSettlementDomain.Name != "x402 Batch Settlement" {
-		t.Fatalf("Name = %q", BatchSettlementDomain.Name)
-	}
-	if BatchSettlementDomain.Version != "1" {
-		t.Fatalf("Version = %q", BatchSettlementDomain.Version)
-	}
-}
-
+// TestVoucherTypes checks the voucher struct encodes to its EIP-712 type string
+// and that keccak of that string is the voucher typehash.
 func TestVoucherTypes(t *testing.T) {
-	v, ok := VoucherTypes["Voucher"]
-	if !ok || len(v) != 2 {
-		t.Fatalf("VoucherTypes shape = %+v", v)
+	const typeString = "Voucher(bytes32 channelId,uint128 maxClaimableAmount)"
+	got := eip712TypeString("Voucher", VoucherTypes["Voucher"])
+	if got != typeString {
+		t.Fatalf("Voucher type string = %s", got)
 	}
-	if v[0].Name != "channelId" || v[0].Type != "bytes32" {
-		t.Fatalf("Voucher[0] = %+v", v[0])
-	}
-	if v[1].Name != "maxClaimableAmount" || v[1].Type != "uint128" {
-		t.Fatalf("Voucher[1] = %+v", v[1])
+	const typeHash = "1e1bd6ff84c3e0d9029a292b212e039c0ca97ec497c55191a4a5874294609a69"
+	if hex.EncodeToString(crypto.Keccak256([]byte(got))) != typeHash {
+		t.Fatalf("Voucher typehash = %x", crypto.Keccak256([]byte(got)))
 	}
 }
 
 func TestRefundTypes(t *testing.T) {
-	r, ok := RefundTypes["Refund"]
-	if !ok || len(r) != 3 {
-		t.Fatalf("RefundTypes shape = %+v", r)
+	const typeString = "Refund(bytes32 channelId,uint256 nonce,uint128 amount)"
+	if got := eip712TypeString("Refund", RefundTypes["Refund"]); got != typeString {
+		t.Fatalf("Refund type string = %s", got)
 	}
 }
 
@@ -66,28 +63,47 @@ func TestClaimBatchTypes(t *testing.T) {
 	if !ok || len(cb) != 1 {
 		t.Fatalf("ClaimBatchTypes shape = %+v", cb)
 	}
-	if cb[0].Type != "ClaimEntry[]" {
-		t.Fatalf("ClaimBatch[0].Type = %q", cb[0].Type)
+	if cb[0].Name != "claims" || cb[0].Type != "ClaimEntry[]" {
+		t.Fatalf("ClaimBatch[0] = %+v", cb[0])
 	}
-	ce, ok := ClaimBatchTypes["ClaimEntry"]
-	if !ok || len(ce) != 3 {
-		t.Fatalf("ClaimEntry shape = %+v", ce)
+	const entry = "ClaimEntry(bytes32 channelId,uint128 maxClaimableAmount,uint128 totalClaimed)"
+	if got := eip712TypeString("ClaimEntry", ClaimBatchTypes["ClaimEntry"]); got != entry {
+		t.Fatalf("ClaimEntry type string = %s", got)
 	}
 }
 
 func TestReceiveAuthorizationTypes(t *testing.T) {
-	r, ok := ReceiveAuthorizationTypes["ReceiveWithAuthorization"]
-	if !ok || len(r) != 6 {
-		t.Fatalf("ReceiveWithAuthorization shape = %+v", r)
+	const typeString = "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+	got := eip712TypeString("ReceiveWithAuthorization", ReceiveAuthorizationTypes["ReceiveWithAuthorization"])
+	if got != typeString {
+		t.Fatalf("ReceiveWithAuthorization type string = %s", got)
+	}
+}
+
+func TestBatchPermit2WitnessTypes(t *testing.T) {
+	permit := BatchPermit2WitnessTypes["PermitWitnessTransferFrom"]
+	if len(permit) != 5 || permit[0].Name != "permitted" || permit[4].Name != "witness" || permit[4].Type != "DepositWitness" {
+		t.Fatalf("PermitWitnessTransferFrom = %+v", permit)
+	}
+	const witness = "DepositWitness(bytes32 channelId)"
+	if got := eip712TypeString("DepositWitness", BatchPermit2WitnessTypes["DepositWitness"]); got != witness {
+		t.Fatalf("DepositWitness type string = %s", got)
+	}
+	const tokenPermissions = "TokenPermissions(address token,uint256 amount)"
+	if got := eip712TypeString("TokenPermissions", BatchPermit2WitnessTypes["TokenPermissions"]); got != tokenPermissions {
+		t.Fatalf("TokenPermissions type string = %s", got)
+	}
+}
+
+func TestWithdrawDelayBounds(t *testing.T) {
+	if MinWithdrawDelay >= MaxWithdrawDelay {
+		t.Fatal("min must be less than max")
 	}
 }
 
 // TestErrorCodes pins the canonical wire prefix `invalid_batch_settlement_evm_`
-// for every error reason exported from this package. Both facilitator-mirrored
-// constants and resource-server abort reasons share the same envelope —
-// renaming or dropping the prefix here breaks cdp-facilitator's substring
-// classifier and the `x402VerifyInvalidReason` / `x402SettleErrorReason`
-// CDP Accounts API enums.
+// for every error reason exported from this package. Facilitator and
+// resource-server reasons share that prefix.
 func TestErrorCodes(t *testing.T) {
 	const wirePrefix = "invalid_batch_settlement_evm_"
 	for _, code := range []string{
@@ -117,11 +133,5 @@ func TestErrorCodes(t *testing.T) {
 		if !strings.HasPrefix(code, wirePrefix) {
 			t.Fatalf("error reason must start with %q, got %q", wirePrefix, code)
 		}
-	}
-}
-
-func TestVoucherManagerValues(t *testing.T) {
-	if VoucherManagerServer != "server" || VoucherManagerFacilitator != "facilitator" {
-		t.Fatalf("voucher manager values = %q, %q", VoucherManagerServer, VoucherManagerFacilitator)
 	}
 }

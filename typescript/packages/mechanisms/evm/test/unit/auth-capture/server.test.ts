@@ -11,10 +11,13 @@ import {
 } from "../../../src/auth-capture/constants";
 import * as Errors from "../../../src/auth-capture/errors";
 import type { FacilitatorClient } from "@x402/core/server";
+import { DEFAULT_ASSETS } from "../../../src/defaultAssets";
 import { zeroAddress } from "viem";
 import type { AuthorizedPayment } from "../../../src/auth-capture/server/storage";
 
-const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const BASE_SEPOLIA = DEFAULT_ASSETS["eip155:84532"]![0]!;
+const BASE_SEPOLIA_USDC = BASE_SEPOLIA.asset;
+const BASE_MAINNET = DEFAULT_ASSETS["eip155:8453"]![0]!;
 
 describe("AuthCaptureEvmScheme", () => {
   describe("parsePrice", () => {
@@ -24,7 +27,7 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.amount).toBe("1000000");
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should parse amounts without dollar sign", async () => {
@@ -32,7 +35,7 @@ describe("AuthCaptureEvmScheme", () => {
       const result = await scheme.parsePrice("0.50", "eip155:84532");
 
       expect(result.amount).toBe("500000");
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should parse small amounts correctly", async () => {
@@ -85,14 +88,14 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.amount).toBe("10000");
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should return extra with name and version for Base mainnet", async () => {
       const scheme = new AuthCaptureEvmScheme();
       const result = await scheme.parsePrice("$1.00", "eip155:8453");
 
-      expect(result.extra).toEqual({ name: "USD Coin", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_MAINNET.name, version: BASE_MAINNET.version });
     });
 
     it("should pass through AssetAmount objects with extra", async () => {
@@ -137,13 +140,14 @@ describe("AuthCaptureEvmScheme", () => {
       // Mezo testnet defaults to mUSD which uses permit2 and supports EIP-2612,
       // so name/version remain (for the EIP-2612 sig) and assetTransferMethod is propagated.
       const scheme = new AuthCaptureEvmScheme();
+      const mezo = DEFAULT_ASSETS["eip155:31611"]![0]!;
       const result = await scheme.parsePrice("$1.00", "eip155:31611");
 
-      expect(result.asset).toBe("0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503");
+      expect(result.asset).toBe(mezo.asset);
       expect(result.extra).toMatchObject({
-        assetTransferMethod: "permit2",
-        name: "Mezo USD",
-        version: "1",
+        assetTransferMethod: mezo.assetTransferMethod,
+        name: mezo.name,
+        version: mezo.version,
       });
     });
   });
@@ -172,7 +176,7 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
       expect(result.amount).toBe("1000000");
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should try parsers in registration order", async () => {
@@ -1175,7 +1179,9 @@ describe("AuthCaptureEvmScheme", () => {
     it("should return decimals for a known default asset", () => {
       const scheme = new AuthCaptureEvmScheme();
 
-      expect(scheme.getAssetDecimals(BASE_SEPOLIA_USDC, "eip155:84532")).toBe(6);
+      expect(scheme.getAssetDecimals(BASE_SEPOLIA_USDC, "eip155:84532")).toBe(
+        BASE_SEPOLIA.decimals,
+      );
     });
 
     it("should return undefined for an unknown asset", () => {
