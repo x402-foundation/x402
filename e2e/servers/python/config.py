@@ -26,6 +26,7 @@ from catalog import (
     catalog_network_ids,
     mcp_tool_name,
     network_caip2_pattern,
+    network_caip2,
     resolve_routes,
     route_discovery_output,
     server_address_env_key,
@@ -104,6 +105,17 @@ def configure_resource_server(server: Any, cfg: ServerConfig) -> None:
     if cfg.payee("tvm"):
         server.register(network_caip2_pattern("tvm"), ExactTvmServerScheme())
 
+    if cfg.payee("cardano"):
+        from x402.mechanisms.cardano import MasumiIssuerConfig, to_masumi_seller_signer
+        from x402.mechanisms.cardano.exact import ExactCardanoServerScheme
+
+        mnemonic = os.getenv("SERVER_CARDANO_SELLER_MNEMONIC")
+        masumi = (
+            MasumiIssuerConfig(to_masumi_seller_signer(mnemonic, network_caip2("cardano")))
+            if mnemonic else None
+        )
+        server.register(network_caip2_pattern("cardano"), ExactCardanoServerScheme(masumi=masumi))
+
     server.register_extension(bazaar_resource_server_extension)
 
 
@@ -143,6 +155,8 @@ def build_resolved_route_config(route: ResolvedRoute, transport: str = "http") -
         "network": route.network,
         "price": route.price,
     }
+    if route.max_timeout_seconds is not None:
+        accepts["maxTimeoutSeconds"] = route.max_timeout_seconds
     if route.extra:
         accepts["extra"] = route.extra
 

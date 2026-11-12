@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Shared config/routes for Python e2e resource servers"
 requires-python = ">=3.10"
 dependencies = [
-    "x402[evm,svm,tvm,extensions]"
+    "x402[evm,svm,tvm,cardano,extensions]"
 ]
 
 [build-system]

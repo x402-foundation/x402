@@ -4,6 +4,7 @@ FastAPI-based facilitator service that verifies and settles payments
 on-chain for the x402 protocol.
 
 Supports:
+- Cardano networks through Blockfrost with an optional address-only mnemonic
 - EVM networks (Base Sepolia) via web3.py
 - SVM networks (Solana Devnet) via solders
 - TVM networks (TON testnet/mainnet) via pytoniq + Toncenter/TonAPI
@@ -15,6 +16,7 @@ Supports:
 Run with: uv run uvicorn main:app --port 4022
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -105,10 +107,11 @@ if not any(
         os.environ.get("FACILITATOR_EVM_PRIVATE_KEY"),
         os.environ.get("FACILITATOR_SVM_PRIVATE_KEY"),
         os.environ.get("FACILITATOR_TVM_PRIVATE_KEY"),
+        os.environ.get("BLOCKFROST_PROJECT_ID"),
     ]
 ):
     print(
-        "❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY, or FACILITATOR_TVM_PRIVATE_KEY is required"
+        "❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY, FACILITATOR_TVM_PRIVATE_KEY, or BLOCKFROST_PROJECT_ID is required"
     )
     sys.exit(1)
 
@@ -148,6 +151,32 @@ if os.environ.get("FACILITATOR_TVM_PRIVATE_KEY"):
     tvm_config.provider_base_url = os.environ.get("TVM_RPC_URL")
     tvm_signer = FacilitatorHighloadV3Signer({TVM_NETWORK: tvm_config})
     print(f"TVM Facilitator account: {tvm_signer.get_addresses()[0]}")
+
+
+cardano_signer = None
+CARDANO_NETWORK = _resolve_network_caip2("cardano")
+if os.environ.get("BLOCKFROST_PROJECT_ID"):
+    from x402.mechanisms.cardano import (
+        BlockfrostConfig,
+        CardanoProviderConfig,
+        FacilitatorCardanoSignerConfig,
+        to_facilitator_cardano_signer,
+    )
+    from x402.mechanisms.cardano.exact import ExactCardanoFacilitatorScheme
+
+    cardano_signer = to_facilitator_cardano_signer(
+        FacilitatorCardanoSignerConfig(
+            network=CARDANO_NETWORK,
+            provider=CardanoProviderConfig(
+                blockfrost=BlockfrostConfig(
+                    os.getenv("CARDANO_RPC_URL", "https://cardano-preprod.blockfrost.io/api/v0"),
+                    os.environ["BLOCKFROST_PROJECT_ID"],
+                )
+            ),
+            mnemonic=os.getenv("FACILITATOR_CARDANO_MNEMONIC"),
+            await_confirmation=False,
+        )
+    )
 
 
 class Erc20ApprovalSigner:
@@ -319,6 +348,14 @@ if tvm_signer is not None:
         ExactTvmFacilitatorScheme(tvm_signer),
     )
 
+if cardano_signer is not None:
+    facilitator.register(
+        [CARDANO_NETWORK],
+        ExactCardanoFacilitatorScheme(
+            cardano_signer, accept_mempool=os.getenv("CARDANO_L1_CONFIRMATIONS") == "-1",
+        ),
+    )
+
 # Register gas sponsoring extensions
 if evm_signer is not None and erc20_approval_signer is not None:
     facilitator.register_extension(EIP2612_GAS_SPONSORING)
@@ -374,7 +411,13 @@ async def verify(request: VerifyRequest):
         # Hooks will automatically:
         # - Track verified payment (on_after_verify)
         # - Extract and catalog discovery info (on_after_verify)
-        response = await facilitator.verify(payload, requirements)
+        if requirements.network.split(":", 1)[0] in ("cardano", "cip34"):
+            # Cardano's synchronous RPC calls must not block the request loop.
+            response = await asyncio.to_thread(
+                lambda: asyncio.run(facilitator.verify(payload, requirements))
+            )
+        else:
+            response = await facilitator.verify(payload, requirements)
 
         if not response.is_valid:
             print(
@@ -415,7 +458,13 @@ async def settle(request: SettleRequest):
         # - Validate payment was verified (on_before_settle - will abort if not)
         # - Check verification timeout (on_before_settle)
         # - Clean up tracking (on_after_settle / on_settle_failure)
-        response = await facilitator.settle(payload, requirements)
+        if requirements.network.split(":", 1)[0] in ("cardano", "cip34"):
+            # Keep the complete hook/settlement lifecycle together in the worker.
+            response = await asyncio.to_thread(
+                lambda: asyncio.run(facilitator.settle(payload, requirements))
+            )
+        else:
+            response = await facilitator.settle(payload, requirements)
 
         return response.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
@@ -514,6 +563,8 @@ async def close():
     print("Received shutdown request")
     if tvm_signer is not None:
         tvm_signer.close()
+    if cardano_signer is not None:
+        cardano_signer.close()
 
     async def shutdown():
         await asyncio.sleep(0.1)
