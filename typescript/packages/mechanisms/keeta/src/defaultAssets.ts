@@ -14,7 +14,7 @@ export const USDC_MAINNET_ADDRESS =
 
 /** Keeta testnet USDC (documented Circle-bridged token). */
 export const USDC_TESTNET_ADDRESS =
-  "keeta_apna75yhhvnv4ei7ape55hndk4yepno7a7i2mhtiwahiygixjcnmvswxhnmnk";
+  "keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai";
 
 const USDC_DECIMALS = 6;
 

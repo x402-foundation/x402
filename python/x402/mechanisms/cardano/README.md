@@ -124,9 +124,11 @@ retries instead of creating a second payment transaction.
 `InMemoryCardanoSettlementStore` and `InMemoryMasumiTermsStorage` are bounded,
 process-local stores. Multiple replicas require shared implementations of their
 atomic storage protocols. A custom signer may add a complete
-`validate_phase1_transaction` hook; balance-changing transactions and spending
-script inputs require it. Ordinary funding inputs must carry the matching key
-witnesses.
+`validate_phase1_transaction` hook; balance-changing transactions require it.
+As in the TypeScript facilitator, verification does not check that every
+funding input carries its owner's witness, so a passing `verify` does not prove
+the payer signed. The node rejects such a transaction at submission, and
+settlement fails without moving funds.
 
 ## Script and Masumi payments
 

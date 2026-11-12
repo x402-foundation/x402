@@ -6,8 +6,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
-from pycardano import Address, VerificationKeyHash
-
 from ....interfaces import FacilitatorContext
 from ....schemas import PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse
 from .. import constants as c
@@ -215,11 +213,6 @@ class ExactCardanoScheme:
                     )
                 except Exception:
                     pass
-            if not accepted and decoded.ttl_slot is None:
-                raise _Rejected(
-                    c.ERR_TTL_TOO_FAR,
-                    "transaction TTL is required to bound the payment validity window",
-                )
             if decoded.ttl_slot is not None or decoded.validity_start_slot is not None:
                 try:
                     slot = self._signer.get_current_slot(requirements.network)
@@ -351,21 +344,6 @@ class ExactCardanoScheme:
                 c.ERR_TRANSACTION_PHASE1_INVALID,
                 "transaction is missing a required signer's signature",
             )
-        for snapshot in inputs:
-            credential = Address.from_primitive(snapshot.address).payment_part
-            if isinstance(credential, VerificationKeyHash):
-                if credential.payload.hex() not in decoded.vkey_hashes:
-                    return Phase1Check(
-                        False,
-                        c.ERR_TRANSACTION_PHASE1_INVALID,
-                        "funding input is missing its owner's signature",
-                    )
-            elif not callable(validator):
-                return Phase1Check(
-                    False,
-                    c.ERR_TRANSACTION_PHASE1_INVALID,
-                    "non-key funding inputs require a complete phase-1 validator",
-                )
         if decoded.balance_changing_operations:
             if not callable(validator):
                 return Phase1Check(
@@ -467,7 +445,13 @@ class ExactCardanoScheme:
             return fail(
                 c.ERR_SETTLEMENT_FAILED, tx_hash, "the Cardano settlement store is at capacity"
             )
-        if claim in ("terms-conflict", "in-flight"):
+        if claim == "terms-conflict":
+            return fail(
+                c.ERR_DUPLICATE_SETTLEMENT,
+                tx_hash,
+                "termsDigest is already bound to another transaction",
+            )
+        if claim == "in-flight":
             return fail(c.ERR_DUPLICATE_SETTLEMENT, tx_hash)
         if claim == "rejected":
             return fail(c.ERR_SETTLEMENT_DEFINITIVELY_REJECTED, tx_hash)

@@ -25,6 +25,10 @@ EVM_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff
 
 # Optional
 SERVER_URL=http://localhost:4021/weather
+
+# Optional, used by all-networks to pay on Casper Testnet
+CASPER_PRIVATE_KEY=<your-casper-private-key-hex>
+CASPER_PRIVATE_KEY_ALGORITHM=ed25519 # ed25519 (default) or secp256k1
 ```
 
 ## Available Examples

@@ -22,9 +22,9 @@ import { ExactKeetaScheme as ExactKeetaFacilitator } from "../../src/exact/facil
 import { ExactKeetaScheme as ExactKeetaServer } from "../../src/exact/server/scheme";
 import { toClientKeetaSigner, toFacilitatorKeetaSigner } from "../../src/signer";
 import type { ExactKeetaPayload } from "../../src/types";
-import { KEETA_TESTNET_CAIP2 } from "../../src/constants";
+import { KEETA_MAINNET_CAIP2, KEETA_TESTNET_CAIP2 } from "../../src/constants";
 import { USDC_MAINNET_ADDRESS, USDC_TESTNET_ADDRESS } from "../../src/defaultAssets";
-import { KTA_TESTNET_ADDRESS } from "../../src/utils";
+import { getUsdcAddress, KTA_TESTNET_ADDRESS } from "../../src/utils";
 import { convertToTokenAmount } from "@x402/core/utils";
 
 // Load mnemonics from environment (all optional, ephemeral accounts are generated if absent)
@@ -181,6 +181,15 @@ describe("Keeta Integration Tests", () => {
 
     [usdcTestnetAddress, usdcMainnetAddress] = [USDC_TESTNET_ADDRESS, USDC_MAINNET_ADDRESS];
   }, 60000); // Allow up to 60s for faucet funding to confirm
+
+  describe("Default asset drift", () => {
+    // Fails when the network's resolver metadata no longer matches the hardcoded
+    // defaults (e.g. after a testnet reset), so DEFAULT_ASSETS needs updating.
+    it("hardcoded USDC addresses match the network resolver", async () => {
+      expect(await getUsdcAddress(KEETA_TESTNET_CAIP2)).toBe(USDC_TESTNET_ADDRESS);
+      expect(await getUsdcAddress(KEETA_MAINNET_CAIP2)).toBe(USDC_MAINNET_ADDRESS);
+    }, 30000);
+  });
 
   describe("x402Client / x402ResourceServer / x402Facilitator - Keeta Flow", () => {
     let client: x402Client;

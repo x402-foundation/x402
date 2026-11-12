@@ -96,6 +96,21 @@ def test_lock_datum_and_verification(quote):
     assert not verify_masumi_datum_invariants(replace(view, state=1), quote.pay_to).ok
 
 
+def test_lock_without_ttl_misses_the_masumi_deadline(quote):
+    lock = build_masumi_lock(quote.extra, BUYER, quote.asset, int(quote.amount), 4310)
+    decoded = DecodedCardanoTransaction(
+        "aa" * 32,
+        [],
+        [CardanoUtxoOutput(quote.pay_to, lock.locked_lovelace, datum=lock.datum.to_cbor_hex())],
+        200_000,
+        1000,
+        vkey_hashes=["11" * 28],
+    )
+    assert decoded.ttl_slot is None
+    result = verify_masumi_lock(quote.extra, quote, decoded, BUYER, 4310)
+    assert result.reason == c.ERR_MASUMI_DEADLINE
+
+
 def test_native_token_collateral_covers_future_result(quote):
     from x402.mechanisms.cardano.exact.masumi.constants import masumi_min_utxo_lovelace
 

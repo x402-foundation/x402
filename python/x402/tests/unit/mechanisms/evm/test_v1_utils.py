@@ -29,6 +29,15 @@ class TestV1GetEvmChainId:
     def test_should_resolve_avalanche(self):
         assert get_evm_chain_id("avalanche") == 43114
 
+    def test_should_resolve_story(self):
+        assert get_evm_chain_id("story") == 1514
+
+    def test_should_resolve_educhain(self):
+        assert get_evm_chain_id("educhain") == 41923
+
+    def test_should_resolve_skale_base_sepolia(self):
+        assert get_evm_chain_id("skale-base-sepolia") == 324705682
+
     def test_should_reject_undefined_aliases(self):
         with pytest.raises(ValueError, match="Unknown v1 network"):
             get_evm_chain_id("base-mainnet")

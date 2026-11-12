@@ -1,6 +1,7 @@
 """Verify and settle real signed Cardano transactions with controlled chain state."""
 
 import base64
+import time
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import blake2b
 from threading import Event
@@ -13,12 +14,22 @@ from pycardano import Address
 
 from x402.mechanisms.cardano import constants as c
 from x402.mechanisms.cardano.exact.facilitator import ExactCardanoScheme
+from x402.mechanisms.cardano.exact.masumi.digests import build_signed_terms, compute_terms_digest
+from x402.mechanisms.cardano.exact.masumi.issue import (
+    issue_masumi_requirements,
+    to_masumi_seller_signer,
+)
+from x402.mechanisms.cardano.settlement_store import (
+    CardanoSettlementClaim,
+    InMemoryCardanoSettlementStore,
+)
 from x402.mechanisms.cardano.types import (
     CardanoProtocolParameters,
     CardanoSettlementEvidence,
     CardanoSubmissionResult,
     CardanoUtxoSnapshot,
 )
+from x402.mechanisms.cardano.utils import decode_cardano_transaction
 from x402.schemas import PaymentPayload, PaymentRequirements
 
 
@@ -137,7 +148,9 @@ def test_spent_input_and_expired_ttl_rejected_before_broadcast(payment):
 
 @pytest.mark.parametrize("validity_start", [None, 900])
 @pytest.mark.parametrize("confirmed", [False, True])
-def test_missing_ttl_requires_authenticated_acceptance(payment, validity_start, confirmed):
+def test_payment_without_ttl_verifies_and_its_settlement_never_expires(
+    payment, validity_start, confirmed
+):
     payload, requirements, chain = payment
     raw = cbor2.loads(base64.b64decode(payload.payload["transaction"]))
     del raw[0][3]
@@ -151,12 +164,15 @@ def test_missing_ttl_requires_authenticated_acceptance(payment, validity_start, 
         chain.evidence = CardanoSettlementEvidence("confirmed", 1)
         chain.exists = False
     facilitator = scheme(chain)
-    result = facilitator.verify(payload, requirements)
-    assert result.is_valid is confirmed
+    assert facilitator.verify(payload, requirements).is_valid
     if not confirmed:
-        assert result.invalid_reason == c.ERR_TTL_TOO_FAR
-        assert not facilitator.settle(payload, requirements).success
-        assert chain.submissions == 0
+        # Without a TTL the validity window never closes, so a broadcast the chain
+        # never reports stays pending rather than failing as expired.
+        assert facilitator.settle(payload, requirements).error_reason == c.ERR_SETTLEMENT_PENDING
+        chain.slot += 100_000
+        resumed = facilitator.settle(payload, requirements)
+        assert resumed.error_reason == c.ERR_SETTLEMENT_PENDING
+        assert chain.submissions == 1
 
 
 def test_unknown_submission_error_retains_claim(payment):
@@ -170,15 +186,60 @@ def test_unknown_submission_error_retains_claim(payment):
     assert chain.submissions == 1
 
 
-def test_valid_signature_from_unrelated_key_does_not_authorize_funding_input(payment):
+def test_funding_input_owner_signature_is_left_to_the_ledger(payment):
     payload, requirements, chain = payment
     chain.payer = str(Address.from_primitive(bytes([0x60]) + bytes.fromhex("44" * 28)))
-    facilitator = scheme(chain)
-    result = facilitator.verify(payload, requirements)
-    assert not result.is_valid
-    assert result.invalid_reason == c.ERR_TRANSACTION_PHASE1_INVALID
-    assert not facilitator.settle(payload, requirements).success
-    assert chain.submissions == 0
+    result = scheme(chain).verify(payload, requirements)
+    assert result.is_valid and result.payer == chain.payer
+
+
+def test_script_funded_input_verifies_without_a_full_validator(payment):
+    payload, requirements, chain = payment
+    chain.payer = str(Address.from_primitive(bytes([0x70]) + bytes.fromhex("55" * 28)))
+    result = scheme(chain).verify(payload, requirements)
+    assert result.is_valid and result.payer == chain.payer
+
+
+@pytest.mark.parametrize("validator", [None, "accepts", "rejects"])
+def test_balance_changing_transaction_requires_a_full_validator(payment, validator):
+    payload, requirements, chain = payment
+    raw = cbor2.loads(base64.b64decode(payload.payload["transaction"]))
+    raw[0][9] = {bytes.fromhex("66" * 28): {b"": 1}}
+    key = SigningKey(bytes(range(32)))
+    digest = blake2b(cbor2.dumps(raw[0]), digest_size=32).digest()
+    raw[1][0][0][1] = key.sign(digest).signature
+    payload.payload["transaction"] = base64.b64encode(cbor2.dumps(raw)).decode()
+
+    def validate(transaction, network):
+        if validator == "rejects":
+            raise ValueError("node phase-1 rejection")
+
+    if validator is not None:
+        chain.validate_phase1_transaction = validate
+    result = scheme(chain).verify(payload, requirements)
+    assert result.is_valid is (validator == "accepts")
+    if validator is None:
+        assert result.invalid_reason == c.ERR_TRANSACTION_PHASE1_INVALID
+        assert "balance-changing" in result.invalid_message
+    if validator == "rejects":
+        assert result.invalid_reason == c.ERR_TRANSACTION_PHASE1_INVALID
+        assert result.invalid_message == "node phase-1 rejection"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [(3, 1200, c.ERR_TTL_TOO_FAR), (8, 1001, c.ERR_VALIDITY_NOT_YET_VALID)],
+)
+def test_present_validity_interval_is_still_bounded(payment, field, value, reason):
+    payload, requirements, chain = payment
+    raw = cbor2.loads(base64.b64decode(payload.payload["transaction"]))
+    raw[0][field] = value
+    key = SigningKey(bytes(range(32)))
+    digest = blake2b(cbor2.dumps(raw[0]), digest_size=32).digest()
+    raw[1][0][0][1] = key.sign(digest).signature
+    payload.payload["transaction"] = base64.b64encode(cbor2.dumps(raw)).decode()
+    result = scheme(chain).verify(payload, requirements)
+    assert not result.is_valid and result.invalid_reason == reason
 
 
 def test_transaction_required_signers_must_have_witnesses(payment):
@@ -295,3 +356,39 @@ def test_concurrent_settlements_only_submit_once(payment):
         first.result()
     assert second.error_reason == c.ERR_DUPLICATE_SETTLEMENT
     assert chain.submissions == 1
+
+
+@pytest.mark.parametrize(
+    ("bound_to", "message"),
+    [
+        ("another transaction", "termsDigest is already bound to another transaction"),
+        ("this transaction", None),
+    ],
+)
+def test_duplicate_settlement_explains_a_masumi_terms_conflict(payment, bound_to, message):
+    payload, _, chain = payment
+    seller = to_masumi_seller_signer("abandon " * 11 + "about", "cardano:preprod")
+    now = int(time.time() * 1000)
+    quote = issue_masumi_requirements(
+        network="cardano:preprod",
+        asset="lovelace",
+        amount="5000000",
+        max_timeout_seconds=120,
+        seller_address=seller.seller_address,
+        sign_terms=seller.sign_terms,
+        commitment=[{"name": "request", "canonicalization": "jcs", "content": {"prompt": "hi"}}],
+        pay_by_time=str(now + 90_000),
+        submit_result_time=str(now + 1_200_000),
+        unlock_time=str(now + 2_100_000),
+        external_dispute_unlock_time=str(now + 3_000_000),
+    )
+    digest = compute_terms_digest(build_signed_terms(quote.extra, quote))
+    tx_hash = decode_cardano_transaction(payload.payload["transaction"]).tx_hash
+    store = InMemoryCardanoSettlementStore()
+    owner_tx = "ab" * 32 if bound_to == "another transaction" else tx_hash
+    store.claim_settlement(CardanoSettlementClaim(owner_tx, "earlier settle", digest))
+    paid = payload.model_copy(update={"accepted": quote})
+    result = scheme(chain, settlement_store=store).settle(paid, quote)
+    assert result.error_reason == c.ERR_DUPLICATE_SETTLEMENT
+    assert result.error_message == message
+    assert chain.submissions == 0

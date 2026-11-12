@@ -8,7 +8,7 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-  attachBackgroundInitHandler,
+  prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
@@ -131,41 +131,12 @@ export function paymentMiddlewareFromHTTPServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ) {
-  // Register custom paywall provider if provided
-  if (paywall) {
-    httpServer.registerPaywallProvider(paywall);
-  }
-
-  // Store initialization promise (not the result)
-  // httpServer.initialize() fetches facilitator support and validates routes
-  let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
-  // rejections; the original promise is still awaited on the first protected
-  // request. Fatal capability / route mismatches exit the process so a
-  // misconfigured server does not stay up until that request.
-  attachBackgroundInitHandler(initPromise);
-  let isInitialized = false;
-
-  /**
-   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
-   */
-  async function initializeHttpServer(): Promise<void> {
-    if (!syncFacilitatorOnStart || isInitialized) {
-      return;
-    }
-
-    if (!initPromise) {
-      initPromise = httpServer.initialize();
-    }
-
-    try {
-      await initPromise;
-      isInitialized = true;
-    } catch (error) {
-      initPromise = null;
-      throw error;
-    }
-  }
+  // Register the paywall provider and wire up retryable facilitator initialization.
+  const { init: initializeHttpServer } = prepareHttpServer(
+    httpServer,
+    paywall,
+    syncFacilitatorOnStart,
+  );
 
   let bazaarPromise: Promise<void> | null = null;
   if (checkIfBazaarNeeded(httpServer.routes)) {
@@ -204,7 +175,7 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     // Only initialize when processing a protected route
-    if (syncFacilitatorOnStart && !isInitialized) {
+    if (syncFacilitatorOnStart) {
       try {
         await initializeHttpServer();
       } catch (error) {
