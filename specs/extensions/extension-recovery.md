@@ -228,13 +228,18 @@ The following are normative consequences:
 6. **One claim per operation, taken before the handler.** Implementations MUST take an atomic
    claim on the operation key before executing the handler, so concurrent copies of one signed
    payment cannot each run it. A copy that arrives while the claim is held MUST either wait for
-   the promoted record and return its projection, or be rejected with the typed `409` conflict
-   before the handler. Read-only verification is not a claim. Implementations MUST name the
-   primitive (unique constraint, conditional write, or lease), MUST expire a lease so a crash
-   cannot block a retry forever, and MUST release the claim on handler or settlement failure.
+   the promoted record and return its projection, or be rejected before the handler with the
+   typed `409 operation_in_flight` conflict. It MUST NOT be answered with a payment challenge:
+   a fresh `402` invites the client to sign a second authorization for one purchase, which is
+   harmless only while the first payment is still in flight and two charges once neither holds.
+   A `409` MUST tell the caller to retry the SAME payment; waiting remains optional. Read-only
+   verification is not a claim. Implementations MUST name the primitive (unique constraint,
+   conditional write, or lease), MUST expire a lease so a crash cannot block a retry forever,
+   and MUST release the claim on handler or settlement failure.
    (Reference implementation: `reserveRecovery` takes the claim before the paywall and answers
-   `409 operation_in_flight`; corroborated by Hitek-cel, who observed three handler runs and one
-   settlement on `@x402` 2.30.0 without a claim.)
+   `409 operation_in_flight`; corroborated by Hitek-cel, who observed three handler runs and
+   one settlement on `@x402` 2.30.0 without a claim, and two `402 nonce_already_used` replies
+   that arrived after the handler had already run.)
 
 > **Two mechanisms satisfy §5.1; the architecture chooses.** The stage-then-promote pattern
 > above is required when settlement confirmation is *asynchronous* — it can only arrive via a
@@ -348,7 +353,19 @@ looking but incorrect implementation silently violates:
 9. **Concurrent copies run the handler once.** With a claim in place, submit three copies of
    one signed payment concurrently. Exactly one handler execution may occur; every response
    must carry the same `responseHash`, and a copy that did not run the handler must be marked
-   `replayed` or receive the typed in-flight conflict. Three handler runs fail this control.
+   `replayed` or receive the typed in-flight conflict. A copy that loses the claim MUST NOT
+   receive a payment challenge, because a fresh `402` invites a second signature. Three handler
+   runs, or a `402` to a loser, fail this control.
+
+10. **A crash at any durable write leaves one charge.** Kill the process at each store write —
+    claim, state transitions, stored response, settling, settle result, delivered, receipt —
+    both just before and just after the write becomes durable, then restart over the same store
+    and replay the caller's retry with the same payment. Across those kill points and three
+    facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
+    the reply is lost), assert: at most one charge; at most one handler run across both
+    processes; every charge has a recoverable or delivered response behind it; a final state of
+    `delivered` or `void`, never in flight; and exactly one receipt for a charged payment.
+    (Vector set and results: Hitek-cel/latch402, `test/x402.test.ts`.)
 
 **6. Protocol Integration**
 
@@ -439,3 +456,4 @@ that CAN be signed well-defined.
 | 0.3     | 2026-10-19 | Names both mechanisms that satisfy §5.1 — async stage-then-promote and synchronous write-after-settle — since the choice is determined by whether settlement confirmation can complete before the response is built. Prompted by production corroboration from scvd.store on x402-foundation/x402#3847 (request-identity keying, scope-bound cache keys, no speculative write). | a32116150-ctrl (verify402) |
 | 0.4     | 2026-10-20 | Requires a **verified** payer scope before replay, not merely a declared or matching address. §5.2 names acceptable proof-of-control mechanisms and forbids returning a cached result on missing or invalid proof; §5.4 adds the unverified-scope control. Prompted by NSPG13's review at `2a03ad6` (x402-foundation/x402#3848). | a32116150-ctrl (verify402) |
 | 0.5     | 2026-11-12 | Three clarifications from an independent implementation (Hitek-cel/latch402, exercised against `@x402/hono` and `@x402/fetch` 2.30.0 with only the chain faked): a server-issued bearer credential is a valid replay key but not proof of payer control (§3.1); recovery reproduces the declared projection, not status, headers, or non-JSON bodies (§4); and an atomic claim MUST be taken before the handler, because read-only verification lets concurrent copies run it once each (§5.1, §5.4 control 9). | a32116150-ctrl (verify402) |
+| 0.6     | 2026-11-12 | Tightens the losing-copy answer: it MUST NOT receive a payment challenge, because the SDK's settlement-failure path returns a fresh `402` after the handler has already run; `409 operation_in_flight` (or waiting) is required, and a `409` tells the caller to retry the same payment (§5.1(6), §5.4 control 9). Adds a crash-at-every-durable-write control with single-charge and recoverability invariants (§5.4 control 10). Prompted by Hitek-cel's concurrency and crash data on x402-foundation/x402#3848. | a32116150-ctrl (verify402) |
