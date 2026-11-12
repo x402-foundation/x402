@@ -50,7 +50,6 @@ def _parameter(parameter: Any) -> tuple[dict[str, Any], int]:
 
 
 def derive_script_hash_hex(extra: dict[str, Any]) -> str:
-    """Apply parameters in JavaScript property order and hash the Plutus script."""
     script = extra.get("script")
     if isinstance(script, dict) and script.get("code"):
         code = script["code"]
@@ -65,8 +64,8 @@ def derive_script_hash_hex(extra: dict[str, Any]) -> str:
             raise ValueError("Cardano script has too many parameters")
         if any(not isinstance(name, str) for name in entries):
             raise ValueError("Cardano script parameter names must be strings")
-        # Object.entries lists array-index keys first; other keys retain insertion order.
-        # 2**32 - 1 and noncanonical decimal spellings are ordinary string keys.
+        # Array-index keys sort first. Other keys keep insertion order.
+        # 2**32 - 1 and noncanonical decimals are ordinary string keys.
         names = sorted(
             entries,
             key=lambda name: (

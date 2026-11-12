@@ -10,8 +10,8 @@ def _json_numbers(value: Any, ancestors: set[int]) -> Any:
     if value is None or type(value) in (str, bool, float):
         return value
     if type(value) is int:
-        # JSON.parse uses IEEE-754 even when the wire spelling has no decimal point.
-        # Keep protocol integer strings untouched: only JSON numbers are rounded.
+        # JSON numbers are IEEE-754 even when the spelling has no decimal point.
+        # Integer strings stay exact.
         try:
             return float(value) if abs(value) > 2**53 - 1 else value
         except OverflowError as exc:
@@ -33,12 +33,7 @@ def _json_numbers(value: Any, ancestors: set[int]) -> Any:
 
 
 def jcs(value: Any) -> str:
-    """Canonicalize JSON with ECMAScript numbers and UTF-16 key order.
-
-    Numeric integers use IEEE-754 rounding, matching JavaScript JSON.parse.
-    Use strings for values that require exact arbitrary-precision integers.
-    Non-JSON values, cycles and non-finite numbers raise ValueError.
-    """
+    """Canonicalize JSON with IEEE-754 numbers and UTF-16 key order."""
     return jcs_bytes(value).decode("utf-8")
 
 

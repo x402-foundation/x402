@@ -1,5 +1,3 @@
-"""Script hashes use the same parameter ordering and CBOR as TypeScript."""
-
 import pytest
 from pycardano import Address, Network, ScriptHash, VerificationKeyHash
 
@@ -101,7 +99,6 @@ def test_canonical_masumi_blueprint_hash():
     ],
 )
 def test_typescript_array_index_parameter_order(names, expected):
-    # Vectors generated with the TypeScript deriveScriptHashHex implementation.
     parameters = {
         name: {"type": "integer", "value": str(index + 1)} for index, name in enumerate(names)
     }

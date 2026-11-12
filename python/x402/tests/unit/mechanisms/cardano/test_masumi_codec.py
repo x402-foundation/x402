@@ -116,7 +116,7 @@ def test_cose_numeric_parameters_require_integers(label, value):
     ],
 )
 def test_typescript_json_number_vectors(number, expected):
-    # TypeScript jcs(JSON.parse(decimal)) vectors, including IEEE-754 rounding.
+    # JSON numbers use IEEE-754 rounding. Integer strings stay exact.
     value = {"nested": [number], "amount": str(number), "flag": True}
     canonical = '{"amount":"' + str(number) + '","flag":true,"nested":[' + expected + "]}"
     assert jcs(value) == canonical

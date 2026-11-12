@@ -125,10 +125,10 @@ retries instead of creating a second payment transaction.
 process-local stores. Multiple replicas require shared implementations of their
 atomic storage protocols. A custom signer may add a complete
 `validate_phase1_transaction` hook; balance-changing transactions require it.
-As in the TypeScript facilitator, verification does not check that every
-funding input carries its owner's witness, so a passing `verify` does not prove
-the payer signed. The node rejects such a transaction at submission, and
-settlement fails without moving funds.
+Verification does not check that every funding input carries its owner's
+witness, so a passing `verify` does not prove the payer signed. The node
+rejects such a transaction at submission, and settlement fails without moving
+funds.
 
 ## Script and Masumi payments
 
@@ -173,9 +173,9 @@ uv run --project python/x402 --all-extras --group dev pytest \
   python/x402/tests/integrations/test_cardano.py
 ```
 
-Unit tests are offline and include TypeScript codec/hash vectors, real Ed25519
+Unit tests are offline and include codec and script-hash vectors, real Ed25519
 signatures, PyCardano transaction construction, quote binding, and concurrent
-settlement/retry checks. Live integration tests require the Preprod environment
-variables documented in their module; they submit real testnet transactions.
-The shared e2e catalog enables Python HTTP/MCP clients, servers and facilitators
-alongside TypeScript for all three transfer methods.
+settlement and retry checks. Live integration tests require the Preprod
+environment variables documented in their module. They submit real testnet
+transactions. The shared e2e catalog runs Python HTTP and MCP clients, servers,
+and facilitators for all three transfer methods.

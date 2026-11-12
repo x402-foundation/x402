@@ -24,7 +24,7 @@ def encode_blockchain_identifier(parts: dict[str, str]) -> str:
     units = text.encode("utf-16-be")
     if len(units) // 2 > MAX_MASUMI_IDENTIFIER_TEXT_CHARS:
         raise ValueError("Masumi identifier text exceeds the character limit")
-    # JavaScript LZ-String consumes UTF-16 code units, not Unicode code points.
+    # LZ-String consumes UTF-16 code units, not Unicode code points.
     text = "".join(chr(int.from_bytes(units[i : i + 2], "big")) for i in range(0, len(units), 2))
     compressed = b"".join(ord(char).to_bytes(2, "big") for char in LZString.compress(text))
     if len(compressed) > MAX_MASUMI_IDENTIFIER_COMPRESSED_BYTES:
