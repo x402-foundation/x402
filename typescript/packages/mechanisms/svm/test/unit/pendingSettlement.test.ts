@@ -114,6 +114,68 @@ describe("ExactSvmScheme pending-settlement store integration", () => {
     vi.restoreAllMocks();
   });
 
+  it("releases its new lock after a pending-store read error so recovery can retry", async () => {
+    const readError = new Error("pending store unavailable");
+    vi.spyOn(store, "get").mockRejectedValueOnce(readError);
+    const deleteEntry = vi.spyOn(store, "delete");
+    const facilitator = setupFacilitator();
+    const payload = makePayload("readFailureTx==");
+
+    await expect(facilitator.settle(payload, requirements)).rejects.toBe(readError);
+    expect(mockSigner.signTransaction).not.toHaveBeenCalled();
+    expect(mockSigner.sendTransaction).not.toHaveBeenCalled();
+    expect(mockSigner.confirmTransaction).not.toHaveBeenCalled();
+    expect(deleteEntry).not.toHaveBeenCalled();
+
+    const retried = await facilitator.settle(payload, requirements);
+    expect(retried.success).toBe(true);
+    expect(mockSigner.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a pending signature during a read outage and reconciles after recovery", async () => {
+    const facilitator = setupFacilitator();
+    const payload = makePayload("pendingReadFailureTx==");
+    const key = svmUtils.transactionMessageHash(
+      svmUtils.decodeTransactionFromPayload(payload.payload as never),
+    );
+    await store.set(key, "priorSignature");
+    const readError = new Error("pending store unavailable");
+    vi.spyOn(store, "get").mockRejectedValueOnce(readError);
+    const deleteEntry = vi.spyOn(store, "delete");
+
+    await expect(facilitator.settle(payload, requirements)).rejects.toBe(readError);
+    expect(deleteEntry).not.toHaveBeenCalled();
+    expect(await store.get(key)).toBe("priorSignature");
+    const retried = await facilitator.settle(payload, requirements);
+    expect(retried.success).toBe(true);
+    expect(retried.transaction).toBe("priorSignature");
+    expect(mockSigner.signTransaction).not.toHaveBeenCalled();
+    expect(mockSigner.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("a duplicate's read error cannot release the in-flight owner's lock", async () => {
+    let finishLookup!: (signature: string | undefined) => void;
+    const blockedLookup = new Promise<string | undefined>(resolve => {
+      finishLookup = resolve;
+    });
+    const readError = new Error("pending store unavailable");
+    vi.spyOn(store, "get").mockReturnValueOnce(blockedLookup).mockRejectedValueOnce(readError);
+    const facilitator = setupFacilitator();
+    const payload = makePayload("concurrentReadFailureTx==");
+    const owner = facilitator.settle(payload, requirements);
+
+    try {
+      await expect(facilitator.settle(payload, requirements)).rejects.toBe(readError);
+      const duplicate = await facilitator.settle(payload, requirements);
+      expect(duplicate.errorReason).toBe(Errors.ErrDuplicateSettlement);
+      expect(mockSigner.sendTransaction).not.toHaveBeenCalled();
+    } finally {
+      finishLookup(undefined);
+    }
+    expect((await owner).success).toBe(true);
+    expect(mockSigner.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
   it("cache-miss + broadcast success: leaves no pending entry", async () => {
     const facilitator = setupFacilitator();
     const payload = makePayload("cacheMissSuccessTx==");

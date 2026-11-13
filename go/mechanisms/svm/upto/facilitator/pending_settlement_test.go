@@ -274,3 +274,90 @@ func TestClaimSettle_PendingSettlementStore_MalformedSignatureDropsEntry(t *test
 	require.NoError(t, getErr)
 	assert.False(t, ok, "a malformed entry must be dropped, not retried forever")
 }
+
+// readErrorPendingStore models a transient read failure independently of writes.
+type readErrorPendingStore struct {
+	x402.PendingSettlementStore
+	readErr    error
+	partialHit bool
+	deletes    int
+	writes     int
+}
+
+func (s *readErrorPendingStore) Get(ctx context.Context, key string) (string, bool, error) {
+	if s.readErr != nil {
+		if s.partialHit {
+			signature, hit, _ := s.PendingSettlementStore.Get(ctx, key)
+			return signature, hit, s.readErr
+		}
+		return "", false, s.readErr
+	}
+	return s.PendingSettlementStore.Get(ctx, key)
+}
+
+func (s *readErrorPendingStore) Set(ctx context.Context, key, signature string) error {
+	s.writes++
+	return s.PendingSettlementStore.Set(ctx, key, signature)
+}
+
+func (s *readErrorPendingStore) Delete(ctx context.Context, key string) error {
+	s.deletes++
+	return s.PendingSettlementStore.Delete(ctx, key)
+}
+
+func TestUptoSettle_PendingStoreReadError(t *testing.T) {
+	for _, claim := range []bool{false, true} {
+		name := "deposit"
+		if claim {
+			name = "claim"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, partialHit := range []bool{false, true} {
+				name := "no result"
+				if partialHit {
+					name = "partial result with error"
+				}
+				t.Run(name, func(t *testing.T) {
+					ctx := context.Background()
+					signer := newMockSigner(t, 1)
+					stub := newStubRPC(t)
+					fixture := newPaymentFixture(t, signer)
+					scheme := newScheme(signer, stub, nil)
+					payload, requirements := fixture.payload, fixture.requirements
+					key := depositCacheKey(requirements.Network, fixture.channelID.String())
+					if claim {
+						payload, requirements = fixture.claimPayload(t, 1858), fixture.claimRequirements(1858)
+						key = settlementCacheKey(requirements.Network, fixture.channelID.String())
+					}
+					readErr := errors.New("pending store unavailable")
+					backing := x402.NewInMemoryPendingSettlementStore()
+					store := &readErrorPendingStore{PendingSettlementStore: backing, readErr: readErr, partialHit: partialHit}
+					scheme.pendingStore = store
+					prior := "3vZ9Q4mF1x1sVEnTkGqwKN1JcgmXCzXfDMz6WrPPBhKtNBbNaRiJ8CT9jkuoAJyGVUvHNNbCTUmzL6yEsSm4x9wp"
+					require.NoError(t, backing.Set(ctx, key, prior))
+
+					response, err := scheme.Settle(ctx, payload, requirements, nil)
+					assert.ErrorIs(t, err, readErr)
+					assert.Nil(t, response)
+					assert.Empty(t, signer.sentTransactions())
+					assert.Zero(t, stub.simulations())
+					assert.Zero(t, store.deletes)
+					assert.Zero(t, store.writes)
+					signature, hit, err := backing.Get(ctx, key)
+					require.NoError(t, err)
+					assert.True(t, hit)
+					assert.Equal(t, prior, signature)
+
+					store.readErr = nil
+					response, err = scheme.Settle(ctx, payload, requirements, nil)
+					require.NoError(t, err)
+					require.NotNil(t, response)
+					assert.True(t, response.Success)
+					assert.Equal(t, prior, response.Transaction)
+					assert.Empty(t, signer.sentTransactions())
+					assert.Zero(t, stub.simulations())
+				})
+			}
+		})
+	}
+}
