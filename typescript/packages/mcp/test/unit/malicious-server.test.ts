@@ -86,33 +86,46 @@ describe("x402MCPClient with a malicious server (real x402Client)", () => {
     expect(scheme.createPaymentPayload).not.toHaveBeenCalled();
   });
 
-  it("applies the cap to a corrective 402 that raises the amount", async () => {
+  it("signs the originally approved amount when a corrective 402 raises it", async () => {
     callTool
       .mockResolvedValueOnce(asToolError(paymentRequired()))
-      .mockResolvedValueOnce(asToolError(paymentRequired({ amount: "5000000" })));
+      .mockResolvedValueOnce(asToolError(paymentRequired({ amount: "5000000" })))
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "ok" }], isError: false });
 
-    await expect(mcp.callTool("quote")).rejects.toThrow(/spendControls/);
-    expect(scheme.createPaymentPayload).toHaveBeenCalledTimes(1);
+    const result = await mcp.callTool("quote");
+
+    expect(result.isError).toBe(false);
+    expect(scheme.createPaymentPayload).toHaveBeenCalledTimes(2);
+    for (const call of scheme.createPaymentPayload.mock.calls) {
+      expect(call[1].amount).toBe("10000");
+      expect(call[1].payTo).toBe(PAY_TO);
+    }
   });
 
-  it("lets onPaymentRequested reject a corrective 402 that changes payTo", async () => {
-    let approvedPayTo: string | undefined;
+  it("re-approves and signs the original payTo when a corrective 402 changes it", async () => {
+    const seen: string[] = [];
     mcp = new x402MCPClient(
       { callTool } as unknown as ConstructorParameters<typeof x402MCPClient>[0],
       new x402Client().register(NETWORK, scheme),
       {
         onPaymentRequested: ({ paymentRequired: pr }) => {
-          const payTo = pr.accepts[0].payTo;
-          approvedPayTo ??= payTo;
-          return payTo === approvedPayTo;
+          seen.push(pr.accepts[0].payTo);
+          return true;
         },
       },
     );
     callTool
       .mockResolvedValueOnce(asToolError(paymentRequired()))
-      .mockResolvedValueOnce(asToolError(paymentRequired({ payTo: ATTACKER })));
+      .mockResolvedValueOnce(asToolError(paymentRequired({ payTo: ATTACKER })))
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "ok" }], isError: false });
 
-    await expect(mcp.callTool("quote")).rejects.toThrow("Payment request denied");
-    expect(scheme.createPaymentPayload).toHaveBeenCalledTimes(1);
+    const result = await mcp.callTool("quote");
+
+    expect(result.isError).toBe(false);
+    expect(seen).toEqual([PAY_TO, PAY_TO]);
+    expect(scheme.createPaymentPayload).toHaveBeenCalledTimes(2);
+    for (const call of scheme.createPaymentPayload.mock.calls) {
+      expect(call[1].payTo).toBe(PAY_TO);
+    }
   });
 });
