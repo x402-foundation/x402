@@ -194,6 +194,19 @@ Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` name
 
 See the [Algorand CAIP-2 namespace profile](https://namespaces.chainagnostic.org/algorand/caip2) for the encoding rules.
 
+### Legacy Identifiers
+
+Early implementations used the full base64 genesis hash as the reference. These values are not valid CAIP-2 and are deprecated:
+
+| Network | Legacy `network` value |
+| ------- | ---------------------- |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` |
+
+Implementations **MUST NOT** emit a legacy value and **SHOULD** reject one they receive. An implementation that receives a legacy value **MUST NOT** rewrite it to the canonical form on behalf of the sender, because the `network` is part of the terms the client accepts.
+
+The [`@x402/avm` README](../../../typescript/packages/mechanisms/avm/README.md#identifier-compatibility-and-migration) lists which SDK releases accept each form and how to migrate.
+
 ## Additional Considerations
 
 ### Assets

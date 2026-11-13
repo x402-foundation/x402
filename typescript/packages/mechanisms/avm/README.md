@@ -50,6 +50,46 @@ Networks are identified via CAIP-2 per the [Algorand namespace profile](https://
 - `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` - Testnet
 - `algorand:*` - Wildcard (matches all Algorand networks)
 
+### Identifier Compatibility and Migration
+
+Early releases of this package used the full base64 genesis hash as the `network` value. That form is not valid CAIP-2 (it is longer than 32 characters and can contain `/` and `=`), so it was replaced by the canonical reference: the URL-safe base64 genesis hash, cut to its first 32 characters. Both forms name the same chain.
+
+| Network | Canonical `network` | Legacy full-hash `network` |
+| ------- | ------------------- | -------------------------- |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` |
+
+Only the `network` value changed. Transactions still carry the full genesis hash in their `gh` field, and the SDK still exports it as `ALGORAND_MAINNET_GENESIS_HASH` and `ALGORAND_TESTNET_GENESIS_HASH`.
+
+#### SDK Releases
+
+| `@x402/avm` release | Sends | Accepts |
+| ------------------- | ----- | ------- |
+| 2.10.0 – 2.19.0 | Legacy | Legacy only; canonical values are not recognized |
+| 2.20.0 – 2.28.0 | Canonical | Canonical and legacy (legacy is normalized on input) |
+| 2.29.0 and later | Canonical | Canonical only |
+
+The switch to canonical identifiers landed in [#2931](https://github.com/x402-foundation/x402/pull/2931). Support for the legacy form was removed in [#3894](https://github.com/x402-foundation/x402/pull/3894): from 2.29.0, `@x402/core` validates every v2 `network` against CAIP-2 syntax, so `@x402/avm` and `@x402/paywall` reject the legacy form as well.
+
+#### Facilitators
+
+| Facilitator | Checked (UTC) | Advertised Algorand networks |
+| ----------- | ------------- | ---------------------------- |
+| [GoPlausible `/supported`](https://facilitator.goplausible.xyz/supported) | 2026-11-13 | Canonical and legacy, for both Mainnet and Testnet |
+
+`/supported` shows what a facilitator advertises at the time of the request. It is not proof that verification or settlement succeeds for a given form, so check it again before you rely on it.
+
+#### Migrating from the Legacy Form
+
+1. Upgrade the client, the resource server and the facilitator to `@x402/avm` 2.20.0 or later.
+2. Replace hardcoded network strings with `ALGORAND_MAINNET_CAIP2` and `ALGORAND_TESTNET_CAIP2`.
+3. Move resource servers and facilitators to canonical identifiers first. Clients on 2.20.0 – 2.28.0 accept both forms, so they keep working while the server side changes.
+4. Upgrade clients past 2.28.0 only once the servers and facilitators they talk to send canonical identifiers.
+
+A client on 2.29.0 or later rejects a payment requirement that carries a legacy identifier. Fix this at the resource server that issued it. Do not rewrite the `network` of a received payment requirement or of a signed payload to make it validate: that changes the terms the client agreed to.
+
+Tools that inspect x402 traffic, such as linters, can treat the legacy form as a deprecated spelling of the same network rather than as an unknown or mismatched one.
+
 ## Signer Implementation
 
 Use the built-in helper functions to create signers from a Base64-encoded private key. These use `generateAddressWithSigners` from `@algorandfoundation/algokit-utils` internally for canonical Ed25519 signing.
