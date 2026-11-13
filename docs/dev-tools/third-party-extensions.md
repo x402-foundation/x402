@@ -17,6 +17,7 @@ Packages that **read or write** the `extensions` property on x402 payloads (`Pay
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | TypeScript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk) |
+| [TWZRD](https://intel.twzrd.xyz) | Buyer-side pre-sign trust check (allow/warn/block); refuses wash-flagged sellers; fails closed by default | TypeScript | [GitHub](https://github.com/twzrd-sol/twzrd-trust/tree/main/twzrd-x402-gate) · [npm](https://www.npmjs.com/package/twzrd-x402-gate) |
 
 ## Third-party utilities
 
