@@ -80,7 +80,7 @@ class x402HTTPClient(x402HTTPClientBase):
 
     async def _execute_hook(self, hook: Any, context: Any) -> Any:
         result = hook(context)
-        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+        if inspect.isawaitable(result):
             return await result
         return result
 
