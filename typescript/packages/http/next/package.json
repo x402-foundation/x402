@@ -3,7 +3,7 @@
   "version": "2.30.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
-  "types": "./dist/esm/index.d.ts",
+  "types": "./dist/cjs/index.d.cts",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
     "test": "vitest run --coverage",
