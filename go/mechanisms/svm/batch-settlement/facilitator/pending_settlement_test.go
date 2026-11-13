@@ -327,7 +327,7 @@ func TestSettleStorageOperationCounts(t *testing.T) {
 		scheme, counts := counted(t, &Config{})
 		response := &x402.SettleResponse{Success: true, Transaction: signature}
 		require.NoError(t, scheme.keepPayoutResult(context.Background(), "batch:distribute:test", response))
-		require.NoError(t, scheme.recordPayout(context.Background(), "batch:distribute:test", response, types.PaymentRequirements{}))
+		require.NoError(t, scheme.recordPayout(context.Background(), "batch:distribute:test", payoutMarker{}, response, types.PaymentRequirements{}))
 		assert.Zero(t, counts.total())
 	})
 
@@ -335,37 +335,56 @@ func TestSettleStorageOperationCounts(t *testing.T) {
 		var order []string
 		scheme, _ := counted(t, &Config{})
 		store := scheme.pendingStore
-		scheme.config.OnDistributionConfirmed = func(ctx context.Context, _ *x402.SettleResponse, _ types.PaymentRequirements) error {
+		scheme.config.OnDistributionConfirmed = func(ctx context.Context, response *x402.SettleResponse, _ types.PaymentRequirements) error {
 			_, stored, err := store.Get(ctx, resultKey("k"))
 			require.NoError(t, err)
 			assert.True(t, stored, "the result is durable before the hook runs")
-			_, recorded, err := store.Get(ctx, recordedKey("k"))
+			previous, _, err := store.Get(ctx, recordedKey("k"))
 			require.NoError(t, err)
-			assert.False(t, recorded)
-			order = append(order, "hook")
+			assert.NotEqual(t, response.Transaction, previous)
+			order = append(order, response.Transaction)
 			return nil
 		}
 		response := &x402.SettleResponse{Success: true, Transaction: signature, Network: x402.Network(network)}
 		require.NoError(t, scheme.keepPayoutResult(context.Background(), "k", response))
-		require.NoError(t, scheme.recordPayout(context.Background(), "k", response, types.PaymentRequirements{}))
-		require.NoError(t, scheme.recordPayout(context.Background(), "k", response, types.PaymentRequirements{}))
-		assert.Equal(t, []string{"hook"}, order, "the hook sees each payout once")
-		_, recorded, err := store.Get(context.Background(), recordedKey("k"))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, response, types.PaymentRequirements{}))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, response, types.PaymentRequirements{}))
+		assert.Equal(t, []string{signature}, order, "the hook sees each payout once")
+		recorded, _, err := store.Get(context.Background(), recordedKey("k"))
 		require.NoError(t, err)
-		assert.True(t, recorded)
+		assert.Equal(t, signature, recorded)
+
+		next := &x402.SettleResponse{Success: true, Transaction: solana.Signature{4}.String(), Network: x402.Network(network)}
+		require.NoError(t, scheme.keepPayoutResult(context.Background(), "k", next))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, next, types.PaymentRequirements{}))
+		assert.Equal(t, []string{signature, next.Transaction}, order, "a later payout under the same key reaches the hook too")
+	})
+
+	t.Run("a marker the caller already read is not read again", func(t *testing.T) {
+		scheme, counts := counted(t, &Config{})
+		scheme.config.OnDistributionConfirmed = func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			t.Fatal("a payout already recorded must not reach the hook")
+			return nil
+		}
+		response := &x402.SettleResponse{Success: true, Transaction: signature}
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{transaction: signature, read: true}, response, types.PaymentRequirements{}))
+		assert.Zero(t, counts.total())
 	})
 }
 
-func TestDistributionKeyFollowsTheSettledWatermark(t *testing.T) {
+func TestDistributionKeys(t *testing.T) {
 	prepared := []PreparedDistribution{{ChannelID: "chan-b"}, {ChannelID: "chan-a"}}
-	at := func(settledB, settledA uint64) string {
-		return distributionKey("net", prepared, []*generated.Channel{
+	key := distributionKey("net", prepared)
+	assert.Equal(t, "batch:distribute:net:chan-a,chan-b", key, "channel order does not change the key")
+	pass := func(settledB, settledA uint64) string {
+		return distributionPassKey(key, prepared, []*generated.Channel{
 			{Settlement: generated.SettlementWatermarks{Settled: settledB}},
 			{Settlement: generated.SettlementWatermarks{Settled: settledA}},
 		})
 	}
-	assert.Equal(t, "batch:distribute:net:chan-a:7,chan-b:5", at(5, 7), "channel order does not change the key")
-	assert.NotEqual(t, at(5, 7), at(5, 8), "a new claim starts a new pass")
+	assert.Equal(t, "batch:distribute:net:chan-a,chan-b:pass:chan-a:7,chan-b:5", pass(5, 7))
+	assert.NotEqual(t, pass(5, 7), pass(5, 8), "a new claim starts a new pass")
+	assert.Empty(t, distributionPassKey(key, prepared, []*generated.Channel{nil, {}}), "no pass starts while a channel is absent")
 }
 
 func TestDecodeWithMessageHashIgnoresSignatures(t *testing.T) {

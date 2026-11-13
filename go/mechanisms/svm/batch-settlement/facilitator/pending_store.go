@@ -14,6 +14,10 @@ import (
 // five minutes.
 const PendingRetention = 24 * time.Hour
 
+// retainedSweepInterval bounds how often the default store sweeps expired
+// entries, so Get and Set cost one lookup rather than a scan of the retained history.
+const retainedSweepInterval = time.Minute
+
 type retainedEntry struct {
 	value    string
 	storedAt time.Time
@@ -21,9 +25,10 @@ type retainedEntry struct {
 
 // retainedPendingStore is the process-local default PendingSettlementStore.
 type retainedPendingStore struct {
-	mu      sync.Mutex
-	entries map[string]retainedEntry
-	now     func() time.Time
+	mu        sync.Mutex
+	entries   map[string]retainedEntry
+	now       func() time.Time
+	lastSwept time.Time
 }
 
 var _ x402.PendingSettlementStore = (*retainedPendingStore)(nil)
@@ -35,16 +40,23 @@ func newRetainedPendingStore() *retainedPendingStore {
 func (s *retainedPendingStore) Get(_ context.Context, key string) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.prune()
 	entry, ok := s.entries[key]
-	return entry.value, ok, nil
+	if !ok {
+		return "", false, nil
+	}
+	if entry.expired(s.now()) {
+		delete(s.entries, key)
+		return "", false, nil
+	}
+	return entry.value, true, nil
 }
 
 func (s *retainedPendingStore) Set(_ context.Context, key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.prune()
-	s.entries[key] = retainedEntry{value: value, storedAt: s.now()}
+	now := s.now()
+	s.sweep(now)
+	s.entries[key] = retainedEntry{value: value, storedAt: now}
 	return nil
 }
 
@@ -55,11 +67,19 @@ func (s *retainedPendingStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// prune removes entries older than PendingRetention. Caller must hold mu.
-func (s *retainedPendingStore) prune() {
-	cutoff := s.now().Add(-PendingRetention)
+func (e retainedEntry) expired(now time.Time) bool {
+	return e.storedAt.Before(now.Add(-PendingRetention))
+}
+
+// sweep removes entries older than PendingRetention at most once per
+// retainedSweepInterval. Caller must hold mu.
+func (s *retainedPendingStore) sweep(now time.Time) {
+	if now.Sub(s.lastSwept) < retainedSweepInterval {
+		return
+	}
+	s.lastSwept = now
 	for key, entry := range s.entries {
-		if entry.storedAt.Before(cutoff) {
+		if entry.expired(now) {
 			delete(s.entries, key)
 		}
 	}

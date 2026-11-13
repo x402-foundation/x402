@@ -762,7 +762,7 @@ func (f *BatchSvmScheme) broadcastDurably(
 		}
 		return recovered, err
 	}
-	return f.sendDurably(ctx, key, network, payer, broadcast)
+	return f.sendDurably(ctx, key, key, network, payer, broadcast)
 }
 
 // broadcastUnchecked is broadcastDurably for callers that already read the pending key.
@@ -774,18 +774,31 @@ func (f *BatchSvmScheme) broadcastUnchecked(
 	if f.hooks.broadcastDurably != nil {
 		return f.hooks.broadcastDurably(ctx, key, network, payer, broadcast)
 	}
-	return f.sendDurably(ctx, key, network, payer, broadcast)
+	return f.sendDurably(ctx, key, key, network, payer, broadcast)
 }
 
+// broadcastReserving is broadcastUnchecked under a separate reservation key, for
+// an operation whose pending record must outlive the chain state it was sent from.
+func (f *BatchSvmScheme) broadcastReserving(reservation string) broadcaster {
+	return func(ctx context.Context, key, network, payer string, broadcast func(func(signature, wire string) error) (string, error)) (durableResult, error) {
+		if f.hooks.broadcastDurably != nil {
+			return f.hooks.broadcastDurably(ctx, key, network, payer, broadcast)
+		}
+		return f.sendDurably(ctx, key, reservation, network, payer, broadcast)
+	}
+}
+
+// sendDurably reserves reservation in the duplicate store before sending and
+// keeps a timed-out broadcast under key in the pending store.
 func (f *BatchSvmScheme) sendDurably(
 	ctx context.Context,
-	key, network, payer string,
+	key, reservation, network, payer string,
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
 	var reserved, reservedWire, holder string
 	signature, err := broadcast(func(broadcastSignature, wire string) error {
 		record := encodeBroadcastRecord(broadcastSignature, blockhashOfWire(wire), "")
-		existing, ok, err := f.duplicateStore.Reserve(ctx, key, record, ReservationTTL)
+		existing, ok, err := f.duplicateStore.Reserve(ctx, reservation, record, ReservationTTL)
 		if err != nil {
 			return err
 		}
@@ -798,13 +811,13 @@ func (f *BatchSvmScheme) sendDurably(
 	})
 	if err != nil {
 		if holder != "" {
-			recovered, err := f.reconcileBroadcast(ctx, key, holder, network, payer)
+			recovered, err := f.reconcileBroadcastAt(ctx, key, reservation, holder, network, payer)
 			recovered.Replayed = recovered.OK
 			return recovered, err
 		}
 		pending, found := PendingSignatureOf(err)
 		if !found {
-			f.releaseReservation(ctx, key, reserved)
+			f.releaseReservation(ctx, reservation, reserved)
 			return durableResult{}, err
 		}
 		// A retry needs the blockhash to tell that this broadcast can no longer land,
@@ -827,11 +840,10 @@ func (f *BatchSvmScheme) recordPending(ctx context.Context, key, record, payer, 
 	return response
 }
 
-// releaseReservation frees key after a broadcast that can no longer land, so a
-// retry before the reservation lapses builds a fresh one. A store error is ignored:
-// the reservation then lapses on its own.
+// releaseReservation frees key after a broadcast that can no longer land. A store
+// error is ignored (the reservation lapses); an empty key names no reservation.
 func (f *BatchSvmScheme) releaseReservation(ctx context.Context, key, signature string) {
-	if signature == "" {
+	if key == "" || signature == "" {
 		return
 	}
 	recoveryCtx, cancel := recoveryContext(ctx)
@@ -840,10 +852,16 @@ func (f *BatchSvmScheme) releaseReservation(ctx context.Context, key, signature 
 }
 
 func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature, network, payer string) (durableResult, error) {
+	return f.reconcileBroadcastAt(ctx, key, key, signature, network, payer)
+}
+
+// reconcileBroadcastAt is reconcileBroadcast for an operation that reserves under
+// a key other than its pending key.
+func (f *BatchSvmScheme) reconcileBroadcastAt(ctx context.Context, key, reservation, signature, network, payer string) (durableResult, error) {
 	if f.hooks.reconcileBroadcast != nil {
 		return f.hooks.reconcileBroadcast(ctx, key, signature, network, payer)
 	}
-	return f.reconcileBroadcastImpl(ctx, key, signature, network, payer)
+	return f.reconcileBroadcastImpl(ctx, key, reservation, signature, network, payer)
 }
 
 // reconcileBroadcastImpl awaits the confirmation of the broadcast record
@@ -852,7 +870,7 @@ func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature,
 // frees the reservation so a retry sends afresh. An unconfirmed one that may
 // still land stays pending. The caller clears the pending record once it has
 // finished the operation.
-func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, record, network, payer string) (durableResult, error) {
+func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, reservationKey, record, network, payer string) (durableResult, error) {
 	signature, blockhash, wire := parseBroadcastRecord(record)
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
@@ -865,12 +883,12 @@ func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, record
 		var onchain *svm.TransactionOnchainFailureError
 		if errors.As(err, &onchain) {
 			f.forgetPending(ctx, key, signature)
-			f.releaseReservation(ctx, key, reservation)
+			f.releaseReservation(ctx, reservationKey, reservation)
 			return durableResult{Response: SettleFailureWithTransaction(x402.Network(network), "transaction_failed", payer, onchain.Error(), signature)}, nil
 		}
 		if f.expiredWithoutLanding(ctx, parsed, blockhash, network) {
 			f.forgetPending(ctx, key, signature)
-			f.releaseReservation(ctx, key, reservation)
+			f.releaseReservation(ctx, reservationKey, reservation)
 			return durableResult{Response: SettleFailureWithTransaction(
 				x402.Network(network),
 				"transaction_failed",

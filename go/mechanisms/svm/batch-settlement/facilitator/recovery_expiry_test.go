@@ -252,7 +252,7 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, reserved)
 
-		result, err := scheme.sendDurably(context.Background(), key, network, "", func(onPrepared func(string, string) error) (string, error) {
+		result, err := scheme.sendDurably(context.Background(), key, key, network, "", func(onPrepared func(string, string) error) (string, error) {
 			if err := onPrepared("other-signature", wire); err != nil {
 				return "", err
 			}
