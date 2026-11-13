@@ -86,6 +86,7 @@ import {
 import { toFacilitatorKeetaSigner, FacilitatorKeetaSigner } from "@x402/keeta";
 import { ExactKeetaScheme } from "@x402/keeta/exact/facilitator";
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+import { UptoStellarScheme } from "@x402/stellar/upto/facilitator";
 import {
   getConcordiumGrpcUrl,
   parseGrpcUrl,
@@ -821,10 +822,9 @@ if (keetaSigner) {
   );
 }
 if (stellarSigner) {
-  facilitator.register(
-    STELLAR_NETWORK as Network,
-    new ExactStellarScheme([stellarSigner]),
-  );
+  facilitator
+    .register(STELLAR_NETWORK as Network, new ExactStellarScheme([stellarSigner]))
+    .register(STELLAR_NETWORK as Network, new UptoStellarScheme([stellarSigner]));
 }
 if (tvmSigner) {
   facilitator.register(TVM_NETWORK as Network, new ExactTvmScheme(tvmSigner));

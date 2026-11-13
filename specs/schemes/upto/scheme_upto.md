@@ -76,3 +76,4 @@ The following patterns are NOT supported by `upto` and would require different s
 Network-specific rules and implementation details are defined in the per-network scheme documents:
 
 - EVM chains: See [`scheme_upto_evm.md`](./scheme_upto_evm.md)
+- Stellar: See [`scheme_upto_stellar.md`](./scheme_upto_stellar.md)
