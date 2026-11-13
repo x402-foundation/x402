@@ -203,9 +203,9 @@ Early implementations used the full base64 genesis hash as the reference. These 
 | Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
 | Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` |
 
-Implementations **MUST NOT** emit a legacy value and **SHOULD** reject one they receive. An implementation that receives a legacy value **MUST NOT** rewrite it to the canonical form on behalf of the sender, because the `network` is part of the terms the client accepts.
+Implementations **MUST NOT** choose a legacy value as a `network`: a resource server in the payment requirements it issues, or a facilitator in the kinds it advertises as supported.
 
-The [`@x402/avm` README](../../../typescript/packages/mechanisms/avm/README.md#identifier-compatibility-and-migration) lists which SDK releases accept each form and how to migrate.
+A receiver **SHOULD** reject a message whose `network` is a legacy value. A receiver that still accepts legacy values during a migration **MAY** treat one as equal to its canonical counterpart when matching networks, but it **MUST NOT** change the `network` value of a message it received.
 
 ## Additional Considerations
 
