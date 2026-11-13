@@ -1,25 +1,42 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
-import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "@x402/core/http";
+import {
+  MAX_CONTROL_PLANE_RESPONSE_BYTES,
+  readLimitedText,
+  ResponseBodyTooLargeError,
+} from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
 
 /**
  * Caps a 402 that will be returned to the caller. Paid resource payloads are left
- * untouched. The body is re-materialized so callers can still read it.
+ * untouched. Inspect a clone so callers retain the original response and body.
  *
  * @param response - Fetch response from the resource server
- * @returns The original response, or a 402 with a bounded body
+ * @returns The original response after checking any 402 body limit
  */
 async function capReturnedPaymentRequired(response: Response): Promise<Response> {
-  if (response.status !== 402) {
+  if (response.status !== 402 || !response.body) {
     return response;
   }
 
-  const body = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+  const reader = response.clone().body!.getReader();
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_CONTROL_PLANE_RESPONSE_BYTES) {
+        throw new ResponseBodyTooLargeError(MAX_CONTROL_PLANE_RESPONSE_BYTES);
+      }
+    }
+    return response;
+  } catch (error) {
+    // A tee's cancellation waits for both branches; start both before awaiting.
+    await Promise.allSettled([reader.cancel(error), response.body.cancel(error)]);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /**
