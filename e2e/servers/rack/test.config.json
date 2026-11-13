@@ -1,0 +1,36 @@
+{
+  "name": "rack",
+  "type": "server",
+  "language": "ruby",
+  "x402Version": 2,
+  "description": "Ruby Rack server with x402 payment middleware",
+  "endpoints": [
+    {
+      "path": "/protected",
+      "method": "GET",
+      "description": "Protected endpoint requiring EVM payment",
+      "requiresPayment": true,
+      "protocolFamily": "evm"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": [
+      "PORT",
+      "EVM_PAYEE_ADDRESS",
+      "FACILITATOR_URL"
+    ],
+    "optional": []
+  }
+}
