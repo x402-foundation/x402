@@ -580,6 +580,7 @@ function tonapiTransactionToToncenter(
       compute_ph: tonapiComputePhase(transaction.compute_phase),
       action: tonapiActionPhase(transaction.action_phase),
       storage_ph: tonapiStoragePhase(transaction.storage_phase),
+      bounce: transaction.bounce_phase,
     },
     in_msg: tonapiMessageToToncenter(transaction.in_msg),
     out_msgs: Array.isArray(transaction.out_msgs)

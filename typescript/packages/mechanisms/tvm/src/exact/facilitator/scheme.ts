@@ -23,6 +23,7 @@ import {
   ERR_EXACT_TVM_INVALID_CODE_HASH,
   ERR_EXACT_TVM_INVALID_EXTENSIONS_DICT,
   ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
+  ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER,
   ERR_EXACT_TVM_INVALID_PAYLOAD,
   ERR_EXACT_TVM_INVALID_RECIPIENT,
   ERR_EXACT_TVM_INVALID_SEQNO,
@@ -43,7 +44,14 @@ import {
   SCHEME_EXACT,
   SUPPORTED_NETWORKS,
 } from "../../constants";
-import { decodeBase64Boc, makeZeroBitCell, normalizeAddress } from "../../codecs/common";
+import {
+  decodeBase64Boc,
+  isNativeAsset,
+  makeZeroBitCell,
+  normalizeAddress,
+  normalizeAsset,
+} from "../../codecs/common";
+import { hasJettonOnlyExtra, isNativeTransfer, nativeTransferBody } from "../../codecs/native";
 import {
   parseActiveW5AccountState,
   parseW5InitData,
@@ -52,7 +60,13 @@ import {
 } from "../../codecs/w5";
 import { SettlementCache } from "../../settlement-cache";
 import type { FacilitatorTvmSigner } from "../../signer";
-import type { ExactTvmPayload, ParsedTvmSettlement, TvmRelayRequest } from "../../types";
+import type {
+  ExactTvmPayload,
+  ParsedNativeTransfer,
+  ParsedTvmSettlement,
+  TvmAccountState,
+  TvmRelayRequest,
+} from "../../types";
 import {
   messageBodyHashMatches,
   parseTraceTransactions,
@@ -63,7 +77,7 @@ import {
   transactionSucceeded,
   type TvmTraceTransaction,
 } from "../../trace-utils";
-import { parseExactTvmPayload } from "../codec";
+import { parseExactTvmNativePayload, parseExactTvmPayload } from "../codec";
 import { SettlementBatcher } from "../settlement-batcher";
 
 export interface ExactTvmFacilitatorConfig {
@@ -126,7 +140,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     }
 
     try {
-      const settlement = parseExactTvmPayload(tvmPayload.settlementBoc);
+      const settlement = parseSettlementFor(tvmPayload.settlementBoc, requirements);
       const [verification] = await this.verifyParsed(payload, requirements, tvmPayload, settlement);
       return verification;
     } catch (error) {
@@ -162,7 +176,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     let verification: VerifyResponse;
     let relayRequest: TvmRelayRequest | null;
     try {
-      settlement = parseExactTvmPayload(tvmPayload.settlementBoc);
+      settlement = parseSettlementFor(tvmPayload.settlementBoc, requirements);
       const verified = await this.verifyParsed(payload, requirements, tvmPayload, settlement);
       verification = verified[0];
       relayRequest = verified[1];
@@ -279,7 +293,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     if (BigInt(payload.accepted.amount) !== BigInt(requirements.amount)) {
       return invalid(ERR_EXACT_TVM_INVALID_AMOUNT);
     }
-    if (normalizeAddress(payload.accepted.asset) !== normalizeAddress(requirements.asset)) {
+    if (normalizeAsset(payload.accepted.asset) !== normalizeAsset(requirements.asset)) {
       return invalid(ERR_EXACT_TVM_INVALID_ASSET);
     }
     if (normalizeAddress(payload.accepted.payTo) !== normalizeAddress(requirements.payTo)) {
@@ -291,8 +305,16 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     if (acceptedExtra.areFeesSponsored !== true || requirementsExtra.areFeesSponsored !== true) {
       return invalid(ERR_EXACT_TVM_UNSUPPORTED_SCHEME);
     }
-    if (normalizeAddress(tvmPayload.asset) !== normalizeAddress(requirements.asset)) {
+    if (normalizeAsset(tvmPayload.asset) !== normalizeAsset(requirements.asset)) {
       return invalid(ERR_EXACT_TVM_INVALID_ASSET);
+    }
+
+    if (isNativeAsset(requirements.asset)) {
+      return this.verifyNative(payload, requirements, settlement);
+    }
+    const transfer = settlement.transfer;
+    if (isNativeTransfer(transfer)) {
+      return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
 
     const expectedResponseDestination = effectiveResponseDestination(requirementsExtra);
@@ -308,80 +330,37 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
 
-    if (settlement.transfer.destination !== normalizeAddress(requirements.payTo)) {
+    if (transfer.destination !== normalizeAddress(requirements.payTo)) {
       return invalid(ERR_EXACT_TVM_INVALID_RECIPIENT);
     }
-    if (settlement.transfer.jettonAmount !== BigInt(requirements.amount)) {
+    if (transfer.jettonAmount !== BigInt(requirements.amount)) {
       return invalid(ERR_EXACT_TVM_INVALID_AMOUNT);
     }
-    if (settlement.transfer.forwardTonAmount !== expectedForwardTonAmount) {
+    if (transfer.forwardTonAmount !== expectedForwardTonAmount) {
       return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
-    if (settlement.transfer.responseDestination !== expectedResponseDestination) {
+    if (transfer.responseDestination !== expectedResponseDestination) {
       return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
-    if (!settlement.transfer.forwardPayload.hash().equals(expectedForwardPayload.hash())) {
+    if (!transfer.forwardPayload.hash().equals(expectedForwardPayload.hash())) {
       return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
-    const maxAttachedTonAmount =
-      settlement.transfer.forwardTonAmount + DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT;
-    if (settlement.transfer.attachedTonAmount > maxAttachedTonAmount) {
+    const maxAttachedTonAmount = transfer.forwardTonAmount + DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT;
+    if (transfer.attachedTonAmount > maxAttachedTonAmount) {
       return invalid(ERR_EXACT_TVM_TON_AMOUNT_TOO_HIGH);
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    if (settlement.validUntil <= now) return invalid(ERR_EXACT_TVM_INVALID_UNTIL_EXPIRED);
-    if (
-      settlement.validUntil >
-      now + (requirements.maxTimeoutSeconds ?? DEFAULT_MAX_TIMEOUT_SECONDS)
-    ) {
-      return invalid(ERR_EXACT_TVM_VALID_UNTIL_TOO_FAR);
-    }
-
-    const account = await this.signer.getAccountState(payer, String(requirements.network));
-    if (account.isFrozen) return invalid(ERR_EXACT_TVM_ACCOUNT_FROZEN);
-
-    let initDataParsed;
-    if (settlement.stateInit && account.isUninitialized) {
-      if (
-        !settlement.stateInit.code ||
-        !ALLOWED_CLIENT_CODES.has(settlement.stateInit.code.hash().toString("hex"))
-      ) {
-        return invalid(ERR_EXACT_TVM_INVALID_CODE_HASH);
-      }
-      if (!stateInitAddressMatches(settlement.stateInit, payer)) {
-        return invalid(ERR_EXACT_TVM_INVALID_W5_MESSAGE);
-      }
-      initDataParsed = parseW5InitData(settlement.stateInit);
-      if (initDataParsed.seqno !== 0) return invalid(ERR_EXACT_TVM_INVALID_SEQNO);
-      if (initDataParsed.extensionsDict) return invalid(ERR_EXACT_TVM_INVALID_EXTENSIONS_DICT);
-    } else {
-      try {
-        initDataParsed = parseActiveW5AccountState(account);
-      } catch {
-        return invalid(ERR_EXACT_TVM_INVALID_CODE_HASH);
-      }
-    }
-
-    if (!initDataParsed.signatureAllowed) return invalid(ERR_EXACT_TVM_INVALID_SIGNATURE_MODE);
-    if (initDataParsed.seqno !== settlement.seqno) return invalid(ERR_EXACT_TVM_INVALID_SEQNO);
-    if (initDataParsed.walletId !== settlement.walletId) {
-      return invalid(ERR_EXACT_TVM_INVALID_WALLET_ID);
-    }
-    if (
-      !verifyW5Signature(initDataParsed.publicKey, settlement.signedSliceHash, settlement.signature)
-    ) {
-      return invalid(ERR_EXACT_TVM_INVALID_SIGNATURE);
-    }
+    const walletCheck = await this.verifyPayerWallet(requirements, settlement);
+    if (typeof walletCheck === "string") return invalid(walletCheck);
 
     const canonicalSourceWallet = normalizeAddress(
       await this.signer.getJettonWallet(requirements.asset, payer, String(requirements.network)),
     );
-    if (normalizeAddress(settlement.transfer.sourceWallet) !== canonicalSourceWallet) {
+    if (normalizeAddress(transfer.sourceWallet) !== canonicalSourceWallet) {
       return invalid(ERR_EXACT_TVM_INVALID_JETTON_TRANSFER);
     }
     const jettonWalletData = await this.signer.getJettonWalletData(
-      settlement.transfer.sourceWallet,
+      transfer.sourceWallet,
       String(requirements.network),
     );
     if (normalizeAddress(jettonWalletData.owner) !== payer) {
@@ -390,7 +369,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     if (normalizeAddress(jettonWalletData.jettonMinter) !== normalizeAddress(requirements.asset)) {
       return invalid(ERR_EXACT_TVM_INVALID_ASSET);
     }
-    if (jettonWalletData.balance < settlement.transfer.jettonAmount) {
+    if (jettonWalletData.balance < transfer.jettonAmount) {
       return invalid(ERR_EXACT_TVM_INSUFFICIENT_BALANCE);
     }
 
@@ -399,7 +378,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         destination: settlement.payer,
         body: settlement.body,
         stateInit: settlement.stateInit,
-        forwardTonAmount: settlement.transfer.forwardTonAmount,
+        forwardTonAmount: transfer.forwardTonAmount,
       };
       const externalBoc = await this.signer.buildRelayExternalBoc(
         String(requirements.network),
@@ -414,7 +393,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
         settlement,
         returnTransaction: true,
       }) as TvmTraceTransaction;
-      const actualInner = settlement.transfer.attachedTonAmount;
+      const actualInner = transfer.attachedTonAmount;
       const requiredOuter =
         actualInner +
         traceTransactionStorageFees(payerTransaction) +
@@ -427,7 +406,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
           destination: settlement.payer,
           body: settlement.body,
           stateInit: settlement.stateInit,
-          forwardTonAmount: settlement.transfer.forwardTonAmount,
+          forwardTonAmount: transfer.forwardTonAmount,
           relayAmount: requiredOuter,
         },
       ];
@@ -444,6 +423,157 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     }
   }
 
+  private async verifyNative(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    settlement: ParsedTvmSettlement,
+  ): Promise<[VerifyResponse, TvmRelayRequest | null]> {
+    const payer = settlement.payer;
+    const invalid = (reason: string): [VerifyResponse, null] => [
+      { isValid: false, invalidReason: reason, payer },
+      null,
+    ];
+
+    const acceptedExtra = (payload.accepted.extra ?? {}) as Record<string, unknown>;
+    const requirementsExtra = (requirements.extra ?? {}) as Record<string, unknown>;
+    if (hasJettonOnlyExtra(requirementsExtra) || hasJettonOnlyExtra(acceptedExtra)) {
+      return invalid(ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER);
+    }
+    const expectedBody = nativeTransferBody(requirementsExtra);
+    if (!nativeTransferBody(acceptedExtra).hash().equals(expectedBody.hash())) {
+      return invalid(ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER);
+    }
+
+    const transfer = settlement.transfer;
+    if (!isNativeTransfer(transfer)) return invalid(ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER);
+    if (transfer.destination !== normalizeAddress(requirements.payTo)) {
+      return invalid(ERR_EXACT_TVM_INVALID_RECIPIENT);
+    }
+    if (transfer.amount !== BigInt(requirements.amount)) {
+      return invalid(ERR_EXACT_TVM_INVALID_AMOUNT);
+    }
+    if (transfer.hasExtraCurrencies || transfer.hasStateInit) {
+      return invalid(ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER);
+    }
+    if (!transfer.body.hash().equals(expectedBody.hash())) {
+      return invalid(ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER);
+    }
+
+    const walletCheck = await this.verifyPayerWallet(requirements, settlement);
+    if (typeof walletCheck === "string") return invalid(walletCheck);
+    // Cheap pre-check before emulation; the exact rule (amount plus forward fee) follows.
+    if (walletCheck.balance < transfer.amount) return invalid(ERR_EXACT_TVM_INSUFFICIENT_BALANCE);
+
+    let payerTransaction: TvmTraceTransaction;
+    try {
+      const externalBoc = await this.signer.buildRelayExternalBoc(
+        String(requirements.network),
+        { destination: settlement.payer, body: settlement.body, stateInit: settlement.stateInit },
+        { forEmulation: true },
+      );
+      const emulation = await this.signer.emulateExternalMessage(
+        String(requirements.network),
+        externalBoc,
+      );
+      payerTransaction = ExactTvmScheme.verifyFinalizedTraceSettlement(emulation, {
+        settlement,
+        returnTransaction: true,
+      }) as TvmTraceTransaction;
+    } catch (error) {
+      return [
+        {
+          isValid: false,
+          invalidReason: ERR_EXACT_TVM_SIMULATION_FAILED,
+          invalidMessage: error instanceof Error ? error.message : String(error),
+          payer,
+        },
+        null,
+      ];
+    }
+
+    // The relay message credits the payer wallet before its actions run. The payment value
+    // and its forward fee must come from the payer's own pre-relay balance, or the facilitator
+    // would be paying the merchant out of its gas budget.
+    if (walletCheck.balance < transfer.amount + traceTransactionFwdFees(payerTransaction)) {
+      return invalid(ERR_EXACT_TVM_INSUFFICIENT_BALANCE);
+    }
+
+    // The relay attaches only what the payer wallet needs to execute, never the value.
+    const requiredOuter =
+      traceTransactionStorageFees(payerTransaction) +
+      traceTransactionComputeFees(payerTransaction) +
+      DEFAULT_TVM_OUTER_GAS_BUFFER;
+    return [
+      { isValid: true, payer },
+      {
+        destination: settlement.payer,
+        body: settlement.body,
+        stateInit: settlement.stateInit,
+        relayAmount: requiredOuter,
+      },
+    ];
+  }
+
+  /**
+   * Check expiry, W5 wallet state and signature shared by all assets.
+   *
+   * @param requirements - Payment requirements
+   * @param settlement - Parsed settlement
+   * @returns The payer account state, or an error reason
+   */
+  private async verifyPayerWallet(
+    requirements: PaymentRequirements,
+    settlement: ParsedTvmSettlement,
+  ): Promise<TvmAccountState | string> {
+    const payer = settlement.payer;
+    const now = Math.floor(Date.now() / 1000);
+    if (settlement.validUntil <= now) return ERR_EXACT_TVM_INVALID_UNTIL_EXPIRED;
+    if (
+      settlement.validUntil >
+      now + (requirements.maxTimeoutSeconds ?? DEFAULT_MAX_TIMEOUT_SECONDS)
+    ) {
+      return ERR_EXACT_TVM_VALID_UNTIL_TOO_FAR;
+    }
+
+    const account = await this.signer.getAccountState(payer, String(requirements.network));
+    if (account.isFrozen) return ERR_EXACT_TVM_ACCOUNT_FROZEN;
+
+    let initDataParsed;
+    if (settlement.stateInit && account.isUninitialized) {
+      if (
+        !settlement.stateInit.code ||
+        !ALLOWED_CLIENT_CODES.has(settlement.stateInit.code.hash().toString("hex"))
+      ) {
+        return ERR_EXACT_TVM_INVALID_CODE_HASH;
+      }
+      if (!stateInitAddressMatches(settlement.stateInit, payer)) {
+        return ERR_EXACT_TVM_INVALID_W5_MESSAGE;
+      }
+      initDataParsed = parseW5InitData(settlement.stateInit);
+      if (initDataParsed.seqno !== 0) return ERR_EXACT_TVM_INVALID_SEQNO;
+      if (initDataParsed.extensionsDict) return ERR_EXACT_TVM_INVALID_EXTENSIONS_DICT;
+    } else {
+      try {
+        initDataParsed = parseActiveW5AccountState(account);
+      } catch {
+        return ERR_EXACT_TVM_INVALID_CODE_HASH;
+      }
+    }
+
+    if (!initDataParsed.signatureAllowed) return ERR_EXACT_TVM_INVALID_SIGNATURE_MODE;
+    if (initDataParsed.seqno !== settlement.seqno) return ERR_EXACT_TVM_INVALID_SEQNO;
+    if (initDataParsed.walletId !== settlement.walletId) {
+      return ERR_EXACT_TVM_INVALID_WALLET_ID;
+    }
+    if (
+      !verifyW5Signature(initDataParsed.publicKey, settlement.signedSliceHash, settlement.signature)
+    ) {
+      return ERR_EXACT_TVM_INVALID_SIGNATURE;
+    }
+
+    return account;
+  }
+
   static verifyFinalizedTraceSettlement(
     traceData: Record<string, unknown>,
     {
@@ -455,7 +585,12 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     },
   ): string | TvmTraceTransaction {
     const transactions = parseTraceTransactions(traceData);
-    const expectedSourceWallet = normalizeAddress(settlement.transfer.sourceWallet);
+    const transfer = settlement.transfer;
+    if (isNativeTransfer(transfer)) {
+      const payerTransaction = findNativePaymentTransaction(transactions, settlement, transfer);
+      return payerTransactionResult(payerTransaction, returnTransaction);
+    }
+    const expectedSourceWallet = normalizeAddress(transfer.sourceWallet);
 
     let payerTransaction: TvmTraceTransaction | null = null;
     for (const transaction of transactions) {
@@ -474,7 +609,7 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
     for (const outMsg of outMsgs) {
       const message = outMsg as Record<string, unknown>;
       if (normalizeAddressOrNull(message.destination) !== expectedSourceWallet) continue;
-      if (!messageBodyHashMatches(message, settlement.transfer.bodyHash)) continue;
+      if (!messageBodyHashMatches(message, transfer.bodyHash)) continue;
       payerOutHash = message.hash;
       break;
     }
@@ -497,14 +632,91 @@ export class ExactTvmScheme implements SchemeNetworkFacilitator {
       throw new Error("Trace does not contain the expected source jetton wallet transaction");
     }
 
-    const transactionHash = payerTransaction.hash_norm ?? payerTransaction.hash;
-    if (!transactionHash) {
-      throw new Error("Trace payer wallet transaction is missing transaction hash");
-    }
-    return returnTransaction
-      ? payerTransaction
-      : traceTransactionHashToHex(String(transactionHash));
+    return payerTransactionResult(payerTransaction, returnTransaction);
   }
+}
+
+function parseSettlementFor(
+  settlementBoc: string,
+  requirements: PaymentRequirements,
+): ParsedTvmSettlement {
+  return isNativeAsset(requirements.asset)
+    ? parseExactTvmNativePayload(settlementBoc)
+    : parseExactTvmPayload(settlementBoc);
+}
+
+function payerTransactionResult(
+  payerTransaction: TvmTraceTransaction,
+  returnTransaction: boolean,
+): string | TvmTraceTransaction {
+  const transactionHash = payerTransaction.hash_norm ?? payerTransaction.hash;
+  if (!transactionHash) {
+    throw new Error("Trace payer wallet transaction is missing transaction hash");
+  }
+  return returnTransaction ? payerTransaction : traceTransactionHashToHex(String(transactionHash));
+}
+
+/**
+ * Find the payer transaction that delivered `amount` TON to `payTo`.
+ *
+ * Fails when the payer skipped the action (mode 3), when no message with the exact value
+ * and body reached the merchant, or when the merchant bounced it.
+ *
+ * @param transactions - Trace transactions
+ * @param settlement - Parsed settlement
+ * @param transfer - Its native transfer
+ * @returns The payer transaction
+ */
+function findNativePaymentTransaction(
+  transactions: TvmTraceTransaction[],
+  settlement: ParsedTvmSettlement,
+  transfer: ParsedNativeTransfer,
+): TvmTraceTransaction {
+  let payerTransaction: TvmTraceTransaction | null = null;
+  for (const transaction of transactions) {
+    if (normalizeAddressOrNull(transaction.account) !== settlement.payer) continue;
+    if (!transactionSucceeded(transaction)) continue;
+    if (!messageBodyHashMatches(transaction.in_msg, settlement.body.hash())) continue;
+    payerTransaction = transaction;
+    break;
+  }
+  if (!payerTransaction) {
+    throw new Error("Trace does not contain the expected payer wallet transaction");
+  }
+
+  const outMsgs = Array.isArray(payerTransaction.out_msgs) ? payerTransaction.out_msgs : [];
+  let paymentHash: unknown;
+  for (const outMsg of outMsgs) {
+    const message = outMsg as Record<string, unknown>;
+    if (normalizeAddressOrNull(message.destination) !== transfer.destination) continue;
+    if (parseMessageValue(message.value) !== transfer.amount) continue;
+    if (!messageBodyHashMatches(message, transfer.body.hash())) continue;
+    paymentHash = message.hash;
+    break;
+  }
+  if (!paymentHash) {
+    throw new Error("Trace payer wallet transaction did not send the payment to payTo");
+  }
+
+  for (const transaction of transactions) {
+    if (normalizeAddressOrNull(transaction.account) !== transfer.destination) continue;
+    const inMsg = transaction.in_msg as Record<string, unknown> | undefined;
+    if (inMsg?.hash !== paymentHash) continue;
+    const description = (transaction.description ?? transaction) as Record<string, unknown>;
+    if (description.bounce !== undefined && description.bounce !== null) {
+      throw new Error("Trace shows the payment bounced from payTo");
+    }
+    return payerTransaction;
+  }
+  throw new Error("Trace does not contain the payTo transaction receiving the payment");
+}
+
+function parseMessageValue(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value;
+  if ((typeof value === "string" && /^\d+$/.test(value)) || typeof value === "number") {
+    return BigInt(value);
+  }
+  return null;
 }
 
 function exactTvmPayloadFromUnknown(value: unknown): ExactTvmPayload {

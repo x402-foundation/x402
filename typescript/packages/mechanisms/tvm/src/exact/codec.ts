@@ -7,12 +7,33 @@ import {
   SEND_MODE_IGNORE_ERRORS,
   SEND_MODE_PAY_FEES_SEPARATELY,
 } from "../constants";
-import type { ParsedTvmSettlement } from "../types";
+import type { ParsedJettonTransfer, ParsedNativeTransfer, ParsedTvmSettlement } from "../types";
 import { decodeBase64Boc, normalizeAddress } from "../codecs/common";
 import { parseJettonTransfer } from "../codecs/jetton";
+import { parseNativeTransfer } from "../codecs/native";
 import { parseOutList } from "../codecs/w5";
 
+/**
+ * Parse a settlement BoC carrying a TEP-74 Jetton `transfer`.
+ *
+ * @param settlementBoc - Base64 settlement BoC
+ * @returns The parsed settlement
+ */
 export function parseExactTvmPayload(settlementBoc: string): ParsedTvmSettlement {
+  return parseSettlement(settlementBoc, false);
+}
+
+/**
+ * Parse a settlement BoC carrying a native TON transfer to `payTo`.
+ *
+ * @param settlementBoc - Base64 settlement BoC
+ * @returns The parsed settlement
+ */
+export function parseExactTvmNativePayload(settlementBoc: string): ParsedTvmSettlement {
+  return parseSettlement(settlementBoc, true);
+}
+
+function parseSettlement(settlementBoc: string, native: boolean): ParsedTvmSettlement {
   let root;
   let message;
   try {
@@ -55,11 +76,11 @@ export function parseExactTvmPayload(settlementBoc: string): ParsedTvmSettlement
   }
 
   const action = actions[0];
-  if (
-    action.outMsg.info.type !== "internal" ||
-    !action.outMsg.info.dest ||
-    action.outMsg.info.bounce !== true
-  ) {
+  if (action.outMsg.info.type !== "internal" || !action.outMsg.info.dest) {
+    throw new Error(ERR_EXACT_TVM_INVALID_W5_ACTIONS);
+  }
+  // Jetton transfers must bounce so that a failed transfer returns the attached TON.
+  if (!native && action.outMsg.info.bounce !== true) {
     throw new Error(ERR_EXACT_TVM_INVALID_W5_ACTIONS);
   }
 
@@ -71,11 +92,17 @@ export function parseExactTvmPayload(settlementBoc: string): ParsedTvmSettlement
     throw new Error(ERR_EXACT_TVM_INVALID_W5_ACTIONS);
   }
 
-  const transfer = parseJettonTransfer(
-    normalizeAddress(action.outMsg.info.dest),
-    action.outMsg.body,
-  );
-  transfer.attachedTonAmount = action.outMsg.info.value.coins;
+  let transfer: ParsedJettonTransfer | ParsedNativeTransfer;
+  if (native) {
+    transfer = parseNativeTransfer(action.outMsg);
+  } else {
+    const jettonTransfer = parseJettonTransfer(
+      normalizeAddress(action.outMsg.info.dest),
+      action.outMsg.body,
+    );
+    jettonTransfer.attachedTonAmount = action.outMsg.info.value.coins;
+    transfer = jettonTransfer;
+  }
 
   const signature = bodySlice.loadBuffer(64);
   if (bodySlice.remainingBits || bodySlice.remainingRefs) {

@@ -6,6 +6,7 @@ import base64
 import binascii
 
 from ....schemas.helpers import convert_to_token_amount
+from ..constants import NATIVE_ASSET
 
 try:
     from pytoniq_core import Address, Builder, Cell
@@ -20,6 +21,18 @@ def normalize_address(address: str | Address) -> str:
     if isinstance(address, Address):
         return address.to_str(is_user_friendly=False)
     return Address(address).to_str(is_user_friendly=False)
+
+
+def is_native_asset(asset: object) -> bool:
+    """Return True when ``asset`` is the reserved native TON identifier."""
+    return isinstance(asset, str) and asset == NATIVE_ASSET
+
+
+def normalize_asset(asset: str | Address) -> str:
+    """Normalize an asset id: jetton masters to raw ``wc:hex``, ``"native"`` unchanged."""
+    if is_native_asset(asset):
+        return NATIVE_ASSET
+    return normalize_address(asset)
 
 
 def address_to_stack_item(address: str) -> object:
