@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
 import axios from "axios";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { wrapAxiosWithPayment, x402Client, x402HTTPClient } from "./index";
@@ -184,5 +185,101 @@ describe("paid retry Cookie serialization", () => {
 
     expect(response.status).toBe(200);
     expect(seen.map(hit => hit.cookie)).toEqual([undefined, undefined]);
+  });
+});
+
+describe("paid retry request body", () => {
+  let origin: string;
+  const bodies: { paid: boolean; body: string; contentType?: string }[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", chunk => chunks.push(chunk));
+    req.on("end", () => {
+      const paid = Boolean(req.headers["payment-signature"]);
+      bodies.push({
+        paid,
+        body: Buffer.concat(chunks).toString(),
+        contentType: req.headers["content-type"],
+      });
+      if (!paid) {
+        const challenge = {
+          x402Version: 2,
+          resource: { url: `${origin}/upload` },
+          accepts: [
+            {
+              scheme: "fixture",
+              network: "fixture:1",
+              amount: "1",
+              asset: "fixture",
+              payTo: "fixture",
+              maxTimeoutSeconds: 60,
+              extra: {},
+            },
+          ],
+        };
+        res.writeHead(402, {
+          "payment-required": Buffer.from(JSON.stringify(challenge)).toString("base64"),
+        });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+
+  beforeAll(async () => {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close(error => (error ? reject(error) : resolve())),
+    );
+  });
+
+  it("sends a stream body again on the paid retry", async () => {
+    const client = new x402Client().setSpendControls(false).register("fixture:1", {
+      scheme: "fixture",
+      createPaymentPayload: async () => ({ x402Version: 2, payload: { fixture: true } }),
+    });
+    const api = wrapAxiosWithPayment(axios.create({ baseURL: origin, proxy: false }), client);
+    const response = await api.post(
+      "/upload",
+      Readable.from([Buffer.from("hello "), Buffer.from("world")]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(bodies.map(({ paid, body }) => ({ paid, body }))).toEqual([
+      { paid: false, body: "hello world" },
+      { paid: true, body: "hello world" },
+    ]);
+  });
+
+  it("keeps a form-data body's multipart headers when the caller sets none", async () => {
+    bodies.length = 0;
+    const boundary = "x402-test-boundary";
+    const multipart = `--${boundary}\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello\r\n--${boundary}--\r\n`;
+    // Same shape Axios detects for the npm form-data package: a stream with append,
+    // toString "[object FormData]" and getHeaders.
+    const form = Object.assign(Readable.from([Buffer.from(multipart)]), {
+      append: () => undefined,
+      toString: () => "[object FormData]",
+      getHeaders: () => ({ "content-type": `multipart/form-data; boundary=${boundary}` }),
+    });
+    const client = new x402Client().setSpendControls(false).register("fixture:1", {
+      scheme: "fixture",
+      createPaymentPayload: async () => ({ x402Version: 2, payload: { fixture: true } }),
+    });
+    const api = wrapAxiosWithPayment(axios.create({ baseURL: origin, proxy: false }), client);
+    const response = await api.post("/upload", form);
+
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    expect(response.status).toBe(200);
+    expect(bodies).toEqual([
+      { paid: false, body: multipart, contentType },
+      { paid: true, body: multipart, contentType },
+    ]);
   });
 });
