@@ -65,6 +65,8 @@ const uptoProxyConfig: Permit2ProxyConfig = {
 
 export interface VerifyUptoPermit2Options {
   simulate?: boolean;
+  /** Amount to simulate the settle call with. Defaults to `requirements.amount`. */
+  simulationAmount?: bigint;
 }
 
 export interface UptoPermit2FacilitatorConfig {
@@ -249,12 +251,12 @@ export async function verifyUptoPermit2(
   }
 
   const facilitatorAddress = getAddress(permit2Payload.permit2Authorization.witness.facilitator);
-  // Per spec §Phase 3 Step 7: simulate with requirements.amount (the worst-case charge).
-  // At verify time, requirements.amount = max authorized amount.
-  // At settle time, requirements.amount = actual settlement amount (≤ max).
+  // Per spec §Phase 3 Step 7: at verify time simulate with requirements.amount (the worst-case
+  // charge). Settle passes the actual settlement amount (≤ max) via options.simulationAmount.
+  const simulationAmount = options?.simulationAmount ?? requiredAmount;
   const uptoSettleArgs = buildUptoPermit2SettleArgs(
     permit2Payload,
-    requiredAmount,
+    simulationAmount,
     facilitatorAddress,
   );
 
@@ -277,7 +279,7 @@ export async function verifyUptoPermit2(
         signer,
         tokenAddress,
         permit2Payload,
-        requirements.amount,
+        simulationAmount.toString(),
       );
     }
 
@@ -314,7 +316,7 @@ export async function verifyUptoPermit2(
             signer,
             tokenAddress,
             permit2Payload,
-            requirements.amount,
+            simulationAmount.toString(),
           );
         }
         return { isValid: true, invalidReason: undefined, payer };
@@ -325,7 +327,7 @@ export async function verifyUptoPermit2(
         signer,
         tokenAddress,
         payer,
-        requirements.amount,
+        simulationAmount.toString(),
       );
     }
   }
@@ -337,7 +339,7 @@ export async function verifyUptoPermit2(
       signer,
       tokenAddress,
       permit2Payload,
-      requirements.amount,
+      simulationAmount.toString(),
     );
   }
 
@@ -423,13 +425,22 @@ export async function settleUptoPermit2(
     }
   }
 
+  if (settlementAmount > BigInt(permit2Payload.permit2Authorization.permitted.amount)) {
+    return {
+      success: false,
+      network: payload.accepted.network,
+      transaction: "",
+      errorReason: ErrUptoSettlementExceedsAmount,
+      payer,
+    };
+  }
+
   // Re-verify the signature before settling. We override `requirements.amount`
   // with the *authorized maximum* (`permitted.amount`) — NOT the actual
   // settlement amount — because `verifyUptoPermit2` performs strict equality
   // (`permitted.amount === requirements.amount`) to confirm the payload matches
-  // what the client signed.  The actual settlement amount, which may be lower
-  // than the authorized maximum, is validated separately in the guard below
-  // (`settlementAmount > permitted.amount`).
+  // what the client signed. The simulation, however, must charge the actual
+  // settlement amount: the payer only needs to cover what is settled.
   const verifyRequirements: PaymentRequirements = {
     ...requirements,
     amount: permit2Payload.permit2Authorization.permitted.amount,
@@ -441,7 +452,10 @@ export async function settleUptoPermit2(
     verifyRequirements,
     permit2Payload,
     context,
-    { simulate: config?.simulateInSettle ?? true },
+    {
+      simulate: (config?.simulateInSettle ?? true) && settlementAmount > 0n,
+      simulationAmount: settlementAmount,
+    },
   );
   if (!valid.isValid) {
     return {
@@ -462,16 +476,6 @@ export async function settleUptoPermit2(
       network: payload.accepted.network,
       payer,
       amount: "0",
-    };
-  }
-
-  if (settlementAmount > BigInt(permit2Payload.permit2Authorization.permitted.amount)) {
-    return {
-      success: false,
-      network: payload.accepted.network,
-      transaction: "",
-      errorReason: ErrUptoSettlementExceedsAmount,
-      payer,
     };
   }
 
