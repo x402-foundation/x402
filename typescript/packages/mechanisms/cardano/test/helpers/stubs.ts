@@ -73,6 +73,14 @@ export const TTL_SLOT = STUB_CURRENT_SLOT + 300n;
 /** Fixed nonce UTXO reference forced into every fixture transaction. */
 export const NONCE_REF = `${"a".repeat(64)}#0`;
 
+/**
+ * A 64-character hex string made of one repeated character (fixture tx hashes).
+ *
+ * @param c - The hex character to repeat.
+ * @returns The 64-character string.
+ */
+export const hex64 = (c: string): string => c.repeat(64);
+
 /** Address the stub chain layer reports as the nonce UTXO owner (the payer). */
 export const PAYER_ADDRESS = "addr_test1vpfacilitatorpayerplaceholder";
 

@@ -6,6 +6,7 @@ const baseConfig = {
     "evm/index": "src/evm/index.ts",
     "svm/index": "src/svm/index.ts",
     "avm/index": "src/avm/index.ts",
+    "cardano/index": "src/cardano/index.ts",
   },
   dts: {
     resolve: true,
