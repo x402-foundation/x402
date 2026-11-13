@@ -287,12 +287,32 @@ def is_eip3009_payload(payload: dict[str, Any]) -> bool:
     return "authorization" in payload
 
 
-def _is_uint256_string(value: Any) -> bool:
+def is_uint256_string(value: Any) -> bool:
+    """Check that a wire value is a uint256 as a decimal string (no sign, spaces or JSON number).
+
+    Args:
+        value: Raw field value.
+
+    Returns:
+        True if the value is a decimal string of at most 2**256 - 1.
+    """
     return (
         isinstance(value, str)
         and _UINT256_DECIMAL_RE.fullmatch(value) is not None
         and int(value) <= _UINT256_MAX
     )
+
+
+def is_bytes32_hex(value: Any) -> bool:
+    """Check that a wire value is 32 bytes as hex, with or without the 0x prefix.
+
+    Args:
+        value: Raw field value.
+
+    Returns:
+        True if the value is a string of exactly 64 hex characters after an optional 0x.
+    """
+    return isinstance(value, str) and _BYTES32_HEX_RE.fullmatch(value) is not None
 
 
 def _validate_signature(payload: dict[str, Any]) -> str | None:
@@ -308,11 +328,10 @@ def _validate_eip3009_authorization(authorization: Any) -> str | None:
     for key in ("from", "to"):
         if not isinstance(authorization.get(key), str):
             return f"authorization.{key} must be a string"
-    nonce = authorization.get("nonce")
-    if not isinstance(nonce, str) or _BYTES32_HEX_RE.fullmatch(nonce) is None:
+    if not is_bytes32_hex(authorization.get("nonce")):
         return "authorization.nonce must be a 32-byte hex string"
     for key in ("value", "validAfter", "validBefore"):
-        if not _is_uint256_string(authorization.get(key)):
+        if not is_uint256_string(authorization.get(key)):
             return f"authorization.{key} must be a uint256 decimal string"
     return None
 
@@ -342,7 +361,7 @@ def _validate_permit2_authorization(authorization: Any) -> str | None:
         "witness.validAfter": witness.get("validAfter"),
     }
     for name, value in numbers.items():
-        if not _is_uint256_string(value):
+        if not is_uint256_string(value):
             return f"permit2Authorization.{name} must be a uint256 decimal string"
     return None
 
