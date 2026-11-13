@@ -153,9 +153,20 @@ const httpBinding = (input: HttpInput) =>
     getHeader: lookup(input.header_lines),
   });
 
+// The README counts a `params_json` the JSON parser refuses as rejected, whatever the reason.
+class ParamsRefused extends Error {}
+
+const parseParams = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new ParamsRefused((error as Error).message);
+  }
+};
+
 const mcpBinding = (input: McpInput) => {
   const params = (
-    input.params_json === undefined ? input.params : JSON.parse(input.params_json)
+    input.params_json === undefined ? input.params : parseParams(input.params_json)
   ) as Record<string, unknown>;
   return mcpToolCallBinding({
     server: input.server,
@@ -166,20 +177,21 @@ const mcpBinding = (input: McpInput) => {
   });
 };
 
-type Outcome = { value?: RequestBinding; error?: string };
+type Outcome = { value?: RequestBinding; error?: string; refused?: boolean };
 
 const attempt = async (fn: () => RequestBinding | Promise<RequestBinding>): Promise<Outcome> => {
   try {
     return { value: await fn() };
   } catch (error) {
-    return { error: (error as Error).message };
+    return { error: (error as Error).message, refused: error instanceof ParamsRefused };
   }
 };
 
 const bindingMatches = (result: Outcome, expect: Expect) =>
   "request_hash" in expect
     ? result.value?.requestHash === expect.request_hash
-    : result.error !== undefined && result.error.includes(expect.error as string);
+    : result.error !== undefined &&
+      (result.refused === true || result.error.includes(expect.error as string));
 
 /**
  * Asserts a result against an expectation, resolving open cases through
