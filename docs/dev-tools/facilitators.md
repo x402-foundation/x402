@@ -23,6 +23,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
 | [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL and wCOP via Permit2 |
+| [Central City](https://centralcity.ai/docs/x402-facilitator.md) | Public x402 v2 facilitator for exact USDC payments on Base mainnet via EIP-3009, including ERC-1271 smart-account payers; no API key, minimum 0.05 USDC per payment ([capabilities](https://centralcity.ai/x402/facilitator/supported)) |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
 | [CSPR.cloud x402 Facilitator](https://docs.cspr.cloud/x402-facilitator-api/reference) | x402 facilitator for Casper Mainnet and Testnet, supporting exact payments with CEP-18 tokens via EIP-712 signatures; get an API key on [https://console.cspr.build](https://console.cspr.build) |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
