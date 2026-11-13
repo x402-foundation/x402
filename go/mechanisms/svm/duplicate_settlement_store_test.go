@@ -67,6 +67,29 @@ func TestInMemoryDuplicateSettlementStore(t *testing.T) {
 		assert.True(t, reserved)
 	})
 
+	t.Run("sweeps other expired reservations at most once per interval", func(t *testing.T) {
+		store := NewInMemoryDuplicateSettlementStore()
+		clock := time.Unix(1_000, 0)
+		store.now = func() time.Time { return clock }
+
+		_, reserved, err := store.Reserve(ctx, "stale", "sig", 10*time.Second)
+		require.NoError(t, err)
+		require.True(t, reserved)
+
+		clock = clock.Add(20 * time.Second)
+		_, reserved, err = store.Reserve(ctx, "op", "sig", time.Hour)
+		require.NoError(t, err)
+		require.True(t, reserved)
+		assert.Contains(t, store.entries, "stale", "a reservation checks only its own key between sweeps")
+
+		clock = clock.Add(duplicateSweepInterval)
+		_, reserved, err = store.Reserve(ctx, "other", "sig", time.Hour)
+		require.NoError(t, err)
+		require.True(t, reserved)
+		assert.NotContains(t, store.entries, "stale")
+		assert.Contains(t, store.entries, "op")
+	})
+
 	t.Run("releases a key only for the signature that holds it", func(t *testing.T) {
 		store := NewInMemoryDuplicateSettlementStore()
 		_, reserved, err := store.Reserve(ctx, "op", "sig-1", time.Minute)

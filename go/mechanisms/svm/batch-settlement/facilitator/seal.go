@@ -251,8 +251,25 @@ func closedAtVoucher(channel *generated.Channel, cumulative uint64) bool {
 // resultKey holds the payout response kept for a retry. It exists only when OnDistributionConfirmed is set.
 func resultKey(key string) string { return key + ":result" }
 
-// recordedKey marks a payout the OnDistributionConfirmed hook already received.
+// recordedKey holds the transaction of the last payout under key that the
+// OnDistributionConfirmed hook received.
 func recordedKey(key string) string { return key + ":recorded" }
+
+// payoutMarker is the value of recordedKey as a caller already read it, so
+// delivery does not read it again. The zero value means unread.
+type payoutMarker struct {
+	transaction string
+	read        bool
+}
+
+// readPayoutMarker reads the recorded marker of key.
+func readPayoutMarker(ctx context.Context, store x402.PendingSettlementStore, key string) (payoutMarker, error) {
+	transaction, _, err := store.Get(ctx, recordedKey(key))
+	if err != nil {
+		return payoutMarker{}, err
+	}
+	return payoutMarker{transaction: transaction, read: true}, nil
+}
 
 // storePayoutResult keeps a payout response for a retry to replay.
 func storePayoutResult(ctx context.Context, store x402.PendingSettlementStore, key string, response *x402.SettleResponse) error {
@@ -263,17 +280,22 @@ func storePayoutResult(ctx context.Context, store x402.PendingSettlementStore, k
 	return store.Set(ctx, resultKey(key), string(encoded))
 }
 
-// deliverPayoutOnce hands response to hook unless a previous call for key already did.
-func deliverPayoutOnce(ctx context.Context, store x402.PendingSettlementStore, hook OnDistributionConfirmed, key string, response *x402.SettleResponse, requirements types.PaymentRequirements) error {
-	if recorded, ok, err := store.Get(ctx, recordedKey(key)); err != nil {
-		return err
-	} else if ok && recorded != "" {
+// deliverPayoutOnce hands response to hook unless key already records its
+// transaction. marker is read from the store unless the caller already read it.
+func deliverPayoutOnce(ctx context.Context, store x402.PendingSettlementStore, hook OnDistributionConfirmed, key string, marker payoutMarker, response *x402.SettleResponse, requirements types.PaymentRequirements) error {
+	if !marker.read {
+		var err error
+		if marker, err = readPayoutMarker(ctx, store, key); err != nil {
+			return err
+		}
+	}
+	if marker.transaction != "" && marker.transaction == response.Transaction {
 		return nil
 	}
 	if err := hook(ctx, response, requirements); err != nil {
 		return err
 	}
-	return store.Set(ctx, recordedKey(key), "1")
+	return store.Set(ctx, recordedKey(key), response.Transaction)
 }
 
 // PrepareRefund validates a refund and picks the cooperative close or the payer-signed request_close.
@@ -441,7 +463,7 @@ func notifySealDistribution(
 	}
 	view := *response
 	view.Amount = merchant
-	return deliverPayoutOnce(ctx, store, hook, key, &view, requirements)
+	return deliverPayoutOnce(ctx, store, hook, key, payoutMarker{}, &view, requirements)
 }
 
 func completeSealDistribution(

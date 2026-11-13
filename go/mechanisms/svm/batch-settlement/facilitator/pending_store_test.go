@@ -37,6 +37,36 @@ func TestRetainedPendingStore(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestRetainedPendingStoreSweepsOtherEntriesAtMostOncePerInterval(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Unix(1_000_000, 0)
+	store := newRetainedPendingStore()
+	store.now = func() time.Time { return clock }
+
+	require.NoError(t, store.Set(ctx, "a", "1"))
+	clock = clock.Add(10 * time.Second)
+	require.NoError(t, store.Set(ctx, "b", "1"))
+	require.NoError(t, store.Set(ctx, "c", "1"))
+
+	clock = clock.Add(PendingRetention)
+	require.NoError(t, store.Set(ctx, "d", "1"))
+	assert.NotContains(t, store.entries, "a", "a due sweep removes expired entries")
+	assert.Contains(t, store.entries, "b")
+
+	clock = clock.Add(10 * time.Second)
+	_, ok, err := store.Get(ctx, "b")
+	require.NoError(t, err)
+	assert.False(t, ok, "a read checks its own entry's age")
+	assert.NotContains(t, store.entries, "b")
+	require.NoError(t, store.Set(ctx, "e", "1"))
+	assert.Contains(t, store.entries, "c", "an expired entry survives until the next sweep")
+
+	clock = clock.Add(retainedSweepInterval)
+	require.NoError(t, store.Set(ctx, "f", "1"))
+	assert.NotContains(t, store.entries, "c")
+	assert.Contains(t, store.entries, "d")
+}
+
 func TestNewBatchSvmSchemeDefaultsToTheRetainedPendingStore(t *testing.T) {
 	scheme := NewBatchSvmScheme(context.Background(), newScriptedSigner(t, 1), &Config{})
 	assert.IsType(t, &retainedPendingStore{}, scheme.pendingStore)
