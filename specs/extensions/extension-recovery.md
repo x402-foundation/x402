@@ -363,8 +363,12 @@ looking but incorrect implementation silently violates:
     and replay the caller's retry with the same payment. Across those kill points and three
     facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
     the reply is lost), assert: at most one charge; at most one handler run across both
-    processes; every charge has a recoverable or delivered response behind it; a final state of
-    `delivered` or `void`, never in flight; and exactly one receipt for a charged payment.
+    processes; every charge has a delivered or recoverable response behind it; and no response
+    is released or replayed without a confirmed settlement behind it; a final state of
+    `delivered` or `void`, never in flight; and exactly one receipt for a charged payment. A
+    service that deliberately releases a response before settlement is final (for example,
+    batching on credit) MUST declare that mode in its extension advertisement; an undeclared
+    pre-settlement release fails this control.
     (Vector set and results: Hitek-cel/latch402, `test/x402.test.ts`.)
 
 **6. Protocol Integration**
@@ -457,3 +461,4 @@ that CAN be signed well-defined.
 | 0.4     | 2026-10-20 | Requires a **verified** payer scope before replay, not merely a declared or matching address. §5.2 names acceptable proof-of-control mechanisms and forbids returning a cached result on missing or invalid proof; §5.4 adds the unverified-scope control. Prompted by NSPG13's review at `2a03ad6` (x402-foundation/x402#3848). | a32116150-ctrl (verify402) |
 | 0.5     | 2026-11-12 | Three clarifications from an independent implementation (Hitek-cel/latch402, exercised against `@x402/hono` and `@x402/fetch` 2.30.0 with only the chain faked): a server-issued bearer credential is a valid replay key but not proof of payer control (§3.1); recovery reproduces the declared projection, not status, headers, or non-JSON bodies (§4); and an atomic claim MUST be taken before the handler, because read-only verification lets concurrent copies run it once each (§5.1, §5.4 control 9). | a32116150-ctrl (verify402) |
 | 0.6     | 2026-11-12 | Tightens the losing-copy answer: it MUST NOT receive a payment challenge, because the SDK's settlement-failure path returns a fresh `402` after the handler has already run; `409 operation_in_flight` (or waiting) is required, and a `409` tells the caller to retry the same payment (§5.1(6), §5.4 control 9). Adds a crash-at-every-durable-write control with single-charge and recoverability invariants (§5.4 control 10). Prompted by Hitek-cel's concurrency and crash data on x402-foundation/x402#3848. | a32116150-ctrl (verify402) |
+| 0.7     | 2026-11-13 | The recovery invariant is now bidirectional (§5.4 control 10): every charge has a delivered or recoverable response behind it, and no response is released or replayed without a confirmed settlement behind it — a store can assert that offline, since every released or replayed response must point at a confirmed settlement. Modes that deliberately serve before settlement final (e.g., batching on credit) MUST declare the exception in their extension advertisement rather than ship it silently; an undeclared pre-settlement release fails the control. Prompted by Hitek-cel on x402-foundation/x402#3848 (comment 6837452445). | a32116150-ctrl (verify402) |
