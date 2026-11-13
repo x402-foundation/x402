@@ -1489,6 +1489,8 @@ class x402ResourceServerBase:
             )
             return verify_response
 
+        except _SyncServerAsyncHookError:
+            raise
         except Exception as e:
             failure_context = VerifyFailureContext(
                 payment_payload=payload,

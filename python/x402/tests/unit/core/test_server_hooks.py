@@ -11,6 +11,7 @@ from x402.schemas import (
     AfterSettleAbortError,
     PaymentPayload,
     PaymentRequirements,
+    RecoveredVerifyResult,
     SettleError,
     SettlePhase,
     SettleResponse,
@@ -777,3 +778,31 @@ class TestGateHookThrowOutcomes:
         resource_server.on_before_settle(hook)
         with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
             resource_server.settle_payment(build_payload(), build_requirements())
+
+    def test_sync_server_async_after_verify_skips_verify_failure(self):
+        client = MockFacilitatorClientSync()
+        resource_server = x402ResourceServerSync(client)
+        resource_server.register("eip155:8453", _HookSchemeServer())
+        resource_server.initialize()
+        after_calls: list[str] = []
+        failure_calls: list[object] = []
+
+        def sync_after(_ctx):
+            after_calls.append("sync")
+
+        async def async_after(_ctx):
+            return None
+
+        def failure_hook(_ctx):
+            failure_calls.append(_ctx)
+            return RecoveredVerifyResult(result=VerifyResponse(is_valid=True, payer="0xrecovered"))
+
+        resource_server.on_after_verify(sync_after)
+        resource_server.on_after_verify(async_after)
+        resource_server.on_verify_failure(failure_hook)
+
+        with pytest.raises(_SyncServerAsyncHookError, match="Async hooks are not supported"):
+            resource_server.verify_payment(build_payload(), build_requirements())
+
+        assert failure_calls == []
+        assert after_calls == ["sync"]
