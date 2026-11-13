@@ -21,6 +21,7 @@
 #   @x402-foundation/concordium  — Concordium network maintainers
 #   @x402-foundation/hedera      — Hedera network maintainers
 #   @x402-foundation/keeta       — Keeta network maintainers
+#   @x402-foundation/lnbtc       — Bitcoin Lightning (lnbtc) network maintainers
 #   @x402-foundation/near        — NEAR network maintainers
 #   @x402-foundation/tvm         — TVM (TON) network maintainers
 #   @x402-foundation/xrpl        — XRPL network maintainers
@@ -203,6 +204,10 @@
 /specs/schemes/**/scheme_*_keeta.md                                       @x402-foundation/keeta
 /typescript/packages/mechanisms/keeta/                                    @x402-foundation/keeta
 /.github/workflows/publish_npm_scoped_x402_keeta.yml                      @x402-foundation/keeta
+
+# ── Lightning (lnbtc) ─────────────────────────────────────────────────────────
+/typescript/packages/mechanisms/lnbtc/                                    @x402-foundation/lnbtc
+/.github/workflows/publish_npm_scoped_x402_lnbtc.yml                      @x402-foundation/lnbtc
 
 # ── NEAR ──────────────────────────────────────────────────────────────────────
 /specs/schemes/**/scheme_*_near.md                                        @x402-foundation/near
