@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { x402HTTPResourceServer, x402ResourceServer } from "@x402/core/server";
-import { paymentMiddlewareFromHTTPServer } from "./index";
+import { paymentMiddlewareFromHTTPServer, type PaymentMiddlewareOptions } from "./index";
 
 describe("payment hooks and parsed request bodies", () => {
   let app: FastifyInstance;
@@ -34,8 +34,40 @@ describe("payment hooks and parsed request bodies", () => {
       bodies.push(structuredClone(await context.adapter.getBody?.()));
       return { grantAccess: true };
     });
-    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
+    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, {
+      paymentHook: "preValidation",
+    });
     return bodies;
+  }
+
+  /**
+   * Creates an initialized resource server with local facilitator doubles.
+   *
+   * @returns Resource server, test scheme details and facilitator call spies.
+   */
+  async function createTestResourceServer() {
+    const network = "eip155:84532";
+    const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+    const verify = vi.fn();
+    const settle = vi.fn();
+    const resourceServer = new x402ResourceServer({
+      getSupported: async () => ({
+        kinds: [{ x402Version: 2, scheme: "exact", network }],
+        extensions: [],
+        signers: {},
+      }),
+      verify,
+      settle,
+    });
+    resourceServer.register(network, {
+      scheme: "exact",
+      parsePrice: async price => ({ amount: String(price), asset, extra: {} }),
+      enhancePaymentRequirements: async requirements => requirements,
+      defaultAssetTransferMethod: "default",
+      paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
+    });
+    await resourceServer.initialize();
+    return { resourceServer, network, asset, verify, settle } as const;
   }
 
   it("makes the JSON body available to the payment hook and the route", async () => {
@@ -156,7 +188,9 @@ describe("payment hooks and parsed request bodies", () => {
       });
       return { grantAccess: true };
     });
-    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
+    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, {
+      paymentHook: "preValidation",
+    });
     app.post(
       "/quote",
       {
@@ -194,7 +228,9 @@ describe("payment hooks and parsed request bodies", () => {
         accepts: { scheme: "exact", network: "eip155:84532", payTo: "0x123", price: "$0.01" },
       },
     }).onProtectedRequest(async () => ({ abort: true, reason: "Payment access denied" }));
-    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
+    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, {
+      paymentHook: "preValidation",
+    });
     const cachedResponse = vi.fn(async (_request: FastifyRequest, reply: FastifyReply) =>
       reply.send({ cached: "paid content" }),
     );
@@ -210,28 +246,89 @@ describe("payment hooks and parsed request bodies", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  describe.each<{ name: string; options?: PaymentMiddlewareOptions }>([
+    { name: "omitted options" },
+    { name: "empty options", options: {} },
+    { name: "explicit onRequest", options: { paymentHook: "onRequest" } },
+  ])("early payment gate with $name", ({ options }) => {
+    it.each([
+      { name: "malformed JSON", payload: '{"quantity":', contentType: "application/json" },
+      {
+        name: "an oversized body",
+        payload: JSON.stringify({ quantity: "x".repeat(32) }),
+        contentType: "application/json",
+      },
+      { name: "a custom parser", payload: "2", contentType: "application/x-quantity" },
+    ])(
+      "returns 402 before parsing $name or running later hooks",
+      async ({ payload, contentType }) => {
+        const { resourceServer, verify, settle } = await createTestResourceServer();
+        const httpServer = new x402HTTPResourceServer(resourceServer, {
+          "POST /quote": {
+            accepts: { scheme: "exact", network: "eip155:84532", payTo: "0x123", price: 100 },
+          },
+        });
+        paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, options);
+        const parser = vi.fn((_request, body, done) => done(null, { quantity: Number(body) }));
+        app.addContentTypeParser("application/x-quantity", { parseAs: "string" }, parser);
+        const laterOnRequest = vi.fn(async () => {});
+        const preParsing = vi.fn(async (_request, _reply, payload) => payload);
+        const preValidation = vi.fn(async () => {});
+        app.addHook("onRequest", laterOnRequest);
+        app.addHook("preParsing", preParsing);
+        app.addHook("preValidation", preValidation);
+        const handler = vi.fn(async () => "paid content");
+        app.post("/quote", { bodyLimit: 16 }, handler);
+
+        const response = await app.inject({
+          method: "POST",
+          url: "/quote",
+          headers: { "content-type": contentType },
+          payload,
+        });
+
+        expect(response.statusCode).toBe(402);
+        const required = JSON.parse(
+          Buffer.from(String(response.headers["payment-required"]), "base64").toString("utf8"),
+        );
+        expect(required.accepts[0].amount).toBe("100");
+        for (const callback of [
+          parser,
+          laterOnRequest,
+          preParsing,
+          preValidation,
+          handler,
+          verify,
+          settle,
+        ]) {
+          expect(callback).not.toHaveBeenCalled();
+        }
+      },
+    );
+  });
+
+  it("keeps the body available to a permitted route with the default payment hook", async () => {
+    const observed: unknown[] = [];
+    const httpServer = new x402HTTPResourceServer(new x402ResourceServer(), {
+      "POST /quote": {
+        accepts: { scheme: "exact", network: "eip155:84532", payTo: "0x123", price: "$0.01" },
+      },
+    }).onProtectedRequest(async context => {
+      observed.push(await context.adapter.getBody?.());
+      return { grantAccess: true };
+    });
+    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
+    app.post("/quote", async request => request.body);
+
+    const response = await app.inject({ method: "POST", url: "/quote", payload: { quantity: 2 } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ quantity: 2 });
+    expect(observed).toEqual([undefined]);
+  });
+
   it("builds payment requirements from the parsed body before returning 402", async () => {
-    const network = "eip155:84532";
-    const asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
-    const verify = vi.fn();
-    const settle = vi.fn();
-    const resourceServer = new x402ResourceServer({
-      getSupported: async () => ({
-        kinds: [{ x402Version: 2, scheme: "exact", network }],
-        extensions: [],
-        signers: {},
-      }),
-      verify,
-      settle,
-    });
-    resourceServer.register(network, {
-      scheme: "exact",
-      parsePrice: async price => ({ amount: String(price), asset, extra: {} }),
-      enhancePaymentRequirements: async requirements => requirements,
-      defaultAssetTransferMethod: "default",
-      paymentFlows: { default: { supported: ["upfront"], default: "upfront" } },
-    });
-    await resourceServer.initialize();
+    const { resourceServer, network, asset, verify, settle } = await createTestResourceServer();
     const httpServer = new x402HTTPResourceServer(resourceServer, {
       "POST /quote": {
         accepts: {
@@ -245,7 +342,9 @@ describe("payment hooks and parsed request bodies", () => {
         },
       },
     });
-    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
+    paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, {
+      paymentHook: "preValidation",
+    });
     const handler = vi.fn(async () => "ok");
     app.post("/quote", handler);
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { paymentMiddleware } from "./index";
 import {
@@ -13,7 +13,7 @@ type HookHandler = (...args: unknown[]) => Promise<unknown>;
  * Captured hooks from a mock Fastify instance.
  */
 interface CapturedHooks {
-  preValidation: HookHandler[];
+  onRequest: HookHandler[];
   onSend: HookHandler[];
 }
 
@@ -23,11 +23,11 @@ interface CapturedHooks {
  * @returns Object containing the mock app and captured hooks.
  */
 function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
-  const hooks: CapturedHooks = { preValidation: [], onSend: [] };
+  const hooks: CapturedHooks = { onRequest: [], onSend: [] };
 
   const app = {
     addHook: vi.fn((name: string, handler: HookHandler) => {
-      if (name === "preValidation") hooks.preValidation.push(handler);
+      if (name === "onRequest") hooks.onRequest.push(handler);
       if (name === "onSend") hooks.onSend.push(handler);
     }),
     decorateRequest: vi.fn(),
@@ -99,11 +99,11 @@ function createMockReply(): FastifyReply & {
     }),
   };
 
-  return reply as unknown as typeof reply;
+  return reply as unknown as FastifyReply & typeof reply;
 }
 
 describe("paymentMiddleware malformed path bypass", () => {
-  let processSpy: ReturnType<typeof vi.spyOn>;
+  let processSpy: MockInstance<x402HTTPResourceServer["processHTTPRequest"]>;
 
   beforeEach(() => {
     processSpy = vi
@@ -137,7 +137,7 @@ describe("paymentMiddleware malformed path bypass", () => {
             network: "eip155:8453",
           },
         },
-      };
+      } as const;
 
       const server = new x402ResourceServer();
 
@@ -147,7 +147,7 @@ describe("paymentMiddleware malformed path bypass", () => {
       const request = createMockRequest({ url: path });
       const reply = createMockReply();
 
-      await hooks.preValidation[0](request, reply);
+      await hooks.onRequest[1](request, reply);
 
       expect(processSpy).toHaveBeenCalled();
       expect(processSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ path }));
