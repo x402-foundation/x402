@@ -30,7 +30,7 @@ import { ExactPermit2Payload } from "../../types";
 import { startAssetContractCheck } from "../../assetCache";
 import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { checkTypedDataSignature } from "../../shared/verifySignature";
 import {
   simulatePermit2Settle,
   simulatePermit2SettleWithPermit,
@@ -202,7 +202,7 @@ export async function verifyPermit2(
   // when it does. No ECDSA fallback for addresses with code — that fallback
   // would accept signatures Permit2 rejects on-chain (notably for ERC-7702
   // EOAs whose delegate doesn't accept raw owner ECDSA).
-  const signatureValid = await verifyTypedDataSignature(signer, {
+  const signatureCheck = await checkTypedDataSignature(signer, {
     address: payer,
     ...permit2TypedData,
     signature: permit2Payload.signature,
@@ -213,7 +213,17 @@ export async function verifyPermit2(
     return { isValid: false, invalidReason: assetReason, payer };
   }
 
-  if (!signatureValid) {
+  // The payer eth_getCode or isValidSignature read failed: no signature check ran.
+  if (signatureCheck === "lookup_failed") {
+    return {
+      isValid: false,
+      invalidReason: Errors.ErrFailedToVerifySignature,
+      invalidMessage: "payer signature lookup failed",
+      payer,
+    };
+  }
+
+  if (signatureCheck !== "valid") {
     return {
       isValid: false,
       invalidReason: Errors.ErrPermit2InvalidSignature,
