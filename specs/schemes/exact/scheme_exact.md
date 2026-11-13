@@ -114,3 +114,5 @@ The extension is network-agnostic in shape but network-specific in encoding and 
 When `extra.splits` is absent or empty, the scheme behaves as a single-payee `exact` payment. Networks that do not implement the extension MUST reject requirements that carry a non-empty `splits` array rather than silently ignoring it (which would misdirect the merchant's expected distribution).
 
 Solana defines the full schema, transaction structure, ATA-creation authorization, and verification rules for this extension in `scheme_exact_svm.md` (§5). Other networks MAY specify their own encoding of the same model.
+
+Sui binds the extension in `scheme_exact_sui.md` (Splits).
