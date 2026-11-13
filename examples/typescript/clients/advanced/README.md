@@ -284,6 +284,7 @@ const client = x402Client.fromConfig({
   schemes: [{ network: "eip155:*", client: new ExactEvmScheme(evmSigner) }],
   spendControls: {
     maxAmountPerPayment: "$1", // default USD cap on recognized pegged assets
+    maxTimeoutSeconds: 3600, // default cap on the signed validity window (seconds)
     allowedAssets: [
       // opt-in non-default with atomic cap
       { network: "eip155:*", asset: "0xCustomToken", maxAmountPerPayment: "2000000" },
@@ -299,6 +300,7 @@ const client = x402Client.fromConfig({
 | Control | Purpose |
 | --- | --- |
 | `maxAmountPerPayment` | USD ceiling on recognized pegged assets (default `$1`). Set `false` to remove. |
+| `maxTimeoutSeconds` | Ceiling on the server-requested `maxTimeoutSeconds`, i.e. how long a signed authorization stays valid (default `3600`). Set `false` to remove. |
 | `allowedAssets` | Opt-in for non-default tokens. List of `{ network, asset }` with optional atomic `maxAmountPerPayment`, or `true` to allow any asset. |
 | `spendControls: false` | Disable all spend controls. Use only for UI-confirmed flows (paywall). |
 
@@ -307,6 +309,7 @@ Native assets (XRP, CCD, KTA, ETH, SOL, HBAR) are not in `DEFAULT_ASSETS`. The `
 **Use case:**
 
 - Bound spend against a malicious 402 or unbounded custom token
+- Bound how long a signed authorization stays cashable when a 402 asks for a very long `maxTimeoutSeconds`
 - Allow a specific custom token without disabling the USD cap on stables
 - Override the cap for one ticker (e.g. PYUSD) without raising it globally
 
