@@ -7,6 +7,7 @@ description: "Community-maintained x402 SDKs."
 | ---- | ----------- | --------- | ----- |
 | [Mogami](https://mogami.gitbook.io/mogami) | Java x402 stack | Java | [GitHub](https://github.com/mogami-tech/) |
 | [PipRail](https://piprail.com) | Multi-chain x402 SDK + MCP server; backendless self-custody (verify against your own RPC) | TypeScript | [GitHub](https://github.com/piprail/piprail) |
-| [raxol_payments](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | x402 client for Elixir/OTP agents, with ledger-enforced spend limits | Elixir | [GitHub](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) · [Hex](https://hex.pm/packages/raxol_payments) |
+| [raxol_payments](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | x402 client for Elixir/OTP agents, with ledger-enforced spend limits | Elixir | [GitHub](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | [Hex](https://hex.pm/packages/raxol_payments) |
 | [x402-rs](https://github.com/x402-rs/x402-rs/blob/main/README.md) | Rust toolkit for x402 | Rust | [GitHub](https://github.com/x402-rs/x402-rs) |
 | [x402-rails](https://github.com/quiknode-labs/x402-rails/blob/main/README.md) | x402 for Rails applications by Quicknode | Ruby | [GitHub](https://github.com/quiknode-labs/x402-rails) |
+| [usdc-paywall](https://github.com/essentoclothes-sudo/usdc-paywall) | Per-call USDC paywall for Node.js APIs: HTTP 402 middleware with on-chain payment verification on Base | TypeScript | [GitHub](https://github.com/essentoclothes-sudo/usdc-paywall) | [npm](https://www.npmjs.com/package/@josealbertomaquina/usdc-paywall) |
