@@ -1,4 +1,25 @@
 import { describe, it, expect, vi } from "vitest";
+
+const { mockReadContract, mockCreatePublicClient, mockHttp } = vi.hoisted(() => {
+  const readContract = vi.fn();
+  return {
+    mockReadContract: readContract,
+    mockCreatePublicClient: vi.fn(() => ({
+      readContract,
+    })),
+    mockHttp: vi.fn((url: string) => ({ url })),
+  };
+});
+
+vi.mock("viem", async () => {
+  const actual = await vi.importActual<typeof import("viem")>("viem");
+  return {
+    ...actual,
+    createPublicClient: mockCreatePublicClient,
+    http: mockHttp,
+  };
+});
+
 import { privateKeyToAccount } from "viem/accounts";
 import { getAddress } from "viem";
 import { x402HTTPClient } from "@x402/core/client";
@@ -884,6 +905,58 @@ describe("BatchSettlementEvmScheme — createPaymentPayload", () => {
       | undefined;
     expect(info?.amount).toBe("5000");
     expect(info?.spender).toBe(getAddress(PERMIT2_ADDRESS));
+  });
+
+  it("reads the Permit2 allowance from rpcUrl when hasRpcClient is false", async () => {
+    _resetSponsoringWarnings();
+    mockReadContract.mockClear();
+    mockHttp.mockClear();
+    mockCreatePublicClient.mockClear();
+    mockReadContract.mockResolvedValue(1_000_000n);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const storage = new InMemoryClientChannelStorage();
+      // The signer reports allowance 0, which would attach a sponsored permit.
+      // The RPC reports enough allowance to skip it.
+      const readContract = vi.fn().mockResolvedValue(0n);
+      const signer: ClientEvmSigner = {
+        ...buildSigner(PAYER_PRIVATE_KEY),
+        readContract,
+        hasRpcClient: () => false,
+      };
+      const requirements = makeRequirements({
+        extra: {
+          name: "USDC",
+          version: "2",
+          receiverAuthorizer: RECEIVER_AUTHORIZER,
+          assetTransferMethod: "permit2",
+        },
+      });
+      const config = buildChannelConfig(makeDeps({ signer, storage }), requirements);
+      await storage.set(computeChannelId(config).toLowerCase(), {});
+      const client = new BatchSettlementEvmScheme(signer, {
+        storage,
+        rpcUrl: "https://batch-allowance.example",
+      });
+
+      const result = await client.createPaymentPayload(2, requirements, {
+        extensions: { eip2612GasSponsoring: {} },
+        maxAmountPerPayment: "1000000",
+      });
+
+      const extensions = result.extensions as Record<string, unknown> | undefined;
+      expect(extensions?.eip2612GasSponsoring).toBeUndefined();
+      expect(readContract).not.toHaveBeenCalled();
+      expect(mockReadContract).toHaveBeenCalledTimes(1);
+      expect(mockReadContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "allowance" }),
+      );
+      expect(mockHttp).toHaveBeenCalledWith("https://batch-allowance.example");
+      expect(mockCreatePublicClient).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
