@@ -58,16 +58,28 @@ class KeypairSigner:
         return self._keypair
 
     def sign_transaction(self, tx: VersionedTransaction) -> VersionedTransaction:
-        """Sign a transaction.
+        """Sign a transaction in this keypair's signer slot.
+
+        Other signatures, such as the facilitator fee payer's, are left as they are.
 
         Args:
             tx: The transaction to sign.
 
         Returns:
-            Signed transaction.
+            New transaction with this keypair's signature added.
+
+        Raises:
+            ValueError: If this keypair is not a required signer of the transaction.
         """
-        tx.sign([self._keypair])
-        return tx
+        message = tx.message
+        pubkey = self._keypair.pubkey()
+        signers = message.account_keys[: message.header.num_required_signatures]
+        if pubkey not in signers:
+            raise ValueError(f"{pubkey} is not a required signer of the transaction")
+
+        signatures = list(tx.signatures)
+        signatures[signers.index(pubkey)] = self._keypair.sign_message(to_bytes_versioned(message))
+        return VersionedTransaction.populate(message, signatures)
 
     @classmethod
     def from_base58(cls, private_key: str) -> "KeypairSigner":

@@ -1,0 +1,1 @@
+`KeypairSigner.sign_transaction` now returns the transaction with the keypair's signature added in its signer slot, instead of always raising `AttributeError`, and raises `ValueError` if the keypair is not a required signer.
