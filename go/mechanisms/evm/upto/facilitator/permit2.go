@@ -27,7 +27,23 @@ func VerifyUptoPermit2(
 	facilCtx *x402.FacilitatorContext,
 	simulate bool,
 ) (*x402.VerifyResponse, error) {
+	return verifyUptoPermit2(ctx, signer, payload, requirements, permit2Payload, facilCtx, simulate, nil)
+}
+
+// simulationAmount overrides only the simulated charge, never the signed
+// authorization or requirements validation. Nil uses the requirements ceiling.
+func verifyUptoPermit2(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	payload types.PaymentPayload,
+	requirements types.PaymentRequirements,
+	permit2Payload *evm.UptoPermit2Payload,
+	facilCtx *x402.FacilitatorContext,
+	simulate bool,
+	simulationAmount *big.Int,
+) (*x402.VerifyResponse, error) {
 	payer := permit2Payload.Permit2Authorization.From
+	zeroSettlement := simulationAmount != nil && simulationAmount.Sign() == 0
 
 	if payload.Accepted.Scheme != evm.SchemeUpto || requirements.Scheme != evm.SchemeUpto {
 		return nil, x402.NewVerifyError(ErrUptoInvalidScheme, payer, "scheme mismatch")
@@ -124,26 +140,33 @@ func VerifyUptoPermit2(
 		} else if code, codeErr := signer.GetCode(ctx, payer); codeErr == nil {
 			deployed = len(code) > 0
 		}
-		if !deployed {
+		// A zero settlement has no simulation to confirm a deployed wallet signature.
+		if !deployed || (simulate && zeroSettlement) {
 			return nil, x402.NewVerifyError(ErrPermit2InvalidSignature, payer, "invalid signature")
 		}
 	}
 
-	if !simulate {
+	if !simulate || zeroSettlement {
 		return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 	}
 
-	// Simulate against requirements.amount (worst-case charge). From must equal the
-	// facilitator address: the upto proxy enforces msg.sender == witness.facilitator.
+	if simulationAmount == nil {
+		simulationAmount = requiredAmount
+	}
+	amountRequired := simulationAmount.String()
+
+	// Simulate the actual charge during settlement, or the ceiling during verification.
+	// From must equal the facilitator address: the upto proxy enforces
+	// msg.sender == witness.facilitator.
 	eip2612Info, _ := eip2612gassponsor.ExtractEip2612GasSponsoringInfo(payload.Extensions)
 	if eip2612Info != nil {
 		if validErr := validateEip2612PermitForPayment(eip2612Info, payer, tokenAddress); validErr != "" {
 			return nil, x402.NewVerifyError(validErr, payer, "eip2612 validation failed")
 		}
 
-		simOk, simErr := SimulateUptoPermit2SettleWithPermit(ctx, signer, permit2Payload, requiredAmount, eip2612Info.Signature, eip2612Info.Amount, eip2612Info.Deadline)
+		simOk, simErr := SimulateUptoPermit2SettleWithPermit(ctx, signer, permit2Payload, simulationAmount, eip2612Info.Signature, eip2612Info.Amount, eip2612Info.Deadline)
 		if simErr != nil || !simOk {
-			resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
+			resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, amountRequired)
 			return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
 		}
 		return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
@@ -163,7 +186,7 @@ func VerifyUptoPermit2(
 			}
 
 			if simulator, ok := extensionSigner.(erc20approvalgassponsor.Erc20ApprovalGasSponsoringSimulator); ok {
-				simArgs, buildErr := BuildUptoPermit2SettleArgs(permit2Payload, requiredAmount)
+				simArgs, buildErr := BuildUptoPermit2SettleArgs(permit2Payload, simulationAmount)
 				if buildErr == nil {
 					simOk, simErr := simulator.SimulateTransactions(ctx, []erc20approvalgassponsor.TransactionRequest{
 						{Serialized: erc20Info.SignedTransaction},
@@ -178,11 +201,11 @@ func VerifyUptoPermit2(
 						return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 					}
 				}
-				resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
+				resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, amountRequired)
 				return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
 			}
 
-			prereqResp := CheckUptoPermit2Prerequisites(ctx, signer, tokenAddress, payer, requirements.Amount)
+			prereqResp := CheckUptoPermit2Prerequisites(ctx, signer, tokenAddress, payer, amountRequired)
 			if !prereqResp.IsValid {
 				return nil, x402.NewVerifyError(prereqResp.InvalidReason, payer, "prerequisites check failed")
 			}
@@ -190,9 +213,9 @@ func VerifyUptoPermit2(
 		}
 	}
 
-	simOk, simErr := SimulateUptoPermit2Settle(ctx, signer, permit2Payload, requiredAmount)
+	simOk, simErr := SimulateUptoPermit2Settle(ctx, signer, permit2Payload, simulationAmount)
 	if simErr != nil || !simOk {
-		resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, requirements.Amount)
+		resp := DiagnoseUptoPermit2SimulationFailure(ctx, signer, tokenAddress, permit2Payload, amountRequired)
 		return nil, x402.NewVerifyError(resp.InvalidReason, payer, "simulation failed")
 	}
 
@@ -221,7 +244,7 @@ func SettleUptoPermit2(
 	// retry (byte-identical payload/requirements), so the fast path below can
 	// safely reuse it to report the settled Amount without re-verifying.
 	settlementAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
-	if !ok {
+	if !ok || settlementAmount.Sign() < 0 {
 		return nil, x402.NewSettleError(ErrUptoInvalidPayload, payer, network, "", "invalid settlement amount")
 	}
 
@@ -239,11 +262,21 @@ func SettleUptoPermit2(
 		}
 	}
 
-	// Re-verify with permitted.amount as requirements.Amount (the authorized max)
+	// Reject charges above the signed ceiling before simulation or broadcast.
+	permittedAmount, ok := new(big.Int).SetString(permit2Payload.Permit2Authorization.Permitted.Amount, 10)
+	if !ok {
+		return nil, x402.NewSettleError(ErrUptoInvalidPayload, payer, network, "", "invalid permitted amount")
+	}
+	if settlementAmount.Cmp(permittedAmount) > 0 {
+		return nil, x402.NewSettleError(ErrUptoSettlementExceedsAmount, payer, network, "", "settlement exceeds permitted amount")
+	}
+
+	// Re-verify against the signed ceiling, but simulate only the actual charge.
+	// Zero settlements still require verification without a transfer simulation.
 	verifyRequirements := requirements
 	verifyRequirements.Amount = permit2Payload.Permit2Authorization.Permitted.Amount
 
-	verifyResp, err := VerifyUptoPermit2(ctx, signer, payload, verifyRequirements, permit2Payload, facilCtx, simulateInSettle)
+	verifyResp, err := verifyUptoPermit2(ctx, signer, payload, verifyRequirements, permit2Payload, facilCtx, simulateInSettle, settlementAmount)
 	if err != nil {
 		ve := &x402.VerifyError{}
 		if errors.As(err, &ve) {
@@ -261,15 +294,6 @@ func SettleUptoPermit2(
 			Payer:       verifyResp.Payer,
 			Amount:      "0",
 		}, nil
-	}
-
-	// Guard: settlement amount must not exceed authorized maximum
-	permittedAmount, ok := new(big.Int).SetString(permit2Payload.Permit2Authorization.Permitted.Amount, 10)
-	if !ok {
-		return nil, x402.NewSettleError(ErrUptoInvalidPayload, payer, network, "", "invalid permitted amount")
-	}
-	if settlementAmount.Cmp(permittedAmount) > 0 {
-		return nil, x402.NewSettleError(ErrUptoSettlementExceedsAmount, payer, network, "", "settlement exceeds permitted amount")
 	}
 
 	args, buildErr := BuildUptoPermit2SettleArgs(permit2Payload, settlementAmount)
