@@ -204,12 +204,14 @@ The `PaymentPayload` schema contains the following fields:
 
 The `accepted` field contains a `PaymentRequirements` object (see section 5.1.2).
 
-The `payload` field contains scheme-specific data. For example, with exact EVM scheme, this includes:
+The `payload` field contains scheme-specific data. The structure of `payload` varies by payment scheme and asset transfer method. For example, with the exact EVM scheme using EIP-3009, this includes:
 
 | Field Name      | Type     | Required | Description                         |
 | --------------- | -------- | -------- | ----------------------------------- |
 | `signature`     | `string` | Required | EIP-712 signature for authorization |
 | `authorization` | `object` | Required | EIP-3009 authorization parameters   |
+
+Other asset transfer methods within the exact scheme (e.g., Permit2, ERC-7710, TXID) define different `payload` structures. See individual scheme specifications for details.
 
 The `Authorization` object contains the following fields:
 
