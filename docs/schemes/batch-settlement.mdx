@@ -961,7 +961,17 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
     // Reclaim PDA rent from abandoned channels
     const rentCleanup = scheme.createRentCleanupManager("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
-    rentCleanup.start({ intervalSecs: 60, abandonGraceSecs: 120 });
+    rentCleanup.start({
+      intervalSecs: 60,
+      abandonGraceSecs: 120,
+      // Optional: called before each abandon-close or distribute within
+      // maxClosesPerRun. Throwing skips the channel; the error is reported
+      // through onError and does not consume a maxClosesPerRun slot.
+      // Reclaim never calls this hook.
+      // beforeCloseOrDistribute: async ({ channelId, payer, payTo, action }) => {
+      //   console.log(`closing channel ${channelId} (action: ${action})`);
+      // },
+    });
     ```
   </Tab>
   <Tab title="Go">
