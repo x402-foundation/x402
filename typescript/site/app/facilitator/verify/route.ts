@@ -1,4 +1,5 @@
 import { VerifyResponse, PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import { parsePaymentPayload, parsePaymentRequirements } from "@x402/core/schemas";
 import { getFacilitator } from "../index";
 
 /**
@@ -9,13 +10,13 @@ import { getFacilitator } from "../index";
  */
 export async function POST(req: Request) {
   // Parse request body - handle JSON parsing errors separately
-  let paymentPayload: PaymentPayload | undefined;
-  let paymentRequirements: PaymentRequirements | undefined;
+  let rawPaymentPayload: unknown;
+  let rawPaymentRequirements: unknown;
 
   try {
     const body = await req.json();
-    paymentPayload = body.paymentPayload as PaymentPayload;
-    paymentRequirements = body.paymentRequirements as PaymentRequirements;
+    rawPaymentPayload = body.paymentPayload;
+    rawPaymentRequirements = body.paymentRequirements;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Failed to parse request body:", errorMessage);
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   }
 
   // Check for missing parameters
-  if (!paymentPayload || !paymentRequirements) {
+  if (!rawPaymentPayload || !rawPaymentRequirements) {
     return Response.json(
       {
         isValid: false,
@@ -42,6 +43,46 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // Validate against the real x402 (V1 or V2) schemas before ever touching
+  // the payload's fields. Without this, a malformed or wrong-version body
+  // reaches facilitator.verify()/settle() (and the scheme-specific handlers
+  // beneath it) as an untyped `unknown` cast to the expected type, and any
+  // property access on a missing/mis-shaped field throws an uncaught
+  // TypeError that surfaces as an opaque HTTP 500 "unexpected_error" instead
+  // of a specific, actionable 400 — e.g. a v2 PaymentPayload missing the
+  // required `accepted` field previously produced
+  // "Cannot read properties of undefined (reading 'scheme')".
+  const payloadResult = parsePaymentPayload(rawPaymentPayload);
+
+  if (!payloadResult.success) {
+    return Response.json(
+      {
+        isValid: false,
+        invalidReason: "invalid_payment_payload",
+        invalidMessage: `paymentPayload failed schema validation: ${payloadResult.error.message}`,
+        error: payloadResult.error.message,
+      } as VerifyResponse,
+      { status: 400 },
+    );
+  }
+
+  const requirementsResult = parsePaymentRequirements(rawPaymentRequirements);
+
+  if (!requirementsResult.success) {
+    return Response.json(
+      {
+        isValid: false,
+        invalidReason: "invalid_payment_requirements",
+        invalidMessage: `paymentRequirements failed schema validation: ${requirementsResult.error.message}`,
+        error: requirementsResult.error.message,
+      } as VerifyResponse,
+      { status: 400 },
+    );
+  }
+
+  const paymentPayload = payloadResult.data as PaymentPayload;
+  const paymentRequirements = requirementsResult.data as PaymentRequirements;
 
   try {
     const facilitator = await getFacilitator();
