@@ -46,7 +46,14 @@ const mockPaymentRequirements = {
 // --- Mock setup ---
 let mockProcessHTTPRequest: ReturnType<typeof vi.fn>;
 let mockProcessSettlement: ReturnType<typeof vi.fn>;
-let mockCreateCompletedSettlementHeaders: ReturnType<typeof vi.fn>;
+let mockCreateCompletedSettlementHeaders: ReturnType<
+  typeof vi.fn<
+    (
+      settlement: CompletedSettlement,
+      existingCacheControl?: string | null,
+    ) => Record<string, string>
+  >
+>;
 let mockCreateFailurePathSettlementHeaders: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
@@ -317,10 +324,12 @@ describe("paymentMiddleware", () => {
     vi.clearAllMocks();
     mockProcessHTTPRequest = vi.fn();
     mockProcessSettlement = vi.fn();
-    mockCreateCompletedSettlementHeaders = vi.fn((_settlement, existingCacheControl) => ({
-      "PAYMENT-RESPONSE": "before-handler-receipt",
-      "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
-    }));
+    mockCreateCompletedSettlementHeaders = vi.fn(
+      (_settlement: CompletedSettlement, existingCacheControl?: string | null) => ({
+        "PAYMENT-RESPONSE": "before-handler-receipt",
+        "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
+      }),
+    );
     mockCreateFailurePathSettlementHeaders = vi.fn((cancelSettlement, settlement) => {
       if (cancelSettlement) {
         return {
