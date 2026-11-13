@@ -1,11 +1,32 @@
 import { x402Client, x402ClientConfig, x402HTTPClient } from "@x402/core/client";
 import { MAX_CONTROL_PLANE_RESPONSE_BYTES, ResponseBodyTooLargeError } from "@x402/core/http";
 import { type PaymentRequired } from "@x402/core/types";
-import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import {
+  type AxiosInstance,
+  type AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
 type AxiosHeaderValue = string | string[];
 type AxiosHeaderRecord = Record<string, AxiosHeaderValue>;
+
+/**
+ * Closes a Node response stream that the wrapper will not return to the caller.
+ *
+ * @param response - Intermediate response owned by the payment wrapper.
+ */
+function releaseResponseBody(response: AxiosResponse): void {
+  const body = response.data as { pipe?: unknown; destroy?: () => void } | null | undefined;
+  if (
+    response.config.responseType === "stream" &&
+    typeof body?.pipe === "function" &&
+    typeof body.destroy === "function"
+  ) {
+    body.destroy();
+  }
+}
 
 /**
  * Resolves the final absolute URL for an Axios 402 response.
@@ -86,18 +107,18 @@ function setAxiosHeader(headers: AxiosHeaderRecord, key: string, value: string):
 }
 
 /**
- * Ensures an Axios `response.data` value stays within the control-plane body cap.
- * Axios buffers response bodies, so byte length can be checked without streaming.
+ * Ensures a buffered Axios response stays within the control-plane body cap.
  *
- * @param data - Axios `response.data` for a payment-required or retry response
+ * @param response - Payment-required or retry response
  * @param maxBytes - Maximum allowed body size in bytes
  * @throws {@link ResponseBodyTooLargeError} when the buffered body exceeds `maxBytes`
  */
 function assertAxiosResponseBodyWithinLimit(
-  data: unknown,
+  response: AxiosResponse,
   maxBytes: number = MAX_CONTROL_PLANE_RESPONSE_BYTES,
 ): void {
-  if (data == null) {
+  const data: unknown = response.data;
+  if (response.config.responseType === "stream" || data == null) {
     return;
   }
 
@@ -189,7 +210,7 @@ export function wrapAxiosWithPayment(
   axiosInstance.interceptors.response.use(
     response => {
       if (response.status === 402) {
-        assertAxiosResponseBodyWithinLimit(response.data);
+        assertAxiosResponseBodyWithinLimit(response);
       }
       return response;
     },
@@ -205,13 +226,15 @@ export function wrapAxiosWithPayment(
 
       // Check if this is already a retry to prevent infinite loops
       if ((originalConfig as X402RetryConfig).__is402Retry) {
-        assertAxiosResponseBodyWithinLimit(error.response.data);
+        assertAxiosResponseBodyWithinLimit(error.response);
         return Promise.reject(error);
       }
 
+      let pendingResponse: AxiosResponse | undefined;
       try {
         const response = error.response;
-        assertAxiosResponseBodyWithinLimit(response.data);
+        releaseResponseBody(response);
+        assertAxiosResponseBodyWithinLimit(response);
 
         // Parse payment requirements from response
         let paymentRequired: PaymentRequired;
@@ -246,8 +269,9 @@ export function wrapAxiosWithPayment(
           if (hookResponse.status !== 402) {
             return hookResponse; // Hook succeeded
           }
-          assertAxiosResponseBodyWithinLimit(hookResponse.data);
+          assertAxiosResponseBodyWithinLimit(hookResponse);
           // Hook's retry got 402, fall through to payment
+          releaseResponseBody(hookResponse);
         }
 
         // Create payment payload
@@ -282,8 +306,9 @@ export function wrapAxiosWithPayment(
 
         // Retry the request with payment
         const secondResponse = await axiosInstance.request(paidConfig);
+        pendingResponse = secondResponse;
         if (secondResponse.status === 402) {
-          assertAxiosResponseBodyWithinLimit(secondResponse.data);
+          assertAxiosResponseBodyWithinLimit(secondResponse);
         }
 
         // Fire payment response hooks and handle recovery
@@ -298,6 +323,8 @@ export function wrapAxiosWithPayment(
         );
 
         if (result.recovered) {
+          releaseResponseBody(secondResponse);
+          pendingResponse = undefined;
           // Retry once with a fresh payload after recovery.
           const freshPayload = await client.createPaymentPayload(paymentRequired);
           const retryHeaders = httpClient.encodePaymentSignatureHeader(freshPayload);
@@ -311,8 +338,9 @@ export function wrapAxiosWithPayment(
             "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
           );
           const retryResponse = await axiosInstance.request(retryConfig);
+          pendingResponse = retryResponse;
           if (retryResponse.status === 402) {
-            assertAxiosResponseBodyWithinLimit(retryResponse.data);
+            assertAxiosResponseBodyWithinLimit(retryResponse);
           }
           // Process the final retry result without another recovery attempt.
           const getRetryHeader = (name: string) => {
@@ -325,6 +353,7 @@ export function wrapAxiosWithPayment(
 
         return secondResponse;
       } catch (retryError) {
+        if (pendingResponse) releaseResponseBody(pendingResponse);
         return Promise.reject(retryError);
       }
     },
