@@ -1,0 +1,44 @@
+{
+  "env": {
+    "SERVER_SUI_ADDRESS": { "required": true, "roles": ["server"] },
+    "CLIENT_SUI_PRIVATE_KEY": { "required": true, "roles": ["client"] },
+    "FACILITATOR_SUI_PRIVATE_KEY": { "required": false, "roles": ["facilitator"] },
+    "SERVER_SUI_AMOUNT": { "required": false, "roles": ["server"] },
+    "SERVER_SUI_ASSET": { "required": false, "roles": ["server"] }
+  },
+  "testnet": {
+    "name": "Sui Testnet",
+    "caip2": "sui:testnet",
+    "rpcUrlDefault": "https://fullnode.testnet.sui.io:443"
+  },
+  "mainnet": {
+    "name": "Sui",
+    "caip2": "sui:mainnet",
+    "rpcUrlDefault": "https://fullnode.mainnet.sui.io:443"
+  },
+  "routes": {
+    "/exact/sui": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_SUI_AMOUNT",
+        "asset": "0x2::sui::SUI",
+        "assetEnv": "SERVER_SUI_ASSET"
+      },
+      "extensions": ["bazaar"]
+    },
+    "/exact/sui/upfront": {
+      "scheme": "exact",
+      "sdks": ["typescript"],
+      "paymentFlow": "upfront",
+      "price": {
+        "amount": "1000",
+        "amountEnv": "SERVER_SUI_AMOUNT",
+        "asset": "0x2::sui::SUI",
+        "assetEnv": "SERVER_SUI_ASSET"
+      },
+      "extensions": ["bazaar"]
+    }
+  }
+}

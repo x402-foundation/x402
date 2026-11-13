@@ -72,6 +72,9 @@ import { createPublicClient, formatEther, formatUnits, http, parseAbi } from "vi
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { Client, Wallet } from "xrpl";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { Ed25519Keypair as SuiEd25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { getSuiNetworkName } from "@x402/sui";
 import {
   PROTOCOL_FAMILIES,
   getNetworkForProtocol,
@@ -916,6 +919,34 @@ async function reportXrpl(mode: NetworkMode): Promise<FamilyReport> {
   }
 }
 
+async function reportSui(mode: NetworkMode): Promise<FamilyReport> {
+  const net = getNetworkForProtocol(mode, "sui");
+  const sui = new SuiGrpcClient({ network: getSuiNetworkName(net.caip2), baseUrl: net.rpcUrl });
+  const client = SuiEd25519Keypair.fromSecretKey(requireEnv("CLIENT_SUI_PRIVATE_KEY")).toSuiAddress();
+  const sponsorKey = env("FACILITATOR_SUI_PRIVATE_KEY");
+  const facilitator = sponsorKey
+    ? SuiEd25519Keypair.fromSecretKey(sponsorKey).toSuiAddress()
+    : undefined;
+  const server = requireEnv(serverAddressKey("sui"));
+  const suiBalance = (owner: string) =>
+    withBalance("SUI", async () => {
+      const { balance } = await sui.core.getBalance({ owner, coinType: "0x2::sui::SUI" });
+      return formatAmount(BigInt(balance.balance), 9);
+    });
+  return {
+    family: "sui",
+    networkName: net.name,
+    caip2: net.caip2,
+    rows: [
+      facilitator
+        ? { role: "facilitator", address: facilitator, balance: await suiBalance(facilitator) }
+        : { role: "facilitator", address: "(keyless)" },
+      { role: "client", address: client, balance: await suiBalance(client) },
+      { role: "server", address: server },
+    ],
+  };
+}
+
 const HANDLERS: Record<string, (mode: NetworkMode) => Promise<FamilyReport>> = {
   evm: reportEvm,
   svm: reportSvm,
@@ -928,6 +959,7 @@ const HANDLERS: Record<string, (mode: NetworkMode) => Promise<FamilyReport>> = {
   tvm: reportTvm,
   near: reportNear,
   xrpl: reportXrpl,
+  sui: reportSui,
   cardano: reportCardano,
   casper: reportCasper,
 };
