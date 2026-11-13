@@ -163,20 +163,45 @@ export const PaymentRequirementsV2Schema = z.object({
 });
 export type PaymentRequirementsV2 = z.infer<typeof PaymentRequirementsV2Schema>;
 
+// Key of the sign-in-with-x extension (see @x402/extensions). Its auth-only routes
+// answer with a 402 whose `accepts` is empty: signing in is the only way through.
+const SIGN_IN_WITH_X_EXTENSION = "sign-in-with-x";
+
 /**
  * PaymentRequired (402 response) schema for V2.
  * Contains payment requirements when a resource requires payment.
+ *
+ * `accepts` must list at least one payment option, except on a sign-in-only route,
+ * which declares the sign-in-with-x extension and accepts no payment.
  */
-export const PaymentRequiredV2Schema = z.object({
-  x402Version: z.literal(2),
-  error: z
-    .string()
-    .nullish()
-    .transform(v => v ?? undefined),
-  resource: ResourceInfoSchema,
-  accepts: z.array(PaymentRequirementsV2Schema).min(1).max(maxPaymentAccepts),
-  extensions: OptionalAny,
-});
+export const PaymentRequiredV2Schema = z
+  .object({
+    x402Version: z.literal(2),
+    error: z
+      .string()
+      .nullish()
+      .transform(v => v ?? undefined),
+    resource: ResourceInfoSchema,
+    accepts: z.array(PaymentRequirementsV2Schema).max(maxPaymentAccepts),
+    extensions: OptionalAny,
+  })
+  .superRefine((value, ctx) => {
+    const extensions = value.extensions;
+    const signInOnly =
+      typeof extensions === "object" &&
+      extensions !== null &&
+      SIGN_IN_WITH_X_EXTENSION in extensions;
+    if (value.accepts.length === 0 && !signInOnly) {
+      ctx.addIssue({
+        code: "too_small",
+        origin: "array",
+        minimum: 1,
+        inclusive: true,
+        path: ["accepts"],
+        message: "accepts must list at least one payment option unless the route is sign-in-only",
+      });
+    }
+  });
 export type PaymentRequiredV2 = z.infer<typeof PaymentRequiredV2Schema>;
 
 /**
