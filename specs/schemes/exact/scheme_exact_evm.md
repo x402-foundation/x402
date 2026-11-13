@@ -86,6 +86,17 @@ Settlement is performed via the facilitator calling the `transferWithAuthorizati
 
 If the transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
+### Phase 4: Reconciling on Chain (informative)
+
+A resource server that reads the settlement transaction itself - after a `settlement_pending`, or as a later audit of what it was paid - should read it as follows. These are properties of EIP-3009 as deployed in Circle's FiatTokenV2 (USDC); other EIP-3009 tokens are expected to behave the same way, and an implementation should confirm this before relying on it.
+
+- **The transaction's sender is the facilitator's relayer, not the payer.** The payer is `authorization.from`, which the facilitator also returns as `payer` in the `SettleResponse`.
+- **A consumed nonce is not a payment.** `authorizationState(authorizer, nonce)` is `true` after `transferWithAuthorization`, `receiveWithAuthorization` and `cancelAuthorization` alike. Nonces are scoped to the token contract: the same `(from, nonce)` is independent on another asset.
+- **The payment is the `Transfer` the token emits after its `AuthorizationUsed` for that nonce, in the same transaction.** FiatTokenV2 marks the authorization used, emitting `AuthorizationUsed(authorizer, nonce)`, and then performs the transfer, emitting `Transfer(from, to, value)`. One transaction may settle several authorizations (a batching facilitator, a multicall), so the `Transfer` that belongs to an authorization is the one that follows its own `AuthorizationUsed`, found by nonce - never every `Transfer` from the payer in the transaction summed together, which would let one payment satisfy two requirements. Only logs emitted by the asset contract count; another contract may emit between the pair.
+- **`to` and `value` still have to be checked.** `receiveWithAuthorization` emits the same `AuthorizationUsed`, so a consumed nonce whose paired `Transfer` pays a different `to`, or a different `value`, consumed the slot without paying for the resource that was served.
+- **`cancelAuthorization` emits `AuthorizationCanceled(authorizer, nonce)` and no `Transfer`:** the nonce is burned and nothing was paid. No later attempt can settle it; a retry needs a fresh nonce.
+- **A `settlement_pending` hash may never be mined, or may be replaced.** Wait for finality before concluding that an authorization was not consumed, and across a reorg identify evidence by `(blockHash, logIndex)`, which names a slot, rather than `(transactionHash, logIndex)`, which names a transaction.
+
 ---
 
 ## 2. AssetTransferMethod: `Permit2`
