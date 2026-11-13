@@ -25,7 +25,8 @@ specs/
 │   │   └── …                  # one file per network
 │   ├── upto/
 │   ├── auth-capture/
-│   └── batch-settlement/
+│   ├── batch-settlement/
+│   └── work/
 ├── extensions/                # optional functionality beyond core payment mechanics
 ├── transports-v2/             # (transports-v1/ kept alongside)
 │   ├── http.md
@@ -50,6 +51,7 @@ Current schemes:
 - `upto` - Authorizes a maximum and settles the amount actually used
 - `auth-capture` - Holds funds, then captures, voids or refunds
 - `batch-settlement` - Grants access immediately and settles later, in batches
+- `work` - Pays with a provider-issued proof-of-work solution
 
 ### Transports
 

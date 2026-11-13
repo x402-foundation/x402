@@ -216,6 +216,63 @@ describe("hookPolicy", () => {
     });
   });
 
+  describe("assertAcceptsAdditiveExtraAfterSchemeEnrich", () => {
+    it("allows a scheme to omit only its own unavailable offer", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ scheme: "work", network: "quai:9" as Network }),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+      ]);
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(baseline, [baseline[1]], "work", "quai:9"),
+      ).not.toThrow();
+    });
+
+    it("rejects removal of another scheme's offer", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+        buildPaymentRequirements({ scheme: "work", network: "quai:9" as Network }),
+      ]);
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(baseline, [baseline[1]], "work", "quai:9"),
+      ).toThrow(/scheme\/network are immutable/);
+    });
+
+    it("rejects removal of another scheme's trailing offer", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ scheme: "work", network: "quai:9" as Network }),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+      ]);
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(baseline, [baseline[0]], "work", "quai:9"),
+      ).toThrow(/only matching accepts may be omitted/);
+    });
+
+    it("rejects changing a retained requirement", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ scheme: "work", network: "quai:9" as Network }),
+      ]);
+      const changed = snapshotPaymentRequirementsList(baseline);
+      changed[0].amount = "2";
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(baseline, changed, "work", "quai:9"),
+      ).toThrow(/payment terms are immutable/);
+    });
+
+    it("rejects adding a requirement", () => {
+      const baseline = snapshotPaymentRequirementsList([
+        buildPaymentRequirements({ scheme: "work", network: "quai:9" as Network }),
+      ]);
+      expect(() =>
+        assertAcceptsAdditiveExtraAfterSchemeEnrich(
+          baseline,
+          [...baseline, baseline[0]],
+          "work",
+          "quai:9",
+        ),
+      ).toThrow(/accepts may not be added/);
+    });
+  });
+
   describe("assertSettleResponseCoreUnchanged", () => {
     it("passes when only extensions change", () => {
       const base = buildSettleResponse({

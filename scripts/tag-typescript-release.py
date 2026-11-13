@@ -50,6 +50,7 @@ PUBLISHED_PACKAGES = [
     "@x402/concordium",
     "@x402/tvm",
     "@x402/xrpl",
+    "@x402/work",
     "@x402/paywall",
     "@x402/axios",
     "@x402/fetch",

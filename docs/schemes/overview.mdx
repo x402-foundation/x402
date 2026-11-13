@@ -1,9 +1,9 @@
 ---
 title: "Payment Schemes"
-description: "Choose between exact, upto, batch-settlement, and auth-capture payment schemes in x402."
+description: "Choose among exact, upto, batch-settlement, auth-capture, and work payment schemes in x402."
 ---
 
-Payment schemes define the payment semantics for a resource: `exact` is for fixed-price requests where the buyer authorizes the advertised amount, `upto` is for single-request usage-based billing where the buyer authorizes a maximum and the seller charges actual usage, `batch-settlement` is for high-volume or repeated micropayments where per-request authorizations are accumulated against a reusable channel, and `auth-capture` is for refundable payments where funds are held in escrow and released (captured, voided, or refunded) after the resource is served. Network implementations define how those semantics are encoded for EVM, SVM, TVM (TON), AVM, Stellar, Aptos, Hedera, Keeta, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`); see [SDK Features](/sdk-features) for current SDK support.
+Payment schemes define the payment semantics for a resource: `exact` is for fixed-price requests where the buyer authorizes the advertised amount, `upto` is for single-request usage-based billing where the buyer authorizes a maximum and the seller charges actual usage, `batch-settlement` is for high-volume or repeated micropayments where per-request authorizations are accumulated against a reusable channel, `auth-capture` is for refundable payments where funds are held in escrow and released (captured, voided, or refunded) after the resource is served, and `work` accepts a provider-issued proof-of-work solution through a profile-defined native work source. Network implementations define how those semantics are encoded for EVM, SVM, TVM (TON), AVM, Stellar, Aptos, Hedera, Keeta, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`); see [SDK Features](/sdk-features) for current SDK support.
 
 ### Schemes in a 402 Response
 
@@ -70,3 +70,4 @@ For scheme-level payload semantics, see the network-agnostic specifications. Eac
 * [`upto` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md)
 * [`batch-settlement` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md)
 * [`auth-capture` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/auth-capture/scheme_auth_capture_evm.md)
+* [`work` spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/work/scheme_work.md)
