@@ -244,6 +244,35 @@ class TestAfterVerifySkipHandler:
         assert result.skip_handler.body == "second"
 
 
+class TestAfterVerifyHookThrow:
+    def test_isolates_hook_error_and_runs_later_hooks(self, server, caplog):
+        resource_server, _client = server
+        later_called = False
+        cancel_reasons: list[str] = []
+
+        def failing_hook(_ctx):
+            raise RuntimeError("after fail")
+
+        def later_hook(_ctx):
+            nonlocal later_called
+            later_called = True
+
+        resource_server.on_after_verify(failing_hook)
+        resource_server.on_after_verify(later_hook)
+        resource_server.on_verified_payment_canceled(lambda ctx: cancel_reasons.append(ctx.reason))
+
+        with caplog.at_level(logging.WARNING, logger="x402"):
+            result = _verify(resource_server, build_payload(), build_requirements())
+
+        assert result.is_valid is True
+        assert later_called is True
+        assert cancel_reasons == []
+        assert (
+            "[x402] Resource server afterVerify hook threw "
+            "(manual after_verify hook #0): after fail"
+        ) in caplog.text
+
+
 class TestAfterVerifyAbort:
     def test_returns_invalid_and_stops_later_hooks(self, server):
         resource_server, _client = server
