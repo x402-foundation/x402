@@ -46,7 +46,14 @@ const mockPaymentRequirements = {
 // --- Mock setup ---
 let mockProcessHTTPRequest: ReturnType<typeof vi.fn>;
 let mockProcessSettlement: ReturnType<typeof vi.fn>;
-let mockCreateCompletedSettlementHeaders: ReturnType<typeof vi.fn>;
+let mockCreateCompletedSettlementHeaders: ReturnType<
+  typeof vi.fn<
+    (
+      settlement: CompletedSettlement,
+      existingCacheControl?: string | null,
+    ) => Record<string, string>
+  >
+>;
 let mockCreateFailurePathSettlementHeaders: ReturnType<typeof vi.fn>;
 let mockRegisterPaywallProvider: ReturnType<typeof vi.fn>;
 let mockRequiresPayment: ReturnType<typeof vi.fn>;
@@ -172,6 +179,7 @@ interface CapturedHooks {
  * @returns Object containing the mock app and captured hooks.
  */
 function createMockApp(): { app: FastifyInstance; hooks: CapturedHooks } {
+  // onRequest[0] guards the request target; onRequest[1] checks payment by default.
   const hooks: CapturedHooks = { onRequest: [], onSend: [], onError: [] };
 
   const app = {
@@ -316,10 +324,12 @@ describe("paymentMiddleware", () => {
     vi.clearAllMocks();
     mockProcessHTTPRequest = vi.fn();
     mockProcessSettlement = vi.fn();
-    mockCreateCompletedSettlementHeaders = vi.fn((_settlement, existingCacheControl) => ({
-      "PAYMENT-RESPONSE": "before-handler-receipt",
-      "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
-    }));
+    mockCreateCompletedSettlementHeaders = vi.fn(
+      (_settlement: CompletedSettlement, existingCacheControl?: string | null) => ({
+        "PAYMENT-RESPONSE": "before-handler-receipt",
+        "Cache-Control": existingCacheControl ? `${existingCacheControl}, private` : "private",
+      }),
+    );
     mockCreateFailurePathSettlementHeaders = vi.fn((cancelSettlement, settlement) => {
       if (cancelSettlement) {
         return {
@@ -340,7 +350,7 @@ describe("paymentMiddleware", () => {
     vi.mocked(HTTPResourceServer).mockImplementation(mockHTTPResourceServerConstructor());
   });
 
-  it("registers onRequest and onSend hooks", () => {
+  it("registers onRequest and onSend hooks by default", () => {
     const { app } = createMockApp();
     paymentMiddleware(
       app,
@@ -370,7 +380,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalled();
     expect(reply.send).not.toHaveBeenCalled();
@@ -405,12 +415,12 @@ describe("paymentMiddleware", () => {
       expect(unhandled).toHaveLength(0);
 
       const firstReply = createMockReply();
-      await hooks.onRequest[0](createMockRequest(), firstReply);
+      await hooks.onRequest[1](createMockRequest(), firstReply);
       expect(firstReply.status).toHaveBeenCalledWith(500);
       expect(firstReply.send).toHaveBeenCalledWith({ error: "Internal Server Error" });
       expect(mockProcessHTTPRequest).not.toHaveBeenCalled();
 
-      await hooks.onRequest[0](createMockRequest(), createMockReply());
+      await hooks.onRequest[1](createMockRequest(), createMockReply());
       expect(initializeCalls).toBe(2);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
@@ -432,7 +442,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest({ url: "/health" });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).not.toHaveBeenCalled();
     expect(reply.send).not.toHaveBeenCalled();
@@ -461,7 +471,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(reply.status).toHaveBeenCalledWith(402);
     expect(reply.type).toHaveBeenCalledWith("text/html");
@@ -492,7 +502,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(reply.status).toHaveBeenCalledWith(402);
     expect(reply.send).toHaveBeenCalledWith({ error: "Payment required" });
@@ -517,7 +527,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(reply.send).not.toHaveBeenCalled();
     expect(request.x402Context).toBeDefined();
@@ -548,7 +558,7 @@ describe("paymentMiddleware", () => {
     const reply = createMockReply();
 
     // Step 1: onRequest stashes payment context
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     // Step 2: onSend settles payment
     const payload = JSON.stringify({ data: "premium content" });
@@ -596,7 +606,7 @@ describe("paymentMiddleware", () => {
     const reply = createMockReply();
     reply._headers["Settlement-Overrides"] = JSON.stringify({ amount: "32%" });
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     await hooks.onSend[0](request, reply, JSON.stringify({ data: "premium content" }));
 
     expect(reply.removeHeader).toHaveBeenCalledWith("Settlement-Overrides");
@@ -627,7 +637,7 @@ describe("paymentMiddleware", () => {
     const reply = createMockReply();
     const payload = Buffer.from([0, 1, 2, 255]);
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const result = await hooks.onSend[0](request, reply, payload);
 
     expect(result).toBe(payload);
@@ -681,7 +691,7 @@ describe("paymentMiddleware", () => {
     const request = createMockRequest();
     const reply = createMockReply();
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     reply.statusCode = 500;
     reply._headers["Settlement-Overrides"] = JSON.stringify({ amount: "32%" });
@@ -740,7 +750,7 @@ describe("paymentMiddleware", () => {
     const request = createMockRequest();
     const reply = createMockReply();
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     reply.statusCode = 500;
     const payload = JSON.stringify({ error: "Server error" });
@@ -793,7 +803,7 @@ describe("paymentMiddleware", () => {
     const request = createMockRequest();
     const reply = createMockReply();
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     reply.type("application/octet-stream");
     reply._headers["Settlement-Overrides"] = JSON.stringify({ amount: "32%" });
@@ -829,7 +839,7 @@ describe("paymentMiddleware", () => {
     const request = createMockRequest();
     const reply = createMockReply();
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     reply._headers["Settlement-Overrides"] = JSON.stringify({ amount: "32%" });
     const payload = JSON.stringify({ data: "premium content" });
@@ -857,7 +867,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(expect.anything(), paywallConfig);
   });
@@ -894,7 +904,7 @@ describe("paymentMiddleware", () => {
     );
 
     const reply = createMockReply();
-    await hooks.onRequest[0](createMockRequest(), reply);
+    await hooks.onRequest[1](createMockRequest(), reply);
 
     expect(reply.status).toHaveBeenCalledWith(502);
     expect(reply.send).toHaveBeenCalledWith({
@@ -917,7 +927,7 @@ describe("paymentMiddleware", () => {
     );
 
     const reply = createMockReply();
-    await hooks.onRequest[0](createMockRequest(), reply);
+    await hooks.onRequest[1](createMockRequest(), reply);
 
     expect(reply.status).toHaveBeenCalledWith(500);
     expect(reply.send).toHaveBeenCalledWith({ error: "Internal Server Error" });
@@ -939,7 +949,7 @@ describe("paymentMiddleware", () => {
     const { app, hooks } = createMockApp();
     paymentMiddleware(app, mockRoutes, {} as unknown as x402ResourceServer);
     const reply = createMockReply();
-    await hooks.onRequest[0](createMockRequest(), reply);
+    await hooks.onRequest[1](createMockRequest(), reply);
 
     expect(reply.status).toHaveBeenCalledWith(502);
     expect(reply.send).toHaveBeenCalledWith({
@@ -980,7 +990,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const result = await hooks.onSend[0](request, reply, JSON.stringify({ data: "secret" }));
 
     expect(reply.status).toHaveBeenCalledWith(402);
@@ -1010,7 +1020,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const result = await hooks.onSend[0](request, reply, JSON.stringify({ data: "secret" }));
 
     expect(reply.status).toHaveBeenCalledWith(502);
@@ -1042,7 +1052,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const bytes = new Uint8Array([1, 2, 3]);
     await hooks.onSend[0](request, reply, bytes);
     expect(
@@ -1051,7 +1061,7 @@ describe("paymentMiddleware", () => {
 
     const request2 = createMockRequest();
     const reply2 = createMockReply();
-    await hooks.onRequest[0](request2, reply2);
+    await hooks.onRequest[1](request2, reply2);
     const arrayBuffer = new Uint8Array([4, 5]).buffer;
     await hooks.onSend[0](request2, reply2, arrayBuffer);
     expect(
@@ -1081,7 +1091,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const stream = { pipe: vi.fn() };
     await hooks.onSend[0](request, reply, stream);
 
@@ -1113,7 +1123,7 @@ describe("paymentMiddleware", () => {
     const request = createMockRequest();
     const reply = createMockReply();
     reply._headers["Cache-Control"] = "max-age=60";
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const payload = { data: "premium" };
     await hooks.onSend[0](request, reply, payload);
 
@@ -1145,7 +1155,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(request.x402RawGuard).toBeDefined();
     reply.raw.writeHead(200, { "X-From-Raw": "yes" });
@@ -1185,7 +1195,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     reply.raw.writeHead(201, "Created", { "X-From-Raw": "yes" });
     reply.raw.end();
 
@@ -1222,7 +1232,7 @@ describe("paymentMiddleware", () => {
     const originalWriteHead = reply.raw.writeHead as ReturnType<typeof vi.fn>;
     const originalFlushHeaders = reply.raw.flushHeaders as ReturnType<typeof vi.fn>;
 
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const wrappedWrite = reply.raw.write;
     const wrappedEnd = reply.raw.end;
     const wrappedWriteHead = reply.raw.writeHead;
@@ -1231,8 +1241,8 @@ describe("paymentMiddleware", () => {
     await hooks.onSend[0](request, reply, "ok");
     request.x402RawGuard?.deactivate();
 
-    wrappedWrite.call(reply.raw, "after");
-    wrappedEnd.call(reply.raw);
+    Reflect.apply(wrappedWrite, reply.raw, ["after"]);
+    Reflect.apply(wrappedEnd, reply.raw, []);
     wrappedWriteHead.call(reply.raw, 200);
     wrappedFlushHeaders.call(reply.raw);
 
@@ -1261,7 +1271,7 @@ describe("paymentMiddleware", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
     const handlerError = new Error("handler exploded");
     await hooks.onError[0](request, reply, handlerError);
 
@@ -1322,8 +1332,8 @@ describe("paymentMiddleware", () => {
     const { app, hooks } = createMockApp();
     paymentMiddleware(app, mockRoutes, {} as unknown as x402ResourceServer);
 
-    await hooks.onRequest[0](createMockRequest(), createMockReply());
-    await hooks.onRequest[0](createMockRequest(), createMockReply());
+    await hooks.onRequest[1](createMockRequest(), createMockReply());
+    await hooks.onRequest[1](createMockRequest(), createMockReply());
 
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(mockProcessHTTPRequest).toHaveBeenCalledTimes(2);
@@ -1340,7 +1350,7 @@ describe("paymentMiddleware", () => {
     const { app, hooks } = createMockApp();
 
     paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
-    await hooks.onRequest[0](createMockRequest(), createMockReply());
+    await hooks.onRequest[1](createMockRequest(), createMockReply());
 
     expect(mockProcessHTTPRequest).toHaveBeenCalled();
     expect(resourceServer.hasExtension).toHaveBeenCalledWith("bazaar");
@@ -1358,11 +1368,31 @@ describe("paymentMiddleware", () => {
     const { app, hooks } = createMockApp();
 
     paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
-    await hooks.onRequest[0](createMockRequest(), createMockReply());
+    await hooks.onRequest[1](createMockRequest(), createMockReply());
 
     expect(mockProcessHTTPRequest).toHaveBeenCalled();
     expect(resourceServer.registerExtension).not.toHaveBeenCalled();
   });
+  it.each(["resource server", "HTTP server"])(
+    "opts into preValidation with a pre-configured %s",
+    serverType => {
+      const { app, hooks } = createMockApp();
+      if (serverType === "resource server") {
+        paymentMiddleware(app, mockRoutes, {} as x402ResourceServer, undefined, undefined, false, {
+          paymentHook: "preValidation",
+        });
+      } else {
+        const httpServer = new HTTPResourceServer({} as x402ResourceServer, mockRoutes);
+        paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false, {
+          paymentHook: "preValidation",
+        });
+      }
+
+      // Only the request-target guard stays in onRequest when payment moves later.
+      expect(hooks.onRequest).toHaveLength(1);
+      expect(app.addHook).toHaveBeenCalledWith("preValidation", expect.any(Function));
+    },
+  );
 
   it("sends an empty JSON body when payment-error has no body", async () => {
     setupMockHttpServer({
@@ -1385,7 +1415,7 @@ describe("paymentMiddleware", () => {
     );
 
     const reply = createMockReply();
-    await hooks.onRequest[0](createMockRequest(), reply);
+    await hooks.onRequest[1](createMockRequest(), reply);
 
     expect(reply.status).toHaveBeenCalledWith(402);
     expect(reply.send).toHaveBeenCalledWith({});
@@ -1436,6 +1466,25 @@ describe("paymentMiddlewareFromConfig", () => {
     expect(serverInstance.register).toHaveBeenCalledWith("eip155:8453", schemeServer);
   });
 
+  it("forwards the opt-in payment hook from configuration", () => {
+    const { app, hooks } = createMockApp();
+    paymentMiddlewareFromConfig(
+      app,
+      mockRoutes,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      {
+        paymentHook: "preValidation",
+      },
+    );
+
+    expect(hooks.onRequest).toHaveLength(1);
+    expect(app.addHook).toHaveBeenCalledWith("preValidation", expect.any(Function));
+  });
+
   it("registers hooks on the Fastify instance", () => {
     const { app } = createMockApp();
     paymentMiddlewareFromConfig(app, mockRoutes);
@@ -1471,7 +1520,7 @@ describe("FastifyAdapter integration", () => {
 
     const request = createMockRequest({ url: "/api/weather", method: "POST" });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1497,7 +1546,7 @@ describe("FastifyAdapter integration", () => {
 
     const request = createMockRequest({ url: "/api/weather?city=NYC" });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1522,7 +1571,7 @@ describe("FastifyAdapter integration", () => {
 
     const request = createMockRequest({ headers: { "payment-signature": "sig-data" } });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1547,7 +1596,7 @@ describe("FastifyAdapter integration", () => {
 
     const request = createMockRequest({ headers: { "x-payment": "payment-data" } });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1574,7 +1623,7 @@ describe("FastifyAdapter integration", () => {
       headers: { "payment-signature": "sig-data", "x-payment": "x-payment-data" },
     });
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1599,7 +1648,7 @@ describe("FastifyAdapter integration", () => {
 
     const request = createMockRequest();
     const reply = createMockReply();
-    await hooks.onRequest[0](request, reply);
+    await hooks.onRequest[1](request, reply);
 
     expect(mockProcessHTTPRequest).toHaveBeenCalledWith(
       expect.objectContaining({

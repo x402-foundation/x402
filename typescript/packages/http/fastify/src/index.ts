@@ -260,6 +260,14 @@ export interface SchemeRegistration {
 }
 
 /**
+ * Fastify payment middleware options.
+ */
+export interface PaymentMiddlewareOptions {
+  /** Payment hook phase. Defaults to onRequest; opt into preValidation to read parsed bodies. */
+  paymentHook?: "onRequest" | "preValidation";
+}
+
+/**
  * Registers x402 payment middleware on a Fastify instance using a pre-configured HTTP server.
  *
  * Use this when you need to configure HTTP-level hooks.
@@ -269,6 +277,7 @@ export interface SchemeRegistration {
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param options - Payment hook phase (defaults to onRequest)
  *
  * @example
  * ```typescript
@@ -289,10 +298,12 @@ export function paymentMiddlewareFromHTTPServer(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  options: PaymentMiddlewareOptions = {},
 ): void {
   app.decorateRequest("x402Context", undefined);
   app.decorateRequest("x402RawGuard", undefined);
 
+  const paymentHook = options.paymentHook ?? "onRequest";
   const { init: initializeHttpServer } = prepareHttpServer(
     httpServer,
     paywall,
@@ -325,7 +336,9 @@ export function paymentMiddlewareFromHTTPServer(
     if (request.url.charCodeAt(0) !== 47 /* "/" */) {
       return reply.status(400).send({ error: "Bad Request" });
     }
+  });
 
+  app.addHook(paymentHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const path = request.url.split("?")[0];
     const adapter = new FastifyAdapter(request);
     const context: HTTPRequestContext = {
@@ -548,6 +561,7 @@ export function paymentMiddlewareFromHTTPServer(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param options - Payment hook phase (defaults to onRequest)
  *
  * @example
  * ```typescript
@@ -566,10 +580,18 @@ export function paymentMiddleware(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  options: PaymentMiddlewareOptions = {},
 ): void {
   const httpServer = new x402HTTPResourceServer(server, routes);
 
-  paymentMiddlewareFromHTTPServer(app, httpServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  paymentMiddlewareFromHTTPServer(
+    app,
+    httpServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    options,
+  );
 }
 
 /**
@@ -585,6 +607,7 @@ export function paymentMiddleware(
  * @param paywallConfig - Optional configuration for the built-in paywall UI
  * @param paywall - Optional custom paywall provider (overrides default)
  * @param syncFacilitatorOnStart - Whether to sync with the facilitator on startup (defaults to true)
+ * @param options - Payment hook phase (defaults to onRequest)
  *
  * @example
  * ```typescript
@@ -607,6 +630,7 @@ export function paymentMiddlewareFromConfig(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
+  options: PaymentMiddlewareOptions = {},
 ): void {
   const ResourceServer = new x402ResourceServer(facilitatorClients);
 
@@ -616,7 +640,15 @@ export function paymentMiddlewareFromConfig(
     }
   }
 
-  paymentMiddleware(app, routes, ResourceServer, paywallConfig, paywall, syncFacilitatorOnStart);
+  paymentMiddleware(
+    app,
+    routes,
+    ResourceServer,
+    paywallConfig,
+    paywall,
+    syncFacilitatorOnStart,
+    options,
+  );
 }
 
 export { x402ResourceServer, x402HTTPResourceServer } from "@x402/core/server";

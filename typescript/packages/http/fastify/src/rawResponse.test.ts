@@ -7,13 +7,16 @@ import {
 } from "@x402/core/http";
 import { x402ResourceServer } from "@x402/core/server";
 import type { SettleResponse } from "@x402/core/types";
-import { paymentMiddleware } from "./index";
+import { paymentMiddleware, type PaymentMiddlewareOptions } from "./index";
 
 const network = "eip155:84532";
 const asset = "test-asset";
 const payTo = "test-payee";
 
-describe("raw responses through the Fastify lifecycle", () => {
+describe.each<[string, PaymentMiddlewareOptions | undefined]>([
+  ["default", undefined],
+  ["preValidation", { paymentHook: "preValidation" }],
+])("raw responses through the Fastify lifecycle (%s)", (_mode, options) => {
   let app: FastifyInstance;
   const settle = vi.fn(
     async (): Promise<SettleResponse> => ({
@@ -63,6 +66,7 @@ describe("raw responses through the Fastify lifecycle", () => {
       undefined,
       undefined,
       false,
+      options,
     );
   });
 
