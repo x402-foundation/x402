@@ -96,12 +96,59 @@ export function convertToTokenAmount(decimalAmount: string, decimals: number): s
       `Invalid amount: ${decimalAmount} — use decimal notation, not scientific notation`,
     );
   }
-  if (!/^-?\d+\.?\d*$/.test(decimalAmount)) {
+  if (!isPlainDecimalAmount(decimalAmount)) {
     throw new Error(`Invalid amount: ${decimalAmount}`);
   }
   const [intPart, decPart = ""] = decimalAmount.split(".");
   const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
   return (intPart + paddedDec).replace(/^0+/, "") || "0";
+}
+
+/**
+ * Validates a plain decimal string with a linear scan to avoid regex backtracking.
+ */
+function isPlainDecimalAmount(decimalAmount: string): boolean {
+  if (decimalAmount.length === 0) {
+    return false;
+  }
+
+  let index = decimalAmount.startsWith("-") ? 1 : 0;
+  if (index === decimalAmount.length) {
+    return false;
+  }
+
+  let hasIntegerDigit = false;
+  while (index < decimalAmount.length) {
+    const charCode = decimalAmount.charCodeAt(index);
+    if (charCode < 48 || charCode > 57) {
+      break;
+    }
+    hasIntegerDigit = true;
+    index++;
+  }
+
+  if (!hasIntegerDigit) {
+    return false;
+  }
+
+  if (index === decimalAmount.length) {
+    return true;
+  }
+
+  if (decimalAmount[index] !== ".") {
+    return false;
+  }
+
+  index++;
+  while (index < decimalAmount.length) {
+    const charCode = decimalAmount.charCodeAt(index);
+    if (charCode < 48 || charCode > 57) {
+      return false;
+    }
+    index++;
+  }
+
+  return true;
 }
 
 /**
