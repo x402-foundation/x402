@@ -254,7 +254,8 @@
       "sdks": [
         "typescript",
         "go",
-        "python"
+        "python",
+        "elixir"
       ],
       "price": {
         "usd": "$0.001"

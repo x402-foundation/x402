@@ -1,0 +1,46 @@
+{
+  "name": "elixir/http/bandit",
+  "type": "server",
+  "language": "elixir",
+  "transport": "http",
+  "x402Version": 2,
+  "protocolFamilies": ["evm"],
+  "schemes": ["exact"],
+  "evm": {
+    "assetTransferMethods": ["eip3009"]
+  },
+  "extensions": [],
+  "endpoints": [
+    {
+      "path": "/exact/evm/eip3009",
+      "method": "GET",
+      "description": "Protected eip3009 endpoint on EVM",
+      "requiresPayment": true,
+      "protocolFamily": "evm",
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009"
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check endpoint",
+      "health": true
+    },
+    {
+      "path": "/close",
+      "method": "POST",
+      "description": "Graceful shutdown endpoint",
+      "close": true
+    }
+  ],
+  "environment": {
+    "required": ["PORT", "FACILITATOR_URL", "SERVER_EVM_ADDRESS"],
+    "optional": [
+      "EVM_NETWORK",
+      "EVM_RPC_URL",
+      "EVM_PERMIT2_ASSET",
+      "MOCK_FACILITATOR_URL",
+      "E2E_MECHANISMS_CATALOG"
+    ]
+  }
+}

@@ -13,7 +13,7 @@ const SKIP_COMPONENT_DIRS = new Set([
   '.next',
 ]);
 
-const LANGUAGES = new Set(['typescript', 'go', 'python']);
+const LANGUAGES = new Set(['typescript', 'go', 'python', 'elixir']);
 const TRANSPORTS = new Set(['http', 'mcp']);
 
 type ComponentLocation = {

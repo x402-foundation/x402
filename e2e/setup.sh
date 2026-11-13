@@ -165,7 +165,7 @@ process_role_v2() {
     local language
     language=$(basename "$language_dir")
     case "$language" in
-      typescript|go|python) ;;
+      typescript|go|python|elixir) ;;
       *) continue ;;
     esac
 

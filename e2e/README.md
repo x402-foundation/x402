@@ -61,6 +61,7 @@ Also add `SERVER_*` / `CLIENT_*` / `FACILITATOR_*` secrets to [`.env-local`](.en
 |-----|--------|
 | TypeScript | Add `clients/typescript/http/<name>/index.ts` or `servers/typescript/http/<name>/index.ts` using the language-root helpers (`../../client.ts` / `../../index.ts` for servers); add the adapter dep to the language `package.json`. Vanilla components need no local `test.config.json`. |
 | Go / Python | Add component dir with `main.go` / `main.py` + module file. `setup.sh` runs language defaults. Vanilla components need no local `test.config.json`. |
+| Elixir | Add `servers/elixir/http/<name>/` with a Mix project, local `install.sh` / `build.sh` / `run.sh`, and a `test.config.json` overlay (server role only; not catalog-inferred yet). |
 
 ## Custom flows (escape hatches)
 
