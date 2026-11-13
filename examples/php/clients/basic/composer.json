@@ -1,0 +1,17 @@
+{
+    "name": "x402/example-client-basic",
+    "description": "Pay a 402 with the x402 PHP client",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require": {
+        "php": "^8.2",
+        "x402/x402": "@dev",
+        "nyholm/psr7": "^1.8",
+        "symfony/http-client": "^7.0"
+    },
+    "repositories": [
+        { "type": "path", "url": "../../../../php" }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
