@@ -1,0 +1,9 @@
+{
+  "title": "Control case: without a configured resource, the query string does reach the facilitator",
+  "provenance": "Modeled from @x402/express 2.30.0 index.mjs line 54 (getUrl returns protocol+host+req.originalUrl, which includes the query string).",
+  "limits": "Shows the default is not broken by itself. Does not show every adapter behaves the same; only @x402/express was read for this vector.",
+  "request_a": { "path": "/report", "query": "account=alice", "configured_resource": null, "method": "GET" },
+  "request_b": { "path": "/report", "query": "account=bob", "configured_resource": null, "method": "GET" },
+  "claim": "stays-distinguished",
+  "note": "Same two requests as the previous vector, minus the configured resource string: the facilitator now sees two different resource.url values, one per account."
+}
