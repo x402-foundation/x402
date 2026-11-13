@@ -20,6 +20,7 @@ This directory contains TypeScript server examples demonstrating how to protect 
 | [`builder-code/`](./builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
 | [`offer-receipt/`](./offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |
 | [`payment-identifier/`](./payment-identifier/) | Idempotency via the `payment-identifier` extension |
+| [`replay-guard/`](./replay-guard/) | Runs a paid handler once per payment authorization (`onAfterVerify` hook) |
 | [`sign-in-with-x/`](./sign-in-with-x/) | Auth-only routes and pay-once-then-authenticate routes |
 | [`cloudfront-lambda-edge/`](./cloudfront-lambda-edge/) | Adds x402 at the CDN edge without modifying the backend |
 | [`mcp/`](./mcp/) | MCP server exposing paid tools |
