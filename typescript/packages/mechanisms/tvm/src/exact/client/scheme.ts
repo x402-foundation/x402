@@ -18,6 +18,7 @@ import {
   DEFAULT_TVM_EMULATION_WALLET_ID,
   DEFAULT_TVM_INNER_GAS_BUFFER,
   DEFAULT_VALID_UNTIL_OFFSET,
+  NATIVE_ASSET,
   SEND_MODE_IGNORE_ERRORS,
   SEND_MODE_PAY_FEES_SEPARATELY,
   SUPPORTED_NETWORKS,
@@ -25,7 +26,9 @@ import {
   W5_EXTERNAL_SIGNED_OPCODE,
   W5_INTERNAL_SIGNED_OPCODE,
 } from "../../constants";
+import { isNativeAsset, normalizeAsset } from "../../codecs/common";
 import { buildJettonTransferBodyFields } from "../../codecs/jetton";
+import { hasJettonOnlyExtra, nativeTransferBody } from "../../codecs/native";
 import { buildW5SignedBody, getW5Seqno } from "../../codecs/w5";
 import { createTvmProviderClient, type TvmProviderClient } from "../../provider";
 import {
@@ -98,17 +101,22 @@ export class ExactTvmScheme implements SchemeNetworkClient {
     }
 
     const client = this.client(network);
-    const asset = normalizeTonAddress(paymentRequirements.asset);
+    const asset = normalizeAsset(paymentRequirements.asset);
     const payer = normalizeTonAddress(this.signer.address);
+    const timeoutSeconds = paymentRequirements.maxTimeoutSeconds ?? DEFAULT_VALID_UNTIL_OFFSET;
+    const validUntil =
+      Math.floor(Date.now() / 1000) +
+      (timeoutSeconds > 10 ? timeoutSeconds - 5 : Math.ceil(timeoutSeconds / 2));
+
+    if (isNativeAsset(asset)) {
+      return this.createNativePaymentPayload(x402Version, paymentRequirements, payer, validUntil);
+    }
+
     const sourceWallet = await client.getJettonWallet(asset, payer);
 
     const account = await client.getAccountState(payer);
     const includeStateInit = !account.isActive;
     const seqno = getW5Seqno(account);
-    const timeoutSeconds = paymentRequirements.maxTimeoutSeconds ?? DEFAULT_VALID_UNTIL_OFFSET;
-    const validUntil =
-      Math.floor(Date.now() / 1000) +
-      (timeoutSeconds > 10 ? timeoutSeconds - 5 : Math.ceil(timeoutSeconds / 2));
 
     const transferBody = buildJettonTransferBodyFields({
       amount: BigInt(paymentRequirements.amount),
@@ -147,6 +155,55 @@ export class ExactTvmScheme implements SchemeNetworkClient {
       x402Version,
       payload: tvmPayload as unknown as Record<string, unknown>,
     };
+  }
+
+  /**
+   * Sign one native TON transfer of exactly `amount` to `payTo`.
+   *
+   * @param x402Version - Protocol version
+   * @param requirements - Payment requirements with `asset: "native"`
+   * @param payer - Payer wallet address (raw)
+   * @param validUntil - W5 request expiry (unix seconds)
+   * @returns The payment payload
+   */
+  private async createNativePaymentPayload(
+    x402Version: number,
+    requirements: PaymentRequirements,
+    payer: string,
+    validUntil: number,
+  ): Promise<PaymentPayloadResult> {
+    const extra = (requirements.extra ?? {}) as Record<string, unknown>;
+    if (hasJettonOnlyExtra(extra)) {
+      throw new Error(
+        "Native TON payments must not set extra.forwardTonAmount or extra.responseDestination",
+      );
+    }
+    const amount = BigInt(requirements.amount);
+    if (amount <= 0n) {
+      throw new Error("Native TON payment amount must be positive");
+    }
+    const account = await this.client(String(requirements.network)).getAccountState(payer);
+    // The payment value must come from the wallet's own balance, not the relay's gas.
+    if (account.balance < amount) {
+      throw new Error(
+        `Wallet balance ${account.balance} nanotons is below the payment amount ${amount}`,
+      );
+    }
+
+    const settlementBoc = await this.signer.signTransfer(
+      getW5Seqno(account),
+      validUntil,
+      [
+        {
+          address: normalizeTonAddress(requirements.payTo),
+          amount,
+          body: nativeTransferBody(extra),
+        },
+      ],
+      { includeStateInit: !account.isActive },
+    );
+    const tvmPayload: TvmPaymentPayload = { settlementBoc, asset: NATIVE_ASSET };
+    return { x402Version, payload: tvmPayload as unknown as Record<string, unknown> };
   }
 
   private client(network: string): TvmProviderClient {

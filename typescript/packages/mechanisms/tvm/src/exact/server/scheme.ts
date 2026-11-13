@@ -10,6 +10,11 @@ import {
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
 import { makeZeroBitCellBoc, normalizeTonAddress } from "../../utils";
+import { isNativeAsset, normalizeAsset } from "../../codecs/common";
+import { NATIVE_ASSET, NATIVE_DECIMALS } from "../../constants";
+
+/** Ticker that selects native TON in money strings such as "0.01 TON". */
+const NATIVE_SYMBOL = "TON";
 
 /**
  * TVM server implementation for the Exact payment scheme.
@@ -41,7 +46,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
       }
       return {
         amount: price.amount,
-        asset: normalizeTonAddress(price.asset),
+        asset: normalizeAsset(price.asset),
         extra: price.extra || {},
       };
     }
@@ -78,7 +83,8 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     if (!paymentRequirements.asset) {
       paymentRequirements.asset = getDefaultAsset(paymentRequirements.network).asset;
     }
-    paymentRequirements.asset = normalizeTonAddress(paymentRequirements.asset);
+    paymentRequirements.asset = normalizeAsset(paymentRequirements.asset);
+    const native = isNativeAsset(paymentRequirements.asset);
     paymentRequirements.payTo = normalizeTonAddress(paymentRequirements.payTo);
 
     if (paymentRequirements.amount.includes(".")) {
@@ -95,10 +101,11 @@ export class ExactTvmScheme implements SchemeNetworkServer {
     if (!("areFeesSponsored" in extra)) {
       extra.areFeesSponsored = _supportedKind.extra?.areFeesSponsored ?? true;
     }
-    if (!("forwardPayload" in extra)) {
+    // Jetton-only defaults; native TON uses forwardPayload as the optional message body.
+    if (!native && !("forwardPayload" in extra)) {
       extra.forwardPayload = makeZeroBitCellBoc();
     }
-    if (!("forwardTonAmount" in extra)) {
+    if (!native && !("forwardTonAmount" in extra)) {
       extra.forwardTonAmount = "0";
     }
     paymentRequirements.extra = extra;
@@ -107,6 +114,13 @@ export class ExactTvmScheme implements SchemeNetworkServer {
   }
 
   private defaultMoneyConversion(amount: string, network: Network, symbol?: string): AssetAmount {
+    if (symbol?.toUpperCase() === NATIVE_SYMBOL) {
+      return {
+        amount: convertToTokenAmount(amount, NATIVE_DECIMALS),
+        asset: NATIVE_ASSET,
+        extra: { areFeesSponsored: true },
+      };
+    }
     const assetInfo = getDefaultAsset(network, symbol);
     return {
       amount: convertToTokenAmount(amount, assetInfo.decimals),
@@ -120,6 +134,7 @@ export class ExactTvmScheme implements SchemeNetworkServer {
   }
 
   getAssetDecimals(asset: string, network: Network): number {
+    if (isNativeAsset(asset)) return NATIVE_DECIMALS;
     const decimals = findDefaultAsset(asset, network)?.decimals;
     if (decimals === undefined) {
       throw new Error(

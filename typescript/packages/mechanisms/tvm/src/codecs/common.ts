@@ -1,10 +1,20 @@
 import { Address, beginCell, Cell } from "@ton/core";
+import { NATIVE_ASSET } from "../constants";
 
 export function normalizeAddress(address: string | Address): string {
   if (Address.isAddress(address)) {
     return address.toRawString();
   }
   return Address.parse(address).toRawString();
+}
+
+export function isNativeAsset(asset: unknown): boolean {
+  return asset === NATIVE_ASSET;
+}
+
+/** Normalize an asset id: Jetton masters to raw `wc:hex`, `"native"` unchanged. */
+export function normalizeAsset(asset: string): string {
+  return isNativeAsset(asset) ? NATIVE_ASSET : normalizeAddress(asset);
 }
 
 export function addressToStackItem(address: string): { type: "slice"; value: string } {
