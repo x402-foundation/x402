@@ -1,6 +1,10 @@
 import { x402Version } from "..";
 import { SettleResponse, VerifyResponse } from "../types/facilitator";
-import { FacilitatorExtension } from "../types/extensions";
+import {
+  FacilitatorExtension,
+  FacilitatorSettleContext,
+  FacilitatorSettleResultContext,
+} from "../types/extensions";
 import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import { Network } from "../types";
@@ -23,14 +27,7 @@ export interface FacilitatorVerifyFailureContext extends FacilitatorVerifyContex
   error: Error;
 }
 
-export interface FacilitatorSettleContext {
-  paymentPayload: PaymentPayload;
-  requirements: PaymentRequirements;
-}
-
-export interface FacilitatorSettleResultContext extends FacilitatorSettleContext {
-  result: SettleResponse;
-}
+export type { FacilitatorSettleContext, FacilitatorSettleResultContext };
 
 export interface FacilitatorSettleFailureContext extends FacilitatorSettleContext {
   error: Error;
@@ -400,6 +397,24 @@ export class x402Facilitator {
           await hook(resultContext);
         } catch (error) {
           this.warnFacilitatorHookFailure("afterSettle", error);
+        }
+      }
+
+      // Run enrichSettleResponse hooks on all registered extensions
+      for (const [key, extension] of this.extensions) {
+        if (!extension.enrichSettleResponse) continue;
+        try {
+          const extensionData = await extension.enrichSettleResponse(resultContext);
+          if (extensionData !== undefined) {
+            if (!settleResult.extensions) {
+              settleResult.extensions = {};
+            }
+            settleResult.extensions[key] = extensionData;
+          }
+        } catch (error) {
+          // Same isolation as the advisory hooks above: settlement has already
+          // executed, so a failing extension must not turn it into an error.
+          this.warnFacilitatorHookFailure(`enrichSettleResponse (extension "${key}")`, error);
         }
       }
 
