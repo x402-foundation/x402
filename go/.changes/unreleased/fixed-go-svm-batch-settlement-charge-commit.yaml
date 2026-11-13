@@ -1,0 +1,3 @@
+kind: fixed
+body: Complete SVM batch server-mode operations only after the channel charge commits, so a channel store that retries or fails a write no longer aborts a valid charge or leaves a completed operation without its charge.
+time: 2026-10-19T19:26:54.000000Z
