@@ -127,7 +127,7 @@ function paymentMiddleware(
 ): void;
 ```
 
-Registers Fastify hooks (`preValidation`, `onSend`, and `onError`) that:
+Registers Fastify hooks (`onRequest`, `preValidation`, `onSend`, and `onError`) that:
 
 1. Use the provided x402ResourceServer for payment processing
 2. Check if the incoming request matches a protected route
