@@ -635,6 +635,51 @@ async def test_create_payment_wrapper_async_find_matching_requirement():
 
 
 @pytest.mark.asyncio
+async def test_create_payment_wrapper_async_settlement_failure_uses_matched_network():
+    """Test that settlement failure on a non-first accept reports the matched network."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockAsyncResourceServer()
+    server.settle_payment.side_effect = Exception("boom")
+
+    accepts = [
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:84532",
+            amount="1000",
+            asset="USDC",
+            pay_to="0xA",
+            max_timeout_seconds=300,
+        ),
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:1",
+            amount="2000",
+            asset="USDC",
+            pay_to="0xB",
+            max_timeout_seconds=300,
+        ),
+    ]
+
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=accepts))
+
+    async def handler(args, context):
+        return {"content": [{"type": "text", "text": "success"}]}
+
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted=accepts[1].model_dump(),
+        payload={"signature": "0x123"},
+    )
+    result = await paid(handler)({}, {"_meta": {"x402/payment": payload.model_dump()}})
+
+    assert result.is_error is True
+    settled_req = server.settle_payment.call_args[0][1]
+    assert settled_req.network == "eip155:1"
+    assert result.structured_content[MCP_PAYMENT_RESPONSE_META_KEY]["network"] == "eip155:1"
+
+
+@pytest.mark.asyncio
 async def test_create_payment_wrapper_async_hooks_order():
     """Test that hooks are called in correct order."""
     server = MockAsyncResourceServer()
