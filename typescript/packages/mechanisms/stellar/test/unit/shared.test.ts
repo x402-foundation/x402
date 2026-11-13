@@ -77,14 +77,11 @@ describe("Stellar Shared Utilities", () => {
         ],
         data: xdr.ScVal.scvVec(args),
       });
-      const body = xdr.ContractEventBody.fromXDR(
-        Buffer.concat([Buffer.from([0, 0, 0, 0]), xdr.ContractEventV0.toXDR(eventV0)]),
-      );
       const event = new xdr.ContractEvent({
-        ext: xdr.ExtensionPoint.fromXDR(Buffer.from([0, 0, 0, 0])),
+        ext: xdr.ExtensionPoint.v0(),
         contractId: null,
-        type: xdr.ContractEventType.diagnostic(),
-        body,
+        type: xdr.ContractEventType.diagnostic,
+        body: xdr.ContractEventBody.v0(eventV0),
       });
 
       return new xdr.DiagnosticEvent({
@@ -289,7 +286,7 @@ describe("Stellar Shared Utilities", () => {
       address: xdr.ScAddress.scAddressTypeAccount(
         xdr.PublicKey.publicKeyTypeEd25519(Keypair.random().rawPublicKey()),
       ),
-      nonce: new xdr.Int64(1),
+      nonce: 1n,
       signatureExpirationLedger: 100,
       signature: xdr.ScVal.scvVoid(),
     });
@@ -363,7 +360,7 @@ describe("Stellar Shared Utilities", () => {
         }),
         signAuthEntries: vi.fn().mockResolvedValue(undefined),
         simulate: vi.fn().mockResolvedValue(undefined),
-        built: { toXDR: () => transactionXDR },
+        built: { toXdr: () => transactionXDR },
       } as unknown as AssembledTransaction<any>);
 
       const scheme = new ExactStellarScheme(signer);
@@ -416,7 +413,7 @@ describe("Stellar Shared Utilities", () => {
       ): xdr.SorobanAuthorizationEntry {
         const addressCredentials = new xdr.SorobanAddressCredentials({
           address: new Address(signerAddress).toScAddress(),
-          nonce: new xdr.Int64(nonce),
+          nonce: BigInt(nonce),
           signatureExpirationLedger: 0,
           signature: xdr.ScVal.scvVoid(),
         });
@@ -459,16 +456,19 @@ describe("Stellar Shared Utilities", () => {
        * @param signature - The signature ScVal from address credentials
        * @returns The raw signature bytes
        */
-      function extractSignatureBytes(signature: xdr.ScVal): Buffer {
-        const signatureEntry = signature
-          .vec()![0]
-          .map()!
-          .find(entry => entry.key().sym().toString() === "signature");
+      function extractSignatureBytes(signature: xdr.ScVal): Uint8Array {
+        const first = signature.type === "scvVec" ? signature.vec?.[0] : undefined;
+        const signatureEntry =
+          first?.type === "scvMap"
+            ? first.map?.find(
+                entry => entry.key.type === "scvSymbol" && entry.key.sym.toString() === "signature",
+              )
+            : undefined;
 
-        if (!signatureEntry) {
-          throw new Error("Signature ScVal has no `signature` member");
+        if (signatureEntry?.val.type !== "scvBytes") {
+          throw new Error("Signature ScVal has no `signature` bytes member");
         }
-        return signatureEntry.val().bytes();
+        return signatureEntry.val.bytes.toBytes();
       }
 
       it("should count a genuinely signed V2 entry as signed", async () => {
@@ -480,9 +480,7 @@ describe("Stellar Shared Utilities", () => {
         );
 
         // Guards against a relabelled V1 fixture silently passing as V2
-        expect(signedEntry.credentials().switch()).toBe(
-          xdr.SorobanCredentialsType.sorobanCredentialsAddressV2(),
-        );
+        expect(signedEntry.credentials.type).toBe("sorobanCredentialsAddressV2");
 
         const status = gatherAuthEntrySignatureStatus({
           transaction: wrapInTransaction([signedEntry]),
@@ -509,13 +507,13 @@ describe("Stellar Shared Utilities", () => {
           StellarNetworks.TESTNET,
         );
 
-        const credentials = getAddressCredentials(signedEntry.credentials());
+        const credentials = getAddressCredentials(signedEntry.credentials);
         if (!credentials) {
           throw new Error("Expected address credentials on the signed V2 entry");
         }
-        expect(credentials.signatureExpirationLedger()).toBe(EXPIRATION_LEDGER);
+        expect(credentials.signatureExpirationLedger).toBe(EXPIRATION_LEDGER);
 
-        const signatureBytes = extractSignatureBytes(credentials.signature());
+        const signatureBytes = extractSignatureBytes(credentials.signature);
         const clientKey = Keypair.fromPublicKey(CLIENT_PUBLIC);
 
         // V2 commits to ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS (CAP-71)
@@ -524,8 +522,8 @@ describe("Stellar Shared Utilities", () => {
           EXPIRATION_LEDGER,
           StellarNetworks.TESTNET,
         );
-        expect(v2Preimage.switch().name).toBe("envelopeTypeSorobanAuthorizationWithAddress");
-        expect(clientKey.verify(hash(v2Preimage.toXDR()), signatureBytes)).toBe(true);
+        expect(v2Preimage.type).toBe("envelopeTypeSorobanAuthorizationWithAddress");
+        expect(clientKey.verify(hash(v2Preimage.toXdr()), signatureBytes)).toBe(true);
 
         // The same signature must NOT satisfy the legacy, non-address-bound
         // preimage over an otherwise identical invocation and nonce - the two
@@ -535,8 +533,8 @@ describe("Stellar Shared Utilities", () => {
           EXPIRATION_LEDGER,
           StellarNetworks.TESTNET,
         );
-        expect(v1Preimage.switch().name).toBe("envelopeTypeSorobanAuthorization");
-        expect(clientKey.verify(hash(v1Preimage.toXDR()), signatureBytes)).toBe(false);
+        expect(v1Preimage.type).toBe("envelopeTypeSorobanAuthorization");
+        expect(clientKey.verify(hash(v1Preimage.toXdr()), signatureBytes)).toBe(false);
       });
 
       it("should count signed V1 and V2 entries in the same transaction", async () => {

@@ -1429,8 +1429,8 @@ importers:
   ../../typescript/packages/mechanisms/stellar:
     dependencies:
       '@stellar/stellar-sdk':
-        specifier: ^16.4.1
-        version: 16.4.1
+        specifier: ^17.4.0
+        version: 17.4.0
       '@x402/core':
         specifier: workspace:~
         version: link:../../core
@@ -5002,6 +5002,15 @@ packages:
   '@evolution-sdk/evolution@0.5.11':
     resolution: {integrity: sha512-Y1o0x9P6v+a9YiGvBg9Rv3lJqkBqeupGI4N2J/pbLLHdnrF1sXFyLe94yvc+sCQGbHwfIPDN0XZc+SDf3W7yQw==}
 
+  '@exodus/bytes@1.16.0':
+    resolution: {integrity: sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
+    peerDependencies:
+      '@noble/hashes': ^1.8.0 || ^2.0.0
+    peerDependenciesMeta:
+      '@noble/hashes':
+        optional: true
+
   '@farcaster/miniapp-core@0.4.1':
     resolution: {integrity: sha512-20FxHTRToYUKx7CQ8PvIy9OoQ6XjdmF1pRMS7dsj37qdqjVDeEkYoK8yXwnoReZoJRcYwIg8P3i6V8bTWNR5mg==}
 
@@ -6973,13 +6982,13 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@stellar/js-xdr@4.0.0':
-    resolution: {integrity: sha512-+NmNa7Tk5BI5XFdy/6xGTqAN4J9a9KgCrCGhj2uEUTCBhLkch0M+QbKzNH8zEnejWe0p8w+0q5hUVX6L3OzoVA==}
-    engines: {node: '>=20.0.0', pnpm: '>=9.0.0'}
+  '@stellar/js-xdr@5.0.0':
+    resolution: {integrity: sha512-HBDNKnxr+ecdaEmbZ0mcKkirOF8tXXEbWSw34P3wT40Tn3g+u+cCH17xAWZymzscq8cojHB8340pR8QNVaD32w==}
+    engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
 
-  '@stellar/stellar-sdk@16.4.1':
-    resolution: {integrity: sha512-0kT+ShOUE6dc0smLEsajuizss1hvlGDsCooM88FqgxNOCKpY8IuQPzCs75RNKMSMITz+dX7KZ5qGhQ2EWGMTTg==}
-    engines: {node: '>=22.0.0'}
+  '@stellar/stellar-sdk@17.4.0':
+    resolution: {integrity: sha512-IX6gi62yWQ+6Oz56LsVEEeSViSOWJL3BkttftwVmVsu+62nLTWNVsCmTWEzwgNLT/q5HGP25OnlU+hhy2E4wwA==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
 
   '@swc/helpers@0.5.17':
@@ -8159,10 +8168,6 @@ packages:
 
   base-x@5.0.1:
     resolution: {integrity: sha512-M7uio8Zt++eg3jPj+rHMfCC+IuygQHHCOU+IYsVtik6FWjuYpVt/+MRKcgsAMHh8mMFAwnB+Bs+mTrFiXjMzKg==}
-
-  base32.js@0.1.0:
-    resolution: {integrity: sha512-n3TkB02ixgBOhTvANakDb4xaMXnYUVkNoRFJjQflcqMQhyEKxEHdj3E6N8t8sUQ0mjH/3/JxzlXuz3ul/J90pQ==}
-    engines: {node: '>=0.12.0'}
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
@@ -13096,6 +13101,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@exodus/bytes@1.16.0(@noble/hashes@2.2.0)':
+    optionalDependencies:
+      '@noble/hashes': 2.2.0
+
   '@farcaster/miniapp-core@0.4.1(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)':
     dependencies:
       '@solana/web3.js': 1.98.4(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)
@@ -16852,17 +16861,17 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@stellar/js-xdr@4.0.0': {}
+  '@stellar/js-xdr@5.0.0': {}
 
-  '@stellar/stellar-sdk@16.4.1':
+  '@stellar/stellar-sdk@17.4.0':
     dependencies:
+      '@exodus/bytes': 1.16.0(@noble/hashes@2.2.0)
       '@noble/ed25519': 3.1.0
       '@noble/hashes': 2.2.0
-      '@stellar/js-xdr': 4.0.0
+      '@stellar/js-xdr': 5.0.0
+      '@types/json-schema': 7.0.15
       axios: 1.20.0
-      base32.js: 0.1.0
       bignumber.js: 11.1.4
-      buffer: 6.0.3
       commander: 14.0.3
       eventsource: 4.1.0
       feaxios: 0.0.23
@@ -19427,8 +19436,6 @@ snapshots:
   base-x@4.0.1: {}
 
   base-x@5.0.1: {}
-
-  base32.js@0.1.0: {}
 
   base64-js@1.5.1: {}
 
