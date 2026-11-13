@@ -528,7 +528,7 @@
     {
       "id": "forwarded-host-hop",
       "note": "A trusted proxy's X-Forwarded-Host hop supplies the public authority.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -540,7 +540,7 @@
     {
       "id": "forwarded-proto-hops",
       "note": "X-Forwarded-Proto hops that are scheme tokens.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -828,7 +828,7 @@
     {
       "id": "authority-x-forwarded-host-path-and-query",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -840,7 +840,7 @@
     {
       "id": "authority-x-forwarded-host-query",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -852,7 +852,7 @@
     {
       "id": "authority-x-forwarded-host-fragment",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -864,7 +864,7 @@
     {
       "id": "authority-x-forwarded-host-backslash",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -876,7 +876,7 @@
     {
       "id": "authority-x-forwarded-host-userinfo",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -888,7 +888,7 @@
     {
       "id": "authority-x-forwarded-host-port-not-numeric",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -900,7 +900,7 @@
     {
       "id": "authority-x-forwarded-host-port-65536",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -912,7 +912,7 @@
     {
       "id": "authority-x-forwarded-host-bad-percent",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -924,7 +924,7 @@
     {
       "id": "authority-x-forwarded-host-brackets-inside-name",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -936,7 +936,7 @@
     {
       "id": "authority-x-forwarded-host-crlf",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -948,7 +948,7 @@
     {
       "id": "authority-x-forwarded-host-empty",
       "note": "A malformed X-Forwarded-Host cannot inject a request target.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -960,7 +960,7 @@
     {
       "id": "forwarded-proto-url",
       "note": "X-Forwarded-Proto hops must be scheme tokens.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -972,7 +972,7 @@
     {
       "id": "forwarded-proto-crlf",
       "note": "X-Forwarded-Proto hops must be scheme tokens.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -984,7 +984,7 @@
     {
       "id": "forwarded-proto-empty-hop",
       "note": "X-Forwarded-Proto hops must be scheme tokens.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -996,7 +996,7 @@
     {
       "id": "forwarded-host-malformed-hop",
       "note": "Every authority hop present must be well formed.",
-      "config": {"public_origin":"https://api.example.com","bound_headers":[]},
+      "config": {"public_origin":"https://api.example.com","bound_headers":[],"trusted_proxy":true},
       "input": {
         "method": "GET",
         "url": "https://api.example.com/article/A",
@@ -1306,6 +1306,39 @@
       "expect": {"error":"invalid_exact_lnbtc_request_binding"}
     },
     {
+      "id": "arguments-nan",
+      "note": "NaN is not JSON (RFC 8259 section 6); a parser that accepts it still cannot bind it, since JCS has no NaN.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":NaN}}"
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "arguments-infinity",
+      "note": "Infinity is not JSON (RFC 8259 section 6); a parser that accepts it still cannot bind it, since JCS has no Infinity.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"x\":Infinity}}"
+      },
+      "expect": {"error":"invalid_exact_lnbtc_request_binding"}
+    },
+    {
+      "id": "arguments-utf16-member-order",
+      "note": "Members U+E000 and U+1F600. JCS sorts by UTF-16 code units (RFC 8785 section 3.2.3), so U+1F600 (0xD83D 0xDE00) sorts first; code-point order would put U+E000 first.",
+      "input": {
+        "server": "https://api.example.com/mcp",
+        "bound_metadata": [],
+        "params_json": "{\"name\":\"get_article\",\"arguments\":{\"\\ue000\":1,\"\\ud83d\\ude00\":2}}"
+      },
+      "expect": {
+        "request_hash": "33cd0ef1fb222147f47746b523ecc9d78e498af43e42a1db287ac12b41df8d86",
+        "canonical_description": "{\"arguments\":{\"😀\":2,\"\":1},\"domain\":\"x402:exact:lnbtc:bolt11:mcp:1\",\"metadata\":[],\"method\":\"tools/call\",\"name\":\"get_article\",\"server\":\"https://api.example.com/mcp\"}"
+      }
+    },
+    {
       "id": "arguments-lone-surrogate",
       "note": "Strings must be valid Unicode.",
       "input": {
@@ -1497,6 +1530,48 @@
               "bound_metadata": [],
               "params": {"name":"get_article","arguments":{"article":"A"}}
             }
+          }
+        ],
+        "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
+      },
+      {
+        "id": "mcp-server-differs",
+        "note": "The challenge binds the same tool call to https://other.example.com/mcp, with a matching requestHash and invoice. The client binds its intended server, not the one the challenge names.",
+        "now": 1700000000,
+        "skew": 60,
+        "patch": [
+          {"op":"remove","path":"/intended_request/http"},
+          {"op":"replace","path":"/intended_request/profile","value":"mcp:1"},
+          {
+            "op": "add",
+            "path": "/intended_request/mcp",
+            "value": {
+              "server": "https://api.example.com/mcp",
+              "bound_metadata": [],
+              "params": {"name":"get_article","arguments":{"article":"A"}}
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/payment_required/accepts",
+            "value": [
+              {
+                "scheme": "exact",
+                "network": "lnbtc:000000000019d6689c085ae165831e93",
+                "amount": "25000",
+                "asset": "BTC",
+                "payTo": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                  "assetTransferMethod": "bolt11",
+                  "paymentFlow": "upfront",
+                  "requestHash": "96903c29186c6aabc95e48abafd8ce3ad32b4060f5d5bf22cf75f3fbfe816e45",
+                  "requestBindingProfile": "mcp:1",
+                  "requestBindingParams": {"server":"https://other.example.com/mcp","metadata":[]},
+                  "invoice": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5j6grc2gcd342hj27fz46lkxw8tfjksrq7h2m7gk0whelhl5pdezsxqzfvcqpjagtg6jp3tcl4s5lzu0py2uwsnz2ha4menzdzn4l2a5q5q53t6zvrku57llvdzx32crfztq9xe74ng0maf7m2frd35ws22kyjhy83xtqpqpm8e0"
+                }
+              }
+            ]
           }
         ],
         "expect": {"error":"invalid_exact_lnbtc_request_mismatch","payer_called":false}
@@ -2827,6 +2902,63 @@
               }
             ],
             "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-nonzero-padding-n",
+        "note": "Signed invoice whose n field (53 words) has its padding bit set.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjnp4qfumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqte3wa9yqmz64pavru5v0jasamkdqa0dszv65548mqayfkm988q20cdrq9x2w55ae3c29fntqfs9jk8ew6cpg2ztdep8zj5evdhsy0yygmsq3lj2tk"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-duplicate-payment-hash",
+        "note": "Signed invoice with a second p field.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qpp59dxrgt65x047tydpmfm7qy73kuj8243dfptcmj5tsjavvegu8jussp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjhwgsjw6aj9um3jaup86jd39anueg569nmegd7ms5jrjn2yq9rsa3zkwn0y20nhl46798d9z5qk7kkwjepu6nwgy4e83epr0ah7hf5uqqdpz6s4"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_decode_failed","step":5}
+          }
+        ]
+      },
+      {
+        "id": "invoice-description-hash-and-inline",
+        "note": "Signed invoice with the spec description hash and an inline d field beside it.",
+        "group": "single_fault",
+        "steps": [
+          {
+            "now": 1700000000,
+            "skew": 60,
+            "patch": [
+              {
+                "op": "replace",
+                "path": "/payload/accepted/extra/invoice",
+                "value": "lnbc250n1pj48ugqpp54y3u9s8ylemsv8l3ewyzzu0klhujvuvmkl6llchq23vy8rzjsf0qsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsdq0v9e8g6trd3jjqsghp5p4nz8am4uqj4q8a87z3sk4x6yk4dv2mvel34epw68qqkwy0xcqvqxqzfvcqpjt4zn40ynfedg9qm4pjsavdys4nhy7fn38uc6ct70t0h6k885pfu5nhk84tlguyrccdna7umxd4l7nvy42uq3j9f200v60h6uydpu7usqpn8uy6"
+              }
+            ],
+            "expect": {"success":false,"error_reason":"invalid_exact_lnbtc_invoice_description","step":5}
           }
         ]
       },

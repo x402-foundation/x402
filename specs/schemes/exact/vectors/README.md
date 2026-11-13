@@ -29,6 +29,12 @@ Each case has an `id`, a `note` explaining it, and an `expect`.
   section 2.1 specifies.
 - An HTTP helper that takes a configured origin is given the URL's own origin in
   `http_binding`. Origin policy is exercised only in `http_server_adapter`.
+- In `http_server_adapter`, `config.trusted_proxy: true` means the request
+  arrived through a proxy the server trusts, so the framework may have built
+  `url` from the proxy's `X-Forwarded-Host` and `X-Forwarded-Proto`. The
+  adapter then reads those headers as authority and scheme sources and
+  validates every hop, as it does `Host`. Every case that carries an
+  `X-Forwarded-*` line sets it.
 - `mcp_binding` gives `params` as a JSON value, or `params_json` as the raw text
   of the `params` object when the text itself is the point (number literals,
   escapes). Parse `params_json` with the SDK's normal JSON parser. If the parser
@@ -78,10 +84,14 @@ Each case has an `id`, a `note` explaining it, and an `expect`.
 - Concurrency and restart behavior of the replay store. These need a real store
   and belong in each SDK's own tests.
 - A replay-store failure. Its reason is proposed separately in #3698.
+- Duplicate member names in `params_json`. The specification requires their
+  rejection, but common JSON parsers keep the last member without reporting
+  the duplicate, so a case cannot yet say how an SDK detects them.
 - Invoice issuance, pricing, and transport middleware.
 
 ## Versioning
 
 `fixture_version` increases whenever an expectation changes or a case is
-removed. Adding a case does not change it. SDK loaders should pin the version
+removed. Adding a case, or an input member that states what an existing case
+already assumed, does not change it. SDK loaders should pin the version
 they target.
