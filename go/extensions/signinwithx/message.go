@@ -103,8 +103,6 @@ func FormatSIWSMessage(payload Payload) (string, error) {
 	if payload.Statement != "" {
 		builder.WriteString(payload.Statement)
 		builder.WriteString("\n\n")
-	} else {
-		builder.WriteString("\n")
 	}
 	builder.WriteString("URI: ")
 	builder.WriteString(payload.URI)
