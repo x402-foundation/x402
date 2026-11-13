@@ -68,7 +68,8 @@
           "schemes/overview",
           "schemes/exact",
           "schemes/upto",
-          "schemes/batch-settlement"
+          "schemes/batch-settlement",
+          "schemes/shared-payment-token"
         ]
       },
       {
