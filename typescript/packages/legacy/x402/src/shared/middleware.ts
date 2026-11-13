@@ -110,11 +110,16 @@ export function findMatchingRoute(
     .replace(/\/+/g, "/") // collapse slashes
     .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
 
+  // Routers match on the raw path, so an encoded "/" or "\" stays inside its
+  // segment. Match on that view too, so it can't skip a parameterised route.
+  const rawPath = pathWithoutQuery.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1");
+
   const upperMethod = method.toUpperCase();
   const findMatchingRoutes = (candidateMethod: string): RoutePattern[] =>
     routePatterns.filter(
       ({ pattern, verb }) =>
-        pattern.test(normalizedPath) && (verb === "*" || candidateMethod === verb),
+        (pattern.test(normalizedPath) || pattern.test(rawPath)) &&
+        (verb === "*" || candidateMethod === verb),
     );
 
   // HTTP routers commonly dispatch HEAD through GET. Preserve an explicit
