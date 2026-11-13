@@ -372,7 +372,17 @@ For custom facilitator implementations, use `UptoSvmScheme` from the facilitator
     const rentCleanup = svmUptoScheme.createRentCleanupManager(
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
     );
-    rentCleanup.start({ intervalSecs: 60, discoveryIntervalSecs: 86_400 });
+    rentCleanup.start({
+      intervalSecs: 60,
+      discoveryIntervalSecs: 86_400,
+      // Optional: called before each abandon-close or distribute within
+      // maxClosesPerRun. Throwing skips the channel; the error is reported
+      // through onError and does not consume a maxClosesPerRun slot.
+      // Reclaim never calls this hook.
+      // beforeCloseOrDistribute: async ({ channelId, payer, payTo, action }) => {
+      //   console.log(`closing channel ${channelId} (action: ${action})`);
+      // },
+    });
     ```
   </Tab>
   <Tab title="Go">
