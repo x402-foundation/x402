@@ -1,0 +1,3 @@
+kind: fixed
+body: The EVM batch-settlement `BatchSettlementChannelManager` now settles claims submitted by a refund (server or client initiated) or by an earlier process. The settle job calls the facilitator on every interval instead of only after its own `Claim`, `Settle` returns an empty transaction instead of an error when the facilitator reports nothing to settle (including a `*x402.SettleError` from a non-2xx reply), and `Stop` with `Flush` settles even when it claimed nothing.
+time: 2026-10-25T00:00:00Z
