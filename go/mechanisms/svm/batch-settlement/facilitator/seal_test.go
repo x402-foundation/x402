@@ -287,6 +287,44 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.Len(t, payouts.calls(), 2)
 	})
 
+	t.Run("delivers the payout of a close that confirmed before its sealed state was visible", func(t *testing.T) {
+		payouts := &payoutLog{}
+		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+		sealedChannel := live(func(channel *generated.Channel) {
+			channel.Status = uint8(generated.ChannelStatus_Sealed)
+			channel.Settlement = generated.SettlementWatermarks{Settled: 3_000, PayoutWatermark: 500}
+		})
+		stale := live(nil)
+		var closeLanded bool
+		fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if closeLanded {
+				return sealedChannel, nil
+			}
+			return stale, nil
+		}
+		reads := 0
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			reads++
+			closeLanded = true
+			return stale, nil
+		}
+		payload := sealPayload(t, 3_000)
+
+		pending := settleThrown(t, fixture.scheme, payload)
+		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+		assert.Equal(t, signature, pending.Transaction)
+		assert.Empty(t, payouts.calls())
+
+		recovered := settle(t, fixture.scheme, payload)
+		assert.True(t, recovered.Success)
+		assert.Equal(t, "2500", recovered.Amount)
+		assert.Equal(t, signature, recovered.Transaction)
+		assert.Len(t, fixture.submits, 1)
+		assert.Equal(t, 1, reads)
+		require.Len(t, payouts.calls(), 1)
+		assert.Equal(t, "2500", payouts.calls()[0].response.Amount)
+	})
+
 	t.Run("seals at the current watermark without a precompile when the voucher equals settled", func(t *testing.T) {
 		fixture := facilitator(t, nil, true)
 		response := settle(t, fixture.scheme, sealPayload(t, 1_000))
@@ -447,7 +485,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 	})
 
 	t.Run("keeps a legacy refund result pending when the merchant credit was not stored", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+		store := x402.NewInMemoryPendingSettlementStore()
 		key := "batch:refund:" + network + ":" + channelID + ":3000:result"
 		encoded, err := json.Marshal(x402.SettleResponse{
 			Success:     true,
@@ -490,7 +528,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 				channel, payload, amount = openLive, refundPayload(t, 3_000), "7000"
 			}
 			store := &readSignalStore{
-				PendingSettlementStore: NewInMemoryPendingSettlementStore(),
+				PendingSettlementStore: x402.NewInMemoryPendingSettlementStore(),
 				key:                    fmt.Sprintf("batch:%s:%s:%s:3000:result", tc.intent, network, channelID),
 				read:                   make(chan struct{}, 1),
 			}
@@ -644,7 +682,7 @@ func (l *payoutLog) calls() []payoutCall {
 }
 
 type readSignalStore struct {
-	PendingSettlementStore
+	x402.PendingSettlementStore
 	key  string
 	read chan struct{}
 }

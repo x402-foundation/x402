@@ -213,7 +213,7 @@ func SettlementPending(network x402.Network, payer, signature, message string) *
 // A failed store write is terminal, with the signature kept for manual reconciliation.
 func RecordPendingOrTerminal(
 	ctx context.Context,
-	store PendingSettlementStore,
+	store x402.PendingSettlementStore,
 	key, signature, payer string,
 	network x402.Network,
 	cause error,

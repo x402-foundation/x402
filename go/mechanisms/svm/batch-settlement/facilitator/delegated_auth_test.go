@@ -264,6 +264,54 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 		require.Nil(t, bound)
 	})
 
+	t.Run("answers a retried delegated open only for the caller that opened the channel", func(t *testing.T) {
+		opened := buildOpen(t, 127)
+		req := requirements(server.PublicKey().String())
+		live := channelOf(opened.Payload.ChannelConfig, generated.ChannelStatus_Open, 0)
+		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
+		pendingStore := x402.NewInMemoryPendingSettlementStore()
+		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
+		schemeFor := func(identity string) *BatchSvmScheme {
+			scheme := NewBatchSvmScheme(ctx, signer, &Config{
+				ChannelStorage:         storage,
+				PendingSettlementStore: pendingStore,
+				DelegatedReceiverAuth: &DelegatedReceiverAuth{
+					ReceiverAuthorizer: server.PublicKey().String(),
+					ResolveCallerIdentity: func(context.Context, DelegatedSettleContext) (string, error) {
+						return identity, nil
+					},
+				},
+			})
+			scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			return scheme
+		}
+
+		signer.confirmErr = errors.New("Transaction confirmation timeout")
+		first := schemeFor(delegatedCaller)
+		first.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+		_, err := first.Settle(ctx, types.PaymentPayload{X402Version: 2, Accepted: req, Payload: asMap(t, opened.Payload)}, req, nil)
+		var pending *x402.SettleError
+		require.ErrorAs(t, err, &pending)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+
+		signer.confirmErr = nil
+		pendingKey := depositKey(network, opened.ChannelID)
+		for _, identity := range []string{"someone-else", ""} {
+			response := settle(t, schemeFor(identity), opened.Payload, req)
+			require.False(t, response.Success)
+			require.Equal(t, batchsettlement.ErrDelegatedUnauthenticated, response.ErrorReason)
+			_, recorded, getErr := pendingStore.Get(ctx, pendingKey)
+			require.NoError(t, getErr)
+			require.True(t, recorded, "a rejected caller must not consume the pending signature")
+		}
+
+		response := settle(t, schemeFor(delegatedCaller), opened.Payload, req)
+		require.True(t, response.Success, "%+v", response)
+		require.Equal(t, pending.Transaction, response.Transaction)
+	})
+
 	t.Run("seals and refunds a matching caller without closeAuthorization", func(t *testing.T) {
 		opened := buildOpen(t, 125)
 		fixture := delegatedScheme(delegatedCaller, true)

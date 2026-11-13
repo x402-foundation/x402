@@ -2,7 +2,8 @@ package facilitator
 
 import (
 	"context"
-	"sync"
+	"errors"
+	"strings"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -10,133 +11,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 )
 
-// PendingSettlementStore records pending signatures and completed operation outcomes.
-// Records outlive an unresolved transaction: this store does not evict them.
-type PendingSettlementStore interface {
-	Get(ctx context.Context, key string) (string, bool, error)
-	Set(ctx context.Context, key, value string) error
-	Delete(ctx context.Context, key string) error
-}
-
-// ConditionalPendingStore adds atomic reservation for multi-process recovery.
-type ConditionalPendingStore interface {
-	PendingSettlementStore
-	// SetIfAbsent inserts key only when it is absent. False means another worker owns it.
-	SetIfAbsent(ctx context.Context, key, value string) (bool, error)
-	// DeleteIfEquals removes key only when it still holds value.
-	DeleteIfEquals(ctx context.Context, key, value string) (bool, error)
-}
-
-// InMemoryPendingSettlementStore is process-local recovery with no eviction of unresolved work.
-type InMemoryPendingSettlementStore struct {
-	mu      sync.Mutex
-	records map[string]string
-}
-
-// NewInMemoryPendingSettlementStore creates an empty in-memory recovery store.
-func NewInMemoryPendingSettlementStore() *InMemoryPendingSettlementStore {
-	return &InMemoryPendingSettlementStore{records: make(map[string]string)}
-}
-
-// Get returns a stored value. A missing key returns ("", false, nil).
-func (s *InMemoryPendingSettlementStore) Get(_ context.Context, key string) (string, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value, ok := s.records[key]
-	return value, ok, nil
-}
-
-// Set records key's value, overwriting any previous one.
-func (s *InMemoryPendingSettlementStore) Set(_ context.Context, key, value string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.records[key] = value
-	return nil
-}
-
-// SetIfAbsent inserts key when it is absent.
-func (s *InMemoryPendingSettlementStore) SetIfAbsent(_ context.Context, key, value string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.records[key]; ok {
-		return false, nil
-	}
-	s.records[key] = value
-	return true, nil
-}
-
-// DeleteIfEquals removes key only when it still holds value.
-func (s *InMemoryPendingSettlementStore) DeleteIfEquals(_ context.Context, key, value string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.records[key] != value {
-		return false, nil
-	}
-	delete(s.records, key)
-	return true, nil
-}
-
-// Delete removes key.
-func (s *InMemoryPendingSettlementStore) Delete(_ context.Context, key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.records, key)
-	return nil
-}
-
-type reservationChain struct {
-	mu      sync.Mutex
-	pending map[pendingKey]chan struct{}
-}
-
-type pendingKey struct {
-	store PendingSettlementStore
-	key   string
-}
-
-var legacyReservations = &reservationChain{pending: map[pendingKey]chan struct{}{}}
-
-// ReserveBroadcast reserves key for signature. Stores with SetIfAbsent use that.
-// Other stores are serialized in this process.
-func ReserveBroadcast(ctx context.Context, store PendingSettlementStore, key, signature string) (bool, error) {
-	if conditional, ok := store.(ConditionalPendingStore); ok {
-		return conditional.SetIfAbsent(ctx, key, signature)
-	}
-	legacyReservations.mu.Lock()
-	token := pendingKey{store: store, key: key}
-	for {
-		wait, busy := legacyReservations.pending[token]
-		if !busy {
-			legacyReservations.pending[token] = make(chan struct{})
-			legacyReservations.mu.Unlock()
-			break
-		}
-		legacyReservations.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-wait:
-		}
-		legacyReservations.mu.Lock()
-	}
-	defer func() {
-		legacyReservations.mu.Lock()
-		close(legacyReservations.pending[token])
-		delete(legacyReservations.pending, token)
-		legacyReservations.mu.Unlock()
-	}()
-	existing, ok, err := store.Get(ctx, key)
-	if err != nil {
-		return false, err
-	}
-	if ok && existing != "" {
-		return false, nil
-	}
-	if err := store.Set(ctx, key, signature); err != nil {
-		return false, err
-	}
-	return true, nil
-}
+// errReservationHeld means another broadcast already holds the operation's reservation.
+var errReservationHeld = errors.New("broadcast reservation held by another worker")
 
 // recoveryGrace is how long pending-store access may run past the request deadline.
 const recoveryGrace = 250 * time.Millisecond
@@ -158,47 +34,79 @@ func recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) 
 	return context.WithDeadline(detached, deadline.Add(recoveryGrace))
 }
 
-// recoveryGet reads key from the pending store on a recovery context.
-func (f *BatchSvmScheme) recoveryGet(ctx context.Context, key string) (string, bool, error) {
-	recoveryCtx, cancel := recoveryContext(ctx)
-	defer cancel()
-	return f.pendingStore.Get(recoveryCtx, key)
+// broadcastRecordSeparator splits a signature, the blockhash it was signed with and
+// the signed transaction. Neither base58 nor base64 has ':', so a bare signature
+// and a signature:blockhash pair are also valid records.
+const broadcastRecordSeparator = ":"
+
+// encodeBroadcastRecord is the value held under an operation key while a broadcast
+// is unresolved. The blockhash lets a retry tell a broadcast that can no longer
+// land from one still in flight. The wire, kept only once a confirmation timed
+// out, lets that retry send the same transaction again. Empty trailing parts are
+// omitted.
+func encodeBroadcastRecord(signature, blockhash, wire string) string {
+	switch {
+	case wire != "":
+		return signature + broadcastRecordSeparator + blockhash + broadcastRecordSeparator + wire
+	case blockhash != "":
+		return signature + broadcastRecordSeparator + blockhash
+	default:
+		return signature
+	}
 }
 
-// BroadcastExpiredWithoutLanding reports whether a broadcast whose confirmation
-// was never observed can no longer land. Anything uncertain answers false.
-func BroadcastExpiredWithoutLanding(
-	ctx context.Context,
-	signer svm.FacilitatorSvmSigner,
-	signature solana.Signature,
-	network, wire string,
-) bool {
+// parseBroadcastRecord splits a broadcast record into its signature, blockhash and wire.
+func parseBroadcastRecord(record string) (signature, blockhash, wire string) {
+	signature, rest, _ := strings.Cut(record, broadcastRecordSeparator)
+	blockhash, wire, _ = strings.Cut(rest, broadcastRecordSeparator)
+	return signature, blockhash, wire
+}
+
+// blockhashOfWire returns the recent blockhash of a base64 transaction, or "" when it cannot be decoded.
+func blockhashOfWire(wire string) string {
+	tx, err := svm.DecodeTransaction(wire)
+	if err != nil {
+		return ""
+	}
+	return tx.Message.RecentBlockhash.String()
+}
+
+// resendKept sends a kept transaction again, so a broadcast that never reached
+// a leader can still land before its blockhash expires. Errors are ignored:
+// the confirmation that follows decides the outcome.
+func (f *BatchSvmScheme) resendKept(ctx context.Context, signature solana.Signature, wire, network string) {
 	if wire == "" {
+		return
+	}
+	tx, err := svm.DecodeTransaction(wire)
+	if err != nil || len(tx.Signatures) == 0 || tx.Signatures[0] != signature {
+		return
+	}
+	_, _ = f.raw.SendTransaction(ctx, tx, network)
+}
+
+// expiredWithoutLanding reports whether a broadcast whose confirmation was never
+// observed can no longer land: its blockhash is invalid and the network has no
+// record of the signature. Anything uncertain answers false.
+func (f *BatchSvmScheme) expiredWithoutLanding(ctx context.Context, signature solana.Signature, blockhash, network string) bool {
+	if blockhash == "" {
 		return false
 	}
-	blockhash, ok := signer.(svm.FacilitatorBlockhashCapabilities)
-	history, historyOK := signer.(svm.FacilitatorConfirmedTransactionReader)
+	validity, ok := f.raw.(svm.FacilitatorBlockhashCapabilities)
+	history, historyOK := f.raw.(svm.FacilitatorConfirmedTransactionReader)
 	if !ok || !historyOK {
 		return false
 	}
-	tx, err := svm.DecodeTransaction(wire)
+	hash, err := solana.HashFromBase58(blockhash)
 	if err != nil {
 		return false
 	}
-	valid, err := blockhash.IsBlockhashValid(ctx, tx.Message.RecentBlockhash, network)
+	valid, err := validity.IsBlockhashValid(ctx, hash, network)
 	if err != nil || valid {
 		return false
 	}
 	confirmed, err := history.GetConfirmedTransaction(ctx, signature, network)
-	if err != nil {
-		return false
-	}
-	return confirmed == nil
-}
-
-// DiscardWire drops the signed bytes kept for rebroadcast. A store error is ignored.
-func DiscardWire(ctx context.Context, store PendingSettlementStore, network, signature string) {
-	_ = store.Delete(ctx, "batch:transaction:"+network+":"+signature+":wire")
+	return err == nil && confirmed == nil
 }
 
 // PayoutAttributionAmbiguousError means a confirmed sweep cannot be attributed

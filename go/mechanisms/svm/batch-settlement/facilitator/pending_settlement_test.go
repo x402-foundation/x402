@@ -4,13 +4,17 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 func TestBatchSettlementPendingSettlement(t *testing.T) {
@@ -20,7 +24,7 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 	recorded := solana.Signature{1}
 	recordedSignature := recorded.String()
 
-	facilitator := func(t *testing.T, store PendingSettlementStore) *BatchSvmScheme {
+	facilitator := func(t *testing.T, store x402.PendingSettlementStore) *BatchSvmScheme {
 		t.Helper()
 		signer := &confirmingSigner{scriptedSigner: newScriptedSigner(t, 1), slot: 432}
 		return NewBatchSvmScheme(context.Background(), signer, &Config{
@@ -84,8 +88,8 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 		})
 	}
 
-	t.Run("reconciles a recorded broadcast instead of repeating it", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+	t.Run("reconciles a recorded broadcast instead of repeating it and clears the record", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
 		require.NoError(t, store.Set(context.Background(), key, recordedSignature))
 		scheme := facilitator(t, store)
 		broadcasts := 0
@@ -97,14 +101,13 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 		assert.True(t, result.OK)
 		assert.Equal(t, recordedSignature, result.Signature)
 		assert.Zero(t, broadcasts)
-		got, ok, err := store.Get(context.Background(), key)
+		_, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, recordedSignature, got)
+		assert.False(t, ok)
 	})
 
 	t.Run("keeps the record until the reconcile knows the outcome", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+		store := x402.NewInMemoryPendingSettlementStore()
 		require.NoError(t, store.Set(context.Background(), key, recordedSignature))
 		signer := &confirmingSigner{scriptedSigner: newScriptedSigner(t, 1), slot: 1}
 		var recordDuringConfirm string
@@ -126,28 +129,25 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 		assert.True(t, result.OK)
 		assert.Equal(t, recordedSignature, result.Signature)
 		assert.Zero(t, broadcasts)
-		got, ok, err := store.Get(context.Background(), key)
-		require.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, recordedSignature, got)
-		require.NoError(t, scheme.completeBroadcast(context.Background(), key, recordedSignature, network))
-		_, ok, err = store.Get(context.Background(), key)
+		_, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
 		assert.False(t, ok)
-		completed, ok, err := store.Get(context.Background(), key+CompletedBroadcastSuffix)
-		require.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, recordedSignature, completed)
 	})
 
 	t.Run("has both concurrent retries reconcile rather than rebroadcast", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+		store := x402.NewInMemoryPendingSettlementStore()
 		require.NoError(t, store.Set(context.Background(), key, recordedSignature))
 		scheme := facilitator(t, store)
+		_, reserved, err := scheme.duplicateStore.Reserve(context.Background(), key, recordedSignature, ReservationTTL)
+		require.NoError(t, err)
+		require.True(t, reserved)
 		var broadcasts int
 		var mu sync.Mutex
 		attempt := func() durableResult {
-			result, err := scheme.broadcastDurably(context.Background(), key, network, payer, func(func(string, string) error) (string, error) {
+			result, err := scheme.broadcastDurably(context.Background(), key, network, payer, func(onPrepared func(string, string) error) (string, error) {
+				if err := onPrepared("fresh-signature", "wire"); err != nil {
+					return "", err
+				}
 				mu.Lock()
 				broadcasts++
 				mu.Unlock()
@@ -167,30 +167,46 @@ func TestBatchSettlementPendingSettlement(t *testing.T) {
 		assert.Equal(t, recordedSignature, second.Signature)
 	})
 
-	t.Run("records a broadcast before its confirmation is awaited", func(t *testing.T) {
-		store := NewInMemoryPendingSettlementStore()
+	t.Run("reserves the signature before the send and writes no pending record on success", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
 		scheme := facilitator(t, store)
-		var recordedMidFlight string
+		var heldMidFlight string
 		_, err := scheme.broadcastDurably(context.Background(), key, network, payer, func(onPrepared func(string, string) error) (string, error) {
 			require.NoError(t, onPrepared("in-flight-signature", "wire"))
-			got, ok, err := store.Get(context.Background(), key)
+			holder, reserved, err := scheme.duplicateStore.Reserve(context.Background(), key, "other-signature", ReservationTTL)
 			require.NoError(t, err)
-			require.True(t, ok)
-			recordedMidFlight = got
+			require.False(t, reserved)
+			heldMidFlight = holder
 			return "in-flight-signature", nil
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "in-flight-signature", recordedMidFlight)
+		assert.Equal(t, "in-flight-signature", heldMidFlight)
+		_, ok, err := store.Get(context.Background(), key)
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("records the pending signature when the confirmation times out", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
+		scheme := facilitator(t, store)
+		result, err := scheme.broadcastDurably(context.Background(), key, network, payer, func(onPrepared func(string, string) error) (string, error) {
+			require.NoError(t, onPrepared(recordedSignature, "wire"))
+			return "", &paymentchannels.SettlementConfirmationTimeoutError{Signature: recordedSignature}
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result.Response)
+		assert.Equal(t, x402.ErrSettlementPending, result.Response.ErrorReason)
+		assert.Equal(t, recordedSignature, result.Response.Transaction)
 		got, ok, err := store.Get(context.Background(), key)
 		require.NoError(t, err)
 		assert.True(t, ok)
-		assert.Equal(t, "in-flight-signature", got)
+		assert.Equal(t, encodeBroadcastRecord(recordedSignature, "", "wire"), got, "the timeout record keeps the signed transaction")
 	})
 }
 
 type storeWatchSigner struct {
 	*confirmingSigner
-	store PendingSettlementStore
+	store x402.PendingSettlementStore
 	key   string
 	seen  *string
 }
@@ -204,4 +220,203 @@ func (s *storeWatchSigner) ConfirmTransactionWithOptions(
 	got, _, _ := s.store.Get(ctx, s.key)
 	*s.seen = got
 	return s.confirmingSigner.ConfirmTransactionWithOptions(ctx, signature, network, opts)
+}
+
+type opCounts struct {
+	mu       sync.Mutex
+	gets     int
+	sets     int
+	deletes  int
+	reserves int
+	releases int
+}
+
+func (c *opCounts) total() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gets + c.sets + c.deletes + c.reserves + c.releases
+}
+
+type countingPendingStore struct {
+	x402.PendingSettlementStore
+	counts *opCounts
+}
+
+func (s *countingPendingStore) Get(ctx context.Context, key string) (string, bool, error) {
+	s.counts.mu.Lock()
+	s.counts.gets++
+	s.counts.mu.Unlock()
+	return s.PendingSettlementStore.Get(ctx, key)
+}
+
+func (s *countingPendingStore) Set(ctx context.Context, key, value string) error {
+	s.counts.mu.Lock()
+	s.counts.sets++
+	s.counts.mu.Unlock()
+	return s.PendingSettlementStore.Set(ctx, key, value)
+}
+
+func (s *countingPendingStore) Delete(ctx context.Context, key string) error {
+	s.counts.mu.Lock()
+	s.counts.deletes++
+	s.counts.mu.Unlock()
+	return s.PendingSettlementStore.Delete(ctx, key)
+}
+
+type countingDuplicateStore struct {
+	svm.DuplicateSettlementStore
+	counts *opCounts
+}
+
+func (s *countingDuplicateStore) Reserve(ctx context.Context, key, signature string, ttl time.Duration) (string, bool, error) {
+	s.counts.mu.Lock()
+	s.counts.reserves++
+	s.counts.mu.Unlock()
+	return s.DuplicateSettlementStore.Reserve(ctx, key, signature, ttl)
+}
+
+func (s *countingDuplicateStore) Release(ctx context.Context, key, signature string) error {
+	s.counts.mu.Lock()
+	s.counts.releases++
+	s.counts.mu.Unlock()
+	return s.DuplicateSettlementStore.Release(ctx, key, signature)
+}
+
+func TestSettleStorageOperationCounts(t *testing.T) {
+	network := string(svm.SolanaDevnetCAIP2)
+	payer := mustKey(t).PublicKey().String()
+	signature := solana.Signature{3}.String()
+
+	counted := func(t *testing.T, cfg *Config) (*BatchSvmScheme, *opCounts) {
+		t.Helper()
+		counts := &opCounts{}
+		cfg.PendingSettlementStore = &countingPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore(), counts: counts}
+		cfg.DuplicateSettlementStore = &countingDuplicateStore{DuplicateSettlementStore: svm.NewInMemoryDuplicateSettlementStore(), counts: counts}
+		signer := &confirmingSigner{scriptedSigner: newScriptedSigner(t, 1), slot: 1}
+		return NewBatchSvmScheme(context.Background(), signer, cfg), counts
+	}
+
+	t.Run("a confirmed broadcast costs one pending read and one reservation", func(t *testing.T) {
+		scheme, counts := counted(t, &Config{})
+		result, err := scheme.broadcastDurably(context.Background(), "batch:claim:test", network, payer, func(onPrepared func(string, string) error) (string, error) {
+			require.NoError(t, onPrepared(signature, "wire"))
+			return signature, nil
+		})
+		require.NoError(t, err)
+		require.True(t, result.OK)
+		assert.Equal(t, 1, counts.gets)
+		assert.Equal(t, 1, counts.reserves)
+		assert.Zero(t, counts.sets)
+		assert.Zero(t, counts.deletes)
+		assert.Zero(t, counts.releases)
+		assert.Equal(t, 2, counts.total())
+	})
+
+	t.Run("a definitive send failure adds one release and no pending write", func(t *testing.T) {
+		scheme, counts := counted(t, &Config{})
+		_, err := scheme.broadcastUnchecked(context.Background(), "batch:claim:test", network, payer, func(onPrepared func(string, string) error) (string, error) {
+			require.NoError(t, onPrepared(signature, "wire"))
+			return "", assert.AnError
+		})
+		require.Error(t, err)
+		assert.Equal(t, 1, counts.releases)
+		assert.Zero(t, counts.sets)
+	})
+
+	t.Run("a distribution without OnDistributionConfirmed writes no result or recorded marker", func(t *testing.T) {
+		scheme, counts := counted(t, &Config{})
+		response := &x402.SettleResponse{Success: true, Transaction: signature}
+		require.NoError(t, scheme.keepPayoutResult(context.Background(), "batch:distribute:test", response))
+		require.NoError(t, scheme.recordPayout(context.Background(), "batch:distribute:test", payoutMarker{}, response, types.PaymentRequirements{}))
+		assert.Zero(t, counts.total())
+	})
+
+	t.Run("a distribution with OnDistributionConfirmed stores the result before the hook and the recorded marker after it", func(t *testing.T) {
+		var order []string
+		scheme, _ := counted(t, &Config{})
+		store := scheme.pendingStore
+		scheme.config.OnDistributionConfirmed = func(ctx context.Context, response *x402.SettleResponse, _ types.PaymentRequirements) error {
+			_, stored, err := store.Get(ctx, resultKey("k"))
+			require.NoError(t, err)
+			assert.True(t, stored, "the result is durable before the hook runs")
+			previous, _, err := store.Get(ctx, recordedKey("k"))
+			require.NoError(t, err)
+			assert.NotEqual(t, response.Transaction, previous)
+			order = append(order, response.Transaction)
+			return nil
+		}
+		response := &x402.SettleResponse{Success: true, Transaction: signature, Network: x402.Network(network)}
+		require.NoError(t, scheme.keepPayoutResult(context.Background(), "k", response))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, response, types.PaymentRequirements{}))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, response, types.PaymentRequirements{}))
+		assert.Equal(t, []string{signature}, order, "the hook sees each payout once")
+		recorded, _, err := store.Get(context.Background(), recordedKey("k"))
+		require.NoError(t, err)
+		assert.Equal(t, signature, recorded)
+
+		next := &x402.SettleResponse{Success: true, Transaction: solana.Signature{4}.String(), Network: x402.Network(network)}
+		require.NoError(t, scheme.keepPayoutResult(context.Background(), "k", next))
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{}, next, types.PaymentRequirements{}))
+		assert.Equal(t, []string{signature, next.Transaction}, order, "a later payout under the same key reaches the hook too")
+	})
+
+	t.Run("a marker the caller already read is not read again", func(t *testing.T) {
+		scheme, counts := counted(t, &Config{})
+		scheme.config.OnDistributionConfirmed = func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			t.Fatal("a payout already recorded must not reach the hook")
+			return nil
+		}
+		response := &x402.SettleResponse{Success: true, Transaction: signature}
+		require.NoError(t, scheme.recordPayout(context.Background(), "k", payoutMarker{transaction: signature, read: true}, response, types.PaymentRequirements{}))
+		assert.Zero(t, counts.total())
+	})
+}
+
+func TestDistributionKeys(t *testing.T) {
+	prepared := []PreparedDistribution{{ChannelID: "chan-b"}, {ChannelID: "chan-a"}}
+	key := distributionKey("net", prepared)
+	assert.Equal(t, "batch:distribute:net:chan-a,chan-b", key, "channel order does not change the key")
+	pass := func(settledB, settledA uint64) string {
+		return distributionPassKey(key, prepared, []*generated.Channel{
+			{Settlement: generated.SettlementWatermarks{Settled: settledB}},
+			{Settlement: generated.SettlementWatermarks{Settled: settledA}},
+		})
+	}
+	assert.Equal(t, "batch:distribute:net:chan-a,chan-b:pass:chan-a:7,chan-b:5", pass(5, 7))
+	assert.NotEqual(t, pass(5, 7), pass(5, 8), "a new claim starts a new pass")
+	assert.Empty(t, distributionPassKey(key, prepared, []*generated.Channel{nil, {}}), "no pass starts while a channel is absent")
+}
+
+func TestDecodeWithMessageHashIgnoresSignatures(t *testing.T) {
+	feePayer := mustKey(t)
+	other := mustKey(t)
+	build := func(signer solana.PrivateKey) string {
+		tx, err := solana.NewTransaction(
+			[]solana.Instruction{solana.NewInstruction(solana.MustPublicKeyFromBase58(svm.MemoProgramAddress), nil, []byte{1})},
+			solana.MustHashFromBase58("11111111111111111111111111111111"),
+			solana.TransactionPayer(signer.PublicKey()),
+		)
+		require.NoError(t, err)
+		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(signer.PublicKey()) {
+				return &signer
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		wire, err := svm.EncodeTransaction(tx)
+		require.NoError(t, err)
+		return wire
+	}
+	_, first, err := decodeWithMessageHash(build(feePayer))
+	require.NoError(t, err)
+	_, again, err := decodeWithMessageHash(build(feePayer))
+	require.NoError(t, err)
+	_, different, err := decodeWithMessageHash(build(other))
+	require.NoError(t, err)
+	assert.Equal(t, first, again)
+	assert.NotEqual(t, first, different)
+
+	_, _, err = decodeWithMessageHash("not-a-transaction")
+	assert.Error(t, err)
 }

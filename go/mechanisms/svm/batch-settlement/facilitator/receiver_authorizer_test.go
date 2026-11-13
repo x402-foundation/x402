@@ -504,4 +504,67 @@ func TestBatchSettlementReceiverAuthorizerBinding(t *testing.T) {
 		require.NotEmpty(t, response.Transaction)
 		require.Len(t, fixture.signer.sentTransactions(), 1)
 	})
+
+	t.Run("rejects a replay of a confirmed open that has no pending signature", func(t *testing.T) {
+		_, payment, req := openedDeposit(t)
+		fixture := facilitatorFor(nil, nil)
+		first := settle(t, fixture.scheme, payment, req)
+		require.True(t, first.Success)
+		require.Len(t, fixture.signer.sentTransactions(), 1)
+
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return liveChannel(), nil
+		}
+		for range 2 {
+			replay := settle(t, fixture.scheme, payment, req)
+			require.False(t, replay.Success)
+			require.Equal(t, batchsettlement.ErrSetupTransaction, replay.ErrorReason)
+		}
+		require.Len(t, fixture.signer.sentTransactions(), 1)
+	})
+
+	t.Run("reconciles the pending signature of a timed-out open on retry and clears it", func(t *testing.T) {
+		channelID, payment, req := openedDeposit(t)
+		fixture := facilitatorFor(nil, nil)
+		fixture.signer.confirmErr = errString("Transaction confirmation timeout")
+		_, err := fixture.scheme.Settle(ctx, payment, req, nil)
+		var pending *x402.SettleError
+		require.ErrorAs(t, err, &pending)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+		require.NotEmpty(t, pending.Transaction)
+		key := depositKey(network, channelID)
+		_, recorded, getErr := fixture.scheme.pendingStore.Get(ctx, key)
+		require.NoError(t, getErr)
+		require.True(t, recorded)
+
+		fixture.signer.confirmErr = nil
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return liveChannel(), nil
+		}
+		retry := settle(t, fixture.scheme, payment, req)
+		require.True(t, retry.Success, "reason=%s message=%s", retry.ErrorReason, retry.ErrorMessage)
+		require.Equal(t, pending.Transaction, retry.Transaction)
+		_, recorded, getErr = fixture.scheme.pendingStore.Get(ctx, key)
+		require.NoError(t, getErr)
+		require.False(t, recorded)
+
+		again := settle(t, fixture.scheme, payment, req)
+		require.False(t, again.Success, "the pending signature answers one retry")
+		require.Equal(t, batchsettlement.ErrSetupTransaction, again.ErrorReason)
+	})
+
+	t.Run("does not treat the open as a retry once the channel has settled claims", func(t *testing.T) {
+		channelID, payment, req := openedDeposit(t)
+		fixture := facilitatorFor(nil, nil)
+		require.NoError(t, fixture.scheme.pendingStore.Set(ctx, depositKey(network, channelID), solana.Signature{1}.String()))
+		sent := len(fixture.signer.sentTransactions())
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			channel := liveChannel()
+			channel.Settlement.Settled = 1_000
+			return channel, nil
+		}
+		response := settle(t, fixture.scheme, payment, req)
+		require.False(t, response.Success)
+		require.Len(t, fixture.signer.sentTransactions(), sent)
+	})
 }
