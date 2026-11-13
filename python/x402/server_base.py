@@ -1555,13 +1555,19 @@ class x402ResourceServerBase:
             "scheme": requirements.scheme,
         }
         keys = extension_keys if extension_keys is not None else list(declared.keys())
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "after_verify",
             self,
             keys,
             scheme,
         ):
-            hook_result = yield ("after", hook, result_context)
+            try:
+                hook_result = yield ("after", hook, result_context)
+            except _SyncServerAsyncHookError:
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("afterVerify", label, error)
+                continue
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",

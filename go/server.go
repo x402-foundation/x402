@@ -1387,7 +1387,10 @@ func (s *x402ResourceServer) runAfterVerifyHooks(
 
 	resultCtx := VerifyResultContext{VerifyContext: hookCtx, Result: verifyResult}
 	for _, lh := range afterVerifyHooks {
-		directive, _ := lh.Hook(resultCtx) // Log errors but don't fail
+		directive, err := lh.Hook(resultCtx)
+		if err != nil {
+			log.Printf("[x402] Resource server afterVerify hook threw (%s): %v", lh.Label, err)
+		}
 		if directive == nil {
 			continue
 		}
