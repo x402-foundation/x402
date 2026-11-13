@@ -355,6 +355,8 @@ ERR_PERMIT2_NOT_YET_VALID = "permit2_not_yet_valid"
 ERR_PERMIT2_AMOUNT_MISMATCH = "permit2_amount_mismatch"
 ERR_PERMIT2_TOKEN_MISMATCH = "permit2_token_mismatch"
 ERR_PERMIT2_INVALID_SIGNATURE = "invalid_permit2_signature"
+# An RPC call the signature check needed failed, so the signature was not checked
+ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE = "invalid_permit2_failed_to_verify_signature"
 ERR_PERMIT2_ALLOWANCE_REQUIRED = "permit2_allowance_required"
 ERR_PERMIT2_INSUFFICIENT_BALANCE = "permit2_insufficient_balance"
 ERR_PERMIT2_INVALID_DESTINATION = "permit2_invalid_destination"
