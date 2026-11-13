@@ -119,6 +119,68 @@ function assertAxiosResponseBodyWithinLimit(
   }
 }
 
+type NodeStreamBody = {
+  pipe: unknown;
+  on: (event: string, listener: (...args: never[]) => void) => unknown;
+  resume?: () => unknown;
+  getHeaders?: () => Record<string, string>;
+};
+
+/**
+ * Returns whether a request body is a Node stream, which Axios consumes on send.
+ *
+ * @param data - Axios request `data`
+ * @returns True for objects with `pipe` and `on`, the shape Axios treats as a stream
+ */
+function isNodeStreamBody(data: unknown): data is NodeStreamBody {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    typeof (data as NodeStreamBody).pipe === "function" &&
+    typeof (data as NodeStreamBody).on === "function"
+  );
+}
+
+/**
+ * Reads a Node stream request body into a Buffer.
+ *
+ * @param stream - Stream body from the request config
+ * @returns The streamed bytes
+ */
+function readNodeStreamBody(stream: NodeStreamBody): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", (error: Error) => reject(error));
+    stream.resume?.();
+  });
+}
+
+/**
+ * Buffers a stream request body before the first send. Axios reuses `config.data` for
+ * the paid retry, and a consumed stream would send that retry with an empty body.
+ * A `form-data` body's headers (the multipart boundary) are applied the way the Axios
+ * http adapter applies them, since the adapter only reads them from the form object.
+ *
+ * @param config - Outgoing Axios request config
+ * @returns The config, with a stream body replaced by its bytes
+ */
+async function bufferStreamRequestBody(
+  config: InternalAxiosRequestConfig,
+): Promise<InternalAxiosRequestConfig> {
+  const data = config.data;
+  if (isNodeStreamBody(data)) {
+    if (typeof data.getHeaders === "function") {
+      config.headers.set(data.getHeaders());
+    }
+    config.data = await readNodeStreamBody(data);
+  }
+  return config;
+}
+
 /**
  * Clones an Axios internal request config so a retry can treat HTTP 402 as a successful
  * response status for validation (so the interceptor can handle payment flow).
@@ -185,6 +247,8 @@ export function wrapAxiosWithPayment(
   client: x402Client | x402HTTPClient,
 ): AxiosInstance {
   const httpClient = client instanceof x402HTTPClient ? client : new x402HTTPClient(client);
+
+  axiosInstance.interceptors.request.use(bufferStreamRequestBody);
 
   axiosInstance.interceptors.response.use(
     response => {

@@ -111,6 +111,9 @@ describe("wrapAxiosWithPayment()", () => {
     // Mock axios client
     mockAxiosClient = {
       interceptors: {
+        request: {
+          use: vi.fn(),
+        },
         response: {
           use: vi.fn(),
         },
@@ -875,6 +878,9 @@ describe("wrapAxiosWithPaymentFromConfig()", () => {
 
     mockAxiosClient = {
       interceptors: {
+        request: {
+          use: vi.fn(),
+        },
         response: {
           use: vi.fn(),
         },
