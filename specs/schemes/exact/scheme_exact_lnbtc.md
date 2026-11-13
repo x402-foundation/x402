@@ -518,6 +518,11 @@ including:
 - A `p`, `h`, `s`, or `n` field whose data length is not 52, 52, 52, or 53 words
   MUST cause rejection. BOLT11's "fields which must be ignored" example predates
   this reader requirement; the requirement applies.
+- The padding bits of a `p`, `h`, `s`, or `n` field MUST be zero: the 4 bits
+  after the 256 data bits of a 52-word field, and the 1 bit after the 264 data
+  bits of a 53-word `n` field. BOLT11 requires writers to pad with zeros but
+  gives readers no rule; a reader that ignored the padding would accept
+  several encodings of one value.
 - An invoice without exactly one `p` field and exactly one `s` field MUST be
   rejected, as MUST an invoice with more than one `n` or `x` field.
 - If an `n` field is present, the signature MUST verify against it and MUST be
