@@ -7,8 +7,9 @@ import time
 from typing import Any
 
 from ....schemas import PaymentRequirements
-from ..codecs.common import normalize_address
+from ..codecs.common import is_native_asset, normalize_address, normalize_asset
 from ..codecs.jetton import build_jetton_transfer_body
+from ..codecs.native import has_jetton_only_extra, native_transfer_body
 from ..codecs.w5 import build_w5_signed_body, get_w5_seqno
 from ..constants import (
     DEFAULT_JETTON_WALLET_MESSAGE_AMOUNT,
@@ -81,17 +82,30 @@ class ExactTvmScheme:
 
         client = self._get_client(network)
         payer = normalize_address(self._signer.address)
-        asset = normalize_address(requirements.asset)
-        source_wallet = client.get_jetton_wallet(asset, payer)
-
-        account = client.get_account_state(payer)
-        include_state_init = not account.is_active
-        seqno = get_w5_seqno(account)
+        asset = normalize_asset(requirements.asset)
         valid_until = int(time.time()) + (
             requirements.max_timeout_seconds - 5
             if requirements.max_timeout_seconds > 10
             else (requirements.max_timeout_seconds + 1) // 2
         )
+
+        if is_native_asset(asset):
+            account = client.get_account_state(payer)
+            include_state_init = not account.is_active
+            signed_body = self._build_native_signed_body(
+                requirements=requirements,
+                balance=account.balance,
+                seqno=get_w5_seqno(account),
+                valid_until=valid_until,
+            )
+            settlement_boc = self._build_settlement_boc(payer, signed_body, include_state_init)
+            return ExactTvmPayload(settlement_boc=settlement_boc, asset=asset).to_dict()
+
+        source_wallet = client.get_jetton_wallet(asset, payer)
+
+        account = client.get_account_state(payer)
+        include_state_init = not account.is_active
+        seqno = get_w5_seqno(account)
         transfer_body = self._build_transfer_body(requirements)
         required_inner = self._estimate_required_inner_value(
             client=client,
@@ -180,6 +194,41 @@ class ExactTvmScheme:
             opcode=opcode,
             send_mode=send_mode,
             wallet_id=wallet_id,
+        )
+
+    def _build_native_signed_body(
+        self,
+        *,
+        requirements: PaymentRequirements,
+        balance: int,
+        seqno: int,
+        valid_until: int,
+    ) -> Cell:
+        """Sign one native TON transfer of exactly ``amount`` to ``payTo``."""
+        if has_jetton_only_extra(requirements.extra):
+            raise ValueError(
+                "Native TON payments must not set extra.forwardTonAmount or "
+                "extra.responseDestination"
+            )
+        amount = int(requirements.amount)
+        if amount <= 0:
+            raise ValueError("Native TON payment amount must be positive")
+        # The payment value must come from the wallet's own balance, not the relay's gas.
+        if balance < amount:
+            raise ValueError(
+                f"Wallet balance {balance} nanotons is below the payment amount {amount}"
+            )
+        out_msg = Contract.create_internal_msg(
+            src=None,
+            dest=Address(requirements.pay_to),
+            bounce=True,
+            value=amount,
+            body=native_transfer_body(requirements.extra),
+        ).serialize()
+        return self._build_w5_signed_body(
+            out_message=out_msg,
+            seqno=seqno,
+            valid_until=valid_until,
         )
 
     def _build_settlement_boc(self, payer: str, body: Cell, include_state_init: bool) -> str:

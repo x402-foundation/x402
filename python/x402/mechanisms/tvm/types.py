@@ -60,6 +60,19 @@ class ParsedJettonTransfer:
 
 
 @dataclass
+class ParsedNativeTransfer:
+    """Native TON transfer extracted from a W5 action."""
+
+    destination: str
+    amount: int
+    body: Cell
+    bounce: bool
+    has_extra_currencies: bool
+    has_state_init: bool
+    body_hash: bytes | None = None
+
+
+@dataclass
 class ParsedTvmSettlement:
     """Parsed TON settlement payload."""
 
@@ -72,7 +85,12 @@ class ParsedTvmSettlement:
     signed_slice_hash: bytes
     signature: bytes
     state_init: StateInit | None
-    transfer: ParsedJettonTransfer
+    transfer: ParsedJettonTransfer | ParsedNativeTransfer
+
+    @property
+    def is_native(self) -> bool:
+        """True when the settlement carries a native TON transfer."""
+        return isinstance(self.transfer, ParsedNativeTransfer)
 
 
 @dataclass
