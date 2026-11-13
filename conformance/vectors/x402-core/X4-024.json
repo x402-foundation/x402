@@ -1,0 +1,17 @@
+{
+  "id": "X4-024",
+  "title": "Stale Manifest Acceptance (OATR)",
+  "category": "identity_verification",
+  "requirement": "HC-17: Clients/servers must reject manifests older than CACHE_TTL_MS (default 15min)",
+  "method": "POST",
+  "request": {
+    "stale_generated_at_ms": 1783088054974,
+    "ttl_exceeded_by_s": 300
+  },
+  "owasp_asi": "ASI04",
+  "severity": "medium",
+  "impact": "fund_theft",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-024"
+}

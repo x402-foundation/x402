@@ -1,0 +1,17 @@
+{
+  "id": "X4-013",
+  "title": "Budget Exhaustion Burst Test",
+  "category": "spending_limits",
+  "requirement": "Twelve Numbers: burst protection prevents agent budget exhaustion",
+  "method": "GET",
+  "request": {
+    "n_burst": 50,
+    "n_workers": 10
+  },
+  "owasp_asi": "ASI08",
+  "severity": "medium",
+  "impact": "overpayment",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-013"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "X4-052",
+  "title": "Mixed Settlement Protocol Confusion",
+  "category": "cross_protocol_confusion",
+  "requirement": "HC-42: x402 settlement must reject Lightning/HTLC-style proofs",
+  "method": "GET",
+  "request": {
+    "mixed_variants": [
+      "lightning_preimage",
+      "bolt11_invoice",
+      "htlc_settlement"
+    ]
+  },
+  "owasp_asi": "ASI09",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-052"
+}

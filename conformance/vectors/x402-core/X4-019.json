@@ -1,0 +1,25 @@
+{
+  "id": "X4-019",
+  "title": "Wrong Network Payment Rejection",
+  "category": "cross_chain_confusion",
+  "requirement": "HC-12: Server must validate payment network matches requirement",
+  "method": "GET",
+  "request": {
+    "networks_tested": [
+      "polygon",
+      "ethereum",
+      "arbitrum",
+      "optimism",
+      "avalanche",
+      "solana",
+      "bitcoin"
+    ],
+    "expected_network": "1"
+  },
+  "owasp_asi": "ASI09",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-019"
+}
