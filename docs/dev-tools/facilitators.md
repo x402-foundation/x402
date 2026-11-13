@@ -37,6 +37,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [Sui Facilitator (UIG Studios)](https://github.com/DrVelvetFog/sui-x402-facilitator) | Non-custodial, zero-fee x402 facilitator for Sui mainnet and testnet with USDC support |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
+| [Toll Facilitator](https://x402.t0ll.xyz) | Free, keyless x402 facilitator for Robinhood Chain (eip155:4663), USDG via EIP-3009 or Permit2: exact, upto, auth-capture escrow and batch-settlement, optional per-payer spending budgets; checks each payTo against the seller's ERC-8004 identity (ERC-8478), pays the gas and signs a receipt for each settlement |
 | [X Pay](https://x-pay.llc/) | x402 v2 facilitator for exact USDC payments on Base mainnet via EIP-3009; merchant API key required for verification and settlement ([capabilities](https://facilitator-xpay.llc/supported)) |
 | [TRDEFI Arc Facilitator](https://trdefi-arc-facilitator.netlify.app) | Free, public x402 facilitator for Arc (eip155:5042), settling exact USDC via EIP-3009. Source: https://github.com/TRDEFI/arc-x402-facilitator |
 
