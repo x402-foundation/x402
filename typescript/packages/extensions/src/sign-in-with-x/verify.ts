@@ -6,15 +6,9 @@
  * - Solana (solana:*): Ed25519 signature verification via tweetnacl
  */
 
-import { extractEVMChainId, formatSIWEMessage, verifyEVMSignature } from "./evm";
+import { verifyEVMPayload } from "./evm";
 import { formatSIWSMessage, verifySolanaSignature, decodeBase58 } from "./solana";
-import type {
-  SIWxPayload,
-  SIWxVerifyResult,
-  SIWxVerifyOptions,
-  SIWxVerifyCode,
-  EVMMessageVerifier,
-} from "./types";
+import type { SIWxPayload, SIWxVerifyResult, SIWxVerifyOptions, SIWxVerifyCode } from "./types";
 
 /**
  * Verify SIWX signature cryptographically.
@@ -55,7 +49,7 @@ export async function verifySIWxSignature(
 ): Promise<SIWxVerifyResult> {
   // Route by chain namespace
   if (payload.chainId.startsWith("eip155:")) {
-    return await verifyEVMPayload(payload, options?.evmVerifier);
+    return await verifyEVMPayload(payload, options);
   }
 
   if (payload.chainId.startsWith("solana:")) {
@@ -77,63 +71,6 @@ export async function verifySIWxSignature(
  */
 function verifyFailure(invalidReason: SIWxVerifyCode, invalidMessage: string): SIWxVerifyResult {
   return { isValid: false, invalidReason, invalidMessage };
-}
-
-/**
- * Verify EVM signature with optional smart wallet support.
- *
- * @param payload - The SIWX payload containing signature and message data
- * @param verifier - Optional message verifier for EIP-1271/EIP-6492 support
- * @returns Verification result with recovered address if valid
- */
-async function verifyEVMPayload(
-  payload: SIWxPayload,
-  verifier?: EVMMessageVerifier,
-): Promise<SIWxVerifyResult> {
-  try {
-    extractEVMChainId(payload.chainId);
-  } catch (error) {
-    return verifyFailure(
-      "invalid_siwx_chain_id",
-      error instanceof Error ? error.message : "Invalid EVM chainId format",
-    );
-  }
-
-  const message = formatSIWEMessage(
-    {
-      domain: payload.domain,
-      uri: payload.uri,
-      statement: payload.statement,
-      version: payload.version,
-      chainId: payload.chainId,
-      type: payload.type,
-      nonce: payload.nonce,
-      issuedAt: payload.issuedAt,
-      expirationTime: payload.expirationTime,
-      notBefore: payload.notBefore,
-      requestId: payload.requestId,
-      resources: payload.resources,
-    },
-    payload.address,
-  );
-
-  try {
-    const valid = await verifyEVMSignature(message, payload.address, payload.signature, verifier);
-
-    if (!valid) {
-      return verifyFailure("invalid_siwx_signature", "Signature verification failed");
-    }
-
-    return {
-      isValid: true,
-      payer: payload.address,
-    };
-  } catch (error) {
-    return verifyFailure(
-      "invalid_siwx_verifier_error",
-      error instanceof Error ? error.message : "Signature verification failed",
-    );
-  }
 }
 
 /**
