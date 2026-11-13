@@ -50,6 +50,43 @@ Networks are identified via CAIP-2 per the [Algorand namespace profile](https://
 - `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` - Testnet
 - `algorand:*` - Wildcard (matches all Algorand networks)
 
+### Identifier Compatibility and Migration
+
+Early releases of this package used the full base64 genesis hash as the `network` value, for example `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=`. That form is not valid CAIP-2 (it is longer than 32 characters and can contain `/` and `=`), so it was replaced by the canonical reference: the URL-safe base64 genesis hash, cut to its first 32 characters. Both forms name the same chain. The scheme specification lists the [legacy values](../../../../specs/schemes/exact/scheme_exact_algo.md#legacy-identifiers) for Mainnet and Testnet.
+
+Only the `network` value changed. Transactions still carry the full genesis hash in their `gh` field, and the SDK still exports it as `ALGORAND_MAINNET_GENESIS_HASH` and `ALGORAND_TESTNET_GENESIS_HASH`.
+
+#### SDK Releases
+
+| `@x402/avm` release | `ALGORAND_*_CAIP2` constants | Legacy `network` value on input |
+| ------------------- | ---------------------------- | ------------------------------- |
+| 2.10.0 – 2.19.0 | Legacy | Expected. Network values are not validated, and any value other than the legacy Testnet one is handled as Mainnet, so a canonical Testnet value is misrouted rather than rejected. |
+| 2.20.0 – 2.28.0 | Canonical | Normalized to canonical, provided the scheme registration matches it (see below). |
+| 2.29.0 and later | Canonical | Rejected with `Unsupported Algorand network`. |
+
+Three details matter when reading this table:
+
+- **The constants changed, not your configuration.** A resource server sends whatever network string is in its route configuration. Upgrading the package does not change a hardcoded legacy string.
+- **Registration decides what reaches the AVM code.** `@x402/core` matches a network against the registered pattern first. On 2.20.0 – 2.28.0 a legacy value is only normalized when the scheme is registered under `algorand:*`. A facilitator registered for a single canonical network never routes a legacy value to the AVM scheme.
+- **The rejection comes from `@x402/avm` and `@x402/paywall`.** Both compare against the canonical values since [#3894](https://github.com/x402-foundation/x402/pull/3894). The `@x402/core` payment schemas also reject non-CAIP-2 networks since 2.29.0 ([#3285](https://github.com/x402-foundation/x402/pull/3285)), but only where the validation helpers are called, so do not rely on core alone to filter legacy values.
+
+The switch to canonical identifiers landed in [#2931](https://github.com/x402-foundation/x402/pull/2931).
+
+#### Facilitators
+
+A hosted facilitator may still advertise legacy values next to the canonical ones, which the current specification no longer allows. Check the facilitator's `/supported` response (for example [GoPlausible](https://facilitator.goplausible.xyz/supported)) before you depend on either form. `/supported` shows what is advertised at the time of the request; it is not proof that verification or settlement succeeds.
+
+#### Migrating from the Legacy Form
+
+1. Upgrade clients to a release between 2.20.0 and 2.28.0 and register the scheme under `algorand:*`. These clients handle both forms, so they keep working while the server side changes.
+2. On resource servers and facilitators, upgrade to 2.20.0 or later and replace hardcoded network strings in route configuration and scheme registration with `ALGORAND_MAINNET_CAIP2` and `ALGORAND_TESTNET_CAIP2`.
+3. Confirm that the 402 responses of each resource server and the `/supported` response of each facilitator carry canonical values.
+4. Only then upgrade clients, resource servers and facilitators to 2.29.0 or later.
+
+A client on 2.29.0 or later rejects a payment requirement that carries a legacy identifier. Fix this at the resource server that issued it. Do not rewrite the `network` of a received payment requirement to make it validate: that changes the terms the client was offered.
+
+Tools that inspect x402 traffic, such as linters, should report a legacy value as a deprecated identifier for the same chain, not as a network mismatch.
+
 ## Signer Implementation
 
 Use the built-in helper functions to create signers from a Base64-encoded private key. These use `generateAddressWithSigners` from `@algorandfoundation/algokit-utils` internally for canonical Ed25519 signing.
