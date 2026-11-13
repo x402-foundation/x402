@@ -31,6 +31,7 @@ export {
 } from "./rentCleanupManager";
 export type {
   BatchSvmRentCleanupManagerConfig,
+  RentCleanupCloseCandidate,
   RentCleanupCloseResult,
   RentCleanupOptions,
   RentCleanupReclaimResult,

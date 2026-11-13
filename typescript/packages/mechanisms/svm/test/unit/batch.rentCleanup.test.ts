@@ -616,6 +616,129 @@ describe("BatchSvmRentCleanupManager — cleanup", () => {
     );
   });
 
+  it.each([
+    {
+      name: "abandon-close of an expired Open channel",
+      status: ChannelStatus.Open,
+      action: "abandon_close",
+    },
+    { name: "distribute of a Sealed channel", status: ChannelStatus.Sealed, action: "distribute" },
+  ])(
+    "passes the channel parties to beforeCloseOrDistribute before signing: $name",
+    async ({ status, action }) => {
+      const nowSecs = Math.floor(Date.now() / 1_000);
+      const record = await seed({ expiresAt: nowSecs - 3_600 });
+      fetchMaybeChannelMock
+        .mockResolvedValueOnce(channelAccount({ status }))
+        .mockResolvedValueOnce({ exists: false });
+
+      const beforeCloseOrDistribute = vi.fn(() => {
+        expect(submitChannelMock).not.toHaveBeenCalled();
+      });
+      const onClose = vi.fn();
+      await manager.cleanup({ beforeCloseOrDistribute, onClose });
+
+      expect(beforeCloseOrDistribute).toHaveBeenCalledTimes(1);
+      expect(beforeCloseOrDistribute).toHaveBeenCalledWith({
+        channelId: record.channelId,
+        payer: payer.address,
+        payTo: payTo.address,
+        action,
+      });
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: record.channelId, action }),
+      );
+    },
+  );
+
+  it("skips a channel beforeCloseOrDistribute rejects, reports it, and keeps the close slot", async () => {
+    const first = await seed();
+    const second = await seed();
+    const [rejected, allowed] = [first, second].sort((a, b) =>
+      a.channelId < b.channelId ? -1 : 1,
+    );
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        channelId === allowed.channelId && submitChannelMock.mock.calls.length > 0
+          ? { exists: false }
+          : channelAccount({ status: ChannelStatus.Sealed }),
+      ),
+    );
+    const blocked = new Error("blocked");
+
+    const onClose = vi.fn();
+    const onError = vi.fn();
+    await manager.cleanup({
+      maxClosesPerRun: 1,
+      beforeCloseOrDistribute: candidate => {
+        if (candidate.channelId === rejected.channelId) throw blocked;
+      },
+      onClose,
+      onError,
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.calls[0]![0].channelId).toBe(allowed.channelId);
+    expect(submitChannelMock).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(blocked, { channelId: rejected.channelId });
+    expect(await storage.get(NETWORK, rejected.channelId)).toBeDefined();
+  });
+
+  it("does not call beforeCloseOrDistribute for reclaim or deferred channels", async () => {
+    const nowSecs = Math.floor(Date.now() / 1_000);
+    const deferred = await seed({ expiresAt: nowSecs + 3_600 });
+    const distributed = await seed();
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        channelAccount({
+          status: channelId === deferred.channelId ? ChannelStatus.Open : ChannelStatus.Distributed,
+        }),
+      ),
+    );
+
+    const beforeCloseOrDistribute = vi.fn(() => {
+      throw new Error("must not be screened");
+    });
+    const onReclaim = vi.fn();
+    const onError = vi.fn();
+    await manager.cleanup({ beforeCloseOrDistribute, onReclaim, onError });
+
+    expect(beforeCloseOrDistribute).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onReclaim).toHaveBeenCalledTimes(1);
+    expect(onReclaim.mock.calls[0]![0].channelIds).toEqual([distributed.channelId]);
+  });
+
+  // The hook may call an external service, so a channel that cannot close this
+  // pass must not be screened; reclaim batches run after the scan.
+  it("does not call beforeCloseOrDistribute once the close budget is spent", async () => {
+    const nowSecs = Math.floor(Date.now() / 1_000);
+    const closable = [
+      await seed({ expiresAt: nowSecs - 3_600 }),
+      await seed({ expiresAt: nowSecs - 3_600 }),
+      await seed({ expiresAt: nowSecs - 3_600 }),
+    ];
+    const distributed = await seed();
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        closable.some(record => record.channelId === channelId)
+          ? channelAccount({ status: ChannelStatus.Sealed })
+          : channelAccount({ status: ChannelStatus.Distributed }),
+      ),
+    );
+
+    const beforeCloseOrDistribute = vi.fn();
+    const onClose = vi.fn();
+    const onReclaim = vi.fn();
+    await manager.cleanup({ maxClosesPerRun: 1, beforeCloseOrDistribute, onClose, onReclaim });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(beforeCloseOrDistribute).toHaveBeenCalledTimes(1);
+    expect(onReclaim).toHaveBeenCalledTimes(1);
+    expect(onReclaim.mock.calls[0]![0].channelIds).toEqual([distributed.channelId]);
+  });
+
   // The close cap must not end the record scan: reclaims are budgeted separately,
   // so a backlog of closable channels would otherwise strand rent forever.
   it("still reclaims when the close budget is spent", async () => {
