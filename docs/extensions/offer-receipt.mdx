@@ -3,14 +3,14 @@ title: "Signed Offers & Receipts"
 description: "Sign offers on 402 responses and receipts on 200 responses, producing cryptographic proof-of-interaction artifacts that clients can use for reputation, auditing, or dispute resolution."
 ---
 
-The Offer & Receipt extension adds cryptographic proof-of-interaction to x402 payment flows. When enabled, your server automatically signs an **offer** on every `402` response (committing to payment terms) and a **receipt** on every `200` response (confirming service delivery). No changes to your business logic.
+The Offer & Receipt extension adds cryptographic proof-of-interaction to x402 payment flows. When enabled, your server automatically signs an **offer** on every `402` response (committing to payment terms) and a **receipt** on every `200` response (attesting to service delivery). No changes to your business logic.
 
 ## Why Enable Offer & Receipt Signing?
 
 Signed offers and receipts are portable, verifiable artifacts that any third party can check. They enable:
 
 * **Reputation systems** — Clients can attach receipts to onchain attestations as proof they actually paid for and received a service. This is the "Verified Purchase" equivalent for the open web.
-* **Dispute resolution** — Offers prove the server committed to specific terms; receipts prove delivery. If either party disputes a transaction, the signed artifacts provide evidence.
+* **Dispute resolution** — Offers prove the server committed to specific terms; receipts prove the server attested to delivery. If either party disputes a transaction, the signed artifacts evidence what was offered and that the interaction happened. The receipt payload carries no amount or usage fields, so for usage-priced schemes (e.g., `upto`) the artifacts do not by themselves evidence the amount settled.
 * **Auditing** — Receipts create a verifiable trail of service delivery without exposing transaction details (the transaction hash is optional).
 * **Client confidence** — Services with verifiable proof-of-interaction build stronger trust signals, making new clients more likely to use the service.
 
@@ -411,13 +411,15 @@ const verified = verifyReceiptMatchesOffer(
 - `payer` matches one of your wallet addresses
 - `issuedAt` is recent (within 1 hour by default)
 
+It performs no amount comparison; the receipt payload carries no amount field (spec §5.2).
+
 ### What Can Clients Do with These Artifacts?
 
 Signed offers and receipts are portable, verifiable artifacts. Clients can:
 
 - **Attach them to reputation attestations** as proof-of-interaction (e.g., "Verified Purchase" reviews)
 - **Store them for auditing** — receipts create a verifiable trail of service delivery
-- **Use them in dispute resolution** — offers prove the server committed to terms; receipts prove delivery
+- **Use them in dispute resolution** — offers prove the server committed to terms; receipts prove the server attested to delivery
 - **Share them with aggregators** — trust scoring engines can verify the signatures independently
 - **Submit them to trust providers** — services like [OMATrust](https://docs.omatrust.org/integrations/x402/overview) can embed receipts into user reviews, and [PEAC Protocol](https://x402.peacprotocol.org) can record them as payment evidence attestation chains
 
