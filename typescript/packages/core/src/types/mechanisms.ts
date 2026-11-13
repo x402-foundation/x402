@@ -87,6 +87,12 @@ export type FindDefaultAsset<T extends DefaultAsset = DefaultAsset> = (
   network: Network,
 ) => T | undefined;
 
+/**
+ * Whether a previously created payload has settled. `"unknown"` means the scheme
+ * cannot tell; a client must not treat it as `"unsettled"`.
+ */
+export type PaymentReconcileResult = "settled" | "unsettled" | "unknown";
+
 export interface SchemeNetworkClient {
   readonly scheme: string;
   readonly schemeHooks?: SchemeClientHooks;
@@ -99,6 +105,12 @@ export interface SchemeNetworkClient {
     paymentRequirements: PaymentRequirements,
     context?: PaymentPayloadContext,
   ): Promise<PaymentPayloadResult>;
+
+  /**
+   * Checks whether a payload this client created has settled, e.g. by reading
+   * the authorization nonce on chain. Omit when the scheme cannot tell.
+   */
+  reconcilePaymentPayload?(paymentPayload: PaymentPayload): Promise<PaymentReconcileResult>;
 }
 
 /**
