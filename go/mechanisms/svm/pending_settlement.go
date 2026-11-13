@@ -19,6 +19,11 @@ import (
 // reconciliation. store may be nil, which disables the write and always
 // returns settlement_pending (mirrors every other PendingSettlementStore
 // call site, where a nil store means the bookkeeping is simply skipped).
+//
+// A waitErr that is or wraps *TransactionFailedError is terminal: the chain
+// confirmed the transaction with an execution error, so nothing is left to
+// reconcile. It returns terminalReason with sigStr preserved and removes any
+// pending record under key.
 func RecordPendingOrTerminal(
 	ctx context.Context,
 	store x402.PendingSettlementStore,
@@ -29,6 +34,12 @@ func RecordPendingOrTerminal(
 	terminalReason string,
 	waitErr error,
 ) error {
+	if IsTransactionFailed(waitErr) {
+		if store != nil {
+			_ = store.Delete(ctx, key)
+		}
+		return x402.NewSettleError(terminalReason, payer, network, sigStr, waitErr.Error())
+	}
 	if store != nil {
 		if setErr := store.Set(ctx, key, sigStr); setErr != nil {
 			return x402.NewSettleError(terminalReason, payer, network, sigStr,
