@@ -183,8 +183,6 @@ describe("Keeta Integration Tests", () => {
   }, 60000); // Allow up to 60s for faucet funding to confirm
 
   describe("Default asset drift", () => {
-    // Fails when the network's resolver metadata no longer matches the hardcoded
-    // defaults (e.g. after a testnet reset), so DEFAULT_ASSETS needs updating.
     it("hardcoded USDC addresses match the network resolver", async () => {
       expect(await getUsdcAddress(KEETA_TESTNET_CAIP2)).toBe(USDC_TESTNET_ADDRESS);
       expect(await getUsdcAddress(KEETA_MAINNET_CAIP2)).toBe(USDC_MAINNET_ADDRESS);

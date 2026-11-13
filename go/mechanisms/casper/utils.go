@@ -3,7 +3,6 @@ package casper
 import (
 	"encoding/hex"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -97,32 +96,8 @@ func ParseAmount(amount string, decimals int) (uint64, error) {
 	return strconv.ParseUint(atomic, 10, 64)
 }
 
-// FormatAmount converts an amount in smallest units to a decimal string
-func FormatAmount(amount uint64, decimals int) string {
-	if amount == 0 {
-		return "0"
-	}
-
-	divisor := uint64(math.Pow10(decimals))
-	quotient := amount / divisor
-	remainder := amount % divisor
-
-	// Format the decimal part with leading zeros
-	decStr := fmt.Sprintf("%0*d", decimals, remainder)
-
-	// Remove trailing zeros
-	decStr = strings.TrimRight(decStr, "0")
-
-	if decStr == "" {
-		return fmt.Sprintf("%d", quotient)
-	}
-
-	return fmt.Sprintf("%d.%s", quotient, decStr)
-}
-
-// ValidateSignatureFormat checks Casper's algorithm tag and requires canonical
-// secp256k1 scalars: 0 < r < n and 0 < s <= n/2. Cryptographic verification must
-// follow this check. Ed25519 signatures have their own encoding rules.
+// ValidateSignatureFormat checks the algorithm tag and, for secp256k1, canonical low-s scalars.
+// Ed25519 is not interpreted as secp256k1. Verify the signature after this check.
 func ValidateSignatureFormat(signature [65]byte) error {
 	switch signature[0] {
 	case byte(keypair.ED25519):

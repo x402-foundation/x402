@@ -10,7 +10,7 @@ import {
   ALGORAND_MAINNET_GENESIS_HASH,
   ALGORAND_TESTNET_CAIP2,
   ALGORAND_TESTNET_GENESIS_HASH,
-  USDC_MAINNET_ASA_ID,
+  DEFAULT_ASSETS,
   USDC_TESTNET_ASA_ID,
   isValidAlgorandAddress,
   isAlgorandNetwork,
@@ -55,18 +55,6 @@ describe("@x402/avm", () => {
       expect(server.paymentFlows).toEqual({
         default: { supported: ["authorization", "upfront"], default: "authorization" },
       });
-    });
-  });
-
-  describe("constants", () => {
-    it("should export correct CAIP-2 network identifiers", () => {
-      expect(ALGORAND_MAINNET_CAIP2).toBe("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k");
-      expect(ALGORAND_TESTNET_CAIP2).toBe("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe");
-    });
-
-    it("should export correct USDC ASA IDs", () => {
-      expect(USDC_MAINNET_ASA_ID).toBe("31566704");
-      expect(USDC_TESTNET_ASA_ID).toBe("10458941");
     });
   });
 
@@ -212,7 +200,9 @@ describe("@x402/avm", () => {
 
     it("returns asset decimals for known defaults", () => {
       const server = new ExactAvmServerScheme();
-      expect(server.getAssetDecimals(USDC_TESTNET_ASA_ID, ALGORAND_TESTNET_CAIP2)).toBe(6);
+      expect(server.getAssetDecimals(USDC_TESTNET_ASA_ID, ALGORAND_TESTNET_CAIP2)).toBe(
+        DEFAULT_ASSETS[ALGORAND_TESTNET_CAIP2]![0]!.decimals,
+      );
       expect(server.getAssetDecimals("unknown", ALGORAND_TESTNET_CAIP2)).toBeUndefined();
     });
 

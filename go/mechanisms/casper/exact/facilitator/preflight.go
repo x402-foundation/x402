@@ -171,9 +171,8 @@ func supportsAuthorization(contract *caspertypes.Contract) bool {
 	return false
 }
 
-// Recognize the explicit missing-value response, never a missing dictionary
-// seed, unavailable state root, timeout, or malformed response. The URef has
-// already been resolved from the active contract at this state root.
+// dictionaryItemMissing reports the missing-value RPC error only.
+// A missing seed, bad state root, timeout, or malformed body is not a miss.
 func dictionaryItemMissing(err error) bool {
 	var rpcErr *rpc.RpcError
 	if !errors.As(err, &rpcErr) || rpcErr.Code != -32003 {

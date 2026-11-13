@@ -39,6 +39,7 @@ import {
   type BatchVoucher,
 } from "../../src/batch-settlement/types";
 import {
+  ADVERTISED_TRANSACTION_VERSIONS,
   SOLANA_DEVNET_CAIP2,
   SOLANA_MAINNET_CAIP2,
   TOKEN_PROGRAM_ADDRESS,
@@ -1326,11 +1327,13 @@ describe("batch-settlement SVM", () => {
         maxClaimChannels: 18,
         maxIdleSecs: 604_800,
         maxSettleChannels: 13,
-        transactionVersions: [0, 1],
+        transactionVersions: [...ADVERTISED_TRANSACTION_VERSIONS],
       });
       // The advertised list is a copy, so mutating one response cannot change the next.
+      const advertised = [...ADVERTISED_TRANSACTION_VERSIONS];
       (extra.transactionVersions as number[])[0] = 1;
-      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2).transactionVersions).toEqual([0, 1]);
+      expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2).transactionVersions).toEqual(advertised);
+      expect(ADVERTISED_TRANSACTION_VERSIONS).toEqual(advertised);
       expect(facilitator.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([feePayer.address]);
     });
 

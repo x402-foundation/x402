@@ -144,10 +144,10 @@ def attach_payment_to_meta(params: dict[str, Any], payload: PaymentPayload) -> d
     result = params.copy()
     meta = result.get("_meta", {}).copy() if isinstance(result.get("_meta"), dict) else {}
     # exclude_none mirrors the HTTP encoder (encode_payment_signature_header uses
-    # model_dump_json(by_alias=True, exclude_none=True)). Without it, optional fields serialize
-    # as explicit nulls (e.g. resource.mimeType: null); strict facilitators — and proxies that
-    # re-marshal this payload into a PAYMENT-SIGNATURE header (CDP Bazaar) — reject such payloads
-    # as 'paymentPayload is invalid'. Keeping the two encoders consistent fixes that.
+    # model_dump_json(by_alias=True, exclude_none=True)). Without it, optional fields
+    # serialize as explicit nulls (for example resource.mimeType: null). Strict
+    # facilitators and proxies that re-marshal this payload into a PAYMENT-SIGNATURE
+    # header reject those payloads as 'paymentPayload is invalid'.
     meta[MCP_PAYMENT_META_KEY] = (
         payload.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payload, "model_dump")

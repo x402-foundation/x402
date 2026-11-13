@@ -103,6 +103,9 @@ type BatchSvmScheme struct {
 	// Config.FacilitatorTransactionVersion.
 	facilitatorTransactionVersion int
 
+	// mintOwners caches positive mint-owner checks made by resolveTerms.
+	mintOwners mintOwnerCache
+
 	mu                sync.Mutex
 	confirmationSlots map[string]uint64
 	hooks             schemeHooks
@@ -543,12 +546,16 @@ func (f *BatchSvmScheme) resolveTerms(ctx context.Context, config batchsettlemen
 	if err != nil {
 		return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
 	}
-	account, err := f.signer.GetAccountInfo(ctx, mint, requirements.Network, &rpc.GetAccountInfoOpts{
-		Encoding:   solana.EncodingBase64,
-		Commitment: paymentchannels.StateCommitment,
-	})
-	if err != nil || account == nil || account.Value == nil || account.Value.Owner.String() != tokenProgram.String() {
-		return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
+	mintKey := mintOwnerCacheKey(requirements.Network, mint, tokenProgram)
+	if !f.mintOwners.fresh(mintKey, f.now()) {
+		account, err := f.signer.GetAccountInfo(ctx, mint, requirements.Network, &rpc.GetAccountInfoOpts{
+			Encoding:   solana.EncodingBase64,
+			Commitment: paymentchannels.StateCommitment,
+		})
+		if err != nil || account == nil || account.Value == nil || account.Value.Owner.String() != tokenProgram.String() {
+			return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
+		}
+		f.mintOwners.remember(mintKey, f.now())
 	}
 	terms := BatchTerms{
 		FeePayer:           feePayer,
@@ -739,6 +746,26 @@ func (f *BatchSvmScheme) broadcastDurably(
 	} else if ok {
 		return f.reconcileBroadcast(ctx, key, recorded, network, payer)
 	}
+	return f.sendDurably(ctx, key, network, payer, broadcast)
+}
+
+// broadcastUnchecked is broadcastDurably for callers that already read the completed and pending keys.
+func (f *BatchSvmScheme) broadcastUnchecked(
+	ctx context.Context,
+	key, network, payer string,
+	broadcast func(func(signature, wire string) error) (string, error),
+) (durableResult, error) {
+	if f.hooks.broadcastDurably != nil {
+		return f.hooks.broadcastDurably(ctx, key, network, payer, broadcast)
+	}
+	return f.sendDurably(ctx, key, network, payer, broadcast)
+}
+
+func (f *BatchSvmScheme) sendDurably(
+	ctx context.Context,
+	key, network, payer string,
+	broadcast func(func(signature, wire string) error) (string, error),
+) (durableResult, error) {
 	signature, err := broadcast(func(broadcastSignature, wire string) error {
 		if err := f.pendingStore.Set(ctx, wireKey(network, broadcastSignature), wire); err != nil {
 			return err
@@ -761,7 +788,7 @@ func (f *BatchSvmScheme) broadcastDurably(
 		return errors.New("concurrent broadcast reservation changed")
 	})
 	if err != nil {
-		if recorded, ok, getErr := f.pendingStore.Get(ctx, key); getErr != nil {
+		if recorded, ok, getErr := f.recoveryGet(ctx, key); getErr != nil {
 			return durableResult{}, getErr
 		} else if ok {
 			return f.reconcileBroadcast(ctx, key, recorded, network, payer)
@@ -770,7 +797,9 @@ func (f *BatchSvmScheme) broadcastDurably(
 		if !found {
 			return durableResult{}, err
 		}
-		return durableResult{Response: RecordPendingOrTerminal(ctx, f.pendingStore, key, pending, payer, x402.Network(network), err)}, nil
+		recoveryCtx, cancel := recoveryContext(ctx)
+		defer cancel()
+		return durableResult{Response: RecordPendingOrTerminal(recoveryCtx, f.pendingStore, key, pending, payer, x402.Network(network), err)}, nil
 	}
 	return durableResult{OK: true, Signature: signature}, nil
 }
@@ -783,7 +812,7 @@ func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature,
 }
 
 func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signature, network, payer string, resend bool) (durableResult, error) {
-	wire, _, _ := f.pendingStore.Get(ctx, wireKey(network, signature))
+	wire, _, _ := f.recoveryGet(ctx, wireKey(network, signature))
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
 		return durableResult{}, err
@@ -801,7 +830,7 @@ func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signat
 		}
 		if BroadcastExpiredWithoutLanding(ctx, f.raw, parsed, network, wire) {
 			f.forgetPending(ctx, key, signature)
-			DiscardWire(ctx, f.pendingStore, network, signature)
+			f.discardWire(ctx, network, signature)
 			return durableResult{Response: SettleFailureWithTransaction(
 				x402.Network(network),
 				"transaction_failed",
@@ -810,18 +839,29 @@ func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, signat
 				signature,
 			)}, nil
 		}
-		return durableResult{Response: RecordPendingOrTerminal(ctx, f.pendingStore, key, signature, payer, x402.Network(network), err)}, nil
+		recoveryCtx, cancel := recoveryContext(ctx)
+		defer cancel()
+		return durableResult{Response: RecordPendingOrTerminal(recoveryCtx, f.pendingStore, key, signature, payer, x402.Network(network), err)}, nil
 	}
 	return durableResult{OK: true, Signature: signature}, nil
 }
 
 func (f *BatchSvmScheme) completeBroadcast(ctx context.Context, key, signature, network string) error {
-	if err := f.pendingStore.Set(ctx, f.completedBroadcastKey(key), signature); err != nil {
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
+	if err := f.pendingStore.Set(recoveryCtx, f.completedBroadcastKey(key), signature); err != nil {
 		return err
 	}
 	f.forgetPending(ctx, key, signature)
-	DiscardWire(ctx, f.pendingStore, network, signature)
+	f.discardWire(ctx, network, signature)
 	return nil
+}
+
+// discardWire drops the kept wire bytes on a recovery context.
+func (f *BatchSvmScheme) discardWire(ctx context.Context, network, signature string) {
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
+	DiscardWire(recoveryCtx, f.pendingStore, network, signature)
 }
 
 func (f *BatchSvmScheme) completeOrPending(ctx context.Context, key, signature, network, payer string) (*x402.SettleResponse, error) {
@@ -836,15 +876,17 @@ func (f *BatchSvmScheme) completedBroadcastKey(key string) string {
 }
 
 func (f *BatchSvmScheme) forgetPending(ctx context.Context, key, signature string) {
+	recoveryCtx, cancel := recoveryContext(ctx)
+	defer cancel()
 	if conditional, ok := f.pendingStore.(ConditionalPendingStore); ok {
-		_, _ = conditional.DeleteIfEquals(ctx, key, signature)
+		_, _ = conditional.DeleteIfEquals(recoveryCtx, key, signature)
 		return
 	}
-	current, found, err := f.pendingStore.Get(ctx, key)
+	current, found, err := f.pendingStore.Get(recoveryCtx, key)
 	if err != nil || !found || current != signature {
 		return
 	}
-	_ = f.pendingStore.Delete(ctx, key)
+	_ = f.pendingStore.Delete(recoveryCtx, key)
 }
 
 func (f *BatchSvmScheme) submitRedemption(ctx context.Context, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {

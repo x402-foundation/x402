@@ -56,12 +56,10 @@ func NewExactEvmScheme(signer evm.FacilitatorEvmSigner, config *ExactEvmSchemeCo
 	}
 }
 
-// SetPendingSettlementStore overrides the default in-memory
-// PendingSettlementStore. Used by multi-instance facilitators (e.g.
-// cdp-facilitator) to inject a shared, network-backed implementation (e.g.
-// Redis) so a settle retry landing on a different replica still reconciles
-// against the transaction the first replica broadcast. A nil store is a
-// no-op.
+// SetPendingSettlementStore overrides the default in-memory store.
+// A multi-instance facilitator injects a shared store so a settle retry on
+// another replica still sees the transaction the first replica broadcast.
+// A nil store is a no-op.
 func (f *ExactEvmScheme) SetPendingSettlementStore(store x402.PendingSettlementStore) {
 	if store != nil {
 		f.pendingStore = store

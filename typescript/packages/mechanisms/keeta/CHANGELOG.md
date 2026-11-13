@@ -1,5 +1,17 @@
 # @x402/keeta
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [fb5ab28](https://github.com/x402-foundation/x402/commit/fb5ab28): Update the Keeta testnet USDC address to `keeta_aosjk5tgpgxr3qazd2abxyhj4srqua5c3xgz4lmgxuyrrwzryiqng4vacgwai` after the testnet reset. The previous token no longer exists on testnet. ([#4220](https://github.com/x402-foundation/x402/pull/4220)) - Thanks [@sc4l3r](https://github.com/sc4l3r)!
+
 ## 2.30.0
 
 ### Minor Changes

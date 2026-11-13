@@ -2427,9 +2427,8 @@ func TestWithPrivateCacheControl(t *testing.T) {
 	}
 }
 
-// ResolveCancelledSettlement is the single place the adapters resolve a
-// cancellation into failure-path headers. The dispatcher must fire exactly once
-// and the caller's Cache-Control must survive as private.
+// ResolveCancelledSettlement fires the dispatcher once and keeps Cache-Control,
+// marked private, on the failure-path headers.
 func TestResolveCancelledSettlement_CancelsOnceAndPreservesCacheControl(t *testing.T) {
 	server := Newx402HTTPResourceServer(RoutesConfig{})
 
@@ -2539,9 +2538,8 @@ func TestResolveCancelledSettlement_NilDispatcher(t *testing.T) {
 	}
 }
 
-// Flows that settle before the handler and do not settle again (upfront) take the
-// after-handler early return that only echoes the receipt. Overrides are still
-// set on the response header map by the handler, so that path must strip them too.
+// Upfront flows echo the before-handler receipt and must still strip
+// Settlement-Overrides from the response header map.
 func TestProcessSettlement_StripsOverridesOnReceiptEchoPath(t *testing.T) {
 	server := Newx402HTTPResourceServer(RoutesConfig{})
 

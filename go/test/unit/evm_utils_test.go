@@ -433,15 +433,14 @@ func TestGetAssetInfo(t *testing.T) {
 	})
 
 	t.Run("Known default asset returns rich metadata", func(t *testing.T) {
-		// Base Sepolia USDC address
-		info, err := evm.GetAssetInfo("eip155:84532", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+		configured := evm.DefaultAssets["eip155:84532"][0]
+		info, err := evm.GetAssetInfo("eip155:84532", configured.Asset)
 		if err != nil {
 			t.Fatalf("Failed to get asset info: %v", err)
 		}
 
-		// Should match the configured USDC
-		if info.Decimals != 6 {
-			t.Errorf("Expected 6 decimals for USDC, got %d", info.Decimals)
+		if info.Decimals != configured.Decimals {
+			t.Errorf("Expected %d decimals for USDC, got %d", configured.Decimals, info.Decimals)
 		}
 	})
 

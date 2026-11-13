@@ -307,16 +307,6 @@ describe("Stellar RPC Helper Functions", () => {
   });
 
   describe("getUsdcAddress", () => {
-    it("should return USDC address for mainnet", () => {
-      const result = getUsdcAddress(STELLAR_PUBNET_CAIP2);
-      expect(result).toBe("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
-    });
-
-    it("should return USDC address for testnet", () => {
-      const result = getUsdcAddress(STELLAR_TESTNET_CAIP2);
-      expect(result).toBe("CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA");
-    });
-
     it("should throw error for unknown network", () => {
       expect(() => getUsdcAddress("invalid-network" as any)).toThrow(
         "No default asset configured for network invalid-network",

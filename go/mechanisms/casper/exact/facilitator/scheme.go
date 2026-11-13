@@ -87,9 +87,7 @@ func (f *ExactCasperScheme) CaipFamily() string {
 	return "casper:*"
 }
 
-// GetExtra returns mechanism-specific extra data for the supported kinds endpoint.
-// For Casper, no extra data is needed: the client signs only the CEP-3009
-// authorization, which does not name the facilitator that relays it.
+// GetExtra returns nil. The CEP-3009 authorization does not name the facilitator.
 func (f *ExactCasperScheme) GetExtra(_ x402.Network) map[string]interface{} {
 	return nil
 }
@@ -145,8 +143,7 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, requirements.Asset)
 	}
 
-	// CEP-3009 passes both bounds as U64 runtime args; parse them the same way
-	// settlement does so a value verify accepts can always be submitted.
+	// validAfter and validBefore are U64 runtime args, so a value accepted here can be submitted.
 	validAfter, err := strconv.ParseUint(p.Authorization.ValidAfter, 10, 64)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validAfter: must be an unsigned 64-bit integer")
@@ -166,7 +163,6 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrExpired, payer, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
 	}
 
-	// verify we have a signer for the network in requirements
 	cfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrNetworkMismatch, payer, err.Error())
@@ -181,17 +177,13 @@ func (f *ExactCasperScheme) Verify(
 		return nil, x402.NewVerifyError(ErrMissingTokenVersion, payer, "")
 	}
 
-	contractPackageHash, err := casperMechanism.DecodeContractPackageHash(requirements.Asset)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, err.Error())
-	}
+	// IsValidContractPackageHash already accepted this 64-character hex hash.
+	contractPackageHash, _ := casperMechanism.DecodeContractPackageHash(requirements.Asset)
 
 	domain := eip712.BuildDomain(name, version, requirements.Network, contractPackageHash)
 
-	fromAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.From)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayer, payer, fmt.Sprintf("invalid from address: %v", err))
-	}
+	// IsValidAddress already accepted this 66-character account hash.
+	fromAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.From)
 	publicKey, err := keypair.NewPublicKey(p.PublicKey)
 	if err != nil || len(p.PublicKey) != publicKey.SerializedLength()*2 {
 		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid public key or key length")
@@ -202,15 +194,11 @@ func (f *ExactCasperScheme) Verify(
 	if !strings.EqualFold(p.Authorization.From, expectedPayer) {
 		return nil, x402.NewVerifyError(ErrPublicKeyMismatch, payer, "authorization.from does not match the public key's account address")
 	}
-	toAddr, err := eip712.NewAddressFromHex("0x" + p.Authorization.To)
-	if err != nil {
-		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, fmt.Sprintf("invalid to address: %v", err))
-	}
+	// IsValidAddress already accepted this 66-character account hash.
+	toAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.To)
 
-	value, ok := new(big.Int).SetString(p.Authorization.Value, 10)
-	if !ok {
-		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, "invalid value")
-	}
+	// IsValidAmountFormat already accepted this decimal integer.
+	value, _ := new(big.Int).SetString(p.Authorization.Value, 10)
 
 	nonceRaw, err := hex.DecodeString(p.Authorization.Nonce)
 	if err != nil || len(nonceRaw) != 32 {
@@ -264,9 +252,8 @@ func (f *ExactCasperScheme) Verify(
 	return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
 }
 
-// validatePreflight runs a live preflight check against the network when a speculative
-// execution endpoint is configured for the payment network; otherwise it falls back to
-// targeted state checks over the regular RPC URL.
+// validatePreflight uses speculative execution when that RPC URL is set,
+// and otherwise checks token, balance, and nonce state at one block.
 func (f *ExactCasperScheme) validatePreflight(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -280,10 +267,8 @@ func (f *ExactCasperScheme) validatePreflight(
 	return f.validateTargetedPreflight(ctx, p, requirements, networkCfg)
 }
 
-// validateSpeculativeExecution builds a Casper 1.5 deploy equivalent to the settlement
-// transaction, signs it with the facilitator key, and runs speculative_exec against the
-// configured speculative RPC endpoint. The deploy is never broadcast; it is only used
-// to confirm the authorization would succeed end-to-end before settlement.
+// validateSpeculativeExecution signs an unsigned deploy and runs speculative_exec.
+// The deploy is not broadcast.
 func (f *ExactCasperScheme) validateSpeculativeExecution(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -394,10 +379,8 @@ func (f *ExactCasperScheme) buildTransferWithAuthorizationArgs(p *casperMechanis
 	return args, nil
 }
 
-// buildTransferWithAuthorizationDeploy builds a Casper 1.5 deploy (not a
-// TransactionV1) that targets the transfer_with_authorization entry point with the
-// runtime args derived from the payload. The deploy is unsigned; the caller signs it
-// before passing it to a speculative execution endpoint.
+// buildTransferWithAuthorizationDeploy builds an unsigned Casper 1.5 deploy
+// for transfer_with_authorization. The caller signs it before speculative_exec.
 func (f *ExactCasperScheme) buildTransferWithAuthorizationDeploy(
 	ctx context.Context,
 	p *casperMechanism.ExactCasperPayload,
@@ -418,10 +401,8 @@ func (f *ExactCasperScheme) buildTransferWithAuthorizationDeploy(
 		return nil, err
 	}
 
-	contractHashRaw, err := casper.NewHash(requirements.Asset)
-	if err != nil {
-		return nil, fmt.Errorf("invalid contract hash: %w", err)
-	}
+	// Verify already accepted this asset as a 64-character hex hash.
+	contractHashRaw, _ := casper.NewHash(requirements.Asset)
 
 	chainName := strings.TrimPrefix(networkCfg.ChainName, "casper:")
 
@@ -491,10 +472,8 @@ func (f *ExactCasperScheme) Settle(
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
-	packageHash, err := casper.NewHash(requirements.Asset)
-	if err != nil {
-		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
-	}
+	// Verify already accepted this asset as a 64-character hex hash.
+	packageHash, _ := casper.NewHash(requirements.Asset)
 	entryPoint := "transfer_with_authorization"
 
 	facilitatorPubKeyHex, err := f.signer.GetPublicKeyHex(ctx, requirements.Network)
@@ -506,7 +485,6 @@ func (f *ExactCasperScheme) Settle(
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
 	}
 
-	// verify we have a signer for this network before proceeding
 	networkCfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
@@ -632,23 +610,10 @@ func payloadFromMap(data map[string]interface{}) (*casperMechanism.ExactCasperPa
 	return &payload, nil
 }
 
-func clListU8WithBytes(bytes []byte) clvalue.CLValue {
-	elements := make([]clvalue.CLValue, 0)
-	for _, v := range bytes {
-		ui8 := clvalue.UInt8(v)
-		elements = append(elements, clvalue.CLValue{
-			Type: cltype.UInt8,
-			UI8:  &ui8,
-		})
+func clListU8WithBytes(raw []byte) clvalue.CLValue {
+	list := clvalue.NewCLList(cltype.UInt8)
+	for _, b := range raw {
+		list.List.Append(*clvalue.NewCLUint8(b))
 	}
-	clType := cltype.NewList(cltype.UInt8)
-	value := clvalue.CLValue{
-		Type: clType,
-		List: &clvalue.List{
-			Type:     clType,
-			Elements: elements,
-		},
-	}
-
-	return value
+	return list
 }

@@ -1,0 +1,1 @@
+"""Cardano mechanism tests."""

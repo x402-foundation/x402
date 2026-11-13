@@ -81,7 +81,6 @@ export function createHttpServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): HttpServerInstance {
-  // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
   return prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);

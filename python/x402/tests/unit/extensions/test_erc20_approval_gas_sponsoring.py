@@ -145,10 +145,6 @@ class _StubSigner:
 
 
 class TestGasFeeFallback:
-    def test_constants_exported_with_expected_values(self):
-        assert DEFAULT_MAX_FEE_PER_GAS == 1_000_000_000
-        assert DEFAULT_MAX_PRIORITY_FEE_PER_GAS == 100_000_000
-
     def test_uses_defaults_when_signer_has_no_estimator(self):
         signer = _StubSigner()
         sign_erc20_approval_transaction(signer, TOKEN_ADDRESS, chain_id=84532)

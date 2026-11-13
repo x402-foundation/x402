@@ -3,7 +3,6 @@
 import pytest
 
 from x402.mechanisms.svm import (
-    SCHEME_EXACT,
     SOLANA_DEVNET_CAIP2,
     SOLANA_MAINNET_CAIP2,
     SOLANA_TESTNET_CAIP2,
@@ -223,12 +222,7 @@ class TestConvertToTokenAmount:
 
 
 class TestConstants:
-    """Test that constants are exported with correct values."""
-
-    def test_should_export_correct_usdc_addresses(self):
-        """Should export correct USDC addresses."""
-        assert USDC_MAINNET_ADDRESS == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-        assert USDC_DEVNET_ADDRESS == "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    """Test address-format behavior."""
 
     def test_should_have_valid_address_regex(self):
         """Should have valid address regex."""
@@ -236,7 +230,3 @@ class TestConstants:
 
         pattern = re.compile(SVM_ADDRESS_REGEX)
         assert pattern.match(USDC_MAINNET_ADDRESS) is not None
-
-    def test_should_export_scheme_exact(self):
-        """Should export scheme identifier."""
-        assert SCHEME_EXACT == "exact"

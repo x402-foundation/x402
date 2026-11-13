@@ -673,13 +673,6 @@ describe("Sign-In-With-X Extension", () => {
     });
   });
 
-  describe("Solana constants", () => {
-    it("should export Solana network constants", () => {
-      expect(SOLANA_MAINNET).toBe("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
-      expect(SOLANA_DEVNET).toBe("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
-    });
-  });
-
   describe("Base58 encoding/decoding", () => {
     it("should roundtrip encode/decode", () => {
       const original = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);

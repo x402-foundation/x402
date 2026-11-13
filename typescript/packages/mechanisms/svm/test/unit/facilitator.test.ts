@@ -13,6 +13,7 @@ import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v
 import {
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MEMO_PROGRAM_ADDRESS,
+  ADVERTISED_TRANSACTION_VERSIONS,
   SOLANA_DEVNET_CAIP2,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   TOKEN_2022_PROGRAM_ADDRESS,
@@ -138,7 +139,7 @@ describe("ExactSvmScheme", () => {
     it("advertises the accepted transaction message versions in getExtra", () => {
       const facilitator = new ExactSvmScheme(mockSigner);
       const extra = facilitator.getExtra(SOLANA_DEVNET_CAIP2);
-      expect(extra!.transactionVersions).toEqual([0, 1]);
+      expect(extra!.transactionVersions).toEqual([...ADVERTISED_TRANSACTION_VERSIONS]);
       expect(extra!.transactionVersions).not.toContain("legacy");
     });
   });

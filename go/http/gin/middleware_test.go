@@ -2221,10 +2221,7 @@ func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerFailure(t *testing.
 	}
 }
 
-// A handler can decline a verified request by aborting rather than returning.
-// However the middleware routes that — its own abort branch, or the >= 400 path
-// once #4188 removes the branch — the internal override header must not survive.
-// No other Gin test reaches this with overrides set.
+// Aborting a verified request must not leave Settlement-Overrides on the response.
 func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerAbort(t *testing.T) {
 	mockClient := &mockFacilitatorClient{
 		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
@@ -2264,8 +2261,6 @@ func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerAbort(t *testing.T)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// The aborted handler's status/body delivery is #4188's concern; this asserts
-	// only the header contract this branch owns.
 	if got := w.Header().Get(x402http.SettlementOverridesHeader); got != "" {
 		t.Errorf("Expected Settlement-Overrides to be stripped on abort, got %q", got)
 	}

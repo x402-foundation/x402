@@ -195,6 +195,34 @@ func TestFormatSIWSMessage(t *testing.T) {
 	}
 }
 
+func TestFormatSIWSMessageWithoutStatement(t *testing.T) {
+	payload := testSolanaPayload()
+	payload.Statement = ""
+
+	got, err := FormatSIWSMessage(payload)
+	if err != nil {
+		t.Fatalf("FormatSIWSMessage() error = %v", err)
+	}
+
+	// Same text as the TypeScript and Python SDKs: one blank line between
+	// the address and the fields when there is no statement.
+	want := "api.example.com wants you to sign in with your Solana account:\n" +
+		"6nYoFimREYaxQZZqBv7vbSd6ozGS1J8uhAAgUXPtaYy6\n\n" +
+		"URI: https://api.example.com/data\n" +
+		"Version: 1\n" +
+		"Chain ID: 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp\n" +
+		"Nonce: abc123xyz\n" +
+		"Issued At: 2026-05-27T00:00:00Z\n" +
+		"Expiration Time: 2026-05-27T00:05:00Z\n" +
+		"Request ID: request-1\n" +
+		"Resources:\n" +
+		"- https://api.example.com/data"
+
+	if got != want {
+		t.Fatalf("message =\n%q\nwant =\n%q", got, want)
+	}
+}
+
 func TestExtractSolanaChainReference(t *testing.T) {
 	got, err := ExtractSolanaChainReference(SolanaDevnet)
 	if err != nil {
@@ -408,6 +436,36 @@ func TestVerifySolanaSignature(t *testing.T) {
 	}
 	if result.InvalidReason != ErrInvalidSIWxSignature {
 		t.Fatalf("InvalidReason = %q, want %q", result.InvalidReason, ErrInvalidSIWxSignature)
+	}
+}
+
+func TestVerifySolanaSignatureWithoutStatement(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+
+	payload := testSolanaPayload()
+	payload.Statement = ""
+	payload.Address = EncodeBase58(publicKey)
+
+	// The message a TypeScript or Python client signs for this challenge.
+	message := "api.example.com wants you to sign in with your Solana account:\n" +
+		payload.Address + "\n\n" +
+		"URI: https://api.example.com/data\n" +
+		"Version: 1\n" +
+		"Chain ID: 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp\n" +
+		"Nonce: abc123xyz\n" +
+		"Issued At: 2026-05-27T00:00:00Z\n" +
+		"Expiration Time: 2026-05-27T00:05:00Z\n" +
+		"Request ID: request-1\n" +
+		"Resources:\n" +
+		"- https://api.example.com/data"
+	payload.Signature = EncodeBase58(ed25519.Sign(privateKey, []byte(message)))
+
+	result := VerifySignature(payload)
+	if !result.IsValid {
+		t.Fatalf("VerifySignature() invalid: %s", result.InvalidMessage)
 	}
 }
 

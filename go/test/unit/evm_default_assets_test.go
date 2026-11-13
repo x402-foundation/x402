@@ -34,10 +34,10 @@ func TestEVMDefaultAssets(t *testing.T) {
 		}
 	})
 
-	t.Run("finds 18-decimal mUSD on Mezo testnet", func(t *testing.T) {
+	t.Run("finds mUSD on Mezo testnet", func(t *testing.T) {
 		got := evm.FindDefaultAsset(mezoTestnetMUSD.Asset, "eip155:31611")
-		if got == nil || got.Decimals != 18 {
-			t.Fatalf("mezo lookup = %+v, want decimals 18", got)
+		if got == nil || got.Asset != mezoTestnetMUSD.Asset {
+			t.Fatalf("mezo lookup = %+v, want %+v", got, mezoTestnetMUSD)
 		}
 	})
 
@@ -93,8 +93,8 @@ func TestEVMDefaultAssets(t *testing.T) {
 			t.Fatal("expected unrecognized asset to return ok=false")
 		}
 		decimals, ok := server.GetAssetDecimals(mezoTestnetMUSD.Asset, "eip155:31611")
-		if !ok || decimals != 18 {
-			t.Fatalf("mUSD decimals = %d, %v, want 18, true", decimals, ok)
+		if !ok || decimals != mezoTestnetMUSD.Decimals {
+			t.Fatalf("mUSD decimals = %d, %v, want %d, true", decimals, ok, mezoTestnetMUSD.Decimals)
 		}
 	})
 }

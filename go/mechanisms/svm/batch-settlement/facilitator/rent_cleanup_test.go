@@ -410,6 +410,33 @@ func TestBatchSvmRentCleanupManagerCleanup(t *testing.T) {
 		assert.Contains(t, messages[0], "payTo")
 	})
 
+	t.Run("skips a channel the beforeCloseOrDistribute hook rejects and reports it", func(t *testing.T) {
+		h := newHarness(t)
+		record := h.seed(channelSeed{status: generated.ChannelStatus_Sealed, expiresAt: farFuture})
+		var candidates []CloseCandidate
+		var reported error
+		require.NoError(t, h.manager.Cleanup(context.Background(), CleanupOptions{
+			BeforeCloseOrDistribute: func(_ context.Context, candidate CloseCandidate) error {
+				candidates = append(candidates, candidate)
+				return errString("blocked")
+			},
+			OnClose: func(CloseResult) { t.Error("a rejected channel must not close") },
+			OnError: func(err error, channelID string) {
+				reported = err
+				assert.Equal(t, record.ChannelID, channelID)
+			},
+		}))
+		assert.Equal(t, []CloseCandidate{{
+			ChannelID: record.ChannelID,
+			Payer:     h.payer.String(),
+			PayTo:     h.payTo.String(),
+			Action:    CloseActionDistribute,
+		}}, candidates)
+		assert.EqualError(t, reported, "blocked")
+		assert.Empty(t, h.signer.sentTransactions())
+		assert.True(t, h.exists(record.ChannelID))
+	})
+
 	t.Run("still reclaims when the close budget is spent", func(t *testing.T) {
 		h := newHarness(t)
 		h.seed(channelSeed{status: generated.ChannelStatus_Open, expiresAt: time.Now().Unix() - 200})

@@ -5,7 +5,7 @@ description = "Shared client setup for Python e2e clients"
 requires-python = ">=3.10"
 dependencies = [
     "eth-account>=0.13.0",
-    "x402[evm,svm,tvm,extensions]"
+    "x402[evm,svm,tvm,cardano,extensions]"
 ]
 
 [build-system]

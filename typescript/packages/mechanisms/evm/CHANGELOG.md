@@ -1,5 +1,21 @@
 # @x402/evm Changelog
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [4f67451](https://github.com/x402-foundation/x402/commit/4f67451): Add Hemi mainnet (chain ID 43111) and Hemi Testnet (chain ID 743111) with USDC.e as the default stablecoin, and the v1 network names `hemi` and `hemi-testnet`. ([#4213](https://github.com/x402-foundation/x402/pull/4213)) - Thanks [@dimitryB](https://github.com/dimitryB) and [@claude](https://github.com/claude)!
+- [fc2de23](https://github.com/x402-foundation/x402/commit/fc2de23): Fixed the batch-settlement channel manager aborting a refund sweep on a channel whose balance is already fully charged. `refund`, `refundIdleChannels` and the auto refund job now skip such channels instead of sending a zero-amount cooperative refund, which the contract rejects (`ZeroRefund`), so the channels after it are still refunded. This matches the Go and Python channel managers. ([#4225](https://github.com/x402-foundation/x402/pull/4225)) - Thanks [@erkancamli](https://github.com/erkancamli)!
+- [b70d6d5](https://github.com/x402-foundation/x402/commit/b70d6d5): Normalize the EIP-2612 `permit` recovery byte to 27/28 in `splitEip2612Signature`, so signatures whose last byte is the raw y-parity (0/1) no longer fail on `ecrecover`-based tokens. ([#3583](https://github.com/x402-foundation/x402/pull/3583)) - Thanks [@artofbitcoin](https://github.com/artofbitcoin) and [@claude](https://github.com/claude)!
+- [95625e4](https://github.com/x402-foundation/x402/commit/95625e4): Fixed EVM batch-settlement channel managers claiming or refunding foreign-network channels in shared storage. Server writes now persist the request network; manager selection uses it first and retains channel-id binding checks for legacy rows. Failed claim batches no longer block later batches or settlement of successful claims. `BatchClaimError` exposes the batch errors, successful results, and any completed settlement; automatic claim jobs report both successful batches and failures. ([#4141](https://github.com/x402-foundation/x402/pull/4141)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+- [1d2858c](https://github.com/x402-foundation/x402/commit/1d2858c): Add Robinhood Chain mainnet (chain ID 4663) with USDG (Global Dollar) as the default stablecoin ([#4207](https://github.com/x402-foundation/x402/pull/4207)) - Thanks [@soli0x](https://github.com/soli0x)!
+
 ## 2.30.0
 
 ### Minor Changes

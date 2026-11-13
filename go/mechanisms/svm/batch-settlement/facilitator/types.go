@@ -5,6 +5,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -86,6 +87,8 @@ type ValidatedDeposit struct {
 	Proof           batchsettlement.BatchProof
 	// ProofAmount is the signed cumulative for a client voucher, or the metered charge for server mode.
 	ProofAmount uint64
+	// Existing is the channel account read during validation, nil when it does not exist yet.
+	Existing *generated.Channel
 }
 
 // PreparedClaim is one claim whose channel, voucher, and fee payer are ready to redeem.
