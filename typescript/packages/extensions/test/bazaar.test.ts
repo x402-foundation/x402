@@ -575,6 +575,19 @@ describe("Bazaar Discovery Extension", () => {
 
       expect(discovered).toBeNull();
     });
+
+    it("should ignore v2-style bazaar extensions on a v1 payload without outputSchema", () => {
+      const v1Requirements = { scheme: "exact", network: "base", resource: "https://a.example/x" };
+      const bazaar = { info: { input: { type: "http", method: "GET" } }, schema: {} };
+      const v1Payload = {
+        x402Version: 1,
+        scheme: "exact",
+        network: "base",
+        extensions: { bazaar },
+      };
+
+      expect(extractDiscoveryInfo(v1Payload as unknown, v1Requirements as unknown)).toBeNull();
+    });
   });
 
   describe("validateAndExtract", () => {

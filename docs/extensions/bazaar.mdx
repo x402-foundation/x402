@@ -911,11 +911,21 @@ Common protocol-level mistakes include:
      prevent SSRF/LFI (CWE-918). Only in-document references like
      `"$ref": "#/definitions/foo"` are allowed.
 
-3. **Treating the absence of `EXTENSION-RESPONSES` as failure.** Facilitators
+3. **Mixing v1 and v2 shapes.** The `bazaar` extension only exists in v2. A
+   v1 (`x402Version: 1`) settlement can succeed without being cataloged: the
+   reference facilitator helpers read v1 discovery data only from
+   `paymentRequirements.outputSchema.input` (`type: "http"` and `method`), not
+   from `extensions`.
+   In v2, every `network` (in `paymentPayload.accepted` and
+   `paymentRequirements`) must be the CAIP-2 identifier copied from the
+   `accepts` entry the client signed (e.g. `eip155:8453`). A v1 network name
+   such as `base` fails with `invalid_network`.
+
+4. **Treating the absence of `EXTENSION-RESPONSES` as failure.** Facilitators
    **may** return this header; its absence carries no signal. When present,
    `bazaar.status` and `rejectedReason` reflect that facilitator's outcome.
 
-4. **Not allowing for asynchronous cataloging.** A `"processing"` status means
+5. **Not allowing for asynchronous cataloging.** A `"processing"` status means
    the declaration was accepted but indexing may happen later. Allow for delay
    before concluding failure with your facilitator.
 
