@@ -250,6 +250,176 @@ func TestHTTPFacilitatorClientVerify(t *testing.T) {
 	}
 }
 
+func TestHTTPFacilitatorClientPostsExactIntegers(t *testing.T) {
+	const exact = "9007199254740993"
+	payloadJSON := []byte(`{"x402Version":2,"payload":{"counter":` + exact + `,"box":{"n":` + exact + `,"arr":[` + exact + `]}},"accepted":{"scheme":"exact","network":"eip155:8453","amount":"` + exact + `","asset":"0x1","payTo":"0x2","maxTimeoutSeconds":60,"extra":{"counter":` + exact + `}},"extensions":{"ext":{"counter":` + exact + `}}}`)
+	requirementsJSON := []byte(`{"scheme":"exact","network":"eip155:8453","amount":"` + exact + `","asset":"0x1","payTo":"0x2","maxTimeoutSeconds":60,"extra":{"counter":` + exact + `,"arr":[` + exact + `]}}`)
+
+	posted := map[string][]byte{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			return
+		}
+		posted[r.URL.Path] = body
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/verify":
+			_, _ = w.Write([]byte(`{"isValid":true,"payer":"0x1"}`))
+		case "/settle":
+			_, _ = w.Write([]byte(`{"success":true,"payer":"0x1","transaction":"0xabc","network":"eip155:8453"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: server.URL})
+	ctx := context.Background()
+	if _, err := client.Verify(ctx, payloadJSON, requirementsJSON); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Settle(ctx, payloadJSON, requirementsJSON); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/verify", "/settle"} {
+		body := posted[path]
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		var request struct {
+			X402Version int `json:"x402Version"`
+			Payload     struct {
+				Payload  map[string]interface{} `json:"payload"`
+				Accepted struct {
+					Amount string                 `json:"amount"`
+					Extra  map[string]interface{} `json:"extra"`
+				} `json:"accepted"`
+				Extensions map[string]interface{} `json:"extensions"`
+			} `json:"paymentPayload"`
+			Requirements struct {
+				Amount string                 `json:"amount"`
+				Extra  map[string]interface{} `json:"extra"`
+			} `json:"paymentRequirements"`
+		}
+		if err := dec.Decode(&request); err != nil {
+			t.Fatalf("%s: %v body %s", path, err, body)
+		}
+		if request.X402Version != 2 {
+			t.Fatalf("%s version %d", path, request.X402Version)
+		}
+		if request.Payload.Accepted.Amount != exact || request.Requirements.Amount != exact {
+			t.Fatalf("%s amount payload=%q requirements=%q", path, request.Payload.Accepted.Amount, request.Requirements.Amount)
+		}
+		assertPostedNumber(t, path+" payload.counter", request.Payload.Payload["counter"], exact)
+		box, _ := request.Payload.Payload["box"].(map[string]interface{})
+		assertPostedNumber(t, path+" payload.box.n", box["n"], exact)
+		arr, _ := box["arr"].([]interface{})
+		if len(arr) != 1 {
+			t.Fatalf("%s payload.box.arr %#v", path, box["arr"])
+		}
+		assertPostedNumber(t, path+" payload.box.arr[0]", arr[0], exact)
+		assertPostedNumber(t, path+" accepted.extra.counter", request.Payload.Accepted.Extra["counter"], exact)
+		ext, _ := request.Payload.Extensions["ext"].(map[string]interface{})
+		assertPostedNumber(t, path+" extensions.ext.counter", ext["counter"], exact)
+		assertPostedNumber(t, path+" requirements.extra.counter", request.Requirements.Extra["counter"], exact)
+		reqArr, _ := request.Requirements.Extra["arr"].([]interface{})
+		if len(reqArr) != 1 {
+			t.Fatalf("%s requirements.extra.arr %#v", path, request.Requirements.Extra["arr"])
+		}
+		assertPostedNumber(t, path+" requirements.extra.arr[0]", reqArr[0], exact)
+	}
+}
+
+func assertPostedNumber(t *testing.T, path string, value interface{}, exact string) {
+	t.Helper()
+	number, ok := value.(json.Number)
+	if !ok || number.String() != exact {
+		t.Fatalf("%s: got %T %v", path, value, value)
+	}
+}
+
+func TestHTTPFacilitatorClientRejectsNonObjectJSON(t *testing.T) {
+	objectPayload := []byte(`{"x402Version":2,"payload":{},"accepted":{"scheme":"exact","network":"eip155:8453"}}`)
+	objectRequirements := []byte(`{"scheme":"exact","network":"eip155:8453"}`)
+	nonObjects := [][]byte{
+		[]byte(`[]`),
+		[]byte(`"abc"`),
+		[]byte(`1`),
+		[]byte(`true`),
+	}
+
+	var posts int
+	var lastBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			return
+		}
+		posts++
+		lastBody = body
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/verify":
+			_, _ = w.Write([]byte(`{"isValid":true,"payer":"0x1"}`))
+		case "/settle":
+			_, _ = w.Write([]byte(`{"success":true,"payer":"0x1","transaction":"0xabc","network":"eip155:8453"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewHTTPFacilitatorClient(&FacilitatorConfig{URL: server.URL})
+	ctx := context.Background()
+	check := func(name string, call func() error) {
+		t.Helper()
+		posts = 0
+		if err := call(); err == nil || posts != 0 {
+			t.Fatalf("%s: err=%v posts=%d", name, err, posts)
+		}
+	}
+	for _, bad := range nonObjects {
+		label := string(bad)
+		check("verify payload "+label, func() error {
+			_, err := client.Verify(ctx, bad, objectRequirements)
+			return err
+		})
+		check("settle payload "+label, func() error {
+			_, err := client.Settle(ctx, bad, objectRequirements)
+			return err
+		})
+		check("verify requirements "+label, func() error {
+			_, err := client.Verify(ctx, objectPayload, bad)
+			return err
+		})
+		check("settle requirements "+label, func() error {
+			_, err := client.Settle(ctx, objectPayload, bad)
+			return err
+		})
+	}
+
+	posts = 0
+	if _, err := client.Verify(ctx, objectPayload, []byte(`null`)); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 1 || !bytes.Contains(lastBody, []byte(`"paymentRequirements":null`)) {
+		t.Fatalf("verify null requirements posts=%d body=%s", posts, lastBody)
+	}
+	if _, err := client.Settle(ctx, objectPayload, []byte(`null`)); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(lastBody, []byte(`"paymentRequirements":null`)) {
+		t.Fatalf("settle null requirements body=%s", lastBody)
+	}
+	posts = 0
+	if _, err := client.Verify(ctx, []byte(`null`), objectRequirements); err == nil || posts != 0 {
+		t.Fatalf("null payload verify err=%v posts=%d", err, posts)
+	}
+}
+
 func TestHTTPFacilitatorClientVerifyInvalidResponse(t *testing.T) {
 	ctx := context.Background()
 

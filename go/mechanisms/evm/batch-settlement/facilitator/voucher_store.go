@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1367,6 +1368,12 @@ func extraNumber(v interface{}) (int, bool) {
 		return int(n), true
 	case float64:
 		return int(n), true
+	case json.Number:
+		parsed, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
 	case string:
 		if !atomicAmountPattern.MatchString(n) {
 			return 0, false
