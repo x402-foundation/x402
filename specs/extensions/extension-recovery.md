@@ -51,7 +51,7 @@ extensions["recovery"].info
 | `header`               | string   | No       | Request header carrying the caller's operation key. Default `"x-idempotency-key"`. Support for the conventional `idempotency-key` fallback is RECOMMENDED. |
 | `ttlSeconds`           | number   | Yes      | Replay window length, measured from settlement confirmation.          |
 | `maxReplays`           | number   | Yes      | Maximum free replays per operation.                                   |
-| `stageTimeoutSeconds`  | number   | No       | Maximum time an unconfirmed (staged) record may exist before it is silently discarded. Aged staged records MUST NOT leave tombstones. |
+| `stageTimeoutSeconds`  | number   | No       | Maximum time a staged record may exist **without a dispatched settlement attempt** before it is silently discarded. Aged staged records MUST NOT leave tombstones. The timer MUST NOT evict a record whose settlement attempt was dispatched and whose outcome is unknown (§5.1(7)). |
 | `excludedKeys`         | string[] | Yes      | Body keys excluded from the response projection before hashing.       |
 | `contentCompanion`     | boolean  | No       | Whether the server also records verdicts under a canonical-request-content companion key. See §3.2. |
 | `reference`            | string   | No       | URL of an implementation's recovery contract documentation.           |
@@ -220,9 +220,13 @@ The following are normative consequences:
    authorization scope. Promotion MUST refuse a settlement whose payer does not match the
    recorded verified scope. An unknown scope may still PAY; it may never replay or promote on
    behalf of a known one.
-4. **Staged records are inert and age out silently.** A staged record that is never
-   promoted MUST be discarded after `stageTimeoutSeconds` and MUST NOT leave a tombstone:
-   an unsettled verdict is not a lost verdict, so no typed signal is owed.
+4. **Staged records are inert and age out silently — up to the settlement attempt.** A record is
+   `staged` only while no settlement attempt has been dispatched. A staged record that is never
+   attempted MUST be discarded after `stageTimeoutSeconds` and MUST NOT leave a tombstone: an
+   unsettled verdict is not a lost verdict, so no typed signal is owed. **The staging timeout MUST
+   NOT be applied across a dispatched settlement attempt** — see item 7. A settlement can land while
+   its reply is lost and the process dies before promotion; that record is still staged, and evicting
+   it on the timer would delete the only copy of a response the caller paid for.
 5. **Save-failure policy is fail-closed.** If the promotion step itself errors, the entry
    stays staged. Implementations SHOULD log the error; they MUST NOT silently promote.
 6. **One claim per operation, taken before the handler.** Implementations MUST take an atomic
@@ -235,11 +239,38 @@ The following are normative consequences:
    A `409` MUST tell the caller to retry the SAME payment; waiting remains optional. Read-only
    verification is not a claim. Implementations MUST name the primitive (unique constraint,
    conditional write, or lease), MUST expire a lease so a crash cannot block a retry forever,
-   and MUST release the claim on handler or settlement failure.
+   and MUST release the claim on handler or settlement failure. Lease expiry ends waiting only: it
+   MUST NOT authorize a replacement handler run or a second settlement attempt while a settlement
+   attempt is outstanding (item 7).
    (Reference implementation: `reserveRecovery` takes the claim before the paywall and answers
    `409 operation_in_flight`; corroborated by Hitek-cel, who observed three handler runs and
    one settlement on `@x402` 2.30.0 without a claim, and two `402 nonce_already_used` replies
    that arrived after the handler had already run.)
+7. **The settlement attempt is a durable boundary.** The staging timer governs only records for which
+   settlement was never attempted. Before dispatching settlement to the facilitator — and before any
+   step that could move funds — the server MUST durably record on the operation that an attempt is in
+   flight (the `settling` state). **The write MUST precede the call, not follow it:** a crash between
+   the call and the recording MUST NOT leave a record that reads as never-attempted, because that
+   record is evictable and may be the only copy of a paid response. From the moment `settling` is
+   durable, and for as long as the outcome is unknown:
+
+   - the record MUST retain the stored response, the operation identity, the recorded request
+     fingerprint, and the verified scope, regardless of `stageTimeoutSeconds` — and regardless of
+     `ttlSeconds`, since the replay window is measured from settlement confirmation and does not run
+     while the outcome is unknown;
+   - the record MUST NOT be evicted, discarded, or tombstoned on any timer;
+   - the operation key MUST NOT be reused for new work: a retry MUST NOT re-run the handler, MUST NOT
+     be charged again, and MUST NOT receive a fresh `402`; it waits for the resolution or receives
+     `409 operation_in_flight`;
+   - the unknown outcome MUST be resolved by reconciliation against the payment rail, to exactly one
+     of three states: `delivered` (settlement confirmed, or the authorization was used → promote and
+     serve), `void` (settlement specifically failed, or the authorization expired unused → discard;
+     only now is a fresh paid call honest), or `stuck` (neither provable → retain the record, keep the
+     key blocked, and raise an operator-visible alarm).
+
+   `stuck` is the one state in which neither side of the control-10 invariant can be proven. It MUST
+   be counted and surfaced, never silently aged out. This is the **"settlement attempted, outcome
+   unknown"** case, and it is precisely the case the staging timeout MUST NOT delete.
 
 > **Two mechanisms satisfy §5.1; the architecture chooses.** The stage-then-promote pattern
 > above is required when settlement confirmation is *asynchronous* — it can only arrive via a
@@ -360,8 +391,10 @@ looking but incorrect implementation silently violates:
 10. **A crash at any durable write leaves one charge.** Kill the process at each store write —
     claim, state transitions, stored response, settling, settle result, delivered, receipt —
     both just before and just after the write becomes durable, then restart over the same store
-    and replay the caller's retry with the same payment. Across those kill points and three
-    facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
+    and replay the caller's retry with the same payment — **including a restart that arrives only
+    after `stageTimeoutSeconds` has elapsed**, which is the lost-reply case where a timer would
+    otherwise remove the only copy of a response the caller paid for. Across those kill points and
+    three facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
     the reply is lost), assert: at most one charge; at most one handler run across both
     processes; every charge has a delivered or recoverable response behind it; and no response
     is released or replayed without a confirmed settlement behind it; a final state of
@@ -370,6 +403,18 @@ looking but incorrect implementation silently violates:
     batching on credit) MUST declare that mode in its extension advertisement; an undeclared
     pre-settlement release fails this control.
     (Vector set and results: Hitek-cel/latch402, `test/x402.test.ts`.)
+
+11. **The staging timeout does not cross a settlement attempt.** Drive one operation to a durable
+    `settling` state, stop the process, and restart `stageTimeoutSeconds` later with the rail
+    reporting the settlement as landed. The record MUST still exist, MUST NOT have been evicted or
+    tombstoned by the staging timer, MUST NOT permit a second handler run or a fresh `402` for the
+    same key, and MUST reconcile to `delivered` so the caller's retry recovers the stored response
+    without a second charge. The same setup with the rail reporting the authorization expired unused
+    MUST reconcile to `void`, and only then free the key for a fresh paid call. A crash between the
+    `settling` write and the facilitator call MUST similarly reconcile to `void` — nothing landed —
+    never to `delivered`. Evicting, discarding, or tombstoning the record on the timer fails this
+    control; so does a `settling` marker written after the facilitator call, because a crash in
+    between then reads as never-attempted.
 
 **6. Protocol Integration**
 
@@ -462,3 +507,4 @@ that CAN be signed well-defined.
 | 0.5     | 2026-11-12 | Three clarifications from an independent implementation (Hitek-cel/latch402, exercised against `@x402/hono` and `@x402/fetch` 2.30.0 with only the chain faked): a server-issued bearer credential is a valid replay key but not proof of payer control (§3.1); recovery reproduces the declared projection, not status, headers, or non-JSON bodies (§4); and an atomic claim MUST be taken before the handler, because read-only verification lets concurrent copies run it once each (§5.1, §5.4 control 9). | a32116150-ctrl (verify402) |
 | 0.6     | 2026-11-12 | Tightens the losing-copy answer: it MUST NOT receive a payment challenge, because the SDK's settlement-failure path returns a fresh `402` after the handler has already run; `409 operation_in_flight` (or waiting) is required, and a `409` tells the caller to retry the same payment (§5.1(6), §5.4 control 9). Adds a crash-at-every-durable-write control with single-charge and recoverability invariants (§5.4 control 10). Prompted by Hitek-cel's concurrency and crash data on x402-foundation/x402#3848. | a32116150-ctrl (verify402) |
 | 0.7     | 2026-11-13 | The recovery invariant is now bidirectional (§5.4 control 10): every charge has a delivered or recoverable response behind it, and no response is released or replayed without a confirmed settlement behind it — a store can assert that offline, since every released or replayed response must point at a confirmed settlement. Modes that deliberately serve before settlement final (e.g., batching on credit) MUST declare the exception in their extension advertisement rather than ship it silently; an undeclared pre-settlement release fails the control. Prompted by Hitek-cel on x402-foundation/x402#3848 (comment 6837452445). | a32116150-ctrl (verify402) |
+| 0.8     | 2026-11-14 | Resolves the conflict NSPG13 found between §5.1(4) and control 10: the staging timeout now applies only to records with **no dispatched settlement attempt**. §5.1(7) makes the attempt a durable, write-ahead boundary (`settling` recorded before the facilitator call), retains the response, operation identity, fingerprint and scope for as long as the outcome is unknown, blocks key reuse and replacement work, and requires reconciliation to `delivered`, `void`, or an alarmed `stuck` — never a timer eviction. Control 10 now restarts past `stageTimeoutSeconds`; new control 11 pins the boundary and rejects a marker written after the call. Incorporates Hitek-cel's implementation data point that voiding a stale claim before `settling` is safe because nothing can have moved. | a32116150-ctrl (verify402) |
