@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -417,7 +418,7 @@ func selectTransactionVersion(extra map[string]interface{}, supported []int) (in
 }
 
 // transactionVersionEntry reports whether entry is the integer 0 or 1. JSON
-// decoding yields float64, so an integral float64 is accepted.
+// decoding yields float64 or json.Number, so an integral number is accepted.
 func transactionVersionEntry(entry interface{}) (int, bool) {
 	switch v := entry.(type) {
 	case float64:
@@ -431,6 +432,10 @@ func transactionVersionEntry(entry interface{}) (int, bool) {
 	case int64:
 		if v == 0 || v == 1 {
 			return int(v), true
+		}
+	case json.Number:
+		if f, err := v.Float64(); err == nil && (f == 0 || f == 1) {
+			return int(f), true
 		}
 	}
 	return 0, false
@@ -529,6 +534,15 @@ func parseHintUint64(value any) (uint64, bool) {
 			return 0, false
 		}
 		return parsed, true
+	case json.Number:
+		if parsed, err := strconv.ParseUint(string(typed), 10, 64); err == nil {
+			return parsed, true
+		}
+		f, err := typed.Float64()
+		if err != nil || f < 0 || f != float64(uint64(f)) {
+			return 0, false
+		}
+		return uint64(f), true
 	default:
 		return 0, false
 	}
