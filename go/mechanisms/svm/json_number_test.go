@@ -30,3 +30,15 @@ func TestTransactionVersionEntryJSONNumber(t *testing.T) {
 		t.Fatal("2 must be rejected")
 	}
 }
+
+func TestUptoNumbersIntegralDecimal(t *testing.T) {
+	if got, ok := uptoOpenSlotString(json.Number("60.0")); !ok || got != "60" {
+		t.Fatalf("uptoOpenSlotString(60.0) = (%q, %v)", got, ok)
+	}
+	if !jsonNumberIsInt64(json.Number("6e1")) {
+		t.Fatal("jsonNumberIsInt64(6e1) = false")
+	}
+	if jsonNumberIsInt64(json.Number("1.5")) {
+		t.Fatal("jsonNumberIsInt64(1.5) = true")
+	}
+}

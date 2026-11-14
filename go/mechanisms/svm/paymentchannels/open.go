@@ -1334,6 +1334,9 @@ func ParseU64(value any, name string) (uint64, error) {
 		return parsed, nil
 	case json.Number:
 		if !unsignedDecimal.MatchString(typed.String()) {
+			if f, err := typed.Float64(); err == nil {
+				return ParseU64(f, name)
+			}
 			return 0, fmt.Errorf("%s must be an unsigned integer", name)
 		}
 		parsed, err := strconv.ParseUint(typed.String(), 10, 64)
