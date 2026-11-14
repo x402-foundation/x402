@@ -172,3 +172,168 @@ func TestV2EnvelopeNetworkRuleFollowsX402Version(t *testing.T) {
 		}
 	})
 }
+
+const exactJSONInteger = "9007199254740993"
+
+func exactNumberTree() string {
+	return `{"n":` + exactJSONInteger + `,"arr":[` + exactJSONInteger + `,{"m":` + exactJSONInteger + `}]}`
+}
+
+func requirementsWithExactNumbers(network string) string {
+	return `{"scheme":"exact","network":"` + network + `","amount":"` + exactJSONInteger + `","asset":"0x1","payTo":"0x2","maxTimeoutSeconds":60,"extra":{"counter":` + exactJSONInteger + `,"box":` + exactNumberTree() + `}}`
+}
+
+func assertExactNumber(t *testing.T, value interface{}, path string) {
+	t.Helper()
+	number, ok := value.(json.Number)
+	if !ok || number.String() != exactJSONInteger {
+		t.Fatalf("%s: got %T %v", path, value, value)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != exactJSONInteger {
+		t.Fatalf("%s re-encoded as %s", path, encoded)
+	}
+}
+
+func assertExactTree(t *testing.T, value interface{}, path string) {
+	t.Helper()
+	box, ok := value.(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s: got %T", path, value)
+	}
+	assertExactNumber(t, box["n"], path+".n")
+	arr, ok := box["arr"].([]interface{})
+	if !ok || len(arr) != 2 {
+		t.Fatalf("%s.arr: got %#v", path, box["arr"])
+	}
+	assertExactNumber(t, arr[0], path+".arr[0]")
+	inner, ok := arr[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s.arr[1]: got %T", path, arr[1])
+	}
+	assertExactNumber(t, inner["m"], path+".arr[1].m")
+}
+
+func TestV2MapNumbersStayExact(t *testing.T) {
+	requirementsJSON := requirementsWithExactNumbers("eip155:8453")
+
+	t.Run("requirements extra", func(t *testing.T) {
+		requirements, err := ToPaymentRequirements([]byte(requirementsJSON))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if requirements.Amount != exactJSONInteger {
+			t.Fatalf("amount %q", requirements.Amount)
+		}
+		assertExactNumber(t, requirements.Extra["counter"], "extra.counter")
+		assertExactTree(t, requirements.Extra["box"], "extra.box")
+	})
+
+	t.Run("payload maps", func(t *testing.T) {
+		body := `{"x402Version":2,"accepted":` + requirementsJSON + `,"payload":{"counter":` + exactJSONInteger + `,"box":` + exactNumberTree() + `},"extensions":{"ext":{"counter":` + exactJSONInteger + `,"box":` + exactNumberTree() + `}}}`
+		payload, err := ToPaymentPayload([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if payload.Accepted.Amount != exactJSONInteger {
+			t.Fatalf("amount %q", payload.Accepted.Amount)
+		}
+		assertExactNumber(t, payload.Payload["counter"], "payload.counter")
+		assertExactTree(t, payload.Payload["box"], "payload.box")
+		assertExactNumber(t, payload.Accepted.Extra["counter"], "accepted.extra.counter")
+		assertExactTree(t, payload.Accepted.Extra["box"], "accepted.extra.box")
+		ext, ok := payload.Extensions["ext"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("extensions.ext: got %T", payload.Extensions["ext"])
+		}
+		assertExactNumber(t, ext["counter"], "extensions.ext.counter")
+		assertExactTree(t, ext["box"], "extensions.ext.box")
+	})
+
+	t.Run("payment required maps", func(t *testing.T) {
+		body := `{"x402Version":2,"accepts":[` + requirementsJSON + `],"extensions":{"ext":{"counter":` + exactJSONInteger + `,"box":` + exactNumberTree() + `}}}`
+		required, err := ToPaymentRequired([]byte(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(required.Accepts) != 1 || required.Accepts[0].Amount != exactJSONInteger {
+			t.Fatalf("accepts %+v", required.Accepts)
+		}
+		assertExactNumber(t, required.Accepts[0].Extra["counter"], "accepts[0].extra.counter")
+		assertExactTree(t, required.Accepts[0].Extra["box"], "accepts[0].extra.box")
+		ext, ok := required.Extensions["ext"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("extensions.ext: got %T", required.Extensions["ext"])
+		}
+		assertExactNumber(t, ext["counter"], "extensions.ext.counter")
+		assertExactTree(t, ext["box"], "extensions.ext.box")
+	})
+
+	t.Run("outer decoder UseNumber", func(t *testing.T) {
+		body := `{"x402Version":2,"accepted":` + requirementsJSON + `,"payload":{"counter":` + exactJSONInteger + `}}`
+		var payload PaymentPayload
+		decoder := json.NewDecoder(strings.NewReader(body))
+		decoder.UseNumber()
+		if err := decoder.Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		assertExactNumber(t, payload.Payload["counter"], "payload.counter")
+		if payload.Accepted.Amount != exactJSONInteger {
+			t.Fatalf("amount %q", payload.Accepted.Amount)
+		}
+	})
+
+	t.Run("rejects an invalid V2 network", func(t *testing.T) {
+		_, err := ToPaymentRequirements([]byte(requirementsWithExactNumbers("ethereum")))
+		if err == nil || !strings.Contains(err.Error(), "must be in CAIP-2 format (e.g., 'eip155:84532')") {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+func TestV2UnmarshalRejectsTrailingBytes(t *testing.T) {
+	requirementsJSON := requirementsWithExactNumbers("eip155:8453")
+	cases := []struct {
+		name   string
+		body   string
+		decode func([]byte) error
+	}{
+		{
+			name: "requirements",
+			body: requirementsJSON,
+			decode: func(data []byte) error {
+				_, err := ToPaymentRequirements(data)
+				return err
+			},
+		},
+		{
+			name: "payload",
+			body: `{"x402Version":2,"accepted":` + requirementsJSON + `,"payload":{"counter":` + exactJSONInteger + `}}`,
+			decode: func(data []byte) error {
+				_, err := ToPaymentPayload(data)
+				return err
+			},
+		},
+		{
+			name: "payment required",
+			body: `{"x402Version":2,"accepts":[` + requirementsJSON + `]}`,
+			decode: func(data []byte) error {
+				_, err := ToPaymentRequired(data)
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.decode([]byte(tc.body + "\n  ")); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.decode([]byte(tc.body + " true")); err == nil {
+				t.Fatal("expected trailing data rejection")
+			}
+		})
+	}
+}
