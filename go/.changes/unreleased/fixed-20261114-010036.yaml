@@ -1,3 +1,3 @@
 kind: fixed
-body: Preserve integers above 2^53 in v2 PaymentPayload, PaymentRequirements, and PaymentRequired maps. Numbers in payload, extra, and extensions decode as json.Number. Callers that type-assert float64 on those maps need to accept json.Number. Verify and settle responses stay float64.
+body: Preserve integers above 2^53 in v2 PaymentPayload, PaymentRequirements, and PaymentRequired maps. Numbers in payload, extra, and extensions decode as json.Number. The HTTP facilitator client forwards those documents as raw JSON on verify and settle. Callers that type-assert float64 on those maps need to accept json.Number. Verify and settle responses stay float64.
 time: 2026-11-14T01:00:36.110320663Z
