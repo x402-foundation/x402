@@ -1026,11 +1026,13 @@ func extraInt(value any) (int, bool) {
 		}
 		return int(typed), true
 	case json.Number:
-		parsed, err := typed.Int64()
-		if err != nil {
-			return 0, false
+		if parsed, err := typed.Int64(); err == nil {
+			return int(parsed), true
 		}
-		return int(parsed), true
+		if f, err := typed.Float64(); err == nil {
+			return extraInt(f)
+		}
+		return 0, false
 	default:
 		return 0, false
 	}

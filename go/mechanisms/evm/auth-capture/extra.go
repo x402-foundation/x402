@@ -135,11 +135,13 @@ func JSONNumberToUint64(value interface{}) (uint64, bool) {
 	case uint64:
 		return v, true
 	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
-			return 0, false
+		if n, err := v.Int64(); err == nil {
+			return nonNegative(n)
 		}
-		return nonNegative(n)
+		if f, err := v.Float64(); err == nil {
+			return JSONNumberToUint64(f)
+		}
+		return 0, false
 	default:
 		return 0, false
 	}

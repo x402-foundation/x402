@@ -202,11 +202,13 @@ func uptoOpenSlotString(value interface{}) (string, bool) {
 	case uint64:
 		return strconv.FormatUint(v, 10), true
 	case json.Number:
-		parsed, err := strconv.ParseUint(v.String(), 10, 64)
-		if err != nil {
-			return "", false
+		if parsed, err := strconv.ParseUint(v.String(), 10, 64); err == nil {
+			return strconv.FormatUint(parsed, 10), true
 		}
-		return strconv.FormatUint(parsed, 10), true
+		if f, err := v.Float64(); err == nil {
+			return uptoOpenSlotString(f)
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -219,8 +221,11 @@ func jsonNumberIsInt64(value interface{}) bool {
 	case int64, int:
 		return true
 	case json.Number:
-		_, err := v.Int64()
-		return err == nil
+		if _, err := v.Int64(); err == nil {
+			return true
+		}
+		f, err := v.Float64()
+		return err == nil && jsonNumberIsInt64(f)
 	default:
 		return false
 	}
