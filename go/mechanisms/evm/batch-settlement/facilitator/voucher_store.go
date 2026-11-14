@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -938,6 +939,15 @@ func optionalUintString(value interface{}) *string {
 			s := fmt.Sprintf("%d", int(v))
 			return &s
 		}
+	case json.Number:
+		if atomicAmountPattern.MatchString(string(v)) {
+			s := string(v)
+			return &s
+		}
+		if f, err := v.Float64(); err == nil && f >= 0 && f == float64(int(f)) {
+			s := fmt.Sprintf("%d", int(f))
+			return &s
+		}
 	}
 	return nil
 }
@@ -1367,6 +1377,14 @@ func extraNumber(v interface{}) (int, bool) {
 		return int(n), true
 	case float64:
 		return int(n), true
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return int(i), true
+		}
+		if f, err := n.Float64(); err == nil {
+			return int(f), true
+		}
+		return 0, false
 	case string:
 		if !atomicAmountPattern.MatchString(n) {
 			return 0, false

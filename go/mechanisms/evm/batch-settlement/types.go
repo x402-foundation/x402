@@ -2,6 +2,7 @@ package batchsettlement
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 )
@@ -327,16 +328,11 @@ func ChannelConfigFromMap(data map[string]interface{}) (ChannelConfig, error) {
 	if config.Salt, ok = data["salt"].(string); !ok {
 		return config, fmt.Errorf("missing or invalid channelConfig.salt")
 	}
-	switch v := data["withdrawDelay"].(type) {
-	case float64:
-		config.WithdrawDelay = int(v)
-	case int:
-		config.WithdrawDelay = v
-	case int64:
-		config.WithdrawDelay = int(v)
-	default:
+	delay, ok := ExtraInt(data["withdrawDelay"])
+	if !ok {
 		return config, fmt.Errorf("missing or invalid channelConfig.withdrawDelay")
 	}
+	config.WithdrawDelay = delay
 	return config, nil
 }
 
@@ -727,6 +723,14 @@ func ExtraInt(v interface{}) (int, bool) {
 		return int(n), true
 	case float64:
 		return int(n), true
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return int(i), true
+		}
+		if f, err := n.Float64(); err == nil {
+			return int(f), true
+		}
+		return 0, false
 	default:
 		return 0, false
 	}
@@ -820,13 +824,8 @@ func ChannelStateRequirementsFromMap(data map[string]interface{}) *BatchSettleme
 	cs.TotalClaimed, _ = data["totalClaimed"].(string)
 	cs.RefundNonce, _ = data["refundNonce"].(string)
 	cs.ChargedCumulativeAmount, _ = data["chargedCumulativeAmount"].(string)
-	switch v := data["withdrawRequestedAt"].(type) {
-	case float64:
-		cs.WithdrawRequestedAt = int(v)
-	case int:
-		cs.WithdrawRequestedAt = v
-	case int64:
-		cs.WithdrawRequestedAt = int(v)
+	if n, ok := ExtraInt(data["withdrawRequestedAt"]); ok {
+		cs.WithdrawRequestedAt = n
 	}
 	if cs.ChannelId == "" {
 		return nil

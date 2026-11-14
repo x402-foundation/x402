@@ -352,10 +352,7 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 
 	withdrawDelay := DefaultWithdrawDelay
 	if requirements.Extra != nil {
-		switch v := requirements.Extra["withdrawDelay"].(type) {
-		case float64:
-			withdrawDelay = int(v)
-		case int:
+		if v, ok := batchsettlement.ExtraInt(requirements.Extra["withdrawDelay"]); ok {
 			withdrawDelay = v
 		}
 	}
