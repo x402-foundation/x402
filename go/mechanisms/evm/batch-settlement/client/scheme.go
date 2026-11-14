@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/big"
@@ -355,6 +356,11 @@ func (c *BatchSettlementEvmScheme) BuildChannelConfig(requirements types.Payment
 		switch v := requirements.Extra["withdrawDelay"].(type) {
 		case float64:
 			withdrawDelay = int(v)
+		case json.Number:
+			parsed, err := v.Float64()
+			if err == nil {
+				withdrawDelay = int(parsed)
+			}
 		case int:
 			withdrawDelay = v
 		}

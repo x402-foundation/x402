@@ -4,6 +4,7 @@
 package upto
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -108,8 +109,8 @@ func ResolveTokenProgram(requirements types.PaymentRequirements) (solana.PublicK
 }
 
 // ParseWithdrawDelay reads the grace period from an extra value. JSON numbers
-// decode as float64, so integer-valued floats are accepted and fractional or
-// non-positive values are rejected.
+// arrive as float64 or json.Number, so integer-valued numbers are accepted and
+// fractional or non-positive values are rejected.
 func ParseWithdrawDelay(value interface{}) (uint32, error) {
 	invalid := errors.New("withdrawDelay must be an integer greater than zero")
 
@@ -117,6 +118,12 @@ func ParseWithdrawDelay(value interface{}) (uint32, error) {
 	switch typed := value.(type) {
 	case float64:
 		seconds = typed
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return 0, invalid
+		}
+		seconds = parsed
 	case int:
 		seconds = float64(typed)
 	case int64:
@@ -152,6 +159,12 @@ func ParseExtraUint64(value interface{}) (uint64, bool) {
 			return 0, false
 		}
 		return uint64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil || parsed < 0 || parsed != float64(uint64(parsed)) {
+			return 0, false
+		}
+		return uint64(parsed), true
 	case int:
 		if typed < 0 {
 			return 0, false
