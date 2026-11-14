@@ -36,6 +36,18 @@ def format_siwe_message(info: Any, address: str) -> str:
             return getattr(info, name)
         return info.get(alias or name)
 
+    # Normalize the account address to its EIP-55 checksummed form so the
+    # rendered message is byte-identical across SIWX implementations. EIP-4361
+    # requires the address line to carry the EIP-55 checksum, and the TypeScript
+    # library (@signinwithethereum/siwe) always checksums it. Rebuilding from a
+    # non-checksummed payload address without this step yields a different
+    # message, a different EIP-191 hash, and rejects an otherwise valid
+    # signature produced by a client using a different implementation.
+    from eth_utils import is_hex_address, to_checksum_address
+
+    if isinstance(address, str) and is_hex_address(address):
+        address = to_checksum_address(address)
+
     siwe_message = SiweMessage(
         domain=_get("domain"),
         address=address,
