@@ -408,21 +408,20 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 // Internal HTTP Methods (shared by V1 and V2)
 // ============================================================================
 
-// Decoding into a map would store numbers as float64 and round integers
-// above 2^53 before the facilitator sees them.
+// Raw map values keep integers above 2^53. Non-objects fail. Null encodes as null.
 func facilitatorPaymentRequest(version int, payloadBytes, requirementsBytes []byte) ([]byte, error) {
-	var payload json.RawMessage
+	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
-	var requirements json.RawMessage
+	var requirements map[string]json.RawMessage
 	if err := json.Unmarshal(requirementsBytes, &requirements); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal requirements: %w", err)
 	}
 	body, err := json.Marshal(struct {
-		X402Version         int             `json:"x402Version"`
-		PaymentPayload      json.RawMessage `json:"paymentPayload"`
-		PaymentRequirements json.RawMessage `json:"paymentRequirements"`
+		X402Version         int                        `json:"x402Version"`
+		PaymentPayload      map[string]json.RawMessage `json:"paymentPayload"`
+		PaymentRequirements map[string]json.RawMessage `json:"paymentRequirements"`
 	}{
 		X402Version:         version,
 		PaymentPayload:      payload,
