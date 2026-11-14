@@ -42,6 +42,7 @@ and fill required environment variables:
 - `CARDANO_NETWORK` - Cardano network (optional, defaults to `cardano:preprod`)
 - `BLOCKFROST_PREPROD_URL` / `BLOCKFROST_PROJECT_ID` - Blockfrost endpoint + project id (required when `CARDANO_MNEMONIC` is set)
 - `APTOS_PRIVATE_KEY` - Aptos Ed25519 private key for Aptos payments (optional; `all-networks`)
+- `BSV_WALLET` - set to `true` to pay via a running BRC-100 wallet, e.g. BSV Desktop (optional; `all-networks`; BSV payers use a wallet connection instead of a raw private key)
 - `CASPER_PRIVATE_KEY` - Casper private key for Casper payments (optional; `all-networks`)
 - `CASPER_PRIVATE_KEY_ALGORITHM` - Casper private key algorithm, either `ed25519` (default) or `secp256k1` (optional; `all-networks`)
 - `CCD_PRIVATE_KEY` - Concordium Ed25519 private key for Concordium payments (optional; `all-networks`)

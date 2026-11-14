@@ -1350,6 +1350,67 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.18.0)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.18.0)(tsx@4.21.0))
 
+  packages/mechanisms/bsv:
+    dependencies:
+      '@bsv/sdk':
+        specifier: ^2.1.6
+        version: 2.1.6
+      '@x402/core':
+        specifier: workspace:~
+        version: link:../../core
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.24.0
+        version: 9.34.0
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.19.17
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.29.1
+        version: 8.49.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)(typescript@5.9.2)
+      '@typescript-eslint/parser':
+        specifier: ^8.29.1
+        version: 8.49.0(eslint@9.34.0)(typescript@5.9.2)
+      '@vitest/coverage-v8':
+        specifier: ^4.1.12
+        version: 4.1.12(vitest@4.1.12)
+      eslint:
+        specifier: ^9.24.0
+        version: 9.34.0
+      eslint-plugin-import:
+        specifier: ^2.31.0
+        version: 2.32.0(@typescript-eslint/parser@8.49.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)
+      eslint-plugin-jsdoc:
+        specifier: ^50.6.9
+        version: 50.8.0(eslint@9.34.0)
+      eslint-plugin-prettier:
+        specifier: ^5.2.6
+        version: 5.5.4(eslint@9.34.0)(prettier@3.5.2)
+      eslint-plugin-sonarjs:
+        specifier: ^3.0.7
+        version: 3.0.7(eslint@9.34.0)
+      prettier:
+        specifier: 3.5.2
+        version: 3.5.2
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.0(postcss@8.5.23)(tsx@4.21.0)(typescript@5.9.2)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.2
+      vite:
+        specifier: ^6.4.5
+        version: 6.4.5(@types/node@22.19.17)(tsx@4.21.0)
+      vite-tsconfig-paths:
+        specifier: ^5.1.4
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.19.17)(tsx@4.21.0))
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.19.17)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.19.17)(tsx@4.21.0))
+
   packages/mechanisms/canton:
     dependencies:
       '@canton-network/core-tx-visualizer':
@@ -2315,6 +2376,9 @@ packages:
     resolution: {integrity: sha512-T9wAjPTFdc8iRiDzTqmeBRCIroWLgXmqZHwnpzuchjYZXXqbnj+zge+HS7UaNunpxGVjDUNK1ah7OR6hEqtJoQ==}
     peerDependencies:
       algosdk: ^3.0.0
+
+  '@bsv/sdk@2.1.6':
+    resolution: {integrity: sha512-Szm1KM9BbA0Yc091gCW5NkFu9lhcykaDK9yXab/B/6f18h05uys3HWKaxHO05pKl0fYIpvwFrSScOefy0RT3GQ==}
 
   '@canton-network/core-ledger-proto@1.14.0':
     resolution: {integrity: sha512-Snp4fi4BNBB4/C5xtCQ7y/kRiYV6B7KHP4Y31TqyXeYawTi3AQIWeNSGsuFFq5fTTO+lScmFPOauUcP6tYm1aA==}
@@ -10469,6 +10533,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@bsv/sdk@2.1.6': {}
 
   '@canton-network/core-ledger-proto@1.14.0':
     dependencies:
