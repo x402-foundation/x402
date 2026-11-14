@@ -201,15 +201,7 @@ func ValidateChannelConfig(
 				config.ReceiverAuthorizer, expectedAuthorizer))
 	}
 	if requirements.Extra != nil {
-		var expectedDelay int
-		switch v := requirements.Extra["withdrawDelay"].(type) {
-		case float64:
-			expectedDelay = int(v)
-		case int:
-			expectedDelay = v
-		case int64:
-			expectedDelay = int(v)
-		}
+		expectedDelay, _ := batchsettlement.ExtraInt(requirements.Extra["withdrawDelay"])
 		if expectedDelay != 0 && config.WithdrawDelay != expectedDelay {
 			return x402.NewVerifyError(ErrWithdrawDelayMismatch, "",
 				fmt.Sprintf("channel withdrawDelay %d does not match required %d",
