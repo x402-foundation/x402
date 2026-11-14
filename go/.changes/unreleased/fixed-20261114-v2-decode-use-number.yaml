@@ -1,0 +1,3 @@
+kind: fixed
+body: 'V2 PaymentRequirements, PaymentPayload and PaymentRequired now decode numbers in extra, payload and extensions as json.Number, so values above 2^53 keep their exact value. Callers that type-assert float64 on these maps should switch to json.Number.'
+time: 2026-11-14T12:24:27.000000+05:30

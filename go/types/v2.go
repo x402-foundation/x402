@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -12,6 +13,15 @@ var networkV2Pattern = regexp.MustCompile(`^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`
 // so an envelope can decode nested requirements and then choose the network rule.
 type requirementsFields PaymentRequirements
 
+// decodeUseNumber decodes like json.Unmarshal but keeps numbers in untyped maps
+// as json.Number. A custom UnmarshalJSON does not inherit the caller's
+// Decoder.UseNumber setting, so without this numbers above 2^53 lose precision.
+func decodeUseNumber(data []byte, v interface{}) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(v)
+}
+
 func checkNetworkV2(network string) error {
 	if networkV2Pattern.MatchString(network) {
 		return nil
@@ -21,6 +31,8 @@ func checkNetworkV2(network string) error {
 
 // PaymentPayload represents a v2 payment payload structure
 // V2 has accepted field with nested scheme/network/requirements
+// Numbers inside Payload, Extensions and Accepted.Extra decode as json.Number
+// to keep their exact value.
 type PaymentPayload struct {
 	X402Version int                    `json:"x402Version"`
 	Payload     map[string]interface{} `json:"payload"`
@@ -35,7 +47,8 @@ func (p PaymentPayload) GetScheme() string                  { return p.Accepted.
 func (p PaymentPayload) GetNetwork() string                 { return p.Accepted.Network }
 func (p PaymentPayload) GetPayload() map[string]interface{} { return p.Payload }
 
-// PaymentRequirements represents v2 payment requirements structure
+// PaymentRequirements represents v2 payment requirements structure.
+// Numbers inside Extra decode as json.Number to keep their exact value.
 type PaymentRequirements struct {
 	Scheme            string                 `json:"scheme"`
 	Network           string                 `json:"network"`
@@ -58,7 +71,7 @@ func (r PaymentRequirements) GetExtra() map[string]interface{} { return r.Extra 
 // UnmarshalJSON rejects a V2 network that is not a CAIP-2 identifier.
 func (r *PaymentRequirements) UnmarshalJSON(data []byte) error {
 	var decoded requirementsFields
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := decodeUseNumber(data, &decoded); err != nil {
 		return err
 	}
 	if err := checkNetworkV2(decoded.Network); err != nil {
@@ -81,7 +94,7 @@ func (p *PaymentPayload) UnmarshalJSON(data []byte) error {
 		payloadFields: &decoded,
 		Accepted:      &accepted,
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeUseNumber(data, &raw); err != nil {
 		return err
 	}
 	if raw.Accepted != nil {
@@ -96,7 +109,9 @@ func (p *PaymentPayload) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// PaymentRequired represents a v2 402 response structure
+// PaymentRequired represents a v2 402 response structure.
+// Numbers inside Extensions and each Accepts[i].Extra decode as json.Number
+// to keep their exact value.
 type PaymentRequired struct {
 	X402Version int                    `json:"x402Version"`
 	Error       string                 `json:"error,omitempty"`
@@ -114,7 +129,7 @@ func (p *PaymentRequired) UnmarshalJSON(data []byte) error {
 		*requiredFields
 		Accepts []requirementsFields `json:"accepts"`
 	}{requiredFields: &decoded}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeUseNumber(data, &raw); err != nil {
 		return err
 	}
 	if raw.Accepts != nil {
