@@ -155,7 +155,7 @@ from `exact`.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `paymentFlow` | string | no | Only supported value is `"escrow"`; omit to use that default. |
+| `paymentFlow` | string | yes | Only supported value is `"escrow"`; required by the v2 spec, section 6.1. |
 | `feePayer` | string | yes | Base58 sponsor key from facilitator `/supported`. Set as channel `payee` (zero share) and `rent_payer`. Co-signs `open` as transaction fee payer, and signs settlement transactions as both fee payer and channel `payee`. MAY equal `receiverAuthorizer` for self-facilitation. |
 | `receiverAuthorizer` | string | yes | Server-defined Base58 key, or the facilitator's `/supported` `receiverAuthorizer` when the server delegates. Set as channel `authorized_signer`; signs settlement vouchers. |
 | `withdrawDelay` | number | yes | Server-defined `grace_period` in seconds. The client MUST encode this exact value in `open`; the facilitator MUST reject any other value. MUST be an integer greater than zero. SHOULD be `>= maxTimeoutSeconds`. |
