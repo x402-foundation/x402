@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -19,7 +20,18 @@ type requirementsFields PaymentRequirements
 func decodeUseNumber(data []byte, v interface{}) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	// Decode stops after one value; reject anything but whitespace after it,
+	// as json.Unmarshal does.
+	if _, err := dec.Token(); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("invalid character after top-level value")
+	}
+	return nil
 }
 
 func checkNetworkV2(network string) error {

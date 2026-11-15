@@ -3,6 +3,7 @@ package types
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -116,5 +117,47 @@ func TestMalformedJSONStillErrors(t *testing.T) {
 		if _, err := ToPaymentRequired([]byte(body)); err == nil {
 			t.Fatalf("ToPaymentRequired(%s) succeeded", body)
 		}
+	}
+}
+
+func TestDirectUnmarshalJSONRejectsTrailingData(t *testing.T) {
+	requirements := requirementsWithExtraJSON("eip155:84532", `{}`)
+	var r PaymentRequirements
+	if err := r.UnmarshalJSON([]byte(requirements + ` true`)); err == nil {
+		t.Fatal("PaymentRequirements accepted trailing data")
+	}
+	var p PaymentPayload
+	if err := p.UnmarshalJSON([]byte(`{"x402Version":2,"accepted":` + requirements + `} {}`)); err == nil {
+		t.Fatal("PaymentPayload accepted trailing data")
+	}
+	var pr PaymentRequired
+	if err := pr.UnmarshalJSON([]byte(`{"x402Version":2,"accepts":[` + requirements + `]} 1`)); err == nil {
+		t.Fatal("PaymentRequired accepted trailing data")
+	}
+	if err := r.UnmarshalJSON([]byte(requirements + " \n\t")); err != nil {
+		t.Fatalf("trailing whitespace rejected: %v", err)
+	}
+}
+
+func TestOuterUseNumberDecoderKeepsExactNumbers(t *testing.T) {
+	input := `{"x402Version":2,"accepted":{"scheme":"exact","network":"eip155:8453","amount":"9007199254740993"},"payload":{"counter":9007199254740993}}`
+	var payload PaymentPayload
+	dec := json.NewDecoder(strings.NewReader(input))
+	dec.UseNumber()
+	if err := dec.Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := payload.Payload["counter"].(json.Number); !ok || got != "9007199254740993" {
+		t.Fatalf("counter = %#v", payload.Payload["counter"])
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"counter":9007199254740993`) {
+		t.Fatalf("re-encoded as %s", encoded)
+	}
+	if payload.Accepted.Amount != "9007199254740993" {
+		t.Fatalf("amount = %q", payload.Accepted.Amount)
 	}
 }

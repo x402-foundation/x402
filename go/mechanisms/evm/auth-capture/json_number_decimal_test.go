@@ -15,3 +15,12 @@ func TestJSONNumberToUint64IntegralDecimal(t *testing.T) {
 		t.Fatal("1.5 must be rejected")
 	}
 }
+
+func TestJSONNumberToUint64AboveInt64(t *testing.T) {
+	if got, ok := JSONNumberToUint64(json.Number("18446744073709551615")); !ok || got != 18446744073709551615 {
+		t.Fatalf("got (%d, %v)", got, ok)
+	}
+	if got, ok := JSONNumberToUint64(json.Number("18446744073709551616")); ok {
+		t.Fatalf("2^64 accepted as %d", got)
+	}
+}
