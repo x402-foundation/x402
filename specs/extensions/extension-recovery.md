@@ -260,16 +260,33 @@ The following are normative consequences:
      while the outcome is unknown;
    - the record MUST NOT be evicted, discarded, or tombstoned on any timer;
    - the operation key MUST NOT be reused for new work: a retry MUST NOT re-run the handler, MUST NOT
-     be charged again, and MUST NOT receive a fresh `402`; it waits for the resolution or receives
-     `409 operation_in_flight`;
+     be charged again, and MUST NOT receive a fresh `402`. It receives one of two typed answers, and
+     nothing else while the outcome is unknown:
+     - **`409 operation_in_flight`** while the attempt can still resolve — a claim contention, or a
+       retry while settlement is unresolved but expected to reconcile. `409` is the answer for an
+       outstanding request (the convention of the IETF `Idempotency-Key` draft): it is per-operation,
+       not per-server, and it MUST carry `Retry-After` (seconds, short) and tell the caller to retry
+       the SAME payment;
+     - **`503 payment_unresolved`** once the record resolves to `stuck` — the outcome can be proven
+       on neither side, the record is retained, the key stays blocked, and an operator has been
+       alarmed. It MUST NOT carry `Retry-After` (the block is not time-based), MUST name the reason
+       so a caller can tell it apart from a generic server-health `503`, and MUST NOT trigger client
+       failovers, circuit breakers or 5xx error budgets: this `503` means "this one operation is
+       stuck", not "the service is unhealthy".
+     Both answers tell the caller to retry the SAME payment, never a new one.
+     (Recommended body shape, both: `{"error":"operation_in_flight","reason":"payment_in_progress"
+     | "payment_unresolved","retry":"same_payment", …}`. The reference implementation answers
+     `409 recovery_conflict / settlement_pending` with `Retry-After: 1` for an unresolved-but-pending
+     record, and `503 recovery_unavailable` where reconciliation cannot move the entry — the status
+     split is the normative part of this rule.)
    - the unknown outcome MUST be resolved by reconciliation against the payment rail, to exactly one
      of three states: `delivered` (settlement confirmed, or the authorization was used → promote and
      serve), `void` (settlement specifically failed, or the authorization expired unused → discard;
      only now is a fresh paid call honest), or `stuck` (neither provable → retain the record, keep the
-     key blocked, and raise an operator-visible alarm).
+     key blocked, raise an operator-visible alarm, and answer retries with `503 payment_unresolved`).
 
    `stuck` is the one state in which neither side of the control-10 invariant can be proven. It MUST
-   be counted and surfaced, never silently aged out. This is the **"settlement attempted, outcome
+   be counted and surfaced, never silently aged out. A retry in this state receives `503 payment_unresolved`; every other unresolved outcome stays at `409 operation_in_flight`. This is the **"settlement attempted, outcome
    unknown"** case, and it is precisely the case the staging timeout MUST NOT delete.
 
 > **Two mechanisms satisfy §5.1; the architecture chooses.** The stage-then-promote pattern
@@ -414,7 +431,9 @@ looking but incorrect implementation silently violates:
     `settling` write and the facilitator call MUST similarly reconcile to `void` — nothing landed —
     never to `delivered`. Evicting, discarding, or tombstoning the record on the timer fails this
     control; so does a `settling` marker written after the facilitator call, because a crash in
-    between then reads as never-attempted.
+    between then reads as never-attempted. A retry while the record is stuck MUST receive
+    `503 payment_unresolved` (no `Retry-After`, key blocked, operator alarmed) — never a payment
+    challenge and never an unqualified server-health `503`.
 
 **6. Protocol Integration**
 
@@ -508,3 +527,4 @@ that CAN be signed well-defined.
 | 0.6     | 2026-11-12 | Tightens the losing-copy answer: it MUST NOT receive a payment challenge, because the SDK's settlement-failure path returns a fresh `402` after the handler has already run; `409 operation_in_flight` (or waiting) is required, and a `409` tells the caller to retry the same payment (§5.1(6), §5.4 control 9). Adds a crash-at-every-durable-write control with single-charge and recoverability invariants (§5.4 control 10). Prompted by Hitek-cel's concurrency and crash data on x402-foundation/x402#3848. | a32116150-ctrl (verify402) |
 | 0.7     | 2026-11-13 | The recovery invariant is now bidirectional (§5.4 control 10): every charge has a delivered or recoverable response behind it, and no response is released or replayed without a confirmed settlement behind it — a store can assert that offline, since every released or replayed response must point at a confirmed settlement. Modes that deliberately serve before settlement final (e.g., batching on credit) MUST declare the exception in their extension advertisement rather than ship it silently; an undeclared pre-settlement release fails the control. Prompted by Hitek-cel on x402-foundation/x402#3848 (comment 6837452445). | a32116150-ctrl (verify402) |
 | 0.8     | 2026-11-14 | Resolves the conflict NSPG13 found between §5.1(4) and control 10: the staging timeout now applies only to records with **no dispatched settlement attempt**. §5.1(7) makes the attempt a durable, write-ahead boundary (`settling` recorded before the facilitator call), retains the response, operation identity, fingerprint and scope for as long as the outcome is unknown, blocks key reuse and replacement work, and requires reconciliation to `delivered`, `void`, or an alarmed `stuck` — never a timer eviction. Control 10 now restarts past `stageTimeoutSeconds`; new control 11 pins the boundary and rejects a marker written after the call. Incorporates Hitek-cel's implementation data point that voiding a stale claim before `settling` is safe because nothing can have moved. | a32116150-ctrl (verify402) |
+| 0.9     | 2026-11-16 | Splits the two “don’t pay again yet” answers, after production evidence. While a settlement can still resolve, the retry gets `409 operation_in_flight` (per-operation conflict, `Retry-After` in seconds, caller retries the SAME payment — the IETF `Idempotency-Key` draft’s outstanding-request convention; corroborated by Hitek-cel’s Latch, commit 23dc6df, and implemented identically in the reference implementation). Once the record resolves to `stuck`, the retry gets `503 payment_unresolved` with no `Retry-After`, naming the reason so it is not read as server-health 5xx (no failovers, breakers, or error budgets) — cv-scvd’s production design (“409 means I now know these conflict; 503 means I don’t know yet, retry”, source verified at commit d94addf72b7ed6ade375bca6f0fa34fae86ce745), and the outcome split Hitek-cel suggested. Control 11 now pins the `503` for stuck; no normative change to the write-ahead boundary itself. | a32116150-ctrl (verify402) |
