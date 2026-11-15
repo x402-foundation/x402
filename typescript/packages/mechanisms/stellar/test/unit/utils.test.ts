@@ -263,7 +263,9 @@ describe("Stellar RPC Helper Functions", () => {
       const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
       expect(result).toBe(3);
-      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon-testnet.stellar.org");
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon-testnet.stellar.org", {
+        allowHttp: true,
+      });
       expect(mockLedgers).toHaveBeenCalled();
       expect(mockLimit).toHaveBeenCalledWith(20);
       expect(mockOrder).toHaveBeenCalledWith("desc");
@@ -303,6 +305,35 @@ describe("Stellar RPC Helper Functions", () => {
 
       expect(result).toBe(6);
       expect(Horizon.Server).toHaveBeenCalledWith("https://horizon.stellar.org");
+    });
+
+    it("should use rpcConfig.horizonUrl instead of the public Horizon URL", async () => {
+      const baseTs = 1734032457;
+      const records = [102, 101, 100].map((seq, i) => ({
+        sequence: seq,
+        closed_at: new Date((baseTs + (2 - i) * 6) * 1000).toISOString(),
+      }));
+      mockHorizonServer(records);
+      const rpcConfig: RpcConfig = {
+        url: "https://rpc.example.com",
+        horizonUrl: "https://horizon.example.com",
+      };
+
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_PUBNET_CAIP2, rpcConfig);
+
+      expect(result).toBe(6);
+      expect(Horizon.Server).toHaveBeenCalledTimes(1);
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon.example.com");
+    });
+
+    it("should allow an HTTP rpcConfig.horizonUrl on testnet", async () => {
+      mockHorizonServer([]);
+
+      await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2, {
+        horizonUrl: "http://localhost:8000",
+      });
+
+      expect(Horizon.Server).toHaveBeenCalledWith("http://localhost:8000", { allowHttp: true });
     });
   });
 
