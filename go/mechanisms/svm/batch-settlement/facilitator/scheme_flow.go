@@ -32,7 +32,6 @@ type durableArgs struct {
 	key           string
 	network       string
 	payer         string
-	beforePending func() error
 	beforeSend    func() (*x402.SettleResponse, error)
 	send          func(func(string, string) error) (string, error)
 	broadcast     func() (durableResult, error)
@@ -64,11 +63,6 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 			return nil, completed, response, err
 		}
 		return finish(completed, phaseCompleted)
-	}
-	if args.beforePending != nil {
-		if err := args.beforePending(); err != nil {
-			return nil, "", nil, err
-		}
 	}
 	if pending, ok, err := f.pendingStore.Get(ctx, args.key); err != nil {
 		return nil, "", nil, err
@@ -294,8 +288,7 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	// slot it lands at, so the window is judged against the challenge's
 	// recentSlot or, without one, the cluster's own slot.
 	if recent == nil {
-		var slot uint64
-		slot, err = slotRead.result(ctx)
+		slot, err := slotRead.result(ctx)
 		if err != nil {
 			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
 		}
