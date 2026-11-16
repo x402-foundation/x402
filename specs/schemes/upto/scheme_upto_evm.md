@@ -150,8 +150,9 @@ The verifier MUST:
 4. verify `authorization.to`, `authorization.value`, `paymentInfo.payTo`, and
    `paymentInfo.settler` against the requirements;
 5. recompute the nonce commitment from the network chain ID, requirements asset, and `paymentInfo`;
-6. verify `validAfter`, `validBefore`, that the validity window does not exceed
-   `maxTimeoutSeconds`, and that the authorization is unused;
+6. verify `authorization.validAfter < now < authorization.validBefore`, that the validity window
+   does not exceed `maxTimeoutSeconds`, and that the authorization is unused. Both ERC-3009 bounds
+   are exclusive;
 7. verify the client balance covers the full signed maximum; and
 8. simulate `x402UptoERC3009Proxy.settle` from the selected settler with `amount` equal to
    `authorization.value`.
@@ -364,7 +365,8 @@ The verifier must execute these checks in order:
 
     > **Note**: This check applies at **verification** time, where `requirements.amount` represents the authorized maximum. At **settlement** time, `requirements.amount` carries the actual settlement amount, which may be less than `permitted.amount`. See [Phase 4 — Settle-Time Verification](#settle-time-verification) for the required handling.
 
-5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
+5.  **Verify** `witness.validAfter <= now <= deadline`. The Permit2 lower bound and signature
+    deadline are both inclusive.
 
 6.  **Verify** the Token and Network match the requirement.
 

@@ -9,8 +9,8 @@ interface IERC3009VRS {
     /// @param from Token owner that signed the authorization.
     /// @param to Authorization recipient and required caller.
     /// @param value Authorized transfer amount.
-    /// @param validAfter Earliest valid timestamp, exclusive.
-    /// @param validBefore Latest valid timestamp, exclusive.
+    /// @param validAfter Exclusive lower bound; valid only when `block.timestamp > validAfter`.
+    /// @param validBefore Exclusive upper bound; valid only when `block.timestamp < validBefore`.
     /// @param nonce Unique authorization nonce.
     /// @param v ECDSA recovery identifier.
     /// @param r ECDSA signature `r`.
