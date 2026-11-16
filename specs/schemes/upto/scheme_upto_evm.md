@@ -555,7 +555,12 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
 
 6. **EIP-3009 Full-Balance Requirement**: EIP-3009 settlement temporarily pulls the maximum and
    refunds the unused amount. The client must retain the full maximum until settlement, and both
-   outgoing transfers must succeed atomically.
+   outgoing transfers must succeed atomically. Concurrent outstanding authorizations therefore
+   require enough available balance to cover their aggregate maxima even when the expected charges
+   are much smaller. Servers should use the shortest `maxTimeoutSeconds` that accommodates request
+   execution, confirmation, and bounded retries, and should settle promptly after each request
+   instead of delaying for long batching windows. Clients that need to reuse the unused maximum
+   immediately should prefer the Permit2 path, which transfers only the actual charge.
 
 7. **Bound Settlement Authority**: The EIP-3009 path is not an arbitrary-relayer design. Only the
    address committed as `paymentInfo.settler` may select the actual charge. That address has the
