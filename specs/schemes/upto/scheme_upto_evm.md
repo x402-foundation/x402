@@ -103,6 +103,10 @@ The authorization fields have the standard EIP-3009 meaning, with these addition
 - `paymentInfo.payTo` MUST equal `PaymentRequirements.payTo`.
 - `paymentInfo.settler` MUST equal `extra.settlerAddress`.
 - `paymentInfo.salt` MUST be a fresh random 32-byte value.
+- `authorization.validBefore - authorization.validAfter` MUST NOT exceed
+  `PaymentRequirements.maxTimeoutSeconds`. Clients and facilitators MAY account for bounded clock
+  skew when choosing and validating these timestamps, but MUST NOT extend the signed validity
+  window.
 - `authorization.nonce` MUST equal:
 
 ```text
@@ -133,7 +137,8 @@ The verifier MUST:
 3. verify `authorization.to`, `authorization.value`, `paymentInfo.payTo`, and
    `paymentInfo.settler` against the requirements;
 4. recompute the nonce commitment from `paymentInfo`;
-5. verify `validAfter`, `validBefore`, and that the authorization is unused;
+5. verify `validAfter`, `validBefore`, that the validity window does not exceed
+   `maxTimeoutSeconds`, and that the authorization is unused;
 6. verify the client balance covers the full signed maximum; and
 7. simulate `x402UptoERC3009Proxy.settle` from the selected settler with `amount` equal to
    `authorization.value`.
@@ -148,8 +153,10 @@ not sufficient for a later partial settlement. Phase 3 requires that simulation 
 ### Phase 3: Settlement Logic
 
 At settlement, `PaymentRequirements.amount` carries the actual amount selected by the resource
-server. If that amount is zero, no transaction is submitted and the authorization expires unused.
-The onchain contract rejects zero-amount settlement.
+server. If that amount is zero, no transaction is submitted and the authorization remains unconsumed.
+The authorization remains usable by the bound settler until `authorization.validBefore`, unless the
+token supports and the payer calls `cancelAuthorization`. The onchain contract rejects zero-amount
+settlement.
 
 When the amount is non-zero, the settler MUST:
 
@@ -180,17 +187,24 @@ token receipt and nonce consumption.
 ### Token Compatibility
 
 The proxy supports both common `receiveWithAuthorization` interfaces. It first calls the
-`bytes signature` overload used by modern tokens with contract-wallet support. If that call reverts
-and the supplied signature is exactly 65 bytes, the proxy interprets it as `r || s || v`, normalizes
-`v` from `0/1` to `27/28` when necessary, and retries the normative ERC-3009 `v, r, s` overload.
-This fallback supports standards-only and older token implementations without changing the payment
+`bytes signature` overload used by modern tokens with contract-wallet support. When a 65-byte
+signature's bytes-overload call reverts or returns without increasing the proxy's balance, the proxy
+interprets the signature as `r || s || v`, normalizes `v` from `0/1` to `27/28` when necessary, and
+retries the normative ERC-3009 `v, r, s` overload. This fallback supports standards-only and older
+token implementations, including those with permissive fallbacks, without changing the payment
 payload. Contract-wallet signatures require a token that implements the bytes overload and validates
 the wallet through ERC-1271 or an equivalent mechanism.
 
 The proxy reverts unless the pull, the merchant payment, and any refund each change the corresponding
 balance by the exact amount. Tokens that charge transfer fees, rebase during settlement, or otherwise
-fail to transfer exact requested amounts are unsupported. A settlement of those tokens cannot spend
-a balance that was already on the proxy.
+fail to transfer exact requested amounts are unsupported. After a successful settlement, the proxy
+balance MUST equal its balance before receiving the authorization, so a settlement cannot spend a
+balance that was already on the proxy.
+
+A supported token MUST enforce that a `receiveWithAuthorization` caller equals the authorization's
+`to` address. Before supporting an asset, a facilitator MUST simulate a valid authorization from a
+caller other than `authorization.to` and confirm that it reverts. The proxy cannot determine this
+property generically from the token interface.
 
 ---
 
@@ -408,7 +422,8 @@ In this example, the buyer signed for up to `20000` atomic units. The resource s
     If `eip2612GasSponsoring` is used, call `x402UptoPermit2Proxy.settleWithPermit`.
 
 4.  **Zero Settlement:**
-    If the settled `amount = 0`, no on-chain transaction is required. The authorization simply expires unused.
+    If the settled `amount = 0`, no onchain transaction is required. The authorization remains
+    unconsumed until its deadline.
 
 If the settlement transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
@@ -511,7 +526,10 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
 
 4. **Time Constraints**: Authorizations have explicit validity bounds to limit their lifetime and reduce exposure.
 
-5. **Zero Settlement**: Allowing $0 settlements means unused authorizations naturally expire without on-chain transactions, reducing gas costs and blockchain bloat.
+5. **Zero Settlement**: A zero-charge EIP-3009 outcome sends no transaction and leaves the
+   authorization usable until `validBefore`, unless the payer cancels it through a token-supported
+   `cancelAuthorization` path. Clients and facilitators must bound that validity window using
+   `maxTimeoutSeconds`.
 
 6. **EIP-3009 Full-Balance Requirement**: EIP-3009 settlement temporarily pulls the maximum and
    refunds the unused amount. The client must retain the full maximum until settlement, and both
@@ -520,4 +538,13 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
 7. **Bound Settlement Authority**: The EIP-3009 path is not an arbitrary-relayer design. Only the
    address committed as `paymentInfo.settler` may select the actual charge. That address has the
    same ability as the Permit2 facilitator to charge any amount up to the signed maximum.
+
+8. **Signing-Surface Disclosure**: The standard EIP-3009 typed-data message displays the proxy
+   address and opaque nonce, not `paymentInfo.payTo` or `paymentInfo.settler`. A client or wallet
+   that receives `paymentInfo` MUST recompute the nonce before displaying or relying on those values.
+
+9. **Token Caller Check**: A token that does not require the
+   `receiveWithAuthorization` caller to equal `authorization.to` can have an authorization consumed
+   outside the proxy, leaving tokens locked there. Facilitators must enforce the compatibility check
+   above before supporting an asset.
 
