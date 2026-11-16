@@ -79,8 +79,8 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
     /// @dev Reverts with `InvalidAmount` when `amount == 0`.
     /// @dev Reverts with `AmountExceedsAuthorization` when `amount > authorization.value`.
     /// @dev Reverts with `InvalidNonce` when the nonce does not commit to `paymentInfo`.
-    /// @dev Reverts with `ReceivedAmountMismatch` when the proxy, recipient, or payer does not
-    ///      receive the exact token amount for that leg.
+    /// @dev Reverts with `ReceivedAmountMismatch` when a settlement leg does not deliver the
+    ///      exact token amount or the proxy does not retain its initial token balance.
     /// @dev Reverts with the token's reason when authorization receipt or either transfer fails.
     ///
     /// @param token ERC-3009 token to settle.
@@ -132,6 +132,8 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
             uint256 payerAfter = asset.balanceOf(authorization.from);
             if (payerAfter < payerBefore || payerAfter - payerBefore != refundAmount) revert ReceivedAmountMismatch();
         }
+
+        if (asset.balanceOf(address(this)) != balanceBefore) revert ReceivedAmountMismatch();
 
         emit Settled();
     }

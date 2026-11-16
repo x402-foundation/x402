@@ -19,6 +19,8 @@ contract MockValidatingERC3009Token is ERC20, EIP712 {
     uint256 public receiveShortfall;
     address public outgoingFrom;
     uint256 public outgoingShortfall;
+    address public senderFeeFrom;
+    uint256 public senderFee;
     bool public bytesAuthorizationEnabled = true;
     bool public vrsAuthorizationEnabled = true;
     bool public emptyVRSRevert;
@@ -76,6 +78,15 @@ contract MockValidatingERC3009Token is ERC20, EIP712 {
     ) external {
         outgoingFrom = from;
         outgoingShortfall = shortfall;
+    }
+
+    /// @notice Makes transfers from `from` debit an additional `fee`.
+    function setSenderFee(
+        address from,
+        uint256 fee
+    ) external {
+        senderFeeFrom = from;
+        senderFee = fee;
     }
 
     function setAuthorizationInterfaces(
@@ -165,6 +176,11 @@ contract MockValidatingERC3009Token is ERC20, EIP712 {
         if (from != address(0) && failedRecipient != address(0) && to == failedRecipient) revert TransferFailed();
         if (outgoingShortfall != 0 && from == outgoingFrom && outgoingShortfall < value) {
             super._update(from, to, value - outgoingShortfall);
+            return;
+        }
+        if (senderFee != 0 && from == senderFeeFrom) {
+            super._update(from, to, value);
+            super._update(from, address(0), senderFee);
             return;
         }
         super._update(from, to, value);

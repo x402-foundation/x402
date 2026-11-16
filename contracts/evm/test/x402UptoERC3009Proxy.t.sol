@@ -494,6 +494,24 @@ contract X402UptoERC3009ProxyTest is Test {
         assertEq(token.balanceOf(address(proxy)), donation);
     }
 
+    function test_settle_reverts_whenSenderFeeConsumesProxyBalance() public {
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo = _paymentInfo(payTo, address(this), bytes32("salt"));
+        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+        bytes memory signature = _signature(authorization, PAYER_KEY);
+        uint256 payerBefore = token.balanceOf(payer);
+        uint256 donation = 7e6;
+        token.mint(address(proxy), donation);
+        token.setSenderFee(address(proxy), 1);
+
+        vm.expectRevert(x402UptoERC3009Proxy.ReceivedAmountMismatch.selector);
+        proxy.settle(address(token), SETTLEMENT_AMOUNT, authorization, paymentInfo, signature);
+
+        assertFalse(token.authorizationState(payer, authorization.nonce));
+        assertEq(token.balanceOf(payer), payerBefore);
+        assertEq(token.balanceOf(payTo), 0);
+        assertEq(token.balanceOf(address(proxy)), donation);
+    }
+
     function test_settle_reverts_whenTokenDeliversLessThanAuthorization() public {
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo = _paymentInfo(payTo, address(this), bytes32("salt"));
         x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
