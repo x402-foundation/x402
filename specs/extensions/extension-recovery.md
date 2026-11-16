@@ -276,9 +276,10 @@ The following are normative consequences:
      Both answers tell the caller to retry the SAME payment, never a new one.
      (Recommended body shape, both: `{"error":"operation_in_flight","reason":"payment_in_progress"
      | "payment_unresolved","retry":"same_payment", …}`. The reference implementation answers
-     `409 recovery_conflict / settlement_pending` with `Retry-After: 1` for an unresolved-but-pending
-     record, and `503 recovery_unavailable` where reconciliation cannot move the entry — the status
-     split is the normative part of this rule.)
+     `409 recovery_conflict` with `code: settlement_pending` and `Retry-After: 1` while the record is
+     unresolved but reconcilable, and `503 payment_unresolved` — no `Retry-After`, `reason` named,
+     `retry: same_payment` — once it resolves to `stuck`; `stuck` and `settling` are counted on
+     `/info.recovery.observability`. The status split is the normative part of this rule.)
    - the unknown outcome MUST be resolved by reconciliation against the payment rail, to exactly one
      of three states: `delivered` (settlement confirmed, or the authorization was used → promote and
      serve), `void` (settlement specifically failed, or the authorization expired unused → discard;
