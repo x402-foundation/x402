@@ -1086,10 +1086,39 @@ A facilitator MAY add per-channel confirmation under `extra`: for a claim,
 `extra.accepts[]` entries of `{ "channelId", "totalClaimed" }` giving the
 confirmed onchain `settled` value the claim advanced each channel to; for a
 settle, `extra.channels[]` listing the channel PDAs the transaction paid. A
-server MUST NOT require either field. When they are absent, it reconciles the
-`settled` and `payout_watermark` values by reading the channel account after
-the transaction confirms; when they are present, it MAY use them only if they
-name exactly the channels it submitted.
+settle response MAY also carry `extra.channelStates[]`, and a facilitator
+SHOULD attach it to the redemption rejections listed under Phase 5. Each entry
+is the channel's confirmed onchain state:
+
+```json
+{
+  "channelId": "<channel-pda>",
+  "status": "open",
+  "balance": "100000",
+  "totalClaimed": "5000",
+  "payoutWatermark": "5000",
+  "withdrawRequestedAt": 0
+}
+```
+
+`status` is one of `open`, `closing`, `sealed`, or `distributed`. `balance` is
+the deposit, `totalClaimed` is `settled`, and `payoutWatermark` is
+`payout_watermark`. On a successful settle the entries describe the channels
+after the transaction: `payoutWatermark` equals `totalClaimed`, and a sealed
+channel is reported as `distributed`.
+
+A server MUST NOT require any of these fields. It adopts `extra.accepts[]` or
+`extra.channelStates[]` only if the response is bound to the requested network,
+the entries name exactly the channels it submitted with no duplicates, and
+every entry satisfies `payoutWatermark <= totalClaimed <= balance`; otherwise it
+ignores the field. When the fields are absent or ignored, the server MAY infer
+the confirmed state from the values it submitted: a confirmed claim advanced
+`settled` to each voucher's `maxClaimableAmount`, and a confirmed settle
+advanced `payout_watermark` to `settled`. It MAY instead read the channel
+account, but only through a reader it was explicitly configured with. A server
+MUST NOT fall back to an implicit public RPC endpoint. When a rejection carries
+no usable state and no reader is configured, the server reports the failure and
+leaves its state unchanged.
 
 Seal (`amount` is the delta paid to the receiver; `extra.channelState`
 carries the final watermark, and `balance - totalClaimed` went back to the
@@ -1829,11 +1858,18 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   is at or below the observed `settled` watermark MUST be rejected with
   `invalid_batch_settlement_svm_cumulative_amount_mismatch`, and a concurrent
   duplicate in-flight claim MUST be rejected with `duplicate_settlement`; no
-  durable duplicate cache is required.
+  durable duplicate cache is required. The rejection is how a server learns
+  that a claim whose response was lost already confirmed, so the facilitator
+  SHOULD attach `extra.channelStates[]` for every channel of the batch, and the
+  server SHOULD resync the channels whose `totalClaimed` is at least their
+  voucher and re-claim the rest once, rather than resubmit the whole batch.
 - **Open-channel distributions.** `distribute` advances `payout_watermark` to
   `settled`; a repeat cannot pay the same delta again. A concurrent duplicate
   distribution for the same channel and observed watermark MUST be rejected with
-  `duplicate_settlement`.
+  `duplicate_settlement`. A distribution that finds nothing left to pay is
+  rejected with `invalid_batch_settlement_svm_cumulative_amount_mismatch`; the
+  facilitator SHOULD attach `extra.channelStates[]` for the channels it read,
+  and the server SHOULD adopt their `payoutWatermark` instead of resubmitting.
 - **Refunds.** The facilitator MUST reject concurrent retries of the same
   `request_close` transaction with `duplicate_settlement`, so one broadcast
   produces one initiation result. Once `Closing`, a later retry fails with
@@ -1843,7 +1879,11 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   `closeAuthorization.validBefore`. The facilitator keeps no close result
   (section 6.3): it rejects a concurrent duplicate with `duplicate_settlement`
   and fails a retry after the close confirmed with
-  `invalid_batch_settlement_svm_close_state`.
+  `invalid_batch_settlement_svm_close_state`. A `seal` rejected with that code
+  because the channel is no longer `Closing`, or because the voucher is below
+  `settled`, SHOULD carry `extra.channelStates[]` with the channel. The server
+  SHOULD record a `distributed` channel as paid out, and a `sealed` one by its
+  `settled` value, instead of sealing again; none of these is a new seal.
 - **Reclaim.** A channel can transition from `Distributed` to deallocated only
   once. Concurrent reclaim attempts require no additional replay mitigation;
   later attempts observe an absent account or invalid status.
@@ -2008,7 +2048,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   full unused escrow.
 - `invalid_batch_settlement_svm_close_state` - the channel cannot be closed, or
   a cooperative voucher does not equal server state or is behind the
-  channel's onchain `settled` value.
+  channel's onchain `settled` value. A `seal` rejection SHOULD carry
+  `extra.channelStates[]` (section 4.4, Phase 5).
 - `invalid_batch_settlement_svm_channel_closing` - the payer has started a
   forced close, so program `settle` is unavailable: a `claim`, `voucher`, or
   `authorization` for the channel is refused and the server retries with a
@@ -2018,7 +2059,9 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - `invalid_batch_settlement_svm_withdraw_delay_out_of_range` - `withdrawDelay`
   is outside `900..=2592000` seconds or is shorter than `maxTimeoutSeconds`.
 - `invalid_batch_settlement_svm_cumulative_amount_mismatch` - corrective 402:
-  client's cumulative voucher does not match server state.
+  client's cumulative voucher does not match server state. For a server-authored
+  `claim` or `settle`, the redemption is already onchain and the rejection
+  SHOULD carry `extra.channelStates[]` (section 4.4, Phase 5).
 - `invalid_batch_settlement_svm_cumulative_exceeds_deposit` - voucher exceeds
   escrowed deposit.
 - `invalid_batch_settlement_svm_voucher_expiry` - voucher `expiresAt` is
@@ -2040,7 +2083,7 @@ Standard x402 codes apply. The facilitator reports verification failures in
   attributed to the batch because a sealed payout in the same transaction
   returned escrow to a payer or treasury that aliases `payTo`. The facilitator
   returns the confirmed signature with this reason instead of an `amount`;
-  the server reconciles from onchain state.
+  the server reconciles as in section 4.4.
 - `invalid_batch_settlement_svm_operation_ceiling_changed` - a server-mode
   `requestId` was already reserved or completed with a different ceiling. The
   reuse is a duplicate operation: the handler did not run, and the earlier

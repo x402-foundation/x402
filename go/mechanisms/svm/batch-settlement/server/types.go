@@ -4,11 +4,11 @@ import batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/bat
 
 const (
 	// ChannelStatusOpen is a channel that can still accept vouchers.
-	ChannelStatusOpen = "open"
+	ChannelStatusOpen = batchsettlement.ChannelStatusOpen
 	// ChannelStatusClosing is a channel whose payer has started a forced close.
-	ChannelStatusClosing = "closing"
+	ChannelStatusClosing = batchsettlement.ChannelStatusClosing
 	// ChannelStatusDistributed is a channel that has been paid out.
-	ChannelStatusDistributed = "distributed"
+	ChannelStatusDistributed = batchsettlement.ChannelStatusDistributed
 )
 
 const (

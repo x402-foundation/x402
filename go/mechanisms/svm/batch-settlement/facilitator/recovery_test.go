@@ -193,7 +193,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		inner.confirmErr = confirmErr
 		return &confirmingSigner{scriptedSigner: inner, slot: slot}
 	}
-	t.Run("rejects a repeated claim at the channel watermark without broadcasting or writing a lifecycle record", func(t *testing.T) {
+	t.Run("answers a repeated claim at the channel watermark with the channel state, without broadcasting or writing a lifecycle record", func(t *testing.T) {
 		payload := claimPayload(t, 1000)
 		storage := newActivityRecordingStorage()
 		signer := confirming(t, 0, nil)
@@ -210,8 +210,14 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 			submitCalls.Add(1)
 			return durableResult{}, errors.New("should not submit")
 		}
-		_, err := scheme.settleClaims(context.Background(), payload, requirements)
-		require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
+		response, err := scheme.settleClaims(context.Background(), payload, requirements)
+		require.NoError(t, err)
+		require.False(t, response.Success)
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, response.ErrorReason)
+		require.Empty(t, response.Transaction)
+		require.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "1000", PayoutWatermark: "0",
+		}}}, response.Extra)
 		require.Zero(t, storage.activityCalls.Load())
 		require.Zero(t, submitCalls.Load())
 		require.Empty(t, signer.confirmCalls())
@@ -382,8 +388,11 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 			restartedSubmits.Add(1)
 			return durableResult{}, errors.New("should not submit")
 		}
-		_, err = restarted.settleClaims(context.Background(), payload, requirements)
-		require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
+		replayed, err := restarted.settleClaims(context.Background(), payload, requirements)
+		require.NoError(t, err)
+		require.False(t, replayed.Success)
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, replayed.ErrorReason)
+		require.Contains(t, replayed.Extra, batchsettlement.ExtraChannelStates)
 		require.Zero(t, restartedSubmits.Load())
 	})
 
@@ -434,9 +443,12 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		}
 		response, err := first.settleDistributions(context.Background(), payload, requirements)
 		require.NoError(t, err)
+		paidOut := []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "1700", PayoutWatermark: "1700",
+		}}
 		require.Equal(t, &x402.SettleResponse{
 			Amount:      "1500",
-			Extra:       map[string]any{"channels": []string{channelID}},
+			Extra:       map[string]any{"channels": []string{channelID}, batchsettlement.ExtraChannelStates: paidOut},
 			Network:     x402.Network(network),
 			Payer:       "",
 			Success:     true,
@@ -466,6 +478,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.False(t, replay.Success, "a completed distribution is not answered again")
 		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, replay.ErrorReason)
 		require.Empty(t, replay.Transaction)
+		require.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: paidOut}, replay.Extra)
 		require.Zero(t, restartedSubmits.Load())
 		require.Equal(t, int32(1), recorded.Load(), "a retry must not deliver the payout to the hook again")
 
@@ -1346,7 +1359,7 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 			return nil
 		}, []svm.FacilitatorTokenBalance{token(0, payTo, "9900")})
 
-		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, requirements)
+		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, nil, requirements)
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		require.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)
@@ -1365,13 +1378,68 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 		require.NoError(t, store.Set(context.Background(), key, signature.String()))
 		scheme := newScheme(t, store, nil, []svm.FacilitatorTokenBalance{token(0, payTo, "9900")})
 
-		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, requirements)
+		response, err := scheme.finishDistribution(context.Background(), key, signature.String(), true, prepared, nil, requirements)
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		require.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)
 		_, ok, err := store.Get(context.Background(), resultKey(key))
 		require.NoError(t, err)
 		require.False(t, ok)
+	})
+}
+
+func TestDistributionChannelStates(t *testing.T) {
+	const channelID = "chan-a"
+	prepared := []PreparedDistribution{{ChannelID: channelID}, {ChannelID: "chan-b"}}
+	channelAt := func(status generated.ChannelStatus, settled, payout uint64) *generated.Channel {
+		return &generated.Channel{
+			Status:           uint8(status),
+			Deposit:          10_000,
+			ClosureStartedAt: 7,
+			Settlement:       generated.SettlementWatermarks{Settled: settled, PayoutWatermark: payout},
+		}
+	}
+
+	t.Run("a confirmed sweep leaves payout at settled, and a sealed channel distributed", func(t *testing.T) {
+		states := distributedStates(prepared, []*generated.Channel{
+			channelAt(generated.ChannelStatus_Open, 3000, 1000),
+			channelAt(generated.ChannelStatus_Sealed, 2000, 0),
+		})
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{
+			{ChannelID: channelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "3000", PayoutWatermark: "3000"},
+			{ChannelID: "chan-b", Status: batchsettlement.ChannelStatusDistributed, Balance: "10000", TotalClaimed: "2000", PayoutWatermark: "2000"},
+		}, states)
+	})
+
+	t.Run("a batch with an unread channel carries no states, so the server never adopts a partial batch", func(t *testing.T) {
+		require.Nil(t, distributedStates(prepared, []*generated.Channel{channelAt(generated.ChannelStatus_Open, 3000, 1000), nil}))
+		require.Len(t, observedStates(prepared, []*generated.Channel{channelAt(generated.ChannelStatus_Open, 3000, 1000), nil}), 1)
+	})
+
+	t.Run("a closing channel reports when its withdrawal was requested", func(t *testing.T) {
+		state := redemptionSnapshot(channelID, channelAt(generated.ChannelStatus_Closing, 3000, 1000))
+		require.Equal(t, batchsettlement.ChannelStatusClosing, state.Status)
+		require.Equal(t, int64(7), state.WithdrawRequestedAt)
+	})
+
+	t.Run("an unknown onchain status leaves the wire status empty", func(t *testing.T) {
+		require.Empty(t, redemptionSnapshot(channelID, channelAt(generated.ChannelStatus(99), 3000, 1000)).Status)
+	})
+
+	t.Run("a stored payout result keeps its channel states for a replay", func(t *testing.T) {
+		states := distributedStates(prepared, []*generated.Channel{
+			channelAt(generated.ChannelStatus_Open, 3000, 1000),
+			channelAt(generated.ChannelStatus_Open, 2000, 0),
+		})
+		stored := &x402.SettleResponse{
+			Success: true,
+			Extra:   map[string]any{"channels": []string{channelID, "chan-b"}, batchsettlement.ExtraChannelStates: states},
+		}
+		encoded, err := json.Marshal(stored)
+		require.NoError(t, err)
+		replayed, err := decodeDistributionResult(string(encoded))
+		require.NoError(t, err)
+		require.Equal(t, stored, replayed)
 	})
 }
 

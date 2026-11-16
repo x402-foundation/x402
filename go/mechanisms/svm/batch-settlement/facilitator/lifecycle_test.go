@@ -1813,16 +1813,26 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		_, err = settle(mismatch, claim())
 		require.ErrorContains(t, err, batchsettlement.ErrChannelIDMismatch)
 
-		for _, value := range []uint64{0, 10_001} {
-			bounds := configured(t)
-			v, err := batchclient.SignBatchVoucher(ctx, payer, channelID, value, 0)
-			require.NoError(t, err)
-			_, err = settle(bounds, claim(func(voucher *batchsettlement.BatchVoucher) {
-				voucher.MaxClaimableAmount = fmt.Sprintf("%d", value)
-				voucher.Signature = v.Signature
-			}))
-			require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
-		}
+		exceeding := configured(t)
+		overDeposit, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 10_001, 0)
+		require.NoError(t, err)
+		_, err = settle(exceeding, claim(func(voucher *batchsettlement.BatchVoucher) {
+			voucher.MaxClaimableAmount = "10001"
+			voucher.Signature = overDeposit.Signature
+		}))
+		require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
+
+		applied := configured(t)
+		zero, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 0, 0)
+		require.NoError(t, err)
+		result, err := settle(applied, claim(func(voucher *batchsettlement.BatchVoucher) {
+			voucher.MaxClaimableAmount = "0"
+			voucher.Signature = zero.Signature
+		}))
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, result.ErrorReason)
+		require.Contains(t, result.Extra, batchsettlement.ExtraChannelStates)
 		signature := configured(t)
 		_, err = settle(signature, claim(func(v *batchsettlement.BatchVoucher) { v.MaxClaimableAmount = "1001" }))
 		require.ErrorContains(t, err, batchsettlement.ErrVoucherSignature)
@@ -1831,7 +1841,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		rejected.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
 			return durableResult{Response: &x402.SettleResponse{ErrorReason: string(x402.ErrSettlementPending), Success: false}}, nil
 		}
-		result, err := settle(rejected, claim())
+		result, err = settle(rejected, claim())
 		require.NoError(t, err)
 		require.False(t, result.Success)
 		require.Equal(t, string(x402.ErrSettlementPending), result.ErrorReason)

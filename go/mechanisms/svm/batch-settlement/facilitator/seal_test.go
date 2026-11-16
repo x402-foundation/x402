@@ -291,7 +291,59 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.False(t, again.Success)
 		assert.Equal(t, batchsettlement.ErrCloseState, again.ErrorReason)
 		assert.Empty(t, again.Transaction)
+		assert.Equal(t, payer.PublicKey().String(), again.Payer)
+		assert.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusSealed, Balance: "10000", TotalClaimed: "3000", PayoutWatermark: "3000",
+		}}}, again.Extra)
 		assert.Len(t, fixture.submits, 1)
+	})
+
+	t.Run("answers a seal retry that finds the channel distributed with that state, with the payout hook set", func(t *testing.T) {
+		payouts := &payoutLog{}
+		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+		require.True(t, settle(t, fixture.scheme, sealPayload(t, 3_000)).Success)
+
+		fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return live(func(channel *generated.Channel) {
+				channel.Status = uint8(generated.ChannelStatus_Distributed)
+				channel.Settlement = generated.SettlementWatermarks{Settled: 3_000, PayoutWatermark: 3_000}
+			}), nil
+		}
+		again := settle(t, fixture.scheme, sealPayload(t, 3_000))
+		assert.False(t, again.Success)
+		assert.Equal(t, batchsettlement.ErrCloseState, again.ErrorReason)
+		assert.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusDistributed, Balance: "10000", TotalClaimed: "3000", PayoutWatermark: "3000",
+		}}}, again.Extra)
+		assert.Len(t, fixture.submits, 1)
+		assert.Len(t, payouts.calls(), 1)
+	})
+
+	t.Run("answers a voucher below settled with the closing channel state and no broadcast", func(t *testing.T) {
+		fixture := facilitator(t, nil, true)
+		response := settle(t, fixture.scheme, sealPayload(t, 999))
+		assert.False(t, response.Success)
+		assert.Equal(t, batchsettlement.ErrCloseState, response.ErrorReason)
+		assert.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusClosing, Balance: "10000", TotalClaimed: "1000", PayoutWatermark: "500", WithdrawRequestedAt: sealNow - 60,
+		}}}, response.Extra)
+		assert.Empty(t, fixture.submits)
+	})
+
+	t.Run("rejects a channel that does not match the configuration before revealing its state", func(t *testing.T) {
+		fixture := facilitator(t, live(func(channel *generated.Channel) {
+			channel.Status = uint8(generated.ChannelStatus_Sealed)
+		}), true)
+		deps := fixture.scheme.defaultSealDependencies()
+		deps.NowSeconds = func() int64 { return sealNow }
+		deps.AssertClaimChannel = func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error {
+			return errors.New(batchsettlement.ErrChannelState)
+		}
+		fixture.scheme.hooks.sealDependencies = func() SealDependencies { return deps }
+		response := settle(t, fixture.scheme, sealPayload(t, 3_000))
+		assert.False(t, response.Success)
+		assert.NotEqual(t, batchsettlement.ErrCloseState, response.ErrorReason)
+		assert.NotContains(t, response.Extra, batchsettlement.ExtraChannelStates)
 	})
 
 	t.Run("answers settlement_pending and keeps the payout record when deleting it fails", func(t *testing.T) {

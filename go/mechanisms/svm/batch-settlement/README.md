@@ -140,6 +140,8 @@ manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, bat
 })
 ```
 
+The manager takes channel state from the facilitator's responses (`extra.channelStates`) or infers it from what it submitted, so a confirmed claim, distribute or seal whose response was lost resyncs instead of being resubmitted. It reads the chain only through `RPCURL`, `ReadSettledWatermark` or `ReadPayoutWatermark`; with none set it never falls back to a public RPC endpoint.
+
 `requirements` must include `extra.feePayer` from the facilitator's supported kind. Claim promptly: if the facilitator or payer forces a close before the latest voucher is claimed, unclaimed value returns to the payer.
 
 ## Facilitator Usage

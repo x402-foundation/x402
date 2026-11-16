@@ -83,7 +83,8 @@ func AssertRefundable(channel *generated.Channel, channelID string) error {
 
 // SettleSeal applies the server's latest voucher with settle_and_seal and pays out with distribute.
 //
-// A retry after the close landed fails with close_state. With
+// A retry after the close landed is rejected with close_state and the channel's
+// `extra.channelStates`, as is a voucher below the settled watermark. With
 // OnDistributionConfirmed set the payout record is kept until the hook has
 // run; a retry that finds it finishes the hook and deletes it.
 func SettleSeal(
@@ -152,8 +153,12 @@ func settleSeal(
 		required = generated.ChannelStatus_Open
 	}
 	if generated.ChannelStatus(channel.Status) != required {
-		return nil, fmt.Errorf("%s: %s applies only to a %s channel; observed status %s",
-			batchsettlement.ErrCloseState, intent, paymentchannels.ChannelStatusString(required), paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
+		if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, allChannelStatuses); err != nil {
+			return nil, err
+		}
+		message := fmt.Sprintf("%s applies only to a %s channel; observed status %s",
+			intent, paymentchannels.ChannelStatusString(required), paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
+		return sealResync(network, payer, message, redemptionSnapshot(channelID, channel)), nil
 	}
 	if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{required}); err != nil {
 		return nil, err
@@ -162,7 +167,11 @@ func settleSeal(
 		return nil, fmt.Errorf("%s: grace period elapsed; the permissionless seal path applies", batchsettlement.ErrCloseState)
 	}
 	settled := channel.Settlement.Settled
-	if cumulative < settled || cumulative > channel.Deposit {
+	if cumulative < settled {
+		message := fmt.Sprintf("voucher %d is below settled %d", cumulative, settled)
+		return sealResync(network, payer, message, redemptionSnapshot(channelID, channel)), nil
+	}
+	if cumulative > channel.Deposit {
 		return nil, fmt.Errorf("%s: voucher %d must lie within settled %d and deposit %d", batchsettlement.ErrCloseState, cumulative, settled, channel.Deposit)
 	}
 	payee, err := solana.PublicKeyFromBase58(terms.FeePayer)
@@ -227,6 +236,19 @@ func settleSeal(
 		return SettlementPending(x402.Network(network), payer, submitted.Signature, string(intent)+" confirmed but the sealed state is not visible yet"), nil
 	}
 	return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, sealed, requirements, intent), nil
+}
+
+var allChannelStatuses = []generated.ChannelStatus{
+	generated.ChannelStatus_Open,
+	generated.ChannelStatus_Closing,
+	generated.ChannelStatus_Sealed,
+	generated.ChannelStatus_Distributed,
+}
+
+func sealResync(network, payer, message string, state batchsettlement.BatchRedemptionChannelState) *x402.SettleResponse {
+	response := ResyncFailure(x402.Network(network), batchsettlement.ErrCloseState, message, []batchsettlement.BatchRedemptionChannelState{state})
+	response.Payer = payer
+	return response
 }
 
 func resultKey(key string) string { return key + ":result" }

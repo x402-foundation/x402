@@ -574,7 +574,9 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 		network: requirements.Network,
 		payer:   payer,
 		beforeSend: func() (*x402.SettleResponse, error) {
-			for _, item := range prepared {
+			states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+			applied := false
+			for i, item := range prepared {
 				channel, err := f.fetchChannel(ctx, requirements.Network, item.ChannelID)
 				if err != nil {
 					return nil, err
@@ -585,9 +587,16 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				if err := f.assertClaimChannel(channel, item.Claim.ChannelConfig, item.Terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open}); err != nil {
 					return nil, err
 				}
-				if item.Cumulative <= channel.Settlement.Settled || item.Cumulative > channel.Deposit {
+				if item.Cumulative > channel.Deposit {
 					return nil, fmt.Errorf("%s", batchsettlement.ErrCumulativeAmountMismatch)
 				}
+				applied = applied || item.Cumulative <= channel.Settlement.Settled
+				states[i] = redemptionSnapshot(item.ChannelID, channel)
+			}
+			if applied {
+				return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "claim already applied onchain", states), nil
+			}
+			for _, item := range prepared {
 				authorizer, err := solana.PublicKeyFromBase58(item.Claim.ChannelConfig.PayerAuthorizer)
 				if err != nil {
 					return nil, err
@@ -804,7 +813,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		if err != nil || !recovered.OK {
 			return recovered.Response, err
 		}
-		return f.finishDistribution(ctx, key, recovered.Signature, true, prepared, requirements)
+		return f.finishDistribution(ctx, key, recovered.Signature, true, prepared, channels, requirements)
 	}
 	var instructions []solana.Instruction
 	var swept []PreparedDistribution
@@ -828,7 +837,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		if previous != nil {
 			return previous, nil
 		}
-		return SettleFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "", ""), nil
+		return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "nothing to distribute onchain", observedStates(prepared, channels)), nil
 	}
 	if passKey == "" {
 		return nil, fmt.Errorf("%s: a channel of the batch is not visible", batchsettlement.ErrChannelState)
@@ -862,7 +871,29 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	if err != nil || !submitted.OK {
 		return submitted.Response, err
 	}
-	return f.finishDistribution(ctx, key, submitted.Signature, false, prepared, requirements)
+	return f.finishDistribution(ctx, key, submitted.Signature, false, prepared, channels, requirements)
+}
+
+func observedStates(prepared []PreparedDistribution, channels []*generated.Channel) []batchsettlement.BatchRedemptionChannelState {
+	states := make([]batchsettlement.BatchRedemptionChannelState, 0, len(prepared))
+	for i, item := range prepared {
+		if channels[i] != nil {
+			states = append(states, redemptionSnapshot(item.ChannelID, channels[i]))
+		}
+	}
+	return states
+}
+
+// distributedStates is nil unless every channel was read: the server adopts only a complete batch.
+func distributedStates(prepared []PreparedDistribution, channels []*generated.Channel) []batchsettlement.BatchRedemptionChannelState {
+	states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+	for i, item := range prepared {
+		if channels[i] == nil {
+			return nil
+		}
+		states[i] = distributedSnapshot(item.ChannelID, channels[i])
+	}
+	return states
 }
 
 // dropPending deletes key's pending record. A store error is ignored: the record
@@ -873,7 +904,7 @@ func (f *BatchSvmScheme) dropPending(ctx context.Context, key string) {
 	_ = f.pendingStore.Delete(recoveryCtx, key)
 }
 
-func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, channels []*generated.Channel, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 	unfinished := func(cause error) *x402.SettleResponse {
 		if fromPending {
@@ -888,12 +919,17 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 			return unfinished(err), nil
 		}
 		response = SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
-	} else if f.config.OnDistributionConfirmed != nil {
-		if err := storePayoutResult(ctx, f.pendingStore, key, response); err != nil {
-			return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+	} else {
+		if states := distributedStates(prepared, channels); states != nil {
+			response.Extra[batchsettlement.ExtraChannelStates] = states
 		}
-		if pending := f.completePayout(ctx, key, response, requirements); pending != nil {
-			return pending, nil
+		if f.config.OnDistributionConfirmed != nil {
+			if err := storePayoutResult(ctx, f.pendingStore, key, response); err != nil {
+				return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
+			}
+			if pending := f.completePayout(ctx, key, response, requirements); pending != nil {
+				return pending, nil
+			}
 		}
 	}
 	if fromPending {
@@ -1317,7 +1353,8 @@ func tokenBalance(balances []svm.FacilitatorTokenBalance, accountIndex int, requ
 }
 
 type distributionExtra struct {
-	Channels []string `json:"channels"`
+	Channels      []string                                      `json:"channels"`
+	ChannelStates []batchsettlement.BatchRedemptionChannelState `json:"channelStates,omitempty"`
 }
 
 type storedDistribution struct {
@@ -1333,6 +1370,9 @@ func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
 	response := stored.SettleResponse
 	if stored.Extra != nil {
 		response.Extra = map[string]any{"channels": stored.Extra.Channels}
+		if stored.Extra.ChannelStates != nil {
+			response.Extra[batchsettlement.ExtraChannelStates] = stored.Extra.ChannelStates
+		}
 	}
 	return &response, nil
 }

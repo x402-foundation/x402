@@ -83,6 +83,38 @@ func snapshotChannel(channelID string, channel *generated.Channel, charged *uint
 	return snapshot
 }
 
+// redemptionSnapshot leaves Status empty for an unrecognized onchain status; the server rejects it.
+func redemptionSnapshot(channelID string, channel *generated.Channel) batchsettlement.BatchRedemptionChannelState {
+	state := batchsettlement.BatchRedemptionChannelState{
+		ChannelID:       channelID,
+		Status:          batchsettlement.RedemptionStatus(generated.ChannelStatus(channel.Status)),
+		Balance:         strconv.FormatUint(channel.Deposit, 10),
+		TotalClaimed:    strconv.FormatUint(channel.Settlement.Settled, 10),
+		PayoutWatermark: strconv.FormatUint(channel.Settlement.PayoutWatermark, 10),
+	}
+	if state.Status == batchsettlement.ChannelStatusClosing {
+		state.WithdrawRequestedAt = channel.ClosureStartedAt
+	}
+	return state
+}
+
+// distributedSnapshot is the state a confirmed distribute leaves behind: payout caught up to settled, and a sealed channel paid out.
+func distributedSnapshot(channelID string, channel *generated.Channel) batchsettlement.BatchRedemptionChannelState {
+	state := redemptionSnapshot(channelID, channel)
+	state.PayoutWatermark = state.TotalClaimed
+	if state.Status == batchsettlement.ChannelStatusSealed {
+		state.Status = batchsettlement.ChannelStatusDistributed
+	}
+	return state
+}
+
+// ResyncFailure rejects a redemption whose effect is already onchain and carries the channels' state, so the server adopts it instead of resubmitting.
+func ResyncFailure(network x402.Network, reason, message string, states []batchsettlement.BatchRedemptionChannelState) *x402.SettleResponse {
+	response := SettleFailure(network, reason, "", message)
+	response.Extra = map[string]any{batchsettlement.ExtraChannelStates: states}
+	return response
+}
+
 // VerifiedChannelExtra projects a channel onto the flat verify response extra.
 func VerifiedChannelExtra(channelID string, channel *generated.Channel) map[string]any {
 	snapshot := snapshotChannel(channelID, channel, nil)
