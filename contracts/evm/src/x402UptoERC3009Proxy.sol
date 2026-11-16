@@ -19,7 +19,14 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
         keccak256("x402UptoERC3009Nonce(address payTo,address settler,bytes32 salt)");
 
     /// @notice Emitted after a payment is settled and its remainder is refunded.
-    event Settled();
+    event Settled(
+        address indexed token,
+        address indexed from,
+        address indexed payTo,
+        bytes32 nonce,
+        uint256 amount,
+        uint256 refund
+    );
 
     /// @notice Thrown when the settlement amount exceeds the signed authorization value.
     error AmountExceedsAuthorization();
@@ -135,7 +142,23 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
 
         if (asset.balanceOf(address(this)) != balanceBefore) revert ReceivedAmountMismatch();
 
-        emit Settled();
+        _emitSettled({
+            token: token,
+            amount: amount,
+            authorization: authorization,
+            paymentInfo: paymentInfo,
+            refundAmount: refundAmount
+        });
+    }
+
+    function _emitSettled(
+        address token,
+        uint256 amount,
+        Authorization calldata authorization,
+        PaymentInfo calldata paymentInfo,
+        uint256 refundAmount
+    ) private {
+        emit Settled(token, authorization.from, paymentInfo.payTo, authorization.nonce, amount, refundAmount);
     }
 
     /// @dev Uses the smart-wallet-compatible bytes overload, then tries the normative ERC-3009

@@ -42,7 +42,14 @@ contract X402UptoERC3009ProxyTest is Test {
     address internal payTo;
     address internal other;
 
-    event Settled();
+    event Settled(
+        address indexed token,
+        address indexed from,
+        address indexed payTo,
+        bytes32 nonce,
+        uint256 amount,
+        uint256 refund
+    );
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -479,10 +486,18 @@ contract X402UptoERC3009ProxyTest is Test {
     }
 
     function test_settle_emitsSettled() public {
-        vm.expectEmit(false, false, false, false);
-        emit Settled();
+        bytes32 salt = bytes32("salt");
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo = _paymentInfo(payTo, address(this), salt);
+        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
 
-        _settle(SETTLEMENT_AMOUNT, MAX_AMOUNT, bytes32("salt"));
+        vm.expectEmit(true, true, true, true, address(proxy));
+        emit Settled(
+            address(token), payer, payTo, authorization.nonce, SETTLEMENT_AMOUNT, MAX_AMOUNT - SETTLEMENT_AMOUNT
+        );
+
+        proxy.settle(
+            address(token), SETTLEMENT_AMOUNT, authorization, paymentInfo, _signature(authorization, PAYER_KEY)
+        );
     }
 
     function test_settle_preservesDonatedBalance() public {
