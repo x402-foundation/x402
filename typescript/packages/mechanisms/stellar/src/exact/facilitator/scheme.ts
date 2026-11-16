@@ -108,7 +108,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
    *
    * @param signers - One or more Stellar signers managed by the facilitator for settlement
    * @param options - Configuration options
-   * @param options.rpcConfig - Optional RPC configuration with custom RPC URL
+   * @param options.rpcConfig - Optional configuration with custom RPC and Horizon URLs
    * @param options.areFeesSponsored - Indicates if fees are sponsored (default: true). The spec
    *   currently only supports `true`; setting `false` here still constructs successfully, but the
    *   official client rejects any payment built against the resulting `areFeesSponsored: false`.
@@ -131,7 +131,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       selectSigner = roundRobinSelectSigner(),
       feeBumpSigner,
     }: {
-      /** Optional RPC configuration with custom RPC URL */
+      /** Optional configuration with custom RPC and Horizon URLs */
       rpcConfig?: RpcConfig;
       /** Indicates if fees are sponsored (default: true). See the constructor's own @param doc above: `false` is accepted here but not yet usable end-to-end. */
       areFeesSponsored?: boolean;
@@ -568,7 +568,10 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       const latestLedger = await server.getLatestLedger();
       const currentLedger = latestLedger.sequence;
       const maxTimeoutSeconds = requirements.maxTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
-      const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(requirements.network);
+      const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(
+        requirements.network,
+        this.rpcConfig,
+      );
       const maxLedgerOffset = Math.ceil(maxTimeoutSeconds / estimatedLedgerSeconds);
       const maxLedger = currentLedger + maxLedgerOffset;
 

@@ -25,7 +25,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
    * Creates a new ExactStellarScheme instance.
    *
    * @param signer - The Stellar signer for client operations
-   * @param rpcConfig - Optional configuration with custom RPC URL
+   * @param rpcConfig - Optional configuration with custom RPC and Horizon URLs
    * @returns ExactStellarScheme instance
    */
   constructor(
@@ -63,7 +63,10 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     const rpcServer = getRpcClient(network, this.rpcConfig);
     const latestLedger = await rpcServer.getLatestLedger();
     const currentLedger = latestLedger.sequence;
-    const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(network);
+    const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(
+      network,
+      this.rpcConfig,
+    );
     const maxLedger = currentLedger + Math.ceil(maxTimeoutSeconds / estimatedLedgerSeconds);
 
     const tx = await contract.AssembledTransaction.build({
