@@ -36,17 +36,17 @@ type Config struct {
 	// PendingSettlementStore remembers a broadcast whose confirmation was not
 	// observed, so a retry reconciles that signature instead of sending again.
 	// It is read once per settle and written only on a confirmation timeout.
-	// With OnDistributionConfirmed set it also holds the payout record a retry
-	// replays, so its retention bounds how long a failing hook can be retried.
+	// With OnDistributionConfirmed set it also holds the payout record until the
+	// hook has run, so its retention bounds how long a failing hook can be retried.
 	// Unset uses a process-local store that keeps entries for PendingRetention.
 	PendingSettlementStore x402.PendingSettlementStore
-	// DuplicateSettlementStore coalesces concurrent settles of one operation
+	// DuplicateSettlementStore rejects concurrent settles of one operation
 	// across workers: a worker reserves the signature it is about to send and
-	// a loser reconciles against it. Share one backed by a networked store
+	// a loser answers duplicate_settlement. Share one backed by a networked store
 	// across facilitator replicas. Unset uses svm.NewInMemoryDuplicateSettlementStore.
 	DuplicateSettlementStore svm.DuplicateSettlementStore
 	// OnDistributionConfirmed records a confirmed payout. Setting it also
-	// makes the facilitator keep each payout for a retry.
+	// makes the facilitator keep each payout until the hook has run.
 	OnDistributionConfirmed OnDistributionConfirmed
 	// ChannelStorage is the one channel store for every use case: the lifecycle
 	// index, the receiver-authorizer binding, the delegated caller identity,
@@ -794,10 +794,11 @@ func (f *BatchSvmScheme) sendDurably(
 	key, reservation, network, payer string,
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
-	var reserved, reservedWire, holder string
+	var reserved, reservedWire string
+	lostReservation := false
 	signature, err := broadcast(func(broadcastSignature, wire string) error {
 		record := encodeBroadcastRecord(broadcastSignature, blockhashOfWire(wire), "")
-		existing, ok, err := f.duplicateStore.Reserve(ctx, reservation, record, ReservationTTL)
+		_, ok, err := f.duplicateStore.Reserve(ctx, reservation, record, ReservationTTL)
 		if err != nil {
 			return err
 		}
@@ -805,14 +806,12 @@ func (f *BatchSvmScheme) sendDurably(
 			reserved, reservedWire = record, wire
 			return nil
 		}
-		holder = existing
+		lostReservation = true
 		return errReservationHeld
 	})
 	if err != nil {
-		if holder != "" {
-			recovered, err := f.reconcileBroadcastAt(ctx, key, reservation, holder, network, payer)
-			recovered.Replayed = recovered.OK
-			return recovered, err
+		if lostReservation {
+			return durableResult{Response: SettleFailure(x402.Network(network), ChannelBusy, payer, "another settlement of this operation is in flight")}, nil
 		}
 		pending, found := PendingSignatureOf(err)
 		if !found {

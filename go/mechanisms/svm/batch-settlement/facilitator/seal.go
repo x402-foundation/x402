@@ -83,9 +83,9 @@ func AssertRefundable(channel *generated.Channel, channelID string) error {
 
 // SettleSeal applies the server's latest voucher with settle_and_seal and pays out with distribute.
 //
-// A retry after the close landed answers from the channel status. With
-// OnDistributionConfirmed set the payout is kept for a retry, so the retry
-// replays the recorded amount.
+// A retry after the close landed fails with close_state. With
+// OnDistributionConfirmed set the payout record is kept until the hook has
+// run; a retry that finds it finishes the hook and deletes it.
 func SettleSeal(
 	ctx context.Context,
 	deps SealDependencies,
@@ -152,15 +152,6 @@ func settleSeal(
 		required = generated.ChannelStatus_Open
 	}
 	if generated.ChannelStatus(channel.Status) != required {
-		if deps.OnDistributionConfirmed == nil && closedAtVoucher(channel, cumulative) {
-			if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{
-				generated.ChannelStatus_Sealed,
-				generated.ChannelStatus_Distributed,
-			}); err != nil {
-				return nil, err
-			}
-			return RefundResponse(channelID, channel, x402.Network(network), ""), nil
-		}
 		return nil, fmt.Errorf("%s: %s applies only to a %s channel; observed status %s",
 			batchsettlement.ErrCloseState, intent, paymentchannels.ChannelStatusString(required), paymentchannels.ChannelStatusString(generated.ChannelStatus(channel.Status)))
 	}
@@ -223,8 +214,6 @@ func settleSeal(
 		}
 		sealed.Amount = fmt.Sprintf("%d", refunded)
 	}
-	// The payout is kept before the state read: once the close confirmed, a
-	// retry that finds the channel already closed replays it to the hook.
 	if deps.OnDistributionConfirmed != nil {
 		if err := storePayoutResult(ctx, deps.PendingStore, key, sealed); err != nil {
 			return nil, err
@@ -240,62 +229,14 @@ func settleSeal(
 	return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, sealed, requirements, intent), nil
 }
 
-// closedAtVoucher reports whether a close at cumulative already landed: the
-// channel is sealed or distributed with exactly that voucher applied.
-func closedAtVoucher(channel *generated.Channel, cumulative uint64) bool {
-	status := generated.ChannelStatus(channel.Status)
-	return (status == generated.ChannelStatus_Sealed || status == generated.ChannelStatus_Distributed) &&
-		channel.Settlement.Settled == cumulative
-}
-
-// resultKey holds the payout response kept for a retry. It exists only when OnDistributionConfirmed is set.
 func resultKey(key string) string { return key + ":result" }
 
-// recordedKey holds the transaction of the last payout under key that the
-// OnDistributionConfirmed hook received.
-func recordedKey(key string) string { return key + ":recorded" }
-
-// payoutMarker is the value of recordedKey as a caller already read it, so
-// delivery does not read it again. The zero value means unread.
-type payoutMarker struct {
-	transaction string
-	read        bool
-}
-
-// readPayoutMarker reads the recorded marker of key.
-func readPayoutMarker(ctx context.Context, store x402.PendingSettlementStore, key string) (payoutMarker, error) {
-	transaction, _, err := store.Get(ctx, recordedKey(key))
-	if err != nil {
-		return payoutMarker{}, err
-	}
-	return payoutMarker{transaction: transaction, read: true}, nil
-}
-
-// storePayoutResult keeps a payout response for a retry to replay.
 func storePayoutResult(ctx context.Context, store x402.PendingSettlementStore, key string, response *x402.SettleResponse) error {
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return err
 	}
 	return store.Set(ctx, resultKey(key), string(encoded))
-}
-
-// deliverPayoutOnce hands response to hook unless key already records its
-// transaction. marker is read from the store unless the caller already read it.
-func deliverPayoutOnce(ctx context.Context, store x402.PendingSettlementStore, hook OnDistributionConfirmed, key string, marker payoutMarker, response *x402.SettleResponse, requirements types.PaymentRequirements) error {
-	if !marker.read {
-		var err error
-		if marker, err = readPayoutMarker(ctx, store, key); err != nil {
-			return err
-		}
-	}
-	if marker.transaction != "" && marker.transaction == response.Transaction {
-		return nil
-	}
-	if err := hook(ctx, response, requirements); err != nil {
-		return err
-	}
-	return store.Set(ctx, recordedKey(key), response.Transaction)
 }
 
 // PrepareRefund validates a refund and picks the cooperative close or the payer-signed request_close.
@@ -438,16 +379,11 @@ func SettleCooperativeRefund(
 
 func notifySealDistribution(
 	ctx context.Context,
-	store x402.PendingSettlementStore,
 	hook OnDistributionConfirmed,
-	key string,
 	response *x402.SettleResponse,
 	requirements types.PaymentRequirements,
 	intent CloseIntent,
 ) error {
-	if hook == nil {
-		return nil
-	}
 	merchant, found := response.Extra[extraPaidToReceiver].(string)
 	switch intent {
 	case CloseIntentSeal:
@@ -463,7 +399,7 @@ func notifySealDistribution(
 	}
 	view := *response
 	view.Amount = merchant
-	return deliverPayoutOnce(ctx, store, hook, key, payoutMarker{}, &view, requirements)
+	return hook(ctx, &view, requirements)
 }
 
 func completeSealDistribution(
@@ -475,32 +411,15 @@ func completeSealDistribution(
 	requirements types.PaymentRequirements,
 	intent CloseIntent,
 ) *x402.SettleResponse {
-	passes := passesFor(store)
-	passes.mu.Lock()
-	if existing := passes.inflight[key]; existing != nil {
-		passes.mu.Unlock()
-		<-existing.done
-		return existing.response
+	if hook == nil {
+		return response
 	}
-	pass := &distributionPass{done: make(chan struct{})}
-	passes.inflight[key] = pass
-	passes.mu.Unlock()
-	defer func() {
-		if pass.response == nil {
-			pass.response = SettlementPending(response.Network, response.Payer, response.Transaction, "seal payout accounting stopped")
-		}
-		close(pass.done)
-		passes.mu.Lock()
-		if passes.inflight[key] == pass {
-			delete(passes.inflight, key)
-		}
-		passes.mu.Unlock()
-	}()
-	if err := notifySealDistribution(ctx, store, hook, key, response, requirements, intent); err != nil {
-		pass.response = SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
-		return pass.response
+	if err := notifySealDistribution(ctx, hook, response, requirements, intent); err != nil {
+		return SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
 	}
-	pass.response = response
+	if err := store.Delete(ctx, resultKey(key)); err != nil {
+		return SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
+	}
 	return response
 }
 

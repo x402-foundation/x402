@@ -1818,24 +1818,25 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   SHOULD maintain a short-lived in-flight cache keyed by the transaction's
   message hash, which is stable across signature variants of the same message.
   Concurrent `/settle` calls for the same
-  transaction MUST be coalesced to one broadcast and one result or rejected
-  with `duplicate_settlement`; they MUST NOT produce independent successful
-  settlements. The entry MAY be evicted once the transaction's blockhash is no
-  longer valid. A refund retry after `request_close` confirms MUST return the
-  observed `Closing` state rather than attempt a second transition.
+  transaction MUST be rejected with `duplicate_settlement`; only the call that
+  broadcast reports the settlement. The entry MAY be evicted once the
+  transaction's blockhash is no longer valid. A refund retry after
+  `request_close` confirms MUST fail with `invalid_batch_settlement_svm_close_state`
+  rather than attempt a second transition.
 - **Claims.** Program `settle` requires a strictly increasing watermark, so the
-  same claim cannot advance accounting twice. A facilitator MAY coalesce
-  in-flight `(channelId, maxClaimableAmount)` claims to avoid a predictable
-  second transaction failure; no durable duplicate cache is required. A claim
-  whose `maxClaimableAmount` is at or below the observed `settled` watermark has
-  already landed and MAY be answered from channel state without a broadcast.
+  same claim cannot advance accounting twice. A claim whose `maxClaimableAmount`
+  is at or below the observed `settled` watermark MUST be rejected with
+  `invalid_batch_settlement_svm_cumulative_amount_mismatch`, and a concurrent
+  duplicate in-flight claim MUST be rejected with `duplicate_settlement`; no
+  durable duplicate cache is required.
 - **Open-channel distributions.** `distribute` advances `payout_watermark` to
-  `settled`; a repeat cannot pay the same delta again. A facilitator MAY
-  coalesce concurrent distributions for the same channel and observed
-  watermark.
-- **Refunds.** The facilitator MUST coalesce retries of the same
-  `request_close` transaction into one broadcast and one initiation result.
-  Once `Closing`, later retries return the observed channel state. A `seal` or
+  `settled`; a repeat cannot pay the same delta again. A concurrent duplicate
+  distribution for the same channel and observed watermark MUST be rejected with
+  `duplicate_settlement`.
+- **Refunds.** The facilitator MUST reject concurrent retries of the same
+  `request_close` transaction with `duplicate_settlement`, so one broadcast
+  produces one initiation result. Once `Closing`, a later retry fails with
+  `invalid_batch_settlement_svm_close_state`. A `seal` or
   server-enriched refund occupies the `("close", channelId, maxClaimableAmount)`
   namespace; the server and facilitator MUST cache that result through
   `closeAuthorization.validBefore`.
@@ -1944,19 +1945,26 @@ provided reservation and completion invariants survive process failure and
 concurrent workers. Retention, sharding, monitoring, and application-result
 storage are implementation concerns.
 
-Facilitator `/settle` needs no durable result store: it only coalesces in-flight
+Facilitator `/settle` needs no durable result store: it rejects concurrent
 duplicates and remembers broadcasts whose confirmation timed out, and the chain
-answers for everything else. A remembered broadcast whose blockhash is no longer
-valid and that the network has no record of MUST be dropped, so a retry
-broadcasts afresh instead of staying `settlement_pending`. A retry of a
-completed `seal`, refund, or `distribute` MAY be answered from the observed
-channel status without a transaction signature. A retry of a deposit whose
-`open` timed out and has since landed MUST be answered only from its remembered
-broadcast, once, and only for the caller that opened a delegated channel;
-without one it is judged as a `top_up`. A facilitator that exposes a
-payout hook MUST instead keep the confirmed payout, from the moment the
-transaction confirms, until the hook has run. The hook is at-least-once and MUST
-be idempotent per transaction.
+answers for everything else. A `/settle` call succeeds only when it broadcast
+and confirmed the transaction itself, or when it finished a remembered
+`settlement_pending` record found at its start. A concurrent duplicate for one
+transaction MUST be rejected with `duplicate_settlement`, not coalesced into a
+shared success, and MUST NOT report the other call's signature. A retry is valid
+only for `settlement_pending`: a retry of a completed claim, `seal`, refund, or
+`distribute` MUST fail rather than be answered from channel status. A remembered
+broadcast whose blockhash is no longer valid and that the network has no record
+of MUST be dropped, so a retry broadcasts afresh instead of staying
+`settlement_pending`. A retry of a deposit whose `open` timed out and has since
+landed MUST be answered only from its remembered broadcast, once, and only for
+the caller that opened a delegated channel; without one it is judged as a
+`top_up`. A facilitator that exposes a payout hook MUST instead keep the
+confirmed payout record, from the moment the transaction confirms, until the
+hook has run, and delete it then. A `/settle` retry that finds the record
+finishes the hook, deletes the record, and returns the payout; if the hook or the
+delete fails it returns `settlement_pending` and keeps the record. The hook is
+at-least-once and MUST be idempotent per transaction.
 
 ## 7. Error Codes
 

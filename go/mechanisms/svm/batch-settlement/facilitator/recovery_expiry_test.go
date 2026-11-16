@@ -246,7 +246,7 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		assert.Equal(t, 2, sends)
 	})
 
-	t.Run("a worker that loses the reservation reconciles with the holder's blockhash", func(t *testing.T) {
+	t.Run("a worker that loses the reservation answers duplicate_settlement even when the holder's blockhash expired", func(t *testing.T) {
 		scheme, _, pending, duplicates := newScheme(t, expired, nil)
 		_, reserved, err := duplicates.Reserve(context.Background(), key, record, time.Minute)
 		require.NoError(t, err)
@@ -259,11 +259,16 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 			return "other-signature", nil
 		})
 		require.NoError(t, err)
+		assert.False(t, result.OK)
 		require.NotNil(t, result.Response)
-		assert.Equal(t, "transaction_failed", result.Response.ErrorReason)
-		assert.Equal(t, signature, result.Response.Transaction)
+		assert.Equal(t, ChannelBusy, result.Response.ErrorReason)
+		assert.Empty(t, result.Response.Transaction)
 		_, ok, err := pending.Get(context.Background(), key)
 		require.NoError(t, err)
 		assert.False(t, ok)
+		holder, stillHeld, err := duplicates.Reserve(context.Background(), key, "other-record", time.Minute)
+		require.NoError(t, err)
+		assert.False(t, stillHeld, "the loser leaves the holder's reservation in place")
+		assert.Equal(t, record, holder)
 	})
 }

@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -27,14 +26,13 @@ type durableArgs struct {
 	beforeSend func() (*x402.SettleResponse, error)
 	send       func(func(string, string) error) (string, error)
 	broadcast  func() (durableResult, error)
-	onReplay   func(string) *x402.SettleResponse
 	// postcondition observes the operation's result onchain. fromPending is true
 	// when signature was recovered from the pending store rather than just sent.
 	postcondition func(signature string, fromPending bool) (any, *x402.SettleResponse, error)
 }
 
 // settleDurably runs one operation under args.key: it reconciles a pending
-// broadcast, answers from chain state in beforeSend, or broadcasts under a
+// broadcast, checks chain state in beforeSend, or broadcasts under a
 // reservation. Storage cost on the happy path is one pending read and one reservation.
 func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (any, string, *x402.SettleResponse, error) {
 	finish := func(signature string, fromPending bool) (any, string, *x402.SettleResponse, error) {
@@ -76,9 +74,6 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 	}
 	if err != nil || !sent.OK {
 		return nil, sent.Signature, sent.Response, err
-	}
-	if sent.Replayed && args.onReplay != nil {
-		return nil, sent.Signature, args.onReplay(sent.Signature), nil
 	}
 	return finish(sent.Signature, false)
 }
@@ -576,7 +571,6 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 		network: requirements.Network,
 		payer:   payer,
 		beforeSend: func() (*x402.SettleResponse, error) {
-			advanced := 0
 			for _, item := range prepared {
 				channel, err := f.fetchChannel(ctx, requirements.Network, item.ChannelID)
 				if err != nil {
@@ -588,12 +582,8 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				if err := f.assertClaimChannel(channel, item.Claim.ChannelConfig, item.Terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open}); err != nil {
 					return nil, err
 				}
-				if item.Cumulative == 0 || item.Cumulative > channel.Deposit {
+				if item.Cumulative <= channel.Settlement.Settled || item.Cumulative > channel.Deposit {
 					return nil, fmt.Errorf("%s", batchsettlement.ErrCumulativeAmountMismatch)
-				}
-				if item.Cumulative <= channel.Settlement.Settled {
-					advanced++
-					continue
 				}
 				authorizer, err := solana.PublicKeyFromBase58(item.Claim.ChannelConfig.PayerAuthorizer)
 				if err != nil {
@@ -617,15 +607,7 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				}
 				instructions = append(instructions, built...)
 			}
-			// The program watermark makes a claim idempotent: every voucher already at or below it is a repeat that landed.
-			switch advanced {
-			case 0:
-				return nil, nil
-			case len(prepared):
-				return ClaimResponse(prepared, x402.Network(requirements.Network), ""), nil
-			default:
-				return nil, fmt.Errorf("%s", batchsettlement.ErrCumulativeAmountMismatch)
-			}
+			return nil, nil
 		},
 		broadcast: func() (durableResult, error) {
 			records := make([]paymentchannels.PaymentChannelRecord, len(prepared))
@@ -645,9 +627,6 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 					return paymentchannels.BroadcastOutcome[durableResult]{Value: value, Disposition: paymentchannels.OpenBroadcastKeep}, nil
 				},
 			})
-		},
-		onReplay: func(signature string) *x402.SettleResponse {
-			return ClaimResponse(prepared, x402.Network(requirements.Network), signature)
 		},
 		postcondition: func(signature string, _ bool) (any, *x402.SettleResponse, error) {
 			ids := make([]string, len(prepared))
@@ -754,10 +733,7 @@ func (f *BatchSvmScheme) distributeCurrent(ctx context.Context, payload batchset
 			return nil, fmt.Errorf("%s", batchsettlement.ErrFeePayerMismatch)
 		}
 	}
-	key := distributionKey(requirements.Network, prepared)
-	return f.coalescePayout(key, func() (*x402.SettleResponse, error) {
-		return f.distributeKeyed(ctx, key, prepared, requirements)
-	})
+	return f.distributeKeyed(ctx, distributionKey(requirements.Network, prepared), prepared, requirements)
 }
 
 // distributionChannels reads and checks prepared's channels. While recovering,
@@ -788,35 +764,11 @@ func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []Pr
 	return channels, nil
 }
 
-// coalescePayout runs one payout pass per key in this process. Concurrent
-// callers share its result, so OnDistributionConfirmed receives the payout once.
-func (f *BatchSvmScheme) coalescePayout(key string, run func() (*x402.SettleResponse, error)) (*x402.SettleResponse, error) {
-	passes := passesFor(f.pendingStore)
-	passes.mu.Lock()
-	if existing := passes.inflight[key]; existing != nil {
-		passes.mu.Unlock()
-		<-existing.done
-		return existing.response, existing.err
-	}
-	pass := &distributionPass{done: make(chan struct{})}
-	passes.inflight[key] = pass
-	passes.mu.Unlock()
-	pass.response, pass.err = run()
-	close(pass.done)
-	passes.mu.Lock()
-	if passes.inflight[key] == pass {
-		delete(passes.inflight, key)
-	}
-	passes.mu.Unlock()
-	return pass.response, pass.err
-}
-
-// distributeKeyed accounts any unfinished distribution under key before starting
+// distributeKeyed finishes any unfinished payout under key before starting
 // another pass, so OnDistributionConfirmed receives every payout.
 func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 	feePayer := prepared[0].FeePayer
 	var previous *x402.SettleResponse
-	var marker payoutMarker
 	if f.config.OnDistributionConfirmed != nil {
 		raw, ok, err := f.pendingStore.Get(ctx, resultKey(key))
 		if err != nil {
@@ -826,14 +778,8 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 			if previous, err = decodeDistributionResult(raw); err != nil {
 				return nil, err
 			}
-			if previous.Success {
-				if marker, err = readPayoutMarker(ctx, f.pendingStore, key); err != nil {
-					return nil, err
-				}
-				if err := f.recordPayout(ctx, key, marker, previous, requirements); err != nil {
-					return SettlementPending(x402.Network(requirements.Network), "", previous.Transaction, err.Error()), nil //nolint:nilerr // the payout landed; a hook failure stays pending
-				}
-				marker = payoutMarker{transaction: previous.Transaction, read: true}
+			if pending := f.completePayout(ctx, key, previous, requirements); pending != nil {
+				return pending, nil
 			}
 		}
 	}
@@ -855,7 +801,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		if err != nil || !recovered.OK {
 			return recovered.Response, err
 		}
-		return f.finishDistribution(ctx, key, recovered.Signature, true, marker, prepared, requirements)
+		return f.finishDistribution(ctx, key, recovered.Signature, true, prepared, requirements)
 	}
 	var instructions []solana.Instruction
 	var swept []PreparedDistribution
@@ -913,7 +859,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	if err != nil || !submitted.OK {
 		return submitted.Response, err
 	}
-	return f.finishDistribution(ctx, key, submitted.Signature, false, marker, prepared, requirements)
+	return f.finishDistribution(ctx, key, submitted.Signature, false, prepared, requirements)
 }
 
 // dropPending deletes key's pending record. A store error is ignored: the record
@@ -924,9 +870,7 @@ func (f *BatchSvmScheme) dropPending(ctx context.Context, key string) {
 	_ = f.pendingStore.Delete(recoveryCtx, key)
 }
 
-// finishDistribution attributes a confirmed sweep and keeps its payout for a retry.
-// A fresh sweep that cannot finish records its signature (fromPending: one already exists).
-func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, marker payoutMarker, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 	unfinished := func(cause error) *x402.SettleResponse {
 		if fromPending {
@@ -941,15 +885,12 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 			return unfinished(err), nil
 		}
 		response = SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
-		if err := f.keepPayoutResult(ctx, key, response); err != nil {
+	} else if f.config.OnDistributionConfirmed != nil {
+		if err := storePayoutResult(ctx, f.pendingStore, key, response); err != nil {
 			return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
 		}
-	} else {
-		if err := f.keepPayoutResult(ctx, key, response); err != nil {
-			return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
-		}
-		if err := f.recordPayout(ctx, key, marker, response, requirements); err != nil {
-			return SettlementPending(network, "", signature, err.Error()), nil //nolint:nilerr // the sweep landed; the kept result is replayed to the hook
+		if pending := f.completePayout(ctx, key, response, requirements); pending != nil {
+			return pending, nil
 		}
 	}
 	if fromPending {
@@ -958,21 +899,15 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 	return response, nil
 }
 
-// keepPayoutResult stores a payout response for a retry. Without
-// OnDistributionConfirmed there is nothing to replay and no store write is made.
-func (f *BatchSvmScheme) keepPayoutResult(ctx context.Context, key string, response *x402.SettleResponse) error {
-	if f.config.OnDistributionConfirmed == nil {
-		return nil
+func (f *BatchSvmScheme) completePayout(ctx context.Context, key string, response *x402.SettleResponse, requirements types.PaymentRequirements) *x402.SettleResponse {
+	err := f.config.OnDistributionConfirmed(ctx, response, requirements)
+	if err == nil {
+		err = f.pendingStore.Delete(ctx, resultKey(key))
 	}
-	return storePayoutResult(ctx, f.pendingStore, key, response)
-}
-
-// recordPayout hands a confirmed payout to OnDistributionConfirmed once per transaction.
-func (f *BatchSvmScheme) recordPayout(ctx context.Context, key string, marker payoutMarker, response *x402.SettleResponse, requirements types.PaymentRequirements) error {
-	if f.config.OnDistributionConfirmed == nil {
-		return nil
+	if err != nil {
+		return SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
 	}
-	return deliverPayoutOnce(ctx, f.pendingStore, f.config.OnDistributionConfirmed, key, marker, response, requirements)
+	return nil
 }
 
 // attributeDistribution reads the confirmed sweep and attributes the
@@ -1106,7 +1041,7 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 				return nil, err
 			}
 			if generated.ChannelStatus(channel.Status) == generated.ChannelStatus_Closing {
-				return RefundResponse(prepared.ChannelID, channel, x402.Network(requirements.Network), ""), nil
+				return nil, fmt.Errorf("%s: %s is already closing", batchsettlement.ErrCloseState, prepared.ChannelID)
 			}
 			return nil, nil
 		},
@@ -1119,9 +1054,6 @@ func (f *BatchSvmScheme) settleRefund(ctx context.Context, payload batchsettleme
 				return "", err
 			}
 			return paymentchannels.BroadcastOpen(ctx, f.signer, feePayer, requirements.Network, prepared.RequestClose, paymentchannels.ChannelBroadcastHooks{OnPrepared: onPrepared})
-		},
-		onReplay: func(signature string) *x402.SettleResponse {
-			return RecoveredRefundResponse(prepared.ChannelID, payer, x402.Network(requirements.Network), signature)
 		},
 		postcondition: func(signature string, fromPending bool) (any, *x402.SettleResponse, error) {
 			observed, matched, err := f.fetchChannelUntil(ctx, requirements.Network, prepared.ChannelID, func(channel *generated.Channel) bool {
@@ -1297,24 +1229,6 @@ func (f *BatchSvmScheme) fetchChannelsUntil(ctx context.Context, network string,
 		}
 	}
 	return nil, false, nil
-}
-
-type distributionPass struct {
-	done     chan struct{}
-	response *x402.SettleResponse
-	err      error
-}
-
-type passRegistry struct {
-	mu       sync.Mutex
-	inflight map[string]*distributionPass
-}
-
-var distributionPasses sync.Map
-
-func passesFor(store x402.PendingSettlementStore) *passRegistry {
-	value, _ := distributionPasses.LoadOrStore(store, &passRegistry{inflight: map[string]*distributionPass{}})
-	return value.(*passRegistry)
 }
 
 // decodeWithMessageHash decodes a base64 transaction and returns its message
