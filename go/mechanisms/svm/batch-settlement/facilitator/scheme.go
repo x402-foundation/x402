@@ -46,7 +46,9 @@ type Config struct {
 	// across facilitator replicas. Unset uses svm.NewInMemoryDuplicateSettlementStore.
 	DuplicateSettlementStore svm.DuplicateSettlementStore
 	// OnDistributionConfirmed records a confirmed payout. Setting it also
-	// makes the facilitator keep each payout until the hook has run.
+	// makes the facilitator keep each observed payout until the hook has run.
+	// A payout that confirms after the process stopped without observing it
+	// does not reach the hook.
 	OnDistributionConfirmed OnDistributionConfirmed
 	// ChannelStorage is the one channel store for every use case: the lifecycle
 	// index, the receiver-authorizer binding, the delegated caller identity,

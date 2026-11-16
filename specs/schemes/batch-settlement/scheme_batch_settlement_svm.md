@@ -1839,8 +1839,11 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   produces one initiation result. Once `Closing`, a later retry fails with
   `invalid_batch_settlement_svm_close_state`. A `seal` or
   server-enriched refund occupies the `("close", channelId, maxClaimableAmount)`
-  namespace; the server and facilitator MUST cache that result through
-  `closeAuthorization.validBefore`.
+  namespace; the server MUST cache that result through
+  `closeAuthorization.validBefore`. The facilitator keeps no close result
+  (section 6.3): it rejects a concurrent duplicate with `duplicate_settlement`
+  and fails a retry after the close confirmed with
+  `invalid_batch_settlement_svm_close_state`.
 - **Reclaim.** A channel can transition from `Distributed` to deallocated only
   once. Concurrent reclaim attempts require no additional replay mitigation;
   later attempts observe an absent account or invalid status.
@@ -1961,11 +1964,15 @@ of MUST be dropped, so a retry broadcasts afresh instead of staying
 landed MUST be answered only from its remembered broadcast, once, and only for
 the caller that opened a delegated channel; without one it is judged as a
 `top_up`. A facilitator that exposes a payout hook MUST instead keep the
-confirmed payout record, from the moment the transaction confirms, until the
-hook has run, and delete it then. A `/settle` retry that finds the record
+confirmed payout record, from the moment it observes the confirmation, until
+the hook has run, and delete it then. A `/settle` retry that finds the record
 finishes the hook, deletes the record, and returns the payout; if the hook or the
-delete fails it returns `settlement_pending` and keeps the record. The hook is
-at-least-once and MUST be idempotent per transaction.
+delete fails it returns `settlement_pending` and keeps the record. The hook runs
+at least once for every payout whose confirmation the facilitator observed, or
+that a retry reconciles from a remembered broadcast, and MUST be idempotent per
+transaction. A payout that confirms after the facilitator stopped without
+observing it or remembering its broadcast does not reach the hook; the
+transaction stays onchain for out-of-band reconciliation.
 
 ## 7. Error Codes
 
