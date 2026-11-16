@@ -30,6 +30,7 @@ from ..constants import (  # noqa: E402
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_REQUIRED_AMOUNT,
     ERR_NETWORK_MISMATCH,
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
@@ -58,6 +59,7 @@ from ..types import (  # noqa: E402
     ExactPermit2TokenPermissions,
     ExactPermit2Witness,
     TypedDataField,
+    _is_uint256_string,
 )
 from ..utils import (  # noqa: E402
     create_permit2_nonce,
@@ -251,6 +253,12 @@ def verify_permit2(
         return VerifyResponse(is_valid=False, invalid_reason=ERR_PERMIT2_NOT_YET_VALID, payer=payer)
 
     # 7. Amount check
+    if not _is_uint256_string(requirements.amount):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_INVALID_REQUIRED_AMOUNT,
+            payer=payer,
+        )
     if amount_val != int(requirements.amount):
         return VerifyResponse(
             is_valid=False, invalid_reason=ERR_PERMIT2_AMOUNT_MISMATCH, payer=payer

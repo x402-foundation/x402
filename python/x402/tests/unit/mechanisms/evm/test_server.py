@@ -527,7 +527,7 @@ class TestRegisterMoneyParser:
 
             def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
-                return AssetAmount(amount="winner", asset="0xWinnerToken", extra={})
+                return AssetAmount(amount="2", asset="0xWinnerToken", extra={})
 
             def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)  # Should not execute
