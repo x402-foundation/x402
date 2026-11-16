@@ -103,7 +103,6 @@ type BatchSvmScheme struct {
 	// Config.FacilitatorTransactionVersion.
 	facilitatorTransactionVersion int
 
-	// mintOwners caches positive mint-owner checks made by resolveTerms.
 	mintOwners mintOwnerCache
 
 	mu                sync.Mutex
@@ -857,7 +856,6 @@ func (f *BatchSvmScheme) completeBroadcast(ctx context.Context, key, signature, 
 	return nil
 }
 
-// discardWire drops the kept wire bytes on a recovery context.
 func (f *BatchSvmScheme) discardWire(ctx context.Context, network, signature string) {
 	recoveryCtx, cancel := recoveryContext(ctx)
 	defer cancel()

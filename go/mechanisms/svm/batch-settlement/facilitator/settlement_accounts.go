@@ -13,18 +13,15 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-// mintOwnerTTLSeconds bounds how long a verified mint owner is trusted. It is
-// short enough that a mint closed and recreated under another token program is
-// noticed soon, and long enough to take the read off the warm path.
+// mintOwnerTTLSeconds expires so a mint recreated under another token program is read again.
 const mintOwnerTTLSeconds int64 = 600
 
 // mintOwnerCacheMaxEntries caps the cache; entries are written before the
 // request is fully validated. A full cache skips remembering.
 const mintOwnerCacheMaxEntries = 4096
 
-// mintOwnerCache remembers mints whose owner matched the advertised token
-// program. Only positive matches are stored; a mismatch or a read error is
-// always re-read. Expired entries are swept when full. The zero value is ready to use.
+// mintOwnerCache stores positive mint-owner matches. The zero value is ready to use.
+// Mismatches and read errors are re-read.
 type mintOwnerCache struct {
 	mu       sync.Mutex
 	verified map[string]int64
@@ -67,7 +64,6 @@ func (c *mintOwnerCache) remember(key string, now int64) {
 	c.verified[key] = now + mintOwnerTTLSeconds
 }
 
-// settlementAccountRead is one payout destination's ATA read.
 type settlementAccountRead struct {
 	label   string
 	owner   solana.PublicKey
@@ -77,10 +73,8 @@ type settlementAccountRead struct {
 	err     error
 }
 
-// settlementAccountsRead holds the in-flight reads of the payer, recipient and
-// treasury ATAs. The reads run concurrently; result judges them in the fixed
-// payer, recipient, treasury order so error precedence does not depend on
-// which read returns first.
+// settlementAccountsRead is the in-flight payer, recipient, and treasury ATA reads.
+// result reports them in that order, not in completion order.
 type settlementAccountsRead struct {
 	mint    solana.PublicKey
 	program solana.PublicKey
@@ -89,14 +83,8 @@ type settlementAccountsRead struct {
 	done    chan struct{}
 }
 
-// startSettlementAccountsRead starts the settlement-account preflight: before
-// the sponsor co-signs a deposit, each payout destination (payer return,
-// receiver, treasury) must be a usable token account for the mint (an unusable
-// one fails distribute only after the escrow is locked and the request served),
-// and the payer's must hold the deposit ("It MUST confirm the payer has
-// sufficient tokens"). It issues the three ATA reads and returns without
-// waiting. Address-parsing failures are held and returned by result, after the
-// caller's own checks. Cancelling ctx abandons the reads.
+// startSettlementAccountsRead reads the payer, recipient, and treasury ATAs before the sponsor co-signs.
+// An unusable destination fails distribute only after escrow is locked.
 func (f *BatchSvmScheme) startSettlementAccountsRead(ctx context.Context, requirements types.PaymentRequirements, payer, tokenProgram string) *settlementAccountsRead {
 	read := &settlementAccountsRead{done: make(chan struct{})}
 	mint, err := solana.PublicKeyFromBase58(requirements.Asset)
@@ -152,8 +140,7 @@ func (r *settlementAccountsRead) fail(err error) *settlementAccountsRead {
 	return r
 }
 
-// result waits for the reads and applies the settlement-account checks. It
-// returns early if ctx ends first.
+// A cancelled ctx returns only while the reads are still running.
 func (r *settlementAccountsRead) result(ctx context.Context, deposit uint64) error {
 	select {
 	case <-r.done:
@@ -188,7 +175,6 @@ func (r *settlementAccountsRead) result(ctx context.Context, deposit uint64) err
 	return nil
 }
 
-// clusterSlotRead is an in-flight cluster slot read.
 type clusterSlotRead struct {
 	slot uint64
 	err  error
@@ -217,7 +203,6 @@ func (r *clusterSlotRead) result(ctx context.Context) (uint64, error) {
 	return r.slot, r.err
 }
 
-// recentSlotHint is the challenge's optional extra.recentSlot.
 func recentSlotHint(requirements types.PaymentRequirements) (*uint64, error) {
 	if requirements.Extra == nil {
 		return nil, nil

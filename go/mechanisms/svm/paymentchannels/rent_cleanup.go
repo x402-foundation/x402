@@ -412,8 +412,7 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 			if status == generated.ChannelStatus_Closing && now < channel.ClosureStartedAt+int64(channel.GracePeriod) {
 				continue
 			}
-			// Checked first so a channel that cannot close this pass is never
-			// screened by the hook; the scan continues for reclaim candidates.
+			// Out of close budget: do not call the hook. Keep scanning for reclaim candidates.
 			if closesUsed >= opts.MaxClosesPerRun {
 				continue
 			}

@@ -158,10 +158,7 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 	default:
 		return ValidatedDeposit{}, fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
 	}
-	// The settlement ATAs (and the cluster slot, when the challenge carries no
-	// recentSlot) are read alongside the channel. This is the last local-only
-	// rejection, so invalid requests never reach RPC. Both are joined where
-	// the serial path used to read them.
+	// Parsing errors stay in result so earlier local rejections still win.
 	prefetchCtx, cancelPrefetch := context.WithCancel(ctx)
 	defer cancelPrefetch()
 	settlement := f.startSettlementAccountsRead(prefetchCtx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram)
@@ -284,9 +281,8 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if err != nil {
 		return err
 	}
-	// The program accepts an open only within its slot window of the cluster
-	// slot it lands at, so the window is judged against the challenge's
-	// recentSlot or, without one, the cluster's own slot.
+	// An open is accepted only inside the program's slot window of the cluster slot it lands at.
+	// That slot is the challenge recentSlot, or the cluster slot when the challenge has none.
 	if recent == nil {
 		slot, err := slotRead.result(ctx)
 		if err != nil {

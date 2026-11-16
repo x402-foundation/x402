@@ -158,7 +158,6 @@ func recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) 
 	return context.WithDeadline(detached, deadline.Add(recoveryGrace))
 }
 
-// recoveryGet reads key from the pending store on a recovery context.
 func (f *BatchSvmScheme) recoveryGet(ctx context.Context, key string) (string, bool, error) {
 	recoveryCtx, cancel := recoveryContext(ctx)
 	defer cancel()
