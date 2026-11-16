@@ -844,6 +844,98 @@ The Cardano implementation supports three asset transfer methods via `extra.asse
 
 For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/) and preprod tUSDM from the [tUSDM faucet](https://tusdm.moneta.global).
 
+### Stellar Setup
+
+The Stellar implementation uses Soroban token transfers with auth-entry signing. The client signs authorization entries only; the facilitator rebuilds and submits the transaction. Ledger-based expiration is used (not timestamps), and the ledger close time is estimated from Horizon.
+
+Install the Stellar package:
+
+```bash
+npm install @x402/stellar
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("stellar:*", new ExactStellarScheme());
+
+// In your route config:
+{
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.001",
+        network: "stellar:testnet",
+        payTo: "GYourStellarAddress",
+      },
+    ],
+    description: "Data endpoint",
+    mimeType: "application/json",
+  },
+}
+```
+
+**Client**
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+const signer = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY!, "stellar:testnet");
+
+// Basic usage (testnet)
+const client = new x402Client()
+  .register("stellar:*", new ExactStellarScheme(signer));
+
+// Custom RPC and Horizon URLs (required for mainnet)
+const clientMainnet = new x402Client()
+  .register(
+    "stellar:*",
+    new ExactStellarScheme(signer, {
+      url: "https://your-soroban-rpc.example.com",       // required for stellar:pubnet
+      horizonUrl: "https://your-horizon.example.com",    // optional; defaults to public SDF Horizon
+    }),
+  );
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
+
+const signer = createEd25519Signer(process.env.STELLAR_PRIVATE_KEY!, "stellar:testnet");
+
+const facilitator = new x402Facilitator()
+  .register(
+    "stellar:testnet",
+    new ExactStellarScheme([signer], {
+      rpcConfig: {
+        url: "https://your-soroban-rpc.example.com",     // required for stellar:pubnet
+        horizonUrl: "https://your-horizon.example.com",  // optional; defaults to public SDF Horizon
+      },
+    }),
+  );
+```
+
+The `rpcConfig` options for both client and facilitator:
+
+| Option | Description |
+|--------|-------------|
+| `url` | Custom Soroban RPC URL. Required for `stellar:pubnet`; defaults to the public testnet RPC for `stellar:testnet`. |
+| `horizonUrl` | Custom Horizon URL used to estimate ledger close time. Defaults to the public SDF Horizon for the network. Set this when your RPC points at a custom endpoint to avoid mismatched ledger timing. |
+
+<Note>
+Stellar mainnet (`stellar:pubnet`) requires a custom `url` — there is no default public Soroban RPC. See [Stellar RPC providers](https://developers.stellar.org/docs/data/apis/rpc/providers) for options.
+</Note>
+
 ### Network Implementations
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Canton, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
