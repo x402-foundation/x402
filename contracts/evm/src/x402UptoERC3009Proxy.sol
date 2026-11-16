@@ -111,7 +111,9 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
         IERC20 asset = IERC20(token);
         uint256 balanceBefore = asset.balanceOf(address(this));
 
-        _receiveWithAuthorization(token, authorization, signature);
+        _receiveWithAuthorization({
+            asset: asset, authorization: authorization, signature: signature, balanceBefore: balanceBefore
+        });
 
         uint256 balanceAfter = asset.balanceOf(address(this));
         if (balanceAfter < balanceBefore || balanceAfter - balanceBefore != authorization.value) {
@@ -134,14 +136,15 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
         emit Settled();
     }
 
-    /// @dev Uses the smart-wallet-compatible bytes overload when available, then falls back to
-    ///      the normative ERC-3009 split-signature overload for 65-byte ECDSA signatures.
+    /// @dev Uses the smart-wallet-compatible bytes overload, then tries the normative ERC-3009
+    ///      split-signature overload for a reverting or no-op 65-byte signature call.
     function _receiveWithAuthorization(
-        address token,
+        IERC20 asset,
         Authorization calldata authorization,
-        bytes calldata signature
+        bytes calldata signature,
+        uint256 balanceBefore
     ) private {
-        try IERC3009(token)
+        try IERC3009(address(asset))
             .receiveWithAuthorization({
             from: authorization.from,
             to: authorization.to,
@@ -156,22 +159,40 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
                 _revertWithReason(bytesReason);
             }
 
-            (uint8 v, bytes32 r, bytes32 s) = _splitSignature(signature);
-            try IERC3009VRS(token)
-                .receiveWithAuthorization({
-                from: authorization.from,
-                to: authorization.to,
-                value: authorization.value,
-                validAfter: authorization.validAfter,
-                validBefore: authorization.validBefore,
-                nonce: authorization.nonce,
-                v: v,
-                r: r,
-                s: s
-            }) {}
-            catch (bytes memory vrsReason) {
-                _revertWithReason(vrsReason.length == 0 ? bytesReason : vrsReason);
-            }
+            _receiveWithAuthorizationVRS({
+                token: address(asset), authorization: authorization, signature: signature, bytesReason: bytesReason
+            });
+            return;
+        }
+
+        if (signature.length == 65 && asset.balanceOf(address(this)) == balanceBefore) {
+            _receiveWithAuthorizationVRS({
+                token: address(asset), authorization: authorization, signature: signature, bytesReason: bytes("")
+            });
+        }
+    }
+
+    function _receiveWithAuthorizationVRS(
+        address token,
+        Authorization calldata authorization,
+        bytes calldata signature,
+        bytes memory bytesReason
+    ) private {
+        (uint8 v, bytes32 r, bytes32 s) = _splitSignature(signature);
+        try IERC3009VRS(token)
+            .receiveWithAuthorization({
+            from: authorization.from,
+            to: authorization.to,
+            value: authorization.value,
+            validAfter: authorization.validAfter,
+            validBefore: authorization.validBefore,
+            nonce: authorization.nonce,
+            v: v,
+            r: r,
+            s: s
+        }) {}
+        catch (bytes memory vrsReason) {
+            _revertWithReason(vrsReason.length == 0 ? bytesReason : vrsReason);
         }
     }
 

@@ -8,6 +8,7 @@ import {Test} from "forge-std/Test.sol";
 import {x402UptoERC3009Proxy} from "../src/x402UptoERC3009Proxy.sol";
 
 import {MockValidatingERC3009Token} from "./mocks/MockValidatingERC3009Token.sol";
+import {MockPermissiveFallbackVRSOnlyERC3009Token} from "./mocks/MockPermissiveFallbackVRSOnlyERC3009Token.sol";
 import {MockVRSOnlyERC3009Token} from "./mocks/MockVRSOnlyERC3009Token.sol";
 
 contract MockERC1271Wallet is IERC1271 {
@@ -281,6 +282,45 @@ contract X402UptoERC3009ProxyTest is Test {
 
         proxy.settle(address(vrsToken), SETTLEMENT_AMOUNT, authorization, paymentInfo, signature);
 
+        assertTrue(vrsToken.authorizationState(payer, authorization.nonce));
+        assertEq(vrsToken.balanceOf(payer), MAX_AMOUNT - SETTLEMENT_AMOUNT);
+        assertEq(vrsToken.balanceOf(payTo), SETTLEMENT_AMOUNT);
+        assertEq(vrsToken.balanceOf(address(proxy)), 0);
+    }
+
+    /// @notice Verifies a non-VRS signature cannot settle through a permissive fallback.
+    /// @dev A no-op bytes call with a non-65-byte signature must not attempt the VRS overload.
+    function test_settle_reverts_whenPermissiveBytesFallbackHasNonVRSLengthSignature() public {
+        MockPermissiveFallbackVRSOnlyERC3009Token vrsToken = new MockPermissiveFallbackVRSOnlyERC3009Token();
+        vrsToken.mint(payer, MAX_AMOUNT);
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
+            _paymentInfo(payTo, address(this), bytes32("vrs-non-vrs-length"));
+        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+
+        vm.expectRevert(x402UptoERC3009Proxy.ReceivedAmountMismatch.selector);
+        proxy.settle(address(vrsToken), SETTLEMENT_AMOUNT, authorization, paymentInfo, hex"1234");
+
+        assertFalse(vrsToken.authorizationState(payer, authorization.nonce));
+        assertEq(vrsToken.balanceOf(payer), MAX_AMOUNT);
+        assertEq(vrsToken.balanceOf(payTo), 0);
+        assertEq(vrsToken.balanceOf(address(proxy)), 0);
+    }
+
+    /// @notice Verifies a no-op bytes call retries the VRS authorization overload.
+    /// @dev A permissive fallback cannot prevent settlement with a VRS-only ERC-3009 token.
+    function test_settle_success_usesVRSAfterPermissiveBytesFallback() public {
+        MockPermissiveFallbackVRSOnlyERC3009Token vrsToken = new MockPermissiveFallbackVRSOnlyERC3009Token();
+        vrsToken.mint(payer, MAX_AMOUNT);
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
+            _paymentInfo(payTo, address(this), bytes32("vrs-permissive-fallback"));
+        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+        bytes memory signature = _signatureFor(
+            authorization, PAYER_KEY, vrsToken.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), vrsToken.domainSeparator()
+        );
+
+        proxy.settle(address(vrsToken), SETTLEMENT_AMOUNT, authorization, paymentInfo, signature);
+
+        assertEq(vrsToken.fallbackCalls(), 1);
         assertTrue(vrsToken.authorizationState(payer, authorization.nonce));
         assertEq(vrsToken.balanceOf(payer), MAX_AMOUNT - SETTLEMENT_AMOUNT);
         assertEq(vrsToken.balanceOf(payTo), SETTLEMENT_AMOUNT);
