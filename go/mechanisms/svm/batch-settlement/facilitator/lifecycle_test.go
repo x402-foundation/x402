@@ -1421,16 +1421,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 
 	t.Run("settles top-ups, idempotent opens, vouchers, and refunds", func(t *testing.T) {
 		facilitatorSigner := newSigner(t)
-		var simulated []string
-		facilitatorSigner.simulateFn = func(_ context.Context, tx *solana.Transaction, _ string) error {
-			wire, err := svm.EncodeTransaction(tx)
-			if err == nil {
-				simulated = append(simulated, wire)
-			} else {
-				simulated = append(simulated, "setup")
-			}
-			return nil
-		}
 		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
 		scheme := newScheme(t, facilitatorSigner, &Config{ChannelStorage: storage})
 		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
@@ -1479,7 +1469,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.True(t, topUp.Success)
 		require.Equal(t, "1000", topUp.Amount)
 		require.Equal(t, fixedSigStr, topUp.Transaction)
-		require.NotEmpty(t, simulated)
 
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{
@@ -1538,12 +1527,8 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			return deps
 		}
 		closing, err := scheme.settleRefund(ctx, refund, req, nil)
-		require.NoError(t, err)
-		require.True(t, closing.Success)
-		require.Equal(t, "", closing.Transaction)
-		state, ok := closing.Extra["channelState"].(batchsettlement.BatchChannelState)
-		require.True(t, ok)
-		require.Equal(t, int64(20), state.WithdrawRequestedAt)
+		require.ErrorContains(t, err, batchsettlement.ErrCloseState)
+		require.Nil(t, closing)
 
 		require.NoError(t, storage.Delete(ctx, network, channelID))
 		blockhash := solana.MustHashFromBase58(svm.USDCMainnetAddress)
@@ -1675,6 +1660,75 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		_, err = indexing.settleDeposit(ctx, topUpPayload, req, nil)
 		require.ErrorContains(t, err, "storage unavailable")
 		requireNotReserved(indexing)
+	})
+
+	t.Run("reconciles a pending top-up before simulating it", func(t *testing.T) {
+		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
+		require.NoError(t, err)
+		req := requirements()
+		tx, err := solana.NewTransaction(
+			[]solana.Instruction{solana.NewInstruction(solana.MustPublicKeyFromBase58(svm.MemoProgramAddress), nil, []byte("top-up"))},
+			solana.MustHashFromBase58("11111111111111111111111111111111"),
+			solana.TransactionPayer(feePayerKey.PublicKey()),
+		)
+		require.NoError(t, err)
+		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(feePayerKey.PublicKey()) {
+				return &feePayerKey
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		topUpWire, err := svm.EncodeTransaction(tx)
+		require.NoError(t, err)
+		_, hash, err := decodeWithMessageHash(topUpWire)
+		require.NoError(t, err)
+		topUpPayload := batchsettlement.ParsedBatchPayload{
+			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
+			Deposit: &batchsettlement.BatchDeposit{Amount: "1000", Transaction: topUpWire}, Voucher: &voucher,
+		}
+		scheme := func(signer *lifecycleSigner) *BatchSvmScheme {
+			s := newScheme(t, signer, nil)
+			s.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
+				return ValidatedDeposit{
+					ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 11_000, IsTopUp: true,
+					Payload: batchsettlement.BatchDepositPayload{
+						Type: topUpPayload.Type, ChannelConfig: channelConfig, Deposit: *topUpPayload.Deposit, Voucher: &voucher,
+					},
+					Terms: defaultTerms,
+				}, nil
+			}
+			s.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+			s.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return channel(func(c *generated.Channel) { c.Deposit = 11_000 }), nil
+			}
+			return s
+		}
+		topKey := topUpKey(network, hash)
+
+		pendingSigner := newSigner(t)
+		pendingSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
+			return errors.New("AlreadyProcessed")
+		}
+		pending := scheme(pendingSigner)
+		require.NoError(t, pending.pendingStore.Set(ctx, topKey, fixedSigStr))
+		response, err := pending.settleDeposit(ctx, topUpPayload, req, nil)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, fixedSigStr, response.Transaction)
+		require.Zero(t, pendingSigner.simulateN, "a recorded top-up is not simulated again")
+		require.Empty(t, pendingSigner.sentTransactions())
+		_, kept, err := pending.pendingStore.Get(ctx, topKey)
+		require.NoError(t, err)
+		require.False(t, kept, "the record is cleared once the top-up is confirmed")
+
+		freshSigner := newSigner(t)
+		fresh := scheme(freshSigner)
+		response, err = fresh.settleDeposit(ctx, topUpPayload, req, nil)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, 1, freshSigner.simulateN, "a top-up with no record is simulated once before it is sent")
+		require.Len(t, freshSigner.sentTransactions(), 1)
 	})
 
 	t.Run("prepares and confirms a voucher claim batch", func(t *testing.T) {

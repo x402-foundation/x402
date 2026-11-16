@@ -339,15 +339,13 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 	if err != nil {
 		return nil, err
 	}
-	if validated.IsTopUp {
-		if err := f.signer.SimulateTransaction(ctx, topUp, requirements.Network, nil); err != nil {
+	if !validated.IsTopUp {
+		if err := f.simulateOpen(ctx, validated, requirements, feePayer); err != nil {
+			if strings.HasPrefix(err.Error(), batchsettlement.ErrSettlementSimulation+":") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("%s: %s", batchsettlement.ErrSettlementSimulation, err.Error())
 		}
-	} else if err := f.simulateOpen(ctx, validated, requirements, feePayer); err != nil {
-		if strings.HasPrefix(err.Error(), batchsettlement.ErrSettlementSimulation+":") {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%s: %s", batchsettlement.ErrSettlementSimulation, err.Error())
 	}
 	expiresAt := int64(batchsettlement.ClientVoucherExpiresAt)
 	if payload.Voucher != nil {
@@ -379,6 +377,11 @@ func (f *BatchSvmScheme) settleDeposit(ctx context.Context, payload batchsettlem
 				network: requirements.Network,
 				payer:   payload.ChannelConfig.Payer,
 				send: func(onPrepared func(string, string) error) (string, error) {
+					if topUp != nil {
+						if err := f.signer.SimulateTransaction(ctx, topUp, requirements.Network, nil); err != nil {
+							return "", fmt.Errorf("%s: %s", batchsettlement.ErrSettlementSimulation, err.Error())
+						}
+					}
 					signature, err := paymentchannels.BroadcastOpen(ctx, f.signer, feePayer, requirements.Network, payload.Deposit.Transaction, paymentchannels.ChannelBroadcastHooks{
 						OnPrepared: func(broadcastSignature, wire string) error {
 							if err := onPrepared(broadcastSignature, wire); err != nil {

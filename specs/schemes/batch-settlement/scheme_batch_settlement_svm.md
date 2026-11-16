@@ -196,7 +196,8 @@ onchain `payee` signature or the close voucher the server supplies at settle
 (client-signed in client mode, operator-signed after server enrichment in
 server mode). The server MUST
 reject an open whose binding Memo is not its own key before forwarding the
-deposit. A refund for a channel that is already `Closing` reports that close.
+deposit. A refund for a channel that is already `Closing` MUST fail with
+`invalid_batch_settlement_svm_close_state`.
 
 A refund is a cooperative close by default: the facilitator applies the
 server's accepted voucher with `settle_and_seal` and a sealed `distribute` on
@@ -1554,8 +1555,8 @@ reject a failed simulation, sign and broadcast it, and confirm that the channel
 entered `Closing` before returning success. An expired blockhash or
 out-of-window `openSlot` MUST be rejected; the client must rebuild and re-sign
 with fresh values. If the channel is already `Closing`, the facilitator MUST
-NOT rebroadcast; after revalidating the channel bindings, it returns the
-observed initiation state as the idempotent result.
+NOT rebroadcast and MUST fail with `invalid_batch_settlement_svm_close_state`;
+only the call that broadcast reports the initiation.
 
 ### Phase 2 - Steady-State Request
 
@@ -2111,7 +2112,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   `settled` monotonicity reject old vouchers. Server-mode request identifiers
   are single use; duplicates are rejected rather than replayed. Clients keep
   one request in flight per channel and only advance from their local confirmed
-  watermark. A sponsored `request_close` is idempotent by that transaction.
+  watermark. A sponsored `request_close` is single use by that transaction: a
+  concurrent duplicate is rejected and a retry once `Closing` fails.
   Cooperative closes use a separate operation namespace and a terminal onchain
   transition.
 - **Bounded sponsor exposure.** Client-supplied transactions have a static

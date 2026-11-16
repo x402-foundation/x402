@@ -348,7 +348,7 @@ func ValidateRefund(
 	return channel, prepared.ChannelID, prepared.Terms, nil
 }
 
-// SettleCooperativeRefund closes an Open channel. A channel already closing reports that close instead.
+// SettleCooperativeRefund closes an Open channel. A channel already closing fails with close_state.
 func SettleCooperativeRefund(
 	ctx context.Context,
 	deps SealDependencies,
@@ -365,7 +365,7 @@ func SettleCooperativeRefund(
 		if err := deps.AssertClaimChannel(current, payload.ChannelConfig, prepared.Terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Closing}); err != nil {
 			return nil, err
 		}
-		return RefundResponse(prepared.ChannelID, current, x402.Network(requirements.Network), ""), nil
+		return nil, fmt.Errorf("%s: %s is already closing", batchsettlement.ErrCloseState, prepared.ChannelID)
 	}
 	seal := batchsettlement.BatchSealPayload{
 		Type:               batchsettlement.PayloadTypeSeal,
