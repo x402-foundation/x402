@@ -24,7 +24,9 @@ if (signer.code.length == 0) {
 }
 ```
 
-x402's facilitator mirrors whichever rule the target contract uses, so a wallet that would fail on-chain also fails pre-verification. There is no path that reports a payment as valid and then reverts at settlement.
+x402's facilitator must mirror whichever signature rule the target contract uses, so an unsupported
+wallet or signature format fails pre-verification instead of first failing at settlement. This
+signature check does not reserve funds or prevent account state from changing after verification.
 
 ### How tokens implement it
 
@@ -62,6 +64,7 @@ For batch-settlement, this table covers the deposit that funds a channel. Vouche
 |---|---|---|
 | `exact` | EIP-3009 (`transferWithAuthorization`) | Token's `SignatureChecker`, typically code-routing |
 | `exact` | Permit2 (`permitWitnessTransferFrom`) | Permit2's `SignatureVerification`, code-routing |
+| `upto` | EIP-3009 (`receiveWithAuthorization`) | Token's `SignatureChecker` through `x402UptoERC3009Proxy` |
 | `upto` | Permit2 (`permitWitnessTransferFrom`) | Permit2's `SignatureVerification`, code-routing |
 | `batch-settlement` | ERC-3009 deposit | Token's `SignatureChecker` via `ERC3009DepositCollector` |
 | `batch-settlement` | Permit2 deposit | Permit2 via `Permit2DepositCollector` |
@@ -72,13 +75,13 @@ The batch-settlement columns describe which wallet can sign the deposit that ope
 
 ✅ Supported. ❌ Not supported (see footnote).
 
-| Wallet type | `exact` EIP-3009 | `exact` Permit2 | `upto` Permit2 | `batch` deposit (ERC-3009) | `batch` deposit (Permit2) |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **A** Plain EOA | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **B** Deployed smart account | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **C** ERC-6492 counterfactual | ✅ ¹ | ❌ ² | ❌ ² | ✅ ³ | ❌ ² |
-| **D** 7702 + permissive delegate | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **E** 7702 + strict delegate | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ |
+| Wallet type | `exact` EIP-3009 | `exact` Permit2 | `upto` EIP-3009 | `upto` Permit2 | `batch` deposit (ERC-3009) | `batch` deposit (Permit2) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **A** Plain EOA | ✅ | ✅ | ✅ ⁵ | ✅ | ✅ | ✅ |
+| **B** Deployed smart account | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **C** ERC-6492 counterfactual | ✅ ¹ | ❌ ² | ❌ ⁵ | ❌ ² | ✅ ³ | ❌ ² |
+| **D** 7702 + permissive delegate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **E** 7702 + strict delegate | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ | ❌ ⁴ |
 
 The three Permit2 columns (`exact` Permit2, `upto`, `batch` deposit Permit2) require the payer to hold a Permit2 allowance for the token. The EIP-3009 columns do not. See [Permit2 allowance](#permit2-allowance) for how each wallet type establishes that allowance.
 
@@ -105,6 +108,14 @@ A deposit payload also carries a voucher, which is verified before the deposit r
 **⁴ ERC-7702 strict delegate with any code-routed scheme**
 
 Not supported by the default client. When an address has code, the verifier routes to `isValidSignature` on the delegate, and a strict delegate requires a specific format such as the validator-prefixed bytes used by ERC-7579 accounts with session-key validators. x402 signs with `signTypedData`, which produces a raw 65-byte ECDSA signature that a strict delegate rejects, so the payment fails on-chain even though signing succeeded. This is the verifier behaving correctly, not an x402 limitation. If you control the delegate, enabling a default ECDSA validator that accepts raw owner signatures turns the wallet into Type D and restores compatibility.
+
+**⁵ Signature limits for `upto` EIP-3009**
+
+The upto proxy does not execute ERC-6492 preparation calls, so a counterfactual payer must deploy
+before signing. Plain EOAs must use the 65-byte `r || s || v` representation; the proxy does not
+decode 64-byte EIP-2098 compact signatures. Deployed smart accounts remain supported through the
+token's bytes-signature overload and may use arbitrary signature bytes accepted by their ERC-1271
+implementation.
 
 ## Permit2 allowance
 
@@ -150,6 +161,6 @@ For the counterfactual ERC-3009 deposit in footnote ³, set `payerAuthorizer` to
 |---|---|
 | Does the address have code? | Decides whether the verifier calls `isValidSignature` (with code) or `ecrecover` (without). |
 | What does the delegate's `isValidSignature` accept? | Decides 7702 compatibility for code-routed schemes. |
-| Which scheme is in use? | Permit2 never supports counterfactual wallets; the code-routed EIP-3009 flows (`exact` EIP-3009 and `batch-settlement` ERC-3009 deposit) do, with an allowlisted factory. |
+| Which scheme is in use? | Permit2 and `upto` EIP-3009 do not support counterfactual wallets. The EIP-3009 flows with an explicit deployment path (`exact` and `batch-settlement` deposits) support them with an allowlisted factory. |
 | Is it a Permit2 flow? | If so, the payer needs a Permit2 allowance. Smart accounts must approve Permit2 themselves; EOAs and 7702 EOAs can use a gas-sponsoring extension. |
 | Is `payerAuthorizer` set? | If so, batch-settlement vouchers use ECDSA only, so the authorizer must be an EOA. |

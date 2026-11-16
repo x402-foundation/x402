@@ -70,6 +70,17 @@ The actual settled amount is communicated by the resource server to the facilita
 - Rationale: Reusing the existing `PaymentRequirements` type for both phases keeps the protocol simple and avoids introducing settlement-specific message types. The `amount` field naturally maps to "how much" in both contexts — "how much is authorized" at verification time and "how much to charge" at settlement time.
 - Implementation: The resource server MUST set the `amount` field in the `PaymentRequirements` passed to the facilitator's settle endpoint to the desired settlement amount. The facilitator MUST verify that this amount does not exceed the authorized maximum from the client's signed authorization. **Critically, the facilitator MUST re-verify the client's signature using the signed maximum, not the settlement-time `requirements.amount`.** On EVM that maximum is Permit2 `permitted.amount` or EIP-3009 `authorization.value`. See network-specific specs (e.g., [EVM Permit2 settle-time verification](./scheme_upto_evm.md#settle-time-verification) and [EVM EIP-3009 settlement](./scheme_upto_evm.md#phase-3-settlement-logic)) for the exact procedure.
 
+## Delivery-Before-Settlement Risk
+
+Verification does not reserve funds or make a later settlement inevitable. Before settlement, a
+client may move funds, revoke an allowance or authorization, or consume a single-use nonce through
+another valid path. A resource server that delivers work before settlement bears this non-payment
+risk.
+
+Servers SHOULD bound unpaid exposure, re-verify immediately before expensive or irreversible work,
+and settle as soon as the charge is known. Network-specific settle-time checks and simulations remain
+mandatory but cannot eliminate state changes that occur after verification.
+
 ## Out of Scope
 
 The following patterns are NOT supported by `upto` and would require different schemes:

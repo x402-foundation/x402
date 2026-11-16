@@ -71,7 +71,9 @@ to the token and transfer funds to the proxy without executing the payment and r
 The payload contains:
 
 - `signature`: the client's `ReceiveWithAuthorization` signature. EOA signatures use the
-  65-byte `r || s || v` encoding; contract-wallet signatures use the token-specific bytes encoding;
+  65-byte `r || s || v` encoding; deployed contract-wallet signatures use the token-specific bytes
+  encoding. ERC-6492 envelopes, undeployed counterfactual wallets, and 64-byte EIP-2098 EOA
+  signatures are not supported;
 - `authorization`: the standard EIP-3009 authorization;
 - `paymentInfo`: the recipient, selected settler, and random salt committed through the nonce.
 
@@ -111,18 +113,25 @@ The authorization fields have the standard EIP-3009 meaning, with these addition
 
 ```text
 NONCE_TYPEHASH = keccak256(
-  "x402UptoERC3009Nonce(address payTo,address settler,bytes32 salt)"
+  "x402UptoERC3009Nonce(uint256 chainId,address token,address payTo,address settler,bytes32 salt)"
 )
 
 authorization.nonce = keccak256(
-  abi.encode(NONCE_TYPEHASH, paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt)
+  abi.encode(
+    NONCE_TYPEHASH,
+    chainId,
+    PaymentRequirements.asset,
+    paymentInfo.payTo,
+    paymentInfo.settler,
+    paymentInfo.salt
+  )
 )
 ```
 
 The nonce is a hash commitment. EIP-3009 has no witness or arbitrary-data field, so the client sends
-the commitment preimage in `paymentInfo` and the proxy recomputes it onchain. `authorization.to`
-binds the proxy. The token's EIP-712 domain binds the token and chain. Those values are signed in
-the authorization, so the nonce does not repeat them.
+the commitment preimage in `paymentInfo` and the proxy recomputes it onchain. The commitment binds
+the chain, token, recipient, and settler. `authorization.to` separately binds the proxy. This does
+not rely on optional EIP-712 domain fields to prevent cross-token or cross-chain use.
 
 `extra.settlerAddress` selects one address for each payment. A server settling directly uses an
 address it controls. A server delegating settlement uses an address advertised by its facilitator.
@@ -132,18 +141,22 @@ The selected address MUST remain available until `authorization.validBefore`.
 
 The verifier MUST:
 
-1. validate the payload shape and EIP-712 `ReceiveWithAuthorization` signature;
-2. verify the network and EIP-712 token domain from `extra.name` and `extra.version`;
-3. verify `authorization.to`, `authorization.value`, `paymentInfo.payTo`, and
+1. validate the payload shape. Reject an ERC-6492 envelope or an undeployed payer. When the payer
+   has no code, require a 65-byte `r || s || v` signature and reject a 64-byte EIP-2098 signature.
+   A deployed contract wallet MAY use arbitrary signature bytes accepted by its ERC-1271
+   implementation;
+2. validate the EIP-712 `ReceiveWithAuthorization` signature;
+3. verify the network and EIP-712 token domain from `extra.name` and `extra.version`;
+4. verify `authorization.to`, `authorization.value`, `paymentInfo.payTo`, and
    `paymentInfo.settler` against the requirements;
-4. recompute the nonce commitment from `paymentInfo`;
-5. verify `validAfter`, `validBefore`, that the validity window does not exceed
+5. recompute the nonce commitment from the network chain ID, requirements asset, and `paymentInfo`;
+6. verify `validAfter`, `validBefore`, that the validity window does not exceed
    `maxTimeoutSeconds`, and that the authorization is unused;
-6. verify the client balance covers the full signed maximum; and
-7. simulate `x402UptoERC3009Proxy.settle` from the selected settler with `amount` equal to
+7. verify the client balance covers the full signed maximum; and
+8. simulate `x402UptoERC3009Proxy.settle` from the selected settler with `amount` equal to
    `authorization.value`.
 
-Step 7 checks that the signed maximum can be pulled and paid in full. It does not execute the refund
+Step 8 checks that the signed maximum can be pulled and paid in full. It does not execute the refund
 transfer, because a full settlement leaves a zero refund. The client must still hold the entire
 maximum, since every settlement pulls `authorization.value` before paying and refunding. When the
 expected charge is already known and is below that maximum, the verifier SHOULD also simulate
@@ -182,7 +195,8 @@ The transaction MUST be sent by `paymentInfo.settler`. The proxy receives the fu
 `authorization.value`, transfers `requirements.amount` to `paymentInfo.payTo`, and refunds
 `authorization.value - requirements.amount` to `authorization.from`. Each of those three token
 movements must deliver the exact amount. Any failure reverts the entire transaction, including
-token receipt and nonce consumption.
+token receipt and nonce consumption. A successful settlement emits `Settled` with the token, payer,
+recipient, nonce, actual amount, and refund.
 
 ### Token Compatibility
 
@@ -194,6 +208,10 @@ retries the normative ERC-3009 `v, r, s` overload. This fallback supports standa
 token implementations, including those with permissive fallbacks, without changing the payment
 payload. Contract-wallet signatures require a token that implements the bytes overload and validates
 the wallet through ERC-1271 or an equivalent mechanism.
+
+The proxy does not execute ERC-6492 preparation calls, so the payer wallet must already be deployed.
+The VRS fallback accepts only 65-byte `r || s || v`; it does not decode the 64-byte EIP-2098 compact
+representation. Verifiers must reject these unsupported formats before a server delivers work.
 
 The proxy reverts unless the pull, the merchant payment, and any refund each change the corresponding
 balance by the exact amount. Tokens that charge transfer fees, rebase during settlement, or otherwise
@@ -495,6 +513,8 @@ The `upto` scheme defines these additional error codes:
 - **`invalid_upto_evm_payload_settlement_exceeds_amount`**: Attempted to settle for more than the authorized `amount`
 - **`invalid_upto_evm_eip3009_nonce_mismatch`**: EIP-3009 nonce does not commit to the supplied payment information
 - **`invalid_upto_evm_eip3009_settler_mismatch`**: Bound settler does not match the requirements or facilitator submitter
+- **`invalid_upto_evm_eip3009_erc6492_unsupported`**: EIP-3009 signature is an unsupported ERC-6492 envelope
+- **`invalid_upto_evm_eip3009_compact_signature_unsupported`**: EIP-3009 EOA signature uses the unsupported 64-byte EIP-2098 representation
 
 ---
 
@@ -547,4 +567,18 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
    `receiveWithAuthorization` caller to equal `authorization.to` can have an authorization consumed
    outside the proxy, leaving tokens locked there. Facilitators must enforce the compatibility check
    above before supporting an asset.
+
+10. **Delivery-Before-Settlement Risk**: Verification does not reserve the payer's balance or
+    authorization. Before settlement, a payer can move funds, cancel the authorization, or consume
+    its nonce, causing settlement to revert after the server delivered work. Servers should bound
+    unpaid exposure, recheck the full-maximum balance and authorization state immediately before
+    expensive work, and settle promptly. These checks narrow but do not eliminate the race.
+
+11. **Signature Format Limits**: ERC-6492 envelopes, undeployed counterfactual wallets, and 64-byte
+    EIP-2098 EOA signatures are unsupported. Verifiers must reject them before serving work.
+    Deployed ERC-1271 wallets may use arbitrary signature bytes accepted by the token.
+
+12. **Settlement Observability**: The proxy's `Settled` event records the token, payer, recipient,
+    nonce, actual charge, and refund. Monitoring should reconcile these values with the metered amount
+    and signed maximum to detect incorrect settlement behavior.
 
