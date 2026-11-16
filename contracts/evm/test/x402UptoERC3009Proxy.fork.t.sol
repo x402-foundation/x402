@@ -68,8 +68,16 @@ contract X402UptoERC3009ProxyForkTest is Test {
         )
     {
         paymentInfo = x402UptoERC3009Proxy.PaymentInfo({payTo: payTo, settler: address(this), salt: salt});
-        bytes32 nonce =
-            keccak256(abi.encode(proxy.NONCE_TYPEHASH(), paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt));
+        bytes32 nonce = keccak256(
+            abi.encode(
+                proxy.NONCE_TYPEHASH(),
+                block.chainid,
+                BASE_USDC,
+                paymentInfo.payTo,
+                paymentInfo.settler,
+                paymentInfo.salt
+            )
+        );
         authorization = x402UptoERC3009Proxy.Authorization({
             from: payer,
             to: address(proxy),

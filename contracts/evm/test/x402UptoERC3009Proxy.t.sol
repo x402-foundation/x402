@@ -9,6 +9,7 @@ import {x402UptoERC3009Proxy} from "../src/x402UptoERC3009Proxy.sol";
 
 import {MockValidatingERC3009Token} from "./mocks/MockValidatingERC3009Token.sol";
 import {MockPermissiveFallbackVRSOnlyERC3009Token} from "./mocks/MockPermissiveFallbackVRSOnlyERC3009Token.sol";
+import {MockSharedDomainERC3009Token} from "./mocks/MockSharedDomainERC3009Token.sol";
 import {MockVRSOnlyERC3009Token} from "./mocks/MockVRSOnlyERC3009Token.sol";
 
 contract MockERC1271Wallet is IERC1271 {
@@ -75,8 +76,19 @@ contract X402UptoERC3009ProxyTest is Test {
         uint256 value,
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo
     ) internal view returns (x402UptoERC3009Proxy.Authorization memory) {
-        bytes32 nonce =
-            keccak256(abi.encode(proxy.NONCE_TYPEHASH(), paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt));
+        return _authorizationFor(address(token), value, paymentInfo);
+    }
+
+    function _authorizationFor(
+        address asset,
+        uint256 value,
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo
+    ) internal view returns (x402UptoERC3009Proxy.Authorization memory) {
+        bytes32 nonce = keccak256(
+            abi.encode(
+                proxy.NONCE_TYPEHASH(), block.chainid, asset, paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt
+            )
+        );
         return x402UptoERC3009Proxy.Authorization({
             from: payer,
             to: address(proxy),
@@ -130,7 +142,10 @@ contract X402UptoERC3009ProxyTest is Test {
     }
 
     function test_nonceTypehash_matchesSpecification() public view {
-        assertEq(proxy.NONCE_TYPEHASH(), keccak256("x402UptoERC3009Nonce(address payTo,address settler,bytes32 salt)"));
+        assertEq(
+            proxy.NONCE_TYPEHASH(),
+            keccak256("x402UptoERC3009Nonce(uint256 chainId,address token,address payTo,address settler,bytes32 salt)")
+        );
     }
 
     function test_settle_selector_matchesPublishedInterface() public pure {
@@ -249,6 +264,53 @@ contract X402UptoERC3009ProxyTest is Test {
         proxy.settle(address(token), SETTLEMENT_AMOUNT, authorization, paymentInfo, hex"");
     }
 
+    function test_settle_reverts_whenTokenDoesNotMatchNonceCommitment() public {
+        MockSharedDomainERC3009Token tokenA = new MockSharedDomainERC3009Token();
+        MockSharedDomainERC3009Token tokenB = new MockSharedDomainERC3009Token();
+        tokenB.mint(payer, MAX_AMOUNT);
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
+            _paymentInfo(payTo, address(this), bytes32("shared-domain-token"));
+        x402UptoERC3009Proxy.Authorization memory authorization =
+            _authorizationFor(address(tokenA), MAX_AMOUNT, paymentInfo);
+        bytes memory signature = _signatureFor(
+            authorization, PAYER_KEY, tokenA.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), tokenA.domainSeparator()
+        );
+
+        assertEq(tokenA.domainSeparator(), tokenB.domainSeparator());
+        vm.expectRevert(x402UptoERC3009Proxy.InvalidNonce.selector);
+        proxy.settle(address(tokenB), SETTLEMENT_AMOUNT, authorization, paymentInfo, signature);
+
+        assertFalse(tokenB.authorizationState(payer, authorization.nonce));
+        assertEq(tokenB.balanceOf(payer), MAX_AMOUNT);
+        assertEq(tokenB.balanceOf(payTo), 0);
+    }
+
+    function test_settle_reverts_whenChainDoesNotMatchNonceCommitment() public {
+        MockSharedDomainERC3009Token sharedDomainToken = new MockSharedDomainERC3009Token();
+        sharedDomainToken.mint(payer, MAX_AMOUNT);
+        x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
+            _paymentInfo(payTo, address(this), bytes32("shared-domain-chain"));
+        x402UptoERC3009Proxy.Authorization memory authorization =
+            _authorizationFor(address(sharedDomainToken), MAX_AMOUNT, paymentInfo);
+        bytes memory signature = _signatureFor(
+            authorization,
+            PAYER_KEY,
+            sharedDomainToken.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(),
+            sharedDomainToken.domainSeparator()
+        );
+        bytes32 domainSeparator = sharedDomainToken.domainSeparator();
+
+        vm.chainId(block.chainid + 1);
+
+        assertEq(sharedDomainToken.domainSeparator(), domainSeparator);
+        vm.expectRevert(x402UptoERC3009Proxy.InvalidNonce.selector);
+        proxy.settle(address(sharedDomainToken), SETTLEMENT_AMOUNT, authorization, paymentInfo, signature);
+
+        assertFalse(sharedDomainToken.authorizationState(payer, authorization.nonce));
+        assertEq(sharedDomainToken.balanceOf(payer), MAX_AMOUNT);
+        assertEq(sharedDomainToken.balanceOf(payTo), 0);
+    }
+
     function test_settle_reverts_whenSignatureIsInvalid() public {
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo = _paymentInfo(payTo, address(this), bytes32("salt"));
         x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
@@ -282,7 +344,8 @@ contract X402UptoERC3009ProxyTest is Test {
         MockVRSOnlyERC3009Token vrsToken = new MockVRSOnlyERC3009Token();
         vrsToken.mint(payer, MAX_AMOUNT);
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo = _paymentInfo(payTo, address(this), bytes32("vrs-only"));
-        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+        x402UptoERC3009Proxy.Authorization memory authorization =
+            _authorizationFor(address(vrsToken), MAX_AMOUNT, paymentInfo);
         bytes memory signature = _signatureFor(
             authorization, PAYER_KEY, vrsToken.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), vrsToken.domainSeparator()
         );
@@ -302,7 +365,8 @@ contract X402UptoERC3009ProxyTest is Test {
         vrsToken.mint(payer, MAX_AMOUNT);
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
             _paymentInfo(payTo, address(this), bytes32("vrs-non-vrs-length"));
-        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+        x402UptoERC3009Proxy.Authorization memory authorization =
+            _authorizationFor(address(vrsToken), MAX_AMOUNT, paymentInfo);
 
         vm.expectRevert(x402UptoERC3009Proxy.ReceivedAmountMismatch.selector);
         proxy.settle(address(vrsToken), SETTLEMENT_AMOUNT, authorization, paymentInfo, hex"1234");
@@ -320,7 +384,8 @@ contract X402UptoERC3009ProxyTest is Test {
         vrsToken.mint(payer, MAX_AMOUNT);
         x402UptoERC3009Proxy.PaymentInfo memory paymentInfo =
             _paymentInfo(payTo, address(this), bytes32("vrs-permissive-fallback"));
-        x402UptoERC3009Proxy.Authorization memory authorization = _authorization(MAX_AMOUNT, paymentInfo);
+        x402UptoERC3009Proxy.Authorization memory authorization =
+            _authorizationFor(address(vrsToken), MAX_AMOUNT, paymentInfo);
         bytes memory signature = _signatureFor(
             authorization, PAYER_KEY, vrsToken.RECEIVE_WITH_AUTHORIZATION_TYPEHASH(), vrsToken.domainSeparator()
         );

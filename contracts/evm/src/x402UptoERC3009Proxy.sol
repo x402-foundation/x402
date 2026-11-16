@@ -14,9 +14,9 @@ import {IERC3009VRS} from "./interfaces/IERC3009VRS.sol";
 contract x402UptoERC3009Proxy is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Typehash used to bind the payment recipient and settler into the ERC-3009 nonce.
+    /// @notice Typehash used to bind the network, token, payment recipient, and settler into the ERC-3009 nonce.
     bytes32 public constant NONCE_TYPEHASH =
-        keccak256("x402UptoERC3009Nonce(address payTo,address settler,bytes32 salt)");
+        keccak256("x402UptoERC3009Nonce(uint256 chainId,address token,address payTo,address settler,bytes32 salt)");
 
     /// @notice Emitted after a payment is settled and its remainder is refunded.
     event Settled(
@@ -111,8 +111,9 @@ contract x402UptoERC3009Proxy is ReentrancyGuard {
         if (amount == 0) revert InvalidAmount();
         if (amount > authorization.value) revert AmountExceedsAuthorization();
 
-        bytes32 expectedNonce =
-            keccak256(abi.encode(NONCE_TYPEHASH, paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt));
+        bytes32 expectedNonce = keccak256(
+            abi.encode(NONCE_TYPEHASH, block.chainid, token, paymentInfo.payTo, paymentInfo.settler, paymentInfo.salt)
+        );
         if (authorization.nonce != expectedNonce) revert InvalidNonce();
 
         IERC20 asset = IERC20(token);
