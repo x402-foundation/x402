@@ -295,11 +295,7 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	// recentSlot or, without one, the cluster's own slot.
 	if recent == nil {
 		var slot uint64
-		if slotRead != nil {
-			slot, err = slotRead.result(ctx)
-		} else {
-			slot, err = f.signer.GetSlot(ctx, requirements.Network, paymentchannels.SlotCommitment)
-		}
+		slot, err = slotRead.result(ctx)
 		if err != nil {
 			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
 		}
@@ -331,7 +327,6 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if open.ChannelID.String() != channelID {
 		return fmt.Errorf("%s: setup transaction channel mismatch", batchsettlement.ErrChannelIDMismatch)
 	}
-	_ = ctx
 	return nil
 }
 

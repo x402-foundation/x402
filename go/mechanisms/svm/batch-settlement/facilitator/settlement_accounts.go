@@ -174,10 +174,7 @@ func (r *settlementAccountsRead) result(ctx context.Context, deposit uint64) err
 		if item.err != nil || item.account == nil || item.account.Value == nil {
 			return fmt.Errorf("%s: missing %s ATA: %s", batchsettlement.ErrSettlementSimulation, item.label, item.ata)
 		}
-		var data []byte
-		if item.account.Value.Data != nil {
-			data = item.account.Value.Data.GetBinary()
-		}
+		data := item.account.GetBinary()
 		if problem := paymentchannels.UnusableSettlementAccount(item.account.Value.Owner, data, item.owner, r.mint, r.program); problem != "" {
 			return fmt.Errorf("%s: %s ATA %s %s", batchsettlement.ErrSettlementSimulation, item.label, item.ata, problem)
 		}
