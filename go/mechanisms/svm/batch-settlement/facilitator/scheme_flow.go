@@ -32,7 +32,6 @@ type durableArgs struct {
 	key           string
 	network       string
 	payer         string
-	beforePending func() error
 	beforeSend    func() (*x402.SettleResponse, error)
 	send          func(func(string, string) error) (string, error)
 	broadcast     func() (durableResult, error)
@@ -64,11 +63,6 @@ func (f *BatchSvmScheme) settleDurably(ctx context.Context, args durableArgs) (a
 			return nil, completed, response, err
 		}
 		return finish(completed, phaseCompleted)
-	}
-	if args.beforePending != nil {
-		if err := args.beforePending(); err != nil {
-			return nil, "", nil, err
-		}
 	}
 	if pending, ok, err := f.pendingStore.Get(ctx, args.key); err != nil {
 		return nil, "", nil, err
@@ -164,10 +158,7 @@ func (f *BatchSvmScheme) validateDeposit(ctx context.Context, payload batchsettl
 	default:
 		return ValidatedDeposit{}, fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
 	}
-	// The settlement ATAs (and the cluster slot, when the challenge carries no
-	// recentSlot) are read alongside the channel. This is the last local-only
-	// rejection, so invalid requests never reach RPC. Both are joined where
-	// the serial path used to read them.
+	// Parsing errors stay in result so earlier local rejections still win.
 	prefetchCtx, cancelPrefetch := context.WithCancel(ctx)
 	defer cancelPrefetch()
 	settlement := f.startSettlementAccountsRead(prefetchCtx, requirements, payload.ChannelConfig.Payer, terms.TokenProgram)
@@ -290,16 +281,10 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if err != nil {
 		return err
 	}
-	// The program accepts an open only within its slot window of the cluster
-	// slot it lands at, so the window is judged against the challenge's
-	// recentSlot or, without one, the cluster's own slot.
+	// An open is accepted only inside the program's slot window of the cluster slot it lands at.
+	// That slot is the challenge recentSlot, or the cluster slot when the challenge has none.
 	if recent == nil {
-		var slot uint64
-		if slotRead != nil {
-			slot, err = slotRead.result(ctx)
-		} else {
-			slot, err = f.signer.GetSlot(ctx, requirements.Network, paymentchannels.SlotCommitment)
-		}
+		slot, err := slotRead.result(ctx)
 		if err != nil {
 			return fmt.Errorf("%s: read cluster slot: %w", batchsettlement.ErrChannelState, err)
 		}
@@ -331,7 +316,6 @@ func (f *BatchSvmScheme) verifyOpen(ctx context.Context, payload batchsettlement
 	if open.ChannelID.String() != channelID {
 		return fmt.Errorf("%s: setup transaction channel mismatch", batchsettlement.ErrChannelIDMismatch)
 	}
-	_ = ctx
 	return nil
 }
 

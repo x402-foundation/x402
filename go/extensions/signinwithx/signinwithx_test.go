@@ -204,8 +204,6 @@ func TestFormatSIWSMessageWithoutStatement(t *testing.T) {
 		t.Fatalf("FormatSIWSMessage() error = %v", err)
 	}
 
-	// Same text as the TypeScript and Python SDKs: one blank line between
-	// the address and the fields when there is no statement.
 	want := "api.example.com wants you to sign in with your Solana account:\n" +
 		"6nYoFimREYaxQZZqBv7vbSd6ozGS1J8uhAAgUXPtaYy6\n\n" +
 		"URI: https://api.example.com/data\n" +
@@ -449,7 +447,6 @@ func TestVerifySolanaSignatureWithoutStatement(t *testing.T) {
 	payload.Statement = ""
 	payload.Address = EncodeBase58(publicKey)
 
-	// The message a TypeScript or Python client signs for this challenge.
 	message := "api.example.com wants you to sign in with your Solana account:\n" +
 		payload.Address + "\n\n" +
 		"URI: https://api.example.com/data\n" +
