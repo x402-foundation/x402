@@ -589,3 +589,11 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
     nonce, actual charge, and refund. Monitoring should reconcile these values with the metered amount
     and signed maximum to detect incorrect settlement behavior.
 
+13. **Issuer-Controlled Availability**: A token issuer that can blacklist addresses, pause transfers,
+    or apply similar administrative restrictions can prevent the canonical proxy from receiving,
+    paying, or refunding that token. Facilitators should monitor supported assets for restrictions on
+    the proxy when the token exposes such state, retain the mandatory verification and settle-time
+    simulations as the generic compatibility check, and stop accepting new authorizations while
+    settlement is disabled. A failed settlement reverts atomically, but a replacement proxy cannot
+    rescue an existing authorization because `authorization.to` commits to the original address.
+
