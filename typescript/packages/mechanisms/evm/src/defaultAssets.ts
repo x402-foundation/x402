@@ -404,6 +404,9 @@ export const getDefaultAsset: GetDefaultAsset<ExactDefaultAssetInfo> = (network,
  * @returns Matching entry, or undefined
  */
 export const findDefaultAsset: FindDefaultAsset<ExactDefaultAssetInfo> = (asset, network) => {
+  if (typeof asset !== "string") {
+    return undefined;
+  }
   const key = resolveNetworkKey(network);
   const assets = DEFAULT_ASSETS[key];
   if (!assets) {
