@@ -6,6 +6,7 @@ from ....schemas import AssetAmount, Network, PaymentRequirements, Price, Suppor
 from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset, get_default_asset
+from ..types import _is_uint256_string
 from ..utils import (
     get_asset_info,
     parse_amount,
@@ -13,6 +14,12 @@ from ..utils import (
 
 # Type alias for money parser (sync)
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
+
+
+def _require_uint256_amount(amount: str) -> None:
+    if _is_uint256_string(amount):
+        return
+    raise ValueError(f"amount must be a uint256 decimal string, got {amount!r}")
 
 
 class ExactEvmScheme:
@@ -80,16 +87,21 @@ class ExactEvmScheme:
         if isinstance(price, dict) and "amount" in price:
             if not price.get("asset"):
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
-            return AssetAmount(
+            parsed = AssetAmount(
                 amount=price["amount"],
                 asset=price["asset"],
                 extra=price.get("extra", {}),
             )
+            if "." not in parsed.amount:
+                _require_uint256_amount(parsed.amount)
+            return parsed
 
         # Already an AssetAmount object
         if isinstance(price, AssetAmount):
             if not price.asset:
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
+            if "." not in price.amount:
+                _require_uint256_amount(price.amount)
             return price
 
         # Parse Money to decimal
@@ -101,10 +113,15 @@ class ExactEvmScheme:
         for parser in self._money_parsers:
             result = parser(decimal_amount, str(network))
             if result is not None:
+                if "." not in result.amount:
+                    _require_uint256_amount(result.amount)
                 return result
 
         # Default: convert using the network (or ticker) default asset
-        return self._default_money_conversion(decimal_amount, str(network), symbol)
+        parsed = self._default_money_conversion(decimal_amount, str(network), symbol)
+        if "." not in parsed.amount:
+            _require_uint256_amount(parsed.amount)
+        return parsed
 
     def enhance_payment_requirements(
         self,
@@ -160,6 +177,7 @@ class ExactEvmScheme:
             if "assetTransferMethod" not in requirements.extra and atm:
                 requirements.extra["assetTransferMethod"] = atm
 
+        _require_uint256_amount(requirements.amount)
         return requirements
 
     def _default_money_conversion(

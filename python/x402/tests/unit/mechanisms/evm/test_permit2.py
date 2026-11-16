@@ -394,6 +394,18 @@ class TestVerifyPermit2:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_PERMIT2_NOT_YET_VALID
 
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.verify(make_payment_payload(), make_requirements(amount=amount))
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_evm_required_amount"
+
     def test_verify_rejects_amount_mismatch(self):
         facilitator = self._make_facilitator()
         auth = make_permit2_authorization(amount="999")  # wrong amount
@@ -536,6 +548,18 @@ class TestSettlePermit2:
         assert result.success is True
         assert result.transaction is not None
         assert len(result.transaction) > 0
+
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_settle_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.settle(make_payment_payload(), make_requirements(amount=amount))
+
+        assert result.success is False
+        assert result.error_reason == "invalid_exact_evm_required_amount"
 
     def test_settle_fails_if_verify_fails(self):
         facilitator = self._make_facilitator(allowance=0)
