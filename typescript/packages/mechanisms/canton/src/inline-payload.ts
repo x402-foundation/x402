@@ -112,14 +112,6 @@ const HEX_RE = /^[0-9a-f]+$/;
 
 /**
  *
- * @param bytes
- */
-function base64Expansion(bytes: number): number {
-  return Math.ceil(bytes / 3) * 4;
-}
-
-/**
- *
  * @param value
  * @param field
  * @param code
@@ -194,7 +186,7 @@ export function decodeInlinePaymentPayload(
   );
 
   const maxCompressed = opts.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES;
-  const maxB64 = opts.maxPreparedTransactionB64Chars ?? base64Expansion(maxCompressed);
+  const maxB64 = opts.maxPreparedTransactionB64Chars ?? Math.ceil(maxCompressed / 3) * 4;
   if (preparedTransaction.length > maxB64) {
     throw new InlinePayloadError(
       "invalid_exact_canton_malformed_payload",

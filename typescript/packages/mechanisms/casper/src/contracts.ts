@@ -40,6 +40,13 @@ type CasperContract = {
   entryPoints?: CasperEntryPoint[];
 };
 
+export class UnsupportedCasperAssetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedCasperAssetError";
+  }
+}
+
 export async function getActiveContractForToken(
   rpcClient: InstanceType<typeof RpcClient>,
   assetKey: string,
@@ -50,20 +57,22 @@ export async function getActiveContractForToken(
   try {
     const contractState = await rpcClient.queryLatestGlobalState(contractKey, []);
     if (!contractState.storedValue.contract) {
-      throw new Error("active contract not found");
+      throw new UnsupportedCasperAssetError("active contract not found");
     }
     return { ...contractState.storedValue.contract, contractHash: contractKey };
   } catch (error) {
-    throw new Error(
-      `failed to get active contract for token: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof UnsupportedCasperAssetError) {
+      throw new UnsupportedCasperAssetError(`failed to get active contract for token: ${message}`);
+    }
+    throw new Error(`failed to get active contract for token: ${message}`);
   }
 }
 
 function contractVersionHash(version: CasperContractVersion): string {
   const hash = version.contractHash.hash?.toHex() ?? version.contractHash.toJSON?.();
   if (!hash) {
-    throw new Error("contract version is missing contract hash");
+    throw new UnsupportedCasperAssetError("contract version is missing contract hash");
   }
   return hash.replace(/^(hash-|contract-)/, "");
 }
@@ -74,7 +83,7 @@ function findActiveContractHash(packageState: CasperStateResult): string {
 
     const versions = contractPackage?.versions ?? [];
     if (versions.length === 0) {
-      throw new Error("contract package has no active versions");
+      throw new UnsupportedCasperAssetError("contract package has no active versions");
     }
 
     const disabledVersions = new Set(
@@ -87,7 +96,7 @@ function findActiveContractHash(packageState: CasperStateResult): string {
         !disabledVersions.has(`${version.protocolVersionMajor}:${version.contractVersion}`),
     );
     if (activeVersions.length === 0) {
-      throw new Error("contract package has no enabled versions");
+      throw new UnsupportedCasperAssetError("contract package has no enabled versions");
     }
 
     const activeVersionHash = activeVersions.reduce((selected, version) =>
@@ -95,7 +104,7 @@ function findActiveContractHash(packageState: CasperStateResult): string {
     );
     return `hash-${contractVersionHash(activeVersionHash)}`;
   }
-  throw new Error("token package not found");
+  throw new UnsupportedCasperAssetError("token package not found");
 }
 
 export async function readDictionaryU256OrDefault(

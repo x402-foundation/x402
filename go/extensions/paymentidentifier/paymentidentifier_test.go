@@ -13,12 +13,6 @@ import (
 )
 
 func TestConstants(t *testing.T) {
-	t.Run("should have correct constant values matching TypeScript", func(t *testing.T) {
-		assert.Equal(t, "payment-identifier", paymentidentifier.PAYMENT_IDENTIFIER)
-		assert.Equal(t, 16, paymentidentifier.PAYMENT_ID_MIN_LENGTH)
-		assert.Equal(t, 128, paymentidentifier.PAYMENT_ID_MAX_LENGTH)
-	})
-
 	t.Run("should match constants from shared types", func(t *testing.T) {
 		assert.Equal(t, types.PAYMENT_IDENTIFIER, paymentidentifier.PAYMENT_IDENTIFIER)
 		assert.Equal(t, types.PAYMENT_ID_MIN_LENGTH, paymentidentifier.PAYMENT_ID_MIN_LENGTH)

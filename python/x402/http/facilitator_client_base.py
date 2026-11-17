@@ -56,8 +56,7 @@ _AUTH_HEADER_PATHS = ("verify", "settle", "supported", "list", "bazaar")
 class CreateHeadersAuthProvider:
     """AuthProvider that wraps a create_headers callable.
 
-    Adapts the dict-style create_headers function (as used by CDP SDK)
-    to the AuthProvider protocol.
+    Adapts a dict-style create_headers callable to the AuthProvider protocol.
     """
 
     def __init__(self, create_headers: Callable[[], dict[str, dict[str, str]]]) -> None:

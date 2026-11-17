@@ -31,6 +31,7 @@ export {
   resolveFacilitatorTransactionVersion,
 } from "../../payment-channels/facilitator";
 export type {
+  RentCleanupCloseCandidate,
   RentCleanupCloseResult,
   RentCleanupOptions,
   RentCleanupReclaimResult,

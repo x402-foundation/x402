@@ -37,10 +37,12 @@ import {
   isMissingDictionaryItem,
   readDictionaryBool,
   readDictionaryU256OrDefault,
+  UnsupportedCasperAssetError,
 } from "../../contracts";
 
 export const ErrInvalidScheme = "invalid_exact_casper_facilitator_invalid_scheme";
 export const ErrNetworkMismatch = "invalid_exact_casper_facilitator_network_mismatch";
+export const ErrMalformedPayload = "invalid_exact_casper_facilitator_malformed_payload";
 export const ErrInvalidAsset = "invalid_exact_casper_facilitator_invalid_asset";
 export const ErrInvalidPayTo = "invalid_exact_casper_facilitator_invalid_payto";
 export const ErrInvalidPayer = "invalid_exact_casper_facilitator_invalid_payer";
@@ -61,6 +63,7 @@ export const ErrAuthorizationUsed =
 export const ErrUnsupportedAsset = "invalid_exact_casper_facilitator_unsupported_asset";
 export const ErrSpeculativeExecutionFailed =
   "invalid_exact_casper_facilitator_speculative_execution_failed";
+export const ErrPreflightFailed = "invalid_exact_casper_facilitator_preflight_failed";
 
 const TRANSFER_WITH_AUTHORIZATION_ENTRY_POINT = "transfer_with_authorization";
 const BALANCES_DICTIONARY = "balances";
@@ -154,7 +157,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
 
     const exactPayload = this.extractPayload(payload);
     if (!exactPayload) {
-      return invalid(ErrInvalidScheme, undefined, "malformed payload");
+      return invalid(ErrMalformedPayload, undefined, "malformed payload");
     }
     const payer = exactPayload.authorization.from;
 
@@ -201,6 +204,9 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       };
     }
 
+    // Set once the transaction is submitted, so a failure after that point
+    // still reports the hash of the transaction the facilitator paid for.
+    let transactionHash = "";
     try {
       const exactPayload = payload.payload as unknown as ExactCasperPayload;
       const transaction = await this.buildTransferWithAuthorizationTransaction(
@@ -209,7 +215,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       );
 
       await this.signer.signTransaction(transaction, requirements.network);
-      const transactionHash = await this.signer.putTransaction(requirements.network, transaction);
+      transactionHash = await this.signer.putTransaction(requirements.network, transaction);
       await this.signer.waitForTransaction(requirements.network, transactionHash);
 
       return {
@@ -225,7 +231,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
         errorReason: ErrSettleFailed,
         errorMessage: message,
         payer: verifyResp.payer,
-        transaction: "",
+        transaction: transactionHash,
         network: requirements.network,
       };
     }
@@ -532,7 +538,9 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return invalid(ErrUnsupportedAsset, payer, message);
+      const reason =
+        error instanceof UnsupportedCasperAssetError ? ErrUnsupportedAsset : ErrPreflightFailed;
+      return invalid(reason, payer, message);
     }
 
     try {
@@ -547,7 +555,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return invalid(ErrInsufficientBalance, payer, message);
+      return invalid(ErrPreflightFailed, payer, message);
     }
 
     try {
@@ -563,7 +571,7 @@ export class ExactCasperScheme implements SchemeNetworkFacilitator {
     } catch (error) {
       if (!isMissingDictionaryItem(error)) {
         const message = error instanceof Error ? error.message : String(error);
-        return invalid(ErrAuthorizationUsed, payer, message);
+        return invalid(ErrPreflightFailed, payer, message);
       }
     }
 

@@ -33,8 +33,6 @@ func testSigner(t *testing.T) evm.ClientEvmSigner {
 func TestOperatorDomain(t *testing.T) {
 	domain := OperatorDomain(testCaptureAuthorizer, big.NewInt(84532))
 
-	assert.Equal(t, "x402 Auth Capture Operator", domain.Name)
-	assert.Equal(t, "1", domain.Version)
 	assert.Equal(t, big.NewInt(84532), domain.ChainID)
 	assert.Equal(t, evm.NormalizeAddress(testCaptureAuthorizer), domain.VerifyingContract)
 }

@@ -121,6 +121,8 @@ export type RouteDefinition = {
   sdks: SdkId[];
   /** SDKs that implement only the client role. Servers and facilitators never see them. */
   clientSdks?: SdkId[];
+  /** SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: SdkId[];
   schemeOptions?: Record<string, boolean>;
   /** Every route declares its own price. */
   price: PriceSpec;
@@ -199,6 +201,8 @@ type EndpointLike = {
   sdks?: SdkId[];
   /** Catalog SDKs that implement only the client role. */
   clientSdks?: SdkId[];
+  /** Catalog SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: SdkId[];
   health?: boolean;
   close?: boolean;
   /** MCP tool name, equal to `path` for MCP endpoints (`method: 'tool'`). */
@@ -299,8 +303,11 @@ export function sdkRoutesFor(sdk: string, role?: ConfigRole): SdkRoute[] {
   return Object.entries(catalog.routes)
     .filter(
       ([, def]) =>
-        def.sdks.includes(sdk as SdkId) ||
-        (role === 'client' && def.clientSdks?.includes(sdk as SdkId)),
+        (def.sdks.includes(sdk as SdkId) ||
+          (role === 'client' && def.clientSdks?.includes(sdk as SdkId))) &&
+        (role !== 'facilitator' ||
+          !def.facilitatorSdks ||
+          def.facilitatorSdks.includes(sdk as SdkId)),
     )
     .map(([path, def]) => ({ path, ...def }));
 }
@@ -414,6 +421,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
       extensions: route.extensions,
       sdks: route.sdks,
       ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+      ...(route.facilitatorSdks ? { facilitatorSdks: route.facilitatorSdks } : {}),
       ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
     };
   }
@@ -431,6 +439,7 @@ export function sdkRouteToEndpoint(route: SdkRoute, transport: RouteTransport = 
     extensions: route.extensions,
     sdks: route.sdks,
     ...(route.clientSdks ? { clientSdks: route.clientSdks } : {}),
+    ...(route.facilitatorSdks ? { facilitatorSdks: route.facilitatorSdks } : {}),
     ...(route.schemeExtra ? { schemeExtra: route.schemeExtra } : {}),
   };
 }

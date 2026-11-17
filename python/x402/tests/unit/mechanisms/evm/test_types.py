@@ -6,7 +6,7 @@ from x402.mechanisms.evm import (
     ExactEvmPayloadV1,
     ExactEvmPayloadV2,
 )
-from x402.mechanisms.evm.types import validate_exact_evm_payload
+from x402.mechanisms.evm.types import validate_exact_evm_payload, validate_upto_permit2_payload
 
 
 class TestExactEIP3009Authorization:
@@ -217,3 +217,48 @@ class TestValidateExactEvmPayload:
         """Should accept a nonce without 0x, as parse_eip3009_authorization does."""
         payload = make_eip3009_payload_dict(nonce="ab" * 32)
         assert validate_exact_evm_payload(payload) is None
+
+
+def make_upto_permit2_payload_dict(**witness_overrides) -> dict:
+    witness = {
+        "to": "0x0987654321098765432109876543210987654321",
+        "facilitator": "0x1111111111111111111111111111111111111111",
+        "validAfter": "0",
+    }
+    witness.update(witness_overrides)
+    return {
+        "permit2Authorization": {
+            "from": "0x1234567890123456789012345678901234567890",
+            "permitted": {
+                "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "amount": "1000000",
+            },
+            "spender": "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
+            "nonce": "12345678901234567890",
+            "deadline": "1000003600",
+            "witness": witness,
+        },
+        "signature": "0x" + "00" * 65,
+    }
+
+
+class TestValidateUptoPermit2Payload:
+    """Test validate_upto_permit2_payload accepts well-formed edge values."""
+
+    def test_should_accept_well_formed_payload(self):
+        """Should accept a well-formed upto Permit2 payload."""
+        assert validate_upto_permit2_payload(make_upto_permit2_payload_dict()) is None
+
+    def test_should_accept_max_uint256_amount(self):
+        """Should accept the largest uint256 permitted amount."""
+        payload = make_upto_permit2_payload_dict()
+        payload["permit2Authorization"]["permitted"]["amount"] = str(2**256 - 1)
+        assert validate_upto_permit2_payload(payload) is None
+
+    def test_should_reject_missing_facilitator(self):
+        """Should reject a witness without the facilitator field."""
+        payload = make_upto_permit2_payload_dict()
+        del payload["permit2Authorization"]["witness"]["facilitator"]
+        assert validate_upto_permit2_payload(payload) == (
+            "permit2Authorization.witness.facilitator must be a string"
+        )

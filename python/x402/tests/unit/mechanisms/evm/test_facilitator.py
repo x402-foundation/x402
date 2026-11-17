@@ -500,6 +500,21 @@ class TestVerify:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_AUTHORIZATION_VALUE_MISMATCH
 
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner())
+
+        result = facilitator.verify(
+            make_payment_payload(amount="1000"),
+            make_requirements(amount=amount),
+        )
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_evm_required_amount"
+
     def test_reports_name_mismatch_from_simulation_diagnostic(self):
         signer = MockFacilitatorSigner(
             typed_data_valid=False,
@@ -792,6 +807,21 @@ class TestSettle:
         assert result.success is False
         assert "unsupported_scheme" in result.error_reason
         assert result.network == NETWORK
+
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = ExactEvmFacilitatorScheme(MockFacilitatorSigner())
+
+        result = facilitator.settle(
+            make_payment_payload(amount="1000"),
+            make_requirements(amount=amount),
+        )
+
+        assert result.success is False
+        assert result.error_reason == "invalid_exact_evm_required_amount"
 
     def test_can_rerun_simulation_during_settle(self):
         # Payer has code so verify_typed_data_strict takes the EIP-1271 path, which

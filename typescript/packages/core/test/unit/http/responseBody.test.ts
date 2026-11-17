@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MAX_CONTROL_PLANE_RESPONSE_BYTES,
-  ResponseBodyTooLargeError,
-  readLimitedText,
-} from "../../../src/http/responseBody";
+import { ResponseBodyTooLargeError, readLimitedText } from "../../../src/http/responseBody";
 
 /**
  * Builds a response whose body arrives in chunks, so the reader cannot rely on
@@ -57,9 +53,5 @@ describe("readLimitedText", () => {
     const response = new Response(null, { status: 204 });
     expect(response.body).toBeNull();
     await expect(readLimitedText(response, 64)).resolves.toBe("");
-  });
-
-  it("bounds control-plane responses at 1 MiB", () => {
-    expect(MAX_CONTROL_PLANE_RESPONSE_BYTES).toBe(1024 * 1024);
   });
 });

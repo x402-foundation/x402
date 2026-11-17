@@ -516,11 +516,23 @@ func (m *BatchChannelManager) record(channelID string, updater func(ChannelState
 }
 
 func (m *BatchChannelManager) submit(ctx context.Context, payload any) (*x402.SettleResponse, error) {
-	return m.config.Settle(ctx, RedemptionRequest{
+	response, err := m.config.Settle(ctx, RedemptionRequest{
 		X402Version: 2,
 		Payload:     payload,
 		Accepted:    m.config.Requirements,
 	}, m.config.Requirements)
+	var settleErr *x402.SettleError
+	if errors.As(err, &settleErr) {
+		return &x402.SettleResponse{
+			Success:      false,
+			ErrorReason:  settleErr.ErrorReason,
+			ErrorMessage: settleErr.ErrorMessage,
+			Payer:        settleErr.Payer,
+			Transaction:  settleErr.Transaction,
+			Network:      settleErr.Network,
+		}, nil
+	}
+	return response, err
 }
 
 // claimBatchSize is how many channels one claim request carries: the

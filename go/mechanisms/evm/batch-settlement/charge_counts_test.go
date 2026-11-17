@@ -26,12 +26,6 @@ var chargeCountChannel = ChannelConfig{
 	Salt:               "0x" + strings.Repeat("00", 32),
 }
 
-func TestChargeCountsMetadataKey(t *testing.T) {
-	if ChargeCountsMetadataKey != "x402ChargeCounts" {
-		t.Fatalf("ChargeCountsMetadataKey = %q", ChargeCountsMetadataKey)
-	}
-}
-
 func TestChargeCountsMetadata_WrapsCountsUnderKey(t *testing.T) {
 	got := ChargeCountsMetadata([]uint64{3, 0, 41})
 	want := map[string]any{"x402ChargeCounts": []uint64{3, 0, 41}}
