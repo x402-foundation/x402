@@ -325,6 +325,8 @@ ends, and released otherwise.
 Claims SHOULD survive restarts for as long as they are kept. A store that loses them, such as one
 kept in memory, lets a payment that already settled settle again within its window and be reported
 as a second success.
+Such a store does not meet the generic spec's retention requirement, and suits only a single process
+that accepts that risk.
 
 ## Security Considerations
 
