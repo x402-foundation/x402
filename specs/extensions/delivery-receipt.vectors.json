@@ -576,6 +576,226 @@
     ],
     "buyerObservedOutput": null
   },
+  "negative": {
+    "description": "Negative fixtures. Each one changes the endToEnd fixture in one respect and, where the payload changed, is re-signed with the published test seeds (endToEnd.seeds.receiptKeys). Shared inputs are $ref pointers into this file. The ml-dsa-65 signatures were produced by a hedged signer: verify them, do not expect to reproduce them.",
+    "author": "Tetsuroh Hori (@Tetsurohhori)",
+    "source": "https://github.com/aos-standard/catalog/blob/036e9ab/docs/runs/x402-delivery-receipt-cold/RUN.md",
+    "contributed": "x402-foundation/x402#3758, 2026-11-16, under this repository's license",
+    "generator": "aos-standard/catalog docs/runs/x402-delivery-receipt-cold/build_proposed.py (clean-room verifier, not the reference)",
+    "signedWith": "the published test seeds endToEnd.seeds.receiptKeys (0202…×32) for both algorithms; ML-DSA-65 signatures are hedged (openssl 3.6), so verify, do not re-sign",
+    "fixtures": {
+      "keyDirectoryDigestMismatch": {
+        "description": "endToEnd payload with keyDirectoryDigest replaced by another 64-hex value and re-signed with the published receipt seeds. The epoch resolves and the signatures verify; §7.5 step 2 fails: the receipt is not trusted.",
+        "receipt": {
+          "payload": {
+            "version": 1,
+            "issuer": "https://api.example.com",
+            "resourceUrl": "https://api.example.com/premium-data",
+            "method": "GET",
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "amount": "10000",
+            "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            "transaction": "0x5c6e0000000000000000000000000000000000000000000000000000000000a1",
+            "logIndex": 312,
+            "paymentId": null,
+            "responseStatus": null,
+            "responseContentType": "application/json",
+            "delivery": {
+              "mode": "body",
+              "sha256": "98cbaf8d7df338a7b9f0331693bd866d76be025663328afdaf6b9fee2a0a5813"
+            },
+            "keyDirectoryEpoch": 1,
+            "keyDirectoryDigest": "af0c607df5cfc7d553a57fe7565b19a3971ecd3ae300a8e86468633eae4fba32",
+            "issuedAt": 1790473960
+          },
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "kid": "153053ad13ee065b",
+              "signature": "7ccdFAcivlLGsW6d6yURio2KdvjPHbdxR6qwOyJaLykRvasrwNywi1y6A83kQ9G4A9dFLe6XPzcWFUrCzCibAA=="
+            },
+            {
+              "alg": "ml-dsa-65",
+              "kid": "c47ca781ddf6ace8",
+              "signature": "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"
+            }
+          ]
+        }
+      },
+      "amountInflatedResigned": {
+        "description": "endToEnd payload with amount 10000 → 10000000, re-signed with the published receipt seeds. Everything a third party can check passes (integrity, authentic, trusted); only the client's own observation (SettleResponse / accepted requirements, §8.3) catches it. This is the §12 boundary: a receipt is the issuer's admission, not an independent witness of the amount.",
+        "receipt": {
+          "payload": {
+            "version": 1,
+            "issuer": "https://api.example.com",
+            "resourceUrl": "https://api.example.com/premium-data",
+            "method": "GET",
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "amount": "10000000",
+            "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            "transaction": "0x5c6e0000000000000000000000000000000000000000000000000000000000a1",
+            "logIndex": 312,
+            "paymentId": null,
+            "responseStatus": null,
+            "responseContentType": "application/json",
+            "delivery": {
+              "mode": "body",
+              "sha256": "98cbaf8d7df338a7b9f0331693bd866d76be025663328afdaf6b9fee2a0a5813"
+            },
+            "keyDirectoryEpoch": 1,
+            "keyDirectoryDigest": "40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6",
+            "issuedAt": 1790473960
+          },
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "kid": "153053ad13ee065b",
+              "signature": "5P31vSQNjM1IxcQyaNIeNS4SWQivFwjPZwrDUF//vNOXqveRiSTmcMHT1iPoeBdI5DTJ3gFnBSuQaf1nzTTkCQ=="
+            },
+            {
+              "alg": "ml-dsa-65",
+              "kid": "c47ca781ddf6ace8",
+              "signature": "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"
+            }
+          ]
+        }
+      },
+      "mlDsa65Stripped": {
+        "description": "endToEnd receipt with the ml-dsa-65 entry removed. §6.1: a receipt that lacks either baseline signature is malformed (integrity fails) on every path, including the session path that would not have checked it.",
+        "receipt": {
+          "payload": {
+            "version": 1,
+            "issuer": "https://api.example.com",
+            "resourceUrl": "https://api.example.com/premium-data",
+            "method": "GET",
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "amount": "10000",
+            "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            "transaction": "0x5c6e0000000000000000000000000000000000000000000000000000000000a1",
+            "logIndex": 312,
+            "paymentId": null,
+            "responseStatus": null,
+            "responseContentType": "application/json",
+            "delivery": {
+              "mode": "body",
+              "sha256": "98cbaf8d7df338a7b9f0331693bd866d76be025663328afdaf6b9fee2a0a5813"
+            },
+            "keyDirectoryEpoch": 1,
+            "keyDirectoryDigest": "40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6",
+            "issuedAt": 1790473960
+          },
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "kid": "153053ad13ee065b",
+              "signature": "lgSqOf7X4NQ9xmDrBuwJA7VLRWnLI3ZpTomg2EFkBRwa5OG9gAf1kb8/LneQfndfIJD0PAB4zXzERuXTEtRDDA=="
+            }
+          ]
+        }
+      },
+      "splitVerdict": {
+        "description": "endToEnd payload re-signed; the ml-dsa-65 signature has one byte flipped, the ed25519 signature is valid. §6.1: the archival path verifies every entry and fails; the session path passes and MUST report ml-dsa-65 as not checked. A result from the session path is not long-term evidence.",
+        "receipt": {
+          "payload": {
+            "version": 1,
+            "issuer": "https://api.example.com",
+            "resourceUrl": "https://api.example.com/premium-data",
+            "method": "GET",
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "amount": "10000",
+            "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            "transaction": "0x5c6e0000000000000000000000000000000000000000000000000000000000a1",
+            "logIndex": 312,
+            "paymentId": null,
+            "responseStatus": null,
+            "responseContentType": "application/json",
+            "delivery": {
+              "mode": "body",
+              "sha256": "98cbaf8d7df338a7b9f0331693bd866d76be025663328afdaf6b9fee2a0a5813"
+            },
+            "keyDirectoryEpoch": 1,
+            "keyDirectoryDigest": "40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6",
+            "issuedAt": 1790473960
+          },
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "kid": "153053ad13ee065b",
+              "signature": "lgSqOf7X4NQ9xmDrBuwJA7VLRWnLI3ZpTomg2EFkBRwa5OG9gAf1kb8/LneQfndfIJD0PAB4zXzERuXTEtRDDA=="
+            },
+            {
+              "alg": "ml-dsa-65",
+              "kid": "c47ca781ddf6ace8",
+              "signature": "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"
+            }
+          ]
+        }
+      },
+      "issuedInFuture": {
+        "description": "endToEnd payload with issuedAt = now + 3600 (beyond the default 300 s allowance of §7.4), re-signed. Integrity and the signatures pass; trusted fails.",
+        "receipt": {
+          "payload": {
+            "version": 1,
+            "issuer": "https://api.example.com",
+            "resourceUrl": "https://api.example.com/premium-data",
+            "method": "GET",
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+            "amount": "10000",
+            "payer": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+            "transaction": "0x5c6e0000000000000000000000000000000000000000000000000000000000a1",
+            "logIndex": 312,
+            "paymentId": null,
+            "responseStatus": null,
+            "responseContentType": "application/json",
+            "delivery": {
+              "mode": "body",
+              "sha256": "98cbaf8d7df338a7b9f0331693bd866d76be025663328afdaf6b9fee2a0a5813"
+            },
+            "keyDirectoryEpoch": 1,
+            "keyDirectoryDigest": "40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6",
+            "issuedAt": 1790477560
+          },
+          "signatures": [
+            {
+              "alg": "ed25519",
+              "kid": "153053ad13ee065b",
+              "signature": "OWTqBnRqC5OEqhxEe+3eG2Hy3UIm84K7KbftUpq7x4gKnKRlA/hum/lwe0wOX8mUbR8bTDPM9u+AP0/qwtjmDA=="
+            },
+            {
+              "alg": "ml-dsa-65",
+              "kid": "c47ca781ddf6ace8",
+              "signature": "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"
+            }
+          ]
+        }
+      },
+      "framingUnregistered": {
+        "description": "endToEnd/stream with delivery.framing = \"ndjson\" (not registered by v0.2.1), receipt inline in the terminal event, re-signed. §5.6: a verifier MUST reject (integrity) a stream receipt whose framing is not registered, before any digest is compared.",
+        "resourceUrl": "https://api.example.com/live-feed",
+        "eventStream": "data: {\"seq\":0,\"price\":\"64000\"}\n\ndata: {\"seq\":1,\"price\":\"64001\"}\n\ndata: line one\ndata: line two\n\nevent: x402-delivery-receipt\ndata: {\"frameCount\":3,\"digest\":\"3cadd9495a2863d2faffaebd7c4c5a8f76f75baa1d480fbaddb0fc92aa4a6df8\",\"receipt\":{\"payload\":{\"version\":1,\"issuer\":\"https://api.example.com\",\"resourceUrl\":\"https://api.example.com/live-feed\",\"method\":\"GET\",\"scheme\":\"exact\",\"network\":\"eip155:8453\",\"asset\":\"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\",\"payTo\":\"0x209693Bc6afc0C5328bA36FaF03C514EF312287C\",\"amount\":\"10000\",\"payer\":\"0x857b06519E91e3A54538791bDbb0E22373e36b66\",\"transaction\":\"0x5c6e0000000000000000000000000000000000000000000000000000000000a1\",\"logIndex\":312,\"paymentId\":null,\"responseStatus\":200,\"responseContentType\":\"text/event-stream\",\"delivery\":{\"mode\":\"stream\",\"framing\":\"ndjson\",\"frameCount\":3,\"digest\":\"3cadd9495a2863d2faffaebd7c4c5a8f76f75baa1d480fbaddb0fc92aa4a6df8\"},\"keyDirectoryEpoch\":1,\"keyDirectoryDigest\":\"40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6\",\"issuedAt\":1790473960},\"signatures\":[{\"alg\":\"ed25519\",\"kid\":\"153053ad13ee065b\",\"signature\":\"s5RHdsMpkDJNTiGipjgKqNbLUoFeJi4l2nzSVdLHKuRMXka5awe4B1e2x2LmvLk3IvfPcyMOKXp/0/jKatHhCg==\"},{\"alg\":\"ml-dsa-65\",\"kid\":\"c47ca781ddf6ace8\",\"signature\":\"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\"}]}}\n\n"
+      },
+      "eventAfterTerminal": {
+        "description": "endToEnd/stream event stream with one more data event appended after the terminal event. The receipt is the original; the digest over the first three frames still matches. §5.6: events after the terminal event are not covered and their presence is a delivery failure.",
+        "resourceUrl": "https://api.example.com/live-feed",
+        "eventStream": "data: {\"seq\":0,\"price\":\"64000\"}\n\ndata: {\"seq\":1,\"price\":\"64001\"}\n\ndata: line one\ndata: line two\n\nevent: x402-delivery-receipt\ndata: {\"frameCount\":3,\"digest\":\"3cadd9495a2863d2faffaebd7c4c5a8f76f75baa1d480fbaddb0fc92aa4a6df8\",\"receipt\":{\"payload\":{\"version\":1,\"issuer\":\"https://api.example.com\",\"resourceUrl\":\"https://api.example.com/live-feed\",\"method\":\"GET\",\"scheme\":\"exact\",\"network\":\"eip155:8453\",\"asset\":\"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\",\"payTo\":\"0x209693Bc6afc0C5328bA36FaF03C514EF312287C\",\"amount\":\"10000\",\"payer\":\"0x857b06519E91e3A54538791bDbb0E22373e36b66\",\"transaction\":\"0x5c6e0000000000000000000000000000000000000000000000000000000000a1\",\"logIndex\":312,\"paymentId\":null,\"responseStatus\":200,\"responseContentType\":\"text/event-stream\",\"delivery\":{\"mode\":\"stream\",\"framing\":\"sse\",\"frameCount\":3,\"digest\":\"3cadd9495a2863d2faffaebd7c4c5a8f76f75baa1d480fbaddb0fc92aa4a6df8\"},\"keyDirectoryEpoch\":1,\"keyDirectoryDigest\":\"40b0560cd3637678eef1ff13743dfbac97ed6f153dcabebc536e3bc5e1e9e4a6\",\"issuedAt\":1790473960},\"signatures\":[{\"alg\":\"ed25519\",\"kid\":\"153053ad13ee065b\",\"signature\":\"UV/wNpJtf1pLLa2Z+WgdFr0ASv5vC8lZgkNx6pLrfY0ENogvsFd66kG6V9Cdo8kY9ithDpjtiOAV+acsBXBIDA==\"},{\"alg\":\"ml-dsa-65\",\"kid\":\"c47ca781ddf6ace8\",\"signature\":\"+w+M8RhYaSIoWHbKa6T32ocYVrNoxoZ/qi+ZR162pXCsPusGQqDTHzynk23oJmR4ApH7kE4c8TTnOesrkdq1qHfD0RyeRKCTO/JQ9TuuJ+gCZRIb/sW6fKoQSn/SbXXCTnCJo2mOh3y0mQfib/4wbXvPqJ+3zHPd0wIXf9YVd+HXfH8m/N78TPwgj9IOnWfxS3+ZJRs+glFyZXeD+7ijORzO3qQI0W9V7FiU+4yiwhesH195E+f0taOhfFUaqPmqiN2Gm7wdEAHVhsVqXPDL3KHNp9XZdb7NZDSqgs9C3nSM5vw9nITEx1OF+rYZmbh5P6koR11YzK4qcMTeOsp4/8ac1qXsYABfY4ecAsb/dooI67mo2kuBI/3rqRKtWRBfUJtBSVfXUVpWKBtjakN0O00xG9hOWgQ3dqJCvFGR/CIWKtK2tr4eZHtm+LUrFOevrw8RN2jaUqzQD2JE5F8sSwdiDcL/+DohS/hF4rGaS85nLbLa6gA/mQkQInVWPMZNO4GrQxPsSl4JOMFScI52UA1mkIk3WtxtsKiiwS872ggRFl7udjmzYwZEPrIRCDVR1Xqxy60A4jJVN0vmdTSE0GhkOVBde0R6oLUtN91Knbnc+/yGjEOz3SwKegqDh7HnE3P9/PTRBjArJGxKz6UaItna6GUzo+jqI9OcRsWQ6pWE8TYfMVPvkqP/FSgqlUt8mP67Iv2CyZNUAVN5FSq+9vXt4DO7MKU36uJwAXxUTePbwLeXF0eq6lOexlcgy37lR2Bqk6qHBU6hff3n1YEpl5fO1wc/ECNGn/hIzYsmZgGg2N1FRHYeQoTM8D88cD9pMzaOYSdkD7cWtFFycuFfZBk5MosoBxYpT1AQeq0dSZbns3LuUt6FIRbKOItyN1G5J+TGPoueXSYo9wcjGbZLK8SRReraFKCllMo86WX5mXf8MZkBV2CCb/5cSYl5tdnXYpxZiwPHYwi5A6LYZCCwMkjlMZ9zhALgyvs8YWwVaMqZvX7Ofdrgfd59fm8+uKyQBL2/J/E2cug0CnpMPIvoRfKNjKz26yAt59UUju25q88I/y+HRDQyac6JyGcCFdIZ/vwzmRa5vOS36cZGKRfsvbHlcAmWGTOLYUU/F0o4Zc+tfe/rNR0hFAP8gbl8RV7WJRt9WCL0WpKRPy322qKMMRukESxvX6zrHahLbhu8OtHs0Y7OZHMHgith2Yuby6YuOKnba25e+7Je8FMjpnSOcoXkp9U89PBtCLl/hh7xqGZzUJzBymG0WLTIEHZCO3ZjZ3/OZ9+N2bkBJgQm4AUIXxypwA1qYYMelonX2HfJ/lHFGd6DqGPiorMr0M1omUR7Q+3pTQyz75cZfFTYmOTf95IFXxGl9MxvgSOrWHx7BgqZ0f7cIX5o9pzAAz3p8Ep3zxf1ERkE3AVdEfJCnfafKbIGZitrOrSLRA5sOBZWm7HL/NNGcw0n8njC9roJv/91IZANEwvfzy1Tvt5LEUagPVPuRoTdWKi99L/Rba6RzHB9U4dF2lTz/rq380jMjSrEaRon1baHvbqth1tUZZUW/WLJKwNcJwJPzGIiEObt8t6h4h2wFF3/0pQ6Vdv1GtTm40Zapz4hpi4j88Yn+7mQ6ucLfhBQ4PLB9pWw4RHFshHzIePlU+JhEI0iveG8e+M+5aSrgvSpL+UWKvplw6GcE8QTLgLFlvcXkZ5l+RCeUnwfppEqrI9aeO8M86PakC333MmTaxZRAZnHm1aDHplREx5zHf5JDopEP5WLC1Jj44j7QXk3P+PCshBc2Se2oE3VX1PNoj7NVczjde+7rvCuZASjW9uWjquRCaDcXTubCWJ2fVzv0bwd2caFw2eJRMbw17L7mYyr38PpYRe7QmaFEC1WqHobnu0y0JPJbPRrscj+BVISEenFddb832EuNHWj9/CJo22d05naPJGewa1lgGfXy+tJMkMcalPoQO4nIoT7afDo17+4e/UEK9ZNHIrq3F9CqChj1CsWEJaj44SjUmZPFa261PO8MqI/+6Y5WPwvD7fqDcssziHh4RjhdGTpd3Xh8yB3CQPFwBukJVw56Bx03ec9a9IrgEhWjrF0Zoig0IEEFFdODsy18MVZymHn5XOlhSnI482WtBJ0od/9vPYxPeMwJkdO0TDNlm7UZ+QqYFPoNwbC75EZnvShkRZsoPV31JVZDhTszNEKq+6cKHv0gxNioLCNSlWr7FxVf9ygPO3bT/PWMsMXkbyx6PFv04+dhu14GwWDpO/Sx4hh3JUffZeC14mwrlXcl2EVO3A2kOFXuvzSMlEKiJUkyMFKv+lMZtLHxTPguocTPWoqmyl3DRuiYDzWvutUHiPho66ZjI1b5y6lsAqdRk7Jahci7+5itGJgT3G6HJxbATwAoo8Zcc8M+R32b8zwyI0wpyR/gQ65honAW7Q2Kv+pe7sqKiyzHUvG99Jz/b3ur6W1UXeYV6C36nV9IDDvrkYA8QJL+cNIaDgXV91fhj5fXD+td/Ji2vSs31wABRr7hTbWy3u35u/RUpKzItqE92ZXfkBL8A0UVJD6vFq5iocAwfeBE2DrORo2fRIJBXhK6YyvEDMZ/rC6jSwj5OGijJQit/ViUChxBryeG++ULjgtjLg+goc1w5FU8m/mjAZExJYP4jlPFDA4fmtEVvXQ0KIKy71SjQD5Yd8UoOAAahpLOzVbmUg9BhLCPSEfsKZbcN4ibaspfBjgS8hgMtfk2woj0u3Wyw+Kn7OA9KLvNeGmsnv+gNkZqg6YzxMLa0tywb1F9t5QRO/sNCNqjJnfauJiW7rhcoaLKOZl2RbO+AV5kuphGgjZw3jm1nt90R2Ow/yaScL5t6q/jw/3VI/XWFnsXTZ1rz2nyJOWreuUBs79fr1Q/QaZuJToXn3iDl0TEwpxhAA9cShiKRQ+cPzpfsySHYGk/3Zsob62x5Fc4+ZML1Bkm/hr02XgE5364wA2IDgsmmRJ2OGqIOs9Ts9hRfdrQs/Zp5aAjGrv4Ntl6XyTSkBu8XJjtZWh0kz7x3aWNqF0G2mecj3bjbJsrDKEqSoOzhLegTvqsdN47MKkQRHex8pQDl1yLvxed16BEmS4gk0ZN5g0k7elHrkcg898e9krQCIhneh3HhcqbYNQKlieCEUYseo2OvSxqFJd0I2A9C6/JIwDoczFQG19AzhQqZ7ETR+up/dzZpsWhUFwipXFHDdp+W2dKZ9Z0Fod2FdHzjMsG2Jc6t6HH+nuinBFpWFB8WFIwpGYCWe0oQ20fKU08xp3YMh7xcVLf+LPKpibqEgTIiPzlICfeAbSdbEL3tJtS7BNc5XoafCbuFqx5fB2qnJmUkBIDv+7NHXhWA7M2GrV7ATI8DR2YEFyOFmIr03rJlkmNzEN21CJwLyHKwMJh20KtLk2/qlv5jzUUYk7b/bHQ1eQdVYGA5FLf6mHsNMv5tD+oD64ipovWHFWsdrDeBuHdu+BhZxB/x5fraNmxO2Uw9XBBug7PoxI7cT55NBMKNmp711chDcVWHlhVLiZIMtl3C3ep/dtkT3cJ6w4sODPfYnTbttzN30tNU+tKFOs6ON37Gisj9C/9Y3xakKfbEZWwvw5G/GLPmXPD1Ne9GQbGiolUF6OWW8PxORAAvK0JAIqFpuyKzQwrT0FvO+dDWDpdGq4Np7T1Ms25bs+cvbf+o6/19R6xXLZVqZtsekY8vMTRaq0ak2R+jwezy0KRMFA+AicuQTmcf+w5Tpp0V0csvTCaSTpZolZaExJh55TAKjzGd+Tccv6rN89HlYJui6ZHYkXdUH/wUKRye8BU75ax4pIG/d8cZASg1gJgrcniUoTa5gEDKXEvd5Zn9FVtGaHqOuvDGmvJbx11KihC812pccIeIpCBOh7C0Z8YETPMQY8cZZtdomM3NZJHJZ+5OsB6KyheoM7E/RMxCxQQcr+68QjJlS33a60ZEhpwHoNsh0VctePzQmkNQbiNgb0Dae0frZo+hZL92YejhyWZ7FqGaaS+8kUot08CiE84An/j1NvW3a8pgsfIqvFORAJJWCMxGcSNar12aETsrCo7k2XgJBXOc3n3UN6wsrIw7TbFeRjigUgs5SPWH6VFjj4NJ1kZa824FR5/nUklrq0FRfoeLOAKYCcYP2fJH06mF5GAimTggjzKLXL8xWV2+vwrXDrwSHM+Od0Nzpvx1sROXQlydmvuH88MK7l85akMqNJTOUedVf+3Q6qUWE3DtJLCnjRY3vGBXs+mrpSILxQbGcryM5Wfkn7ceDKA1KSP24qgjH8PLWSIsLNrViYbIuejdPIryjNIEwv+28HKAZZ67avG621bpMD4rnIgCGlW6uVizcYH1pqbJ/G2StOYWq/y/dZjJ/+GltcnNHsECZWWF1hfqy+7PE2aHSUAAAAAAAAAAAAAAAAAAAACA8TGSQo\"}]}}\n\ndata: {\"seq\":3,\"price\":\"64003\"}\n\n"
+      }
+    }
+  },
   "expectedVerdicts": [
     {
       "id": "endToEnd/body/session",
@@ -1246,6 +1466,487 @@
         "buyerObservedOutput": "none"
       },
       "automaticRepayment": false
+    },
+    {
+      "id": "keyDirectoryDigestMismatch/session",
+      "vector": "/negative/fixtures/keyDirectoryDigestMismatch",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/keyDirectoryDigestMismatch/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "trusted",
+        "code": "KEY_DIRECTORY_DIGEST_MISMATCH"
+      },
+      "note": "longTermEvidence is false because trusted fails (§8.1)"
+    },
+    {
+      "id": "keyDirectoryDigestMismatch/archival",
+      "vector": "/negative/fixtures/keyDirectoryDigestMismatch",
+      "path": "archival",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/keyDirectoryDigestMismatch/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "trusted",
+        "code": "KEY_DIRECTORY_DIGEST_MISMATCH"
+      },
+      "note": "longTermEvidence is false because trusted fails (§8.1)"
+    },
+    {
+      "id": "amountInflatedResigned/session",
+      "vector": "/negative/fixtures/amountInflatedResigned",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/amountInflatedResigned/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "pass",
+        "settlement": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "settlement",
+        "code": "SETTLEMENT_MISMATCH"
+      }
+    },
+    {
+      "id": "amountInflatedResigned/archival",
+      "vector": "/negative/fixtures/amountInflatedResigned",
+      "path": "archival",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/amountInflatedResigned/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "pass",
+        "settlement": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": true,
+      "reason": {
+        "level": "settlement",
+        "code": "SETTLEMENT_MISMATCH"
+      },
+      "note": "longTermEvidence is true: authentic and trusted pass on the archival path; the receipt is genuine evidence of what the issuer signed, and it does not match this settlement"
+    },
+    {
+      "id": "mlDsa65Stripped/session",
+      "vector": "/negative/fixtures/mlDsa65Stripped",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/mlDsa65Stripped/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "integrity",
+        "code": "SIGNATURES_SHAPE"
+      },
+      "note": "one entry left: the 2–4 entry count of §5.3 fails before the baseline-pair check; a verifier that checks the pair first reports the missing ml-dsa-65 instead — same level"
+    },
+    {
+      "id": "mlDsa65Stripped/archival",
+      "vector": "/negative/fixtures/mlDsa65Stripped",
+      "path": "archival",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/mlDsa65Stripped/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "integrity",
+        "code": "SIGNATURES_SHAPE"
+      },
+      "note": "one entry left: the 2–4 entry count of §5.3 fails before the baseline-pair check; a verifier that checks the pair first reports the missing ml-dsa-65 instead — same level"
+    },
+    {
+      "id": "splitVerdict/session",
+      "vector": "/negative/fixtures/splitVerdict",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/splitVerdict/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "pass",
+        "settlement": "pass",
+        "delivery": "pass"
+      },
+      "valid": true,
+      "longTermEvidence": false,
+      "reason": null,
+      "note": "the verifier's report MUST list ml-dsa-65 among the algorithms it did not check (§6.1)"
+    },
+    {
+      "id": "splitVerdict/archival",
+      "vector": "/negative/fixtures/splitVerdict",
+      "path": "archival",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/splitVerdict/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "authentic",
+        "code": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "issuedInFuture/session",
+      "vector": "/negative/fixtures/issuedInFuture",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/endToEnd/resourceUrl"
+        },
+        "method": "GET",
+        "responseBody": {
+          "$ref": "/endToEnd/body"
+        },
+        "receipt": {
+          "$ref": "/negative/fixtures/issuedInFuture/receipt"
+        }
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "trusted",
+        "code": "ISSUED_IN_FUTURE"
+      }
+    },
+    {
+      "id": "framingUnregistered/session",
+      "vector": "/negative/fixtures/framingUnregistered",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "eventStream": {
+          "$ref": "/negative/fixtures/framingUnregistered/eventStream"
+        },
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/negative/fixtures/framingUnregistered/resourceUrl"
+        },
+        "method": "GET",
+        "responseStatus": 200
+      },
+      "levels": {
+        "integrity": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "integrity",
+        "code": "DELIVERY_FRAMING"
+      }
+    },
+    {
+      "id": "eventAfterTerminal/session",
+      "vector": "/negative/fixtures/eventAfterTerminal",
+      "path": "session",
+      "offline": false,
+      "inputs": {
+        "eventStream": {
+          "$ref": "/negative/fixtures/eventAfterTerminal/eventStream"
+        },
+        "directory": {
+          "$ref": "/endToEnd/directory"
+        },
+        "pinnedGovernanceKeys": {
+          "$ref": "/endToEnd/governanceKeys"
+        },
+        "now": {
+          "$ref": "/endToEnd/now"
+        },
+        "settle": {
+          "$ref": "/endToEnd/settle"
+        },
+        "requirements": {
+          "$ref": "/endToEnd/requirements"
+        },
+        "resourceUrl": {
+          "$ref": "/negative/fixtures/eventAfterTerminal/resourceUrl"
+        },
+        "method": "GET"
+      },
+      "levels": {
+        "integrity": "pass",
+        "authentic": "pass",
+        "trusted": "pass",
+        "settlement": "pass",
+        "delivery": "fail"
+      },
+      "valid": false,
+      "longTermEvidence": false,
+      "reason": {
+        "level": "delivery",
+        "code": "EVENTS_AFTER_TERMINAL"
+      }
     }
   ]
 }

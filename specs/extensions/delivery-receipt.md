@@ -563,6 +563,9 @@ separately:
 | `settlement` | The payload matches the settlement the client observed (§8.3), and any `offer-receipt` receipt in the same `SettleResponse` agrees with it (§2.1). |
 | `delivery` | The body digest (body mode), or the frame count, running digest and terminal event (stream mode), equal what the client received, and `responseStatus`, when not `null`, equals the observed status. |
 
+When the client did not record the response status, the comparison is not performed, and a verifier SHOULD report
+whether it was.
+
 A verifier MUST report which path it used. A receipt is **valid for the client** only if all five levels pass; a
 level that was not evaluated has not passed, and an implementation that exposes a single "valid" verdict MUST NOT
 return it as true when `settlement` or `delivery` was not evaluated, unless the caller explicitly asked for a
@@ -819,7 +822,8 @@ re-signing if your ML-DSA signer is hedged.
 
 This specification PR carries only the text and `delivery-receipt.vectors.json`. The TypeScript reference
 implementation, its test suite and the OpenSSL-only check referenced below are proposed in a follow-up PR; until
-then they are public at `johnInarti/x402`, branch `feat/delivery-receipt-extension` (commit `3cce288`).
+then they are public at `johnInarti/x402`, branch `feat/delivery-receipt-extension` (commit `9e184e0`, whose
+`test/delivery-receipt-expected-verdicts.test.ts` checks every run of `expectedVerdicts` under the rule of A.7).
 
 **Which runtime checked what.** "The vectors pass" means different things per row, so each check is listed with
 the runtime that performed it:
@@ -985,18 +989,22 @@ entry is one verifier run:
 | `path` | `session` or `archival` (§8.1). |
 | `offline` | `true` only for an explicitly requested third-party evaluation (§8.1). |
 | `inputs` | What the verifier is given, by role: `receipt`, or `reference` + `receiptDocument` (the octets served at `receiptUrl`), or `eventStream`; `directory`; `pinnedGovernanceKeys` (trust basis `pinned`, §7.3); `now`; and what the client observed: `settle`, `requirements`, `resourceUrl`, `method`, `responseBody`, `responseStatus`. A role that is absent was not available to the verifier. A value of the form `{ "$ref": "<JSON Pointer>" }` refers to a value elsewhere in the file; any other value is literal. |
-| `levels` | The result of each of the five levels of §8.1 — `integrity`, `authentic`, `trusted`, `settlement`, `delivery` — as `"pass"`, `"fail"` or `"not-evaluated"`. |
+| `levels` | The result of the levels of §8.1, in the order `integrity`, `authentic`, `trusted`, `settlement`, `delivery`, as `"pass"`, `"fail"` or `"not-evaluated"`, up to and including the first level that did not pass. A level after it is not listed. |
 | `valid` | The single "valid for the client" verdict of §8.1. |
 | `longTermEvidence` | Whether the result is long-term evidence (§8.1). |
 | `reason` | `null` when `valid` is `true`; otherwise `{ "level", "code" }`: the first level that did not pass and why. |
 | `outcomes` | Optional. The four outcomes of §8.4: `receiptValidity` (`valid` when `integrity`, `authentic` and `trusted` pass); `receiptAvailability` (`receiptAvailableToVerifier` when `receiptDocument` hashes to the reference `digest` — the verifier holds a matching copy; availability at the issuer's origin is not evaluated, since no run has a retrieval observation); `resultRecoverability` (`window-open` when `now < recoveryWindow.until`, `expired` when `now >= recoveryWindow.until`; the value `recoverable` is reserved for a run whose inputs record an actual retrieval of the result from the issuer, and no run in this file has one); and `buyerObservedOutput` (`captured` when `inputs` has `responseBody` or `eventStream`, otherwise `none`). Each is computable from the file. |
 | `automaticRepayment` | Optional. Always `false`: §8.4 forbids retrying the payment automatically, and missing output never triggers a second payment. |
+| `note` | Optional. Informative remark on the run; never part of the expectation. |
 
-A verifier conforms on a run when it reports the same `path`, the same value for each of the five levels, and the
-same `valid` and `longTermEvidence`. `reason.level` is part of the expectation; `reason.code` is compared only for
-codes this specification defines (`KEY_DIRECTORY_DIGEST_MISMATCH`, §7.5 step 2, and `DELIVERY_UNCONFIRMED`: the
-`delivery` level was not evaluated because the client holds no observed content to compare). Other codes in the
-file are diagnostics of the reference implementation. This convention restates §8.1 and adds no requirement to it.
+A verifier conforms on a run when it reports the same `path`, the same value for each level listed in `levels`, and
+the same `valid` and `longTermEvidence`. What a verifier reports for a level after the first one that did not pass is
+informative and is not compared: a verifier may stop there or go on evaluating, and the verdict is the same either
+way, because `valid` requires every level to pass (§8.1). `reason.level` is part of the expectation; `reason.code` is
+compared only for codes this specification defines (`KEY_DIRECTORY_DIGEST_MISMATCH`, §7.5 step 2, and
+`DELIVERY_UNCONFIRMED`: the `delivery` level was not evaluated because the client holds no observed content to
+compare). Other codes in the file are diagnostics of the reference implementation. This convention restates §8.1
+and adds no requirement to it.
 
 ## Appendix B. End-to-end vector
 
@@ -1025,3 +1033,13 @@ file are diagnostics of the reference implementation. This convention restates �
   boundary runs (session path, no output, `now` given literally) fix the deadline: at `now = until - 1` the outcome
   is `window-open`, at `now = until` it is `expired`; the levels, `valid`, `reason` and `automaticRepayment` are the
   same on both sides.
+- `negative`: seven negative fixtures contributed by Tetsuroh Hori (@Tetsurohhori) in x402-foundation/x402#3758, each
+  derived from `endToEnd` and, where the payload changed, re-signed with the published test seeds, with eleven runs
+  in `expectedVerdicts`. They pin a directory root that does not match `keyDirectoryDigest` (`trusted`,
+  `KEY_DIRECTORY_DIGEST_MISMATCH`, both paths); an inflated amount that passes every check a third party can make and
+  is caught only by the client's own settlement observation (§8.3, §12); a receipt without its `ml-dsa-65` entry
+  (`integrity` on both paths, §6.1); a broken `ml-dsa-65` signature next to a valid `ed25519` one (valid on the
+  session path with `ml-dsa-65` reported as not checked, `authentic` fails on the archival path, §6.1); an `issuedAt`
+  beyond the allowed skew (`trusted`, §7.4); an unregistered stream framing (`integrity`, §5.6); and an event after
+  the terminal event (`delivery`, §5.6). They were decided by two implementations written separately: the verifier
+  that generated them, written from this text without the reference's code, and the reference.
