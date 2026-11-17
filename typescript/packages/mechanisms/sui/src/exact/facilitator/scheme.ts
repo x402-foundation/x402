@@ -22,6 +22,7 @@ import type {
 } from "../../types";
 import {
   createSuiClientResolver,
+  isPositiveAmount,
   matchExactPayment,
   normalizeSignatures,
   parseBase64Bytes,
@@ -51,6 +52,11 @@ type ValidatedPayment =
 type Rejection = { reason: string; message: string };
 
 /**
+ * The longest a verify's simulation of a sponsored payment is reused by settle.
+ */
+const MAX_VERIFIED_SIMULATION_MS = 10 * 60 * 1000;
+
+/**
  * Sui facilitator implementation for the Exact payment scheme. Verification is
  * effects-only: the facilitator checks that the transaction's balance changes
  * credit `payTo` with exactly `amount`, not how the transaction is built.
@@ -66,6 +72,12 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
   private readonly feePayer?: string;
   private readonly maxSponsoredGasBudget: bigint;
   private readonly guard: SettlementGuard;
+  /**
+   * Sponsored payments whose simulation passed at verify, keyed by digest and
+   * requirements, with the time the result expires. Lets settle skip a second
+   * simulation in the `authorization` flow.
+   */
+  private readonly verifiedSimulations = new Map<string, number>();
 
   /**
    * Creates a new ExactSuiScheme facilitator instance.
@@ -153,12 +165,13 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
         };
       }
 
+      if (validated.sponsored) this.recordVerifiedSimulation(digest, requirements);
       return { isValid: true, invalidReason: undefined, payer: sender };
     } catch (error) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_sui_payload_verification_error",
-        invalidMessage: error instanceof Error ? error.message : String(error),
+        invalidMessage: errorMessage(error),
         payer: "",
       };
     }
@@ -167,8 +180,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
   /**
    * Settle a payment: re-run the offline checks, check the current epoch is in
    * the transaction's window, claim the digest, then submit and report success
-   * only if the executed effects match. The claim is released unless settlement
-   * succeeds.
+   * only if the executed effects match. The claim is kept only on success.
    *
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
@@ -179,26 +191,18 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
     const network = requirements.network;
-    const failure = (errorReason: string, errorMessage?: string, payer = ""): SettleResponse => ({
-      success: false,
-      errorReason,
-      errorMessage,
-      transaction: "",
-      network,
-      payer,
-    });
 
     let validated: ValidatedPayment;
     try {
       validated = await this.validate(payload, requirements);
     } catch (error) {
-      return failure("transaction_failed", errorMessage(error));
+      return settleFailure(network, "transaction_failed", errorMessage(error));
     }
     if (!validated.ok) {
-      return failure(validated.reason, validated.message, validated.payer);
+      return settleFailure(network, validated.reason, validated.message, validated.payer);
     }
 
-    const { sender, digest, minEpoch, maxEpoch, transactionBytes } = validated;
+    const { sender, digest, minEpoch, maxEpoch, transactionBytes, sponsored } = validated;
     const client = this.getClient(network);
 
     // A fullnode answers a re-submitted, already-executed transaction with its
@@ -208,15 +212,19 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       const { systemState } = await client.core.getCurrentSystemState();
       const epoch = BigInt(systemState.epoch);
       if (epoch < BigInt(minEpoch) || epoch > BigInt(maxEpoch)) {
-        return failure(
+        return settleFailure(
+          network,
           "invalid_exact_sui_payload_invalid_expiration",
           `current epoch ${epoch} is outside the transaction's window ${minEpoch}..${maxEpoch}`,
           sender,
+          // An earlier attempt may have executed it, so return the digest
+          // for the caller to reconcile.
+          digest,
         );
       }
-      if (this.guard instanceof SettlementCache) this.guard.observeEpoch(network, epoch);
+      await this.guard.observeEpoch?.(network, epoch);
     } catch (error) {
-      return failure("transaction_failed", errorMessage(error), sender);
+      return settleFailure(network, "transaction_failed", errorMessage(error), sender, digest);
     }
 
     const key: SettlementKey = { network, digest, maxEpoch };
@@ -224,24 +232,31 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     try {
       claimed = await this.guard.claim(key);
     } catch (error) {
-      return failure("transaction_failed", errorMessage(error), sender);
+      return settleFailure(network, "transaction_failed", errorMessage(error), sender, digest);
     }
     if (!claimed) {
-      return failure("duplicate_settlement", `transaction ${digest} was already settled`, sender);
+      return settleFailure(
+        network,
+        "duplicate_settlement",
+        `transaction ${digest} was already settled, or a settle for it is in progress`,
+        sender,
+      );
     }
 
     let result: SettleResponse;
     try {
-      result = await this.submit(
-        payload.payload as ExactSuiPayload,
-        transactionBytes,
-        digest,
-        sender,
-        validated.sponsored,
-        requirements,
-      );
+      result = sponsored
+        ? await this.settleSponsored(payload.payload as ExactSuiPayload, validated, requirements)
+        : await this.submit(
+            payload.payload as ExactSuiPayload,
+            transactionBytes,
+            digest,
+            sender,
+            false,
+            requirements,
+          );
     } catch (error) {
-      result = failure("transaction_failed", errorMessage(error), sender);
+      result = settleFailure(network, "transaction_failed", errorMessage(error), sender, digest);
     }
 
     if (!result.success) {
@@ -253,6 +268,82 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       }
     }
     return result;
+  }
+
+  /**
+   * Settle a sponsored payment. The sponsor pays gas for whatever it co-signs,
+   * so the payment's simulated effects are checked first, unless a recent
+   * verify of the same payment already checked them. Settle can't assume a
+   * verify ran (the `upfront` flow, or a direct call). A transaction that has
+   * already executed, such as a retry after `settlement_pending`, is reported
+   * from its effects without being co-signed again.
+   *
+   * @param suiPayload - The signed payload
+   * @param validated - The payment, after the offline checks
+   * @param requirements - The payment requirements
+   * @returns The settlement response
+   */
+  private async settleSponsored(
+    suiPayload: ExactSuiPayload,
+    validated: ValidatedPayment & { ok: true },
+    requirements: PaymentRequirements,
+  ): Promise<SettleResponse> {
+    const network = requirements.network;
+    const { sender, digest, transactionBytes } = validated;
+    const client = this.getClient(network);
+
+    if (!this.takeVerifiedSimulation(digest, requirements)) {
+      const executed = await this.lookup(client, digest);
+      if (executed) return this.finish(client, executed, digest, sender, requirements);
+
+      const rejection = await this.simulate(client, transactionBytes, requirements);
+      if (rejection) {
+        // A retry after `settlement_pending` can land here while the original
+        // submission is still in flight, so return the digest to reconcile.
+        return settleFailure(network, rejection.reason, rejection.message, sender, digest);
+      }
+    }
+
+    return this.submit(suiPayload, transactionBytes, digest, sender, true, requirements);
+  }
+
+  /**
+   * Record that a sponsored payment's simulation passed at verify. The record
+   * lasts `maxTimeoutSeconds`, capped at {@link MAX_VERIFIED_SIMULATION_MS}.
+   *
+   * @param digest - The transaction digest
+   * @param requirements - The requirements it was checked against
+   */
+  private recordVerifiedSimulation(digest: string, requirements: PaymentRequirements): void {
+    const now = Date.now();
+    // Map iteration is in insertion order and no entry outlives
+    // MAX_VERIFIED_SIMULATION_MS, so stop at the first live entry: each entry
+    // is visited once, and an expired entry lingers at most that long.
+    for (const [key, expiresAt] of this.verifiedSimulations) {
+      if (expiresAt >= now) break;
+      this.verifiedSimulations.delete(key);
+    }
+    const ttl = Math.min(
+      Math.max(Number(requirements.maxTimeoutSeconds) || 0, 0) * 1000,
+      MAX_VERIFIED_SIMULATION_MS,
+    );
+    const key = simulationKey(digest, requirements);
+    this.verifiedSimulations.delete(key);
+    this.verifiedSimulations.set(key, now + ttl);
+  }
+
+  /**
+   * Consume a verify's record for a sponsored payment.
+   *
+   * @param digest - The transaction digest
+   * @param requirements - The requirements being settled
+   * @returns True when verify simulated this payment against these requirements recently
+   */
+  private takeVerifiedSimulation(digest: string, requirements: PaymentRequirements): boolean {
+    const key = simulationKey(digest, requirements);
+    const expiresAt = this.verifiedSimulations.get(key);
+    this.verifiedSimulations.delete(key);
+    return expiresAt !== undefined && expiresAt >= Date.now();
   }
 
   /**
@@ -275,11 +366,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     if (payload.accepted.network !== requirements.network) {
       return { ok: false, reason: "network_mismatch", payer: "" };
     }
-    if (
-      typeof requirements.amount !== "string" ||
-      !/^[0-9]+$/.test(requirements.amount) ||
-      BigInt(requirements.amount) <= 0n
-    ) {
+    if (!isPositiveAmount(requirements.amount)) {
       return {
         ok: false,
         reason: "invalid_payment_requirements",
@@ -440,7 +527,9 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
    * Submit the payment, wait for finality, and check the executed effects. A
    * facilitator-sponsored payment goes through the executor; any other goes
    * straight to the network client. If submission or the wait throws, the
-   * transaction is looked up by digest once before reporting failure.
+   * transaction is looked up by digest once. When it is not found, the outcome
+   * is unknown: the submission may still execute, so the result is
+   * `settlement_pending` with the digest, and a retry resubmits the same bytes.
    *
    * @param suiPayload - The signed payload
    * @param transactionBytes - The decoded transaction bytes
@@ -463,7 +552,6 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     const client = this.getClient(network);
 
     let finalized: FinalizedTransaction;
-    let submissionAcknowledged = false;
     try {
       const submitted: SuiExecutorResult =
         sponsored && this.executeTransaction
@@ -471,44 +559,39 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
           : await client.core.executeTransaction({ transaction: transactionBytes, signatures });
 
       if (submitted.$kind === "Rejected") {
-        return {
-          success: false,
-          errorReason: "sponsor_rejected",
-          errorMessage:
-            submitted.reason ??
+        return settleFailure(
+          network,
+          "sponsor_rejected",
+          submitted.reason ??
             submitted.issues
               ?.map(i => i.message)
               .filter(Boolean)
               .join("; "),
-          transaction: "",
-          network,
-          payer: sender,
-        };
+          sender,
+          "",
+        );
       }
       if (submitted.$kind === "FailedTransaction") {
-        return {
-          success: false,
-          errorReason: "transaction_failed",
-          errorMessage: submitted.FailedTransaction.status.error?.message,
-          transaction: submitted.FailedTransaction.digest,
+        return settleFailure(
           network,
-          payer: sender,
-        };
+          "transaction_failed",
+          submitted.FailedTransaction.status.error?.message,
+          sender,
+          submitted.FailedTransaction.digest,
+        );
       }
 
       // The executor must submit the bytes the payer signed.
       if (sponsored && submitted.Transaction.digest !== digest) {
-        return {
-          success: false,
-          errorReason: "transaction_failed",
-          errorMessage: `executor submitted ${submitted.Transaction.digest}, expected ${digest}`,
-          transaction: submitted.Transaction.digest,
+        return settleFailure(
           network,
-          payer: sender,
-        };
+          "transaction_failed",
+          `executor submitted ${submitted.Transaction.digest}, expected ${digest}`,
+          sender,
+          submitted.Transaction.digest,
+        );
       }
 
-      submissionAcknowledged = true;
       finalized = await client.core.waitForTransaction({
         digest: submitted.Transaction.digest,
         include: { balanceChanges: true },
@@ -516,63 +599,77 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     } catch (error) {
       const found = await this.lookup(client, digest);
       if (!found) {
-        // An acknowledged submission can use core's automatic pending retry.
-        // A locally computed digest alone does not establish that it was broadcast.
-        return {
-          success: false,
-          errorReason: submissionAcknowledged ? "settlement_pending" : "transaction_failed",
-          errorMessage: errorMessage(error),
-          transaction: digest,
-          network,
-          payer: sender,
-        };
+        // A submission that threw, even without an acknowledgement, may have
+        // reached a validator and can still execute. Report it as pending with
+        // the digest; a retry resubmits the same signed bytes.
+        return settleFailure(network, "settlement_pending", errorMessage(error), sender, digest);
       }
       finalized = found;
     }
 
+    return this.finish(client, finalized, digest, sender, requirements);
+  }
+
+  /**
+   * Report an executed transaction: success only when it succeeded and its
+   * balance changes credit `payTo` with exactly `amount`.
+   *
+   * @param client - The Sui client
+   * @param finalized - The executed transaction
+   * @param digest - The transaction digest
+   * @param sender - The transaction sender
+   * @param requirements - The payment requirements
+   * @returns The settlement response
+   */
+  private async finish(
+    client: ClientWithCoreApi,
+    finalized: FinalizedTransaction,
+    digest: string,
+    sender: string,
+    requirements: PaymentRequirements,
+  ): Promise<SettleResponse> {
+    const network = requirements.network;
     if (finalized.$kind === "FailedTransaction") {
-      return {
-        success: false,
-        errorReason: "transaction_failed",
-        errorMessage: finalized.FailedTransaction.status.error?.message,
-        transaction: finalized.FailedTransaction.digest,
+      return settleFailure(
         network,
-        payer: sender,
-      };
+        "transaction_failed",
+        finalized.FailedTransaction.status.error?.message,
+        sender,
+        finalized.FailedTransaction.digest,
+      );
     }
 
     let transaction = finalized.Transaction;
     if (!Array.isArray(transaction.balanceChanges)) {
       const fetched = await this.lookup(client, digest);
       if (fetched?.$kind !== "Transaction" || !Array.isArray(fetched.Transaction.balanceChanges)) {
-        return {
-          success: false,
-          errorReason: "transaction_failed",
-          errorMessage: "balance changes for the executed transaction are unavailable",
-          transaction: transaction.digest,
+        return settleFailure(
           network,
-          payer: sender,
-        };
+          "transaction_failed",
+          "balance changes for the executed transaction are unavailable",
+          sender,
+          transaction.digest,
+        );
       }
       transaction = fetched.Transaction;
     }
 
     const problem = this.matchRecipients(transaction.balanceChanges, requirements);
     if (problem) {
-      return {
-        success: false,
-        errorReason: "settlement_effects_mismatch",
-        errorMessage: problem,
-        transaction: transaction.digest,
+      return settleFailure(
         network,
-        payer: sender,
-      };
+        "settlement_effects_mismatch",
+        problem,
+        sender,
+        transaction.digest,
+      );
     }
     return { success: true, transaction: transaction.digest, network, payer: sender };
   }
 
   /**
-   * Simulate the payment (at verify) and check the recipient's credit.
+   * Simulate the payment and check the recipient's credit: at verify, and at
+   * settle before a sponsor co-signs.
    *
    * @param client - The Sui client
    * @param transactionBytes - The transaction bytes
@@ -793,4 +890,42 @@ function isTransactionNotFound(error: unknown, digest: string): boolean {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A failed settlement response.
+ *
+ * @param network - The CAIP-2 network id
+ * @param errorReason - The reason code
+ * @param errorMessage - A description of the failure
+ * @param payer - The payer, when known
+ * @param transaction - The transaction digest, when it may have been submitted
+ * @returns The settlement response
+ */
+function settleFailure(
+  network: Network,
+  errorReason: string,
+  errorMessage?: string,
+  payer = "",
+  transaction = "",
+): SettleResponse {
+  return { success: false, errorReason, errorMessage, transaction, network, payer };
+}
+
+/**
+ * The key for a verified simulation: the transaction and everything the
+ * effects check compared it against.
+ *
+ * @param digest - The transaction digest
+ * @param requirements - The payment requirements
+ * @returns The map key
+ */
+function simulationKey(digest: string, requirements: PaymentRequirements): string {
+  return JSON.stringify([
+    requirements.network,
+    digest,
+    requirements.asset,
+    requirements.payTo,
+    requirements.amount,
+  ]);
 }

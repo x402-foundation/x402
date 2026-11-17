@@ -167,3 +167,15 @@ export function matchExactPayment(
 
   return null;
 }
+
+/**
+ * Whether a value is a positive integer amount in atomic units, written as a
+ * decimal string. Shared by the client, server and facilitator so all three
+ * accept the same amounts.
+ *
+ * @param amount - The amount to check
+ * @returns True for a positive integer string
+ */
+export function isPositiveAmount(amount: unknown): amount is string {
+  return typeof amount === "string" && /^[0-9]+$/.test(amount) && BigInt(amount) > 0n;
+}

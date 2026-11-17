@@ -8,7 +8,11 @@ import {
 } from "../../src/constants";
 import { testRequirements } from "./helpers";
 
-const supportedKind = { x402Version: 2, scheme: "exact", network: SUI_TESTNET_CAIP2 };
+const supportedKind = {
+  x402Version: 2,
+  scheme: "exact",
+  network: SUI_TESTNET_CAIP2 as `${string}:${string}`,
+};
 
 describe("ExactSuiScheme server", () => {
   const scheme = new ExactSuiScheme();

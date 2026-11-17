@@ -552,6 +552,18 @@ describe("ExactSuiScheme facilitator", () => {
       expect(mock.core.executeTransaction).not.toHaveBeenCalled();
     });
 
+    it("returns the digest when the window has passed", async () => {
+      const payload = await payment();
+      const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+      mock.core.getCurrentSystemState.mockResolvedValue({
+        systemState: { epoch: String(EPOCH + 2) },
+      });
+      expect(await scheme.settle(payload, testRequirements())).toMatchObject({
+        errorReason: "invalid_exact_sui_payload_invalid_expiration",
+        transaction: digest,
+      });
+    });
+
     it("re-fetches balance changes missing from the finalized transaction", async () => {
       const payload = await payment();
       const digest = await digestOf((payload.payload as { transaction: string }).transaction);
@@ -672,7 +684,7 @@ describe("ExactSuiScheme facilitator", () => {
           "a thrown execute",
           (core: ReturnType<typeof mockClient>["core"]) =>
             core.executeTransaction.mockRejectedValueOnce(new Error("fullnode unavailable")),
-          "transaction_failed",
+          "settlement_pending",
         ],
         [
           "an effects mismatch",
@@ -683,7 +695,7 @@ describe("ExactSuiScheme facilitator", () => {
             }),
           "settlement_effects_mismatch",
         ],
-      ])("releases the claim after %s", async (_, fail, reason) => {
+      ])("lets a retry settle after %s", async (_, fail, reason) => {
         const payload = await payment();
         settled(successRecord(exactBalanceChanges(), "retried"));
         fail(mock.core);
@@ -751,6 +763,45 @@ describe("ExactSuiScheme facilitator", () => {
           "duplicate_settlement",
         );
         expect(mock.core.executeTransaction).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        [
+          "the epoch read",
+          () => mock.core.getCurrentSystemState.mockRejectedValue(new Error("rpc down")),
+        ],
+        ["the claim", () => undefined],
+      ])("returns the digest when %s throws", async (which, fail) => {
+        fail();
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          settlementGuard: {
+            claim: () => Promise.reject(new Error("store down")),
+            release: vi.fn(),
+          },
+        });
+        const payload = await payment();
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        expect(await s.settle(payload, testRequirements())).toMatchObject({
+          errorReason: "transaction_failed",
+          errorMessage: which === "the claim" ? "store down" : "rpc down",
+          transaction: digest,
+        });
+      });
+
+      it("passes each epoch it reads to the guard", async () => {
+        const guard: SettlementGuard = {
+          claim: vi.fn().mockResolvedValue(true),
+          release: vi.fn(),
+          observeEpoch: vi.fn(),
+        };
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          settlementGuard: guard,
+        });
+        settled(successRecord(exactBalanceChanges()));
+        expect((await s.settle(await payment(), testRequirements())).success).toBe(true);
+        expect(guard.observeEpoch).toHaveBeenCalledWith(SUI_TESTNET_CAIP2, BigInt(EPOCH));
       });
 
       it("keeps a successful claim through maxEpoch, then refuses by epoch", async () => {
@@ -853,12 +904,12 @@ describe("ExactSuiScheme facilitator", () => {
         });
       });
 
-      it("reports an unknown outcome with the digest and releases the claim", async () => {
+      it("reports an unknown outcome as pending with the digest and releases the claim", async () => {
         const payload = await payment();
         const digest = await digestOf((payload.payload as { transaction: string }).transaction);
         mock.core.executeTransaction.mockRejectedValueOnce(new Error("fullnode unavailable"));
         expect(await scheme.settle(payload, testRequirements())).toMatchObject({
-          errorReason: "transaction_failed",
+          errorReason: "settlement_pending",
           errorMessage: "fullnode unavailable",
           transaction: digest,
           payer,
@@ -1065,6 +1116,16 @@ describe("ExactSuiScheme facilitator", () => {
       return { s, executeTransaction, requirements: testRequirements({ extra: { feePayer } }) };
     }
 
+    it("defaults to an in-memory settlement guard", async () => {
+      const s = new ExactSuiScheme({ clients: { [SUI_TESTNET_CAIP2]: mock.client } });
+      const payload = await payment();
+      settled(successRecord(exactBalanceChanges(), "default-guard"));
+      expect((await s.settle(payload, testRequirements())).success).toBe(true);
+      expect((await s.settle(payload, testRequirements())).errorReason).toBe(
+        "duplicate_settlement",
+      );
+    });
+
     it("requires an executor when a fee payer is set", () => {
       expect(() => new ExactSuiScheme({ feePayer })).toThrow("executeTransaction");
     });
@@ -1119,7 +1180,7 @@ describe("ExactSuiScheme facilitator", () => {
       expect((await s.settle(payload, requirements)).success).toBe(true);
     });
 
-    it("does not simulate a sponsored payment at settle", async () => {
+    it("simulates a sponsored payment before calling the executor", async () => {
       const { s, executeTransaction, requirements } = withExecutor(null);
       executeTransaction.mockImplementation(executed);
       mock.core.waitForTransaction.mockResolvedValue({
@@ -1128,7 +1189,136 @@ describe("ExactSuiScheme facilitator", () => {
       });
       const result = await s.settle(await payment({ sponsored: true }, requirements), requirements);
       expect(result.success).toBe(true);
+      expect(mock.core.simulateTransaction).toHaveBeenCalledOnce();
+      expect(mock.core.simulateTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+        executeTransaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      [
+        "underpays",
+        {
+          $kind: "Transaction",
+          Transaction: successRecord(exactBalanceChanges("1")),
+          gasPaymentMocked: false,
+        },
+        "invalid_exact_sui_payload_transfer_mismatch",
+      ],
+      [
+        "fails in simulation",
+        { $kind: "FailedTransaction", FailedTransaction: failureRecord("abort") },
+        "invalid_exact_sui_payload_simulation_failed",
+      ],
+    ])(
+      "rejects a sponsored payment that %s without calling the executor",
+      async (_, simulation, reason) => {
+        const { s, executeTransaction, requirements } = withExecutor(null);
+        mock.core.simulateTransaction.mockResolvedValue(simulation);
+        const payload = await payment({ sponsored: true }, requirements);
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        expect(await s.settle(payload, requirements)).toMatchObject({
+          errorReason: reason,
+          transaction: digest,
+        });
+        expect(executeTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("reports an already-executed sponsored payment without co-signing it again", async () => {
+      const { s, executeTransaction, requirements } = withExecutor(null);
+      const payload = await payment({ sponsored: true }, requirements);
+      const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+      mock.core.getTransaction.mockResolvedValue({
+        $kind: "Transaction",
+        Transaction: successRecord(exactBalanceChanges(), digest),
+      });
+      expect(await s.settle(payload, requirements)).toMatchObject({
+        success: true,
+        transaction: digest,
+      });
+      expect(executeTransaction).not.toHaveBeenCalled();
       expect(mock.core.simulateTransaction).not.toHaveBeenCalled();
+    });
+
+    it("does not simulate a payment the payer pays gas for", async () => {
+      settled(successRecord(exactBalanceChanges(), "self-paid"));
+      expect((await scheme.settle(await payment(), testRequirements())).success).toBe(true);
+      expect(mock.core.simulateTransaction).not.toHaveBeenCalled();
+    });
+
+    describe("reusing verify", () => {
+      /**
+       * A sponsoring facilitator and a sponsored payment.
+       *
+       * @param maxTimeoutSeconds - The requirements' timeout
+       * @returns The scheme, requirements and payload
+       */
+      async function sponsoredPayment(maxTimeoutSeconds = 300) {
+        const { s, executeTransaction, requirements } = withExecutor(null);
+        executeTransaction.mockImplementation(executed);
+        mock.core.waitForTransaction.mockResolvedValue({
+          $kind: "Transaction",
+          Transaction: successRecord(exactBalanceChanges(), "sponsored"),
+        });
+        const reqs = { ...requirements, maxTimeoutSeconds };
+        return { s, reqs, payload: await payment({ sponsored: true }, reqs) };
+      }
+
+      it("skips the settle simulation after a verify of the same payment", async () => {
+        const { s, reqs, payload } = await sponsoredPayment();
+        expect((await s.verify(payload, reqs)).isValid).toBe(true);
+        expect((await s.settle(payload, reqs)).success).toBe(true);
+        expect(mock.core.simulateTransaction).toHaveBeenCalledOnce();
+      });
+
+      it("simulates again when the requirements differ from the verified ones", async () => {
+        const { s, reqs, payload } = await sponsoredPayment();
+        expect((await s.verify(payload, reqs)).isValid).toBe(true);
+        const other = { ...reqs, amount: "2" };
+        expect((await s.settle(payload, other)).errorReason).toBe(
+          "invalid_exact_sui_payload_transfer_mismatch",
+        );
+        expect(mock.core.simulateTransaction).toHaveBeenCalledTimes(2);
+      });
+
+      it.each([
+        ["maxTimeoutSeconds", 60, 60_000],
+        ["the 10-minute cap", 3600, 600_000],
+      ])("keeps the verify record for %s", async (_, maxTimeoutSeconds, lifetimeMs) => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+          const live = await sponsoredPayment(maxTimeoutSeconds);
+          expect((await live.s.verify(live.payload, live.reqs)).isValid).toBe(true);
+          vi.advanceTimersByTime(lifetimeMs);
+          expect((await live.s.settle(live.payload, live.reqs)).success).toBe(true);
+          expect(mock.core.simulateTransaction).toHaveBeenCalledOnce();
+
+          mock.core.simulateTransaction.mockClear();
+          const expired = await sponsoredPayment(maxTimeoutSeconds);
+          expect((await expired.s.verify(expired.payload, expired.reqs)).isValid).toBe(true);
+          vi.advanceTimersByTime(lifetimeMs + 1);
+          expect((await expired.s.settle(expired.payload, expired.reqs)).success).toBe(true);
+          expect(mock.core.simulateTransaction).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("consumes the record, so a retry after settlement_pending checks again", async () => {
+        const { s, reqs, payload } = await sponsoredPayment();
+        expect((await s.verify(payload, reqs)).isValid).toBe(true);
+        mock.core.waitForTransaction.mockRejectedValueOnce(new Error("confirmation timeout"));
+        expect((await s.settle(payload, reqs)).errorReason).toBe("settlement_pending");
+        expect(mock.core.simulateTransaction).toHaveBeenCalledOnce();
+
+        mock.core.getTransaction.mockClear();
+        expect((await s.settle(payload, reqs)).success).toBe(true);
+        expect(mock.core.getTransaction).toHaveBeenCalledWith(
+          expect.objectContaining({ include: { balanceChanges: true } }),
+        );
+        expect(mock.core.simulateTransaction).toHaveBeenCalledTimes(2);
+      });
     });
 
     it("rejects a payment that fails the sponsorship checks before calling the executor", async () => {

@@ -148,7 +148,8 @@ export async function buildTestTransaction(options: TestTransactionOptions = {})
       digest: CHAIN_ID,
     })),
   );
-  tx.setExpiration(expiration);
+  // Test helper deliberately allows malformed expirations.
+  tx.setExpiration(expiration as Parameters<typeof tx.setExpiration>[0]);
 
   return toBase64(await tx.build());
 }
@@ -308,8 +309,19 @@ export function failureRecord(message: string, digest = "failed-digest") {
  *
  * @returns The mock client and its core method mocks
  */
-export function mockClient() {
-  const core = {
+type MockFn = ReturnType<typeof vi.fn>;
+
+export interface MockCore {
+  simulateTransaction: MockFn;
+  executeTransaction: MockFn;
+  getTransaction: MockFn;
+  waitForTransaction: MockFn;
+  getCurrentSystemState: MockFn;
+  [key: string]: unknown;
+}
+
+export function mockClient(): { client: ClientWithCoreApi; core: MockCore } {
+  const core: MockCore = {
     simulateTransaction: vi.fn(),
     executeTransaction: vi.fn(),
     getTransaction: vi

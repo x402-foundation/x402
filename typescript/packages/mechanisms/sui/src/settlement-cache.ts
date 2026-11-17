@@ -1,10 +1,11 @@
 import type { SettlementGuard, SettlementKey } from "./types";
 
 /**
- * In-process settlement guard. Successful claims are kept as long as
- * {@link SettlementGuard} requires. Not shared across processes: when several
- * processes serve `/settle`, supply a {@link SettlementGuard} backed by one
- * shared store with atomic claims.
+ * In-process settlement guard, and the facilitator's default. Successful claims
+ * are kept as long as {@link SettlementGuard} requires. Not shared across
+ * processes and lost on restart, so it suits only development, tests, or a
+ * single process that accepts repeat-settlement risk. Production SHOULD use a
+ * shared, durable {@link SettlementGuard} with atomic claims.
  */
 export class SettlementCache implements SettlementGuard {
   private readonly entries = new Map<string, { network: string; maxEpoch: bigint }>();
