@@ -1069,7 +1069,7 @@ func parseWireVoucher(value any) (batchsettlement.BatchVoucher, bool) {
 	if !ok || !batchsettlement.IsBatchVoucher(record) {
 		return batchsettlement.BatchVoucher{}, false
 	}
-	encoded, err := json.Marshal(record)
+	encoded, err := json.Marshal(jsonnum.CanonicalValue(record))
 	if err != nil {
 		return batchsettlement.BatchVoucher{}, false
 	}
@@ -1084,7 +1084,7 @@ func parseChannelState(value any) (batchsettlement.BatchChannelState, bool) {
 	if value == nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(jsonnum.CanonicalValue(value))
 	if err != nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
@@ -1099,7 +1099,7 @@ func parseVoucherState(value any) (batchsettlement.BatchVoucherState, bool) {
 	if value == nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(jsonnum.CanonicalValue(value))
 	if err != nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}

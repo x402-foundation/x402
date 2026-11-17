@@ -109,7 +109,9 @@ func UptoPayloadFromMap(data map[string]interface{}) (*UptoSvmPayload, error) {
 		normalized["openSlot"] = slot
 		data = normalized
 	}
-	jsonBytes, err := json.Marshal(data)
+	// Integer-valued numbers such as 1.9e9 are rewritten as integers so they
+	// still decode into the int64 fields now that payload maps hold json.Number.
+	jsonBytes, err := json.Marshal(jsonnum.CanonicalValue(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload data: %w", err)
 	}

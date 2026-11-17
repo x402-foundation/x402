@@ -44,3 +44,27 @@ func Canonical(n json.Number) json.Number {
 	}
 	return n
 }
+
+// CanonicalValue returns a copy of a decoded JSON value with every json.Number
+// passed through Canonical, so a payload map re-encoded with json.Marshal still
+// decodes into Go integer fields. The input is not modified.
+func CanonicalValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = CanonicalValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = CanonicalValue(item)
+		}
+		return out
+	case json.Number:
+		return Canonical(v)
+	default:
+		return v
+	}
+}

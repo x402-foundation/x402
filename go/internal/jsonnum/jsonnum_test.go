@@ -39,3 +39,22 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalValue(t *testing.T) {
+	in := map[string]any{
+		"a": json.Number("60.0"),
+		"b": []any{json.Number("6e1"), map[string]any{"c": json.Number("60.5")}},
+		"s": "60.0",
+	}
+	out := CanonicalValue(in).(map[string]any)
+	if out["a"] != json.Number("60") || out["s"] != "60.0" {
+		t.Fatalf("got %#v", out)
+	}
+	arr := out["b"].([]any)
+	if arr[0] != json.Number("60") || arr[1].(map[string]any)["c"] != json.Number("60.5") {
+		t.Fatalf("nested %#v", arr)
+	}
+	if in["a"] != json.Number("60.0") || in["b"].([]any)[0] != json.Number("6e1") {
+		t.Fatalf("input mutated: %#v", in)
+	}
+}
