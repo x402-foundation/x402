@@ -310,6 +310,27 @@ describe("ExactEvmScheme (Server)", () => {
       expect(result.amount).toBe("10000");
     });
 
+    it("rejects a dotted amount when the asset is not a known default", async () => {
+      const network = "eip155:8453";
+      const requirements = {
+        scheme: "exact",
+        network,
+        asset: "0x1234567890123456789012345678901234567890",
+        amount: "0.01",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 3600,
+        extra: {},
+      };
+
+      await expect(
+        server.enhancePaymentRequirements(
+          requirements as never,
+          { x402Version: 2, scheme: "exact", network },
+          [],
+        ),
+      ).rejects.toThrow("not a registered asset");
+    });
+
     it.each(["1e4", "0x2710", "1_000", "+1000", " 1000 "])(
       "rejects non-canonical atomic amount %s",
       async amount => {
