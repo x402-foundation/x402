@@ -4,7 +4,7 @@
 
 When a resource server refuses a payment attempt, x402 today gives no standard way to leave a durable, independently-checkable record of that refusal. A buyer whose payment attempt was rejected has nothing to show afterward except its own word; the seller's "no" leaves no row anywhere for either party to point to later. [Pull request #3776](https://github.com/x402-foundation/x402/pull/3776), §5.5, closes a related but different gap: it makes every acceptance and refusal along a request's path resolve to the same `attempt_identity`. Nothing requires that a refusal be recorded at all. What follows closes that second gap: a signed artifact, a Rejection Receipt, that a resource server can return (or make available) when it rejects a payment attempt, bound to the exact attempt it refused, with a bounded, fail-closed vocabulary for the stated reason and an explicit evidence class per reason, so a reader can tell a claim the resource server can prove apart from one it can only assert.
 
-This is a reference implementation, not a hypothetical: [`agent-receipt-verify`](https://github.com/holistis/agent-receipt-verify) (MIT/Apache-2.0, `npx -y agent-receipt-verify rejection-receipt`) has implemented and tested this checker since 2026-11-10: 26 recorded test vectors across 9 clauses in the reference implementation, every clause carrying at least one acceptance and one rejection, plus a separate real-cryptography suite (EIP-712 signing and verification against a freshly generated key, `did:web` key resolution against a faked fetch, no live network) that adds 50 passing tests and 0 failing ones.
+This is a reference implementation, not a hypothetical: [`agent-receipt-verify`](https://github.com/holistis/agent-receipt-verify) (MIT/Apache-2.0, `npx -y agent-receipt-verify rejection-receipt`) has implemented and tested this checker since 2026-11-10: 26 recorded test vectors across 9 clauses in the reference implementation, every clause carrying at least one acceptance and one rejection, plus a separate real-cryptography suite (EIP-712 signing and verification against a freshly generated key, `did:web` key resolution against a faked fetch, no live network) that brings that file to 79 passing tests and 0 failing ones.
 
 ## 2. Status, Scope, and Relationship to Other Work
 
@@ -41,8 +41,8 @@ Phase 1 stays narrow in a second way, too: it is a verifier, not an issuer. Noth
 | --- | --- | --- | --- |
 | `type` | string | Yes | `x402-rejection-receipt` |
 | `version` | integer | Yes | Currently `1` |
-| `attempt_binding.payment_payload_hash` | string | Yes | Hash binding this receipt to the specific payment payload that was refused |
-| `attempt_binding.payment_requirements_hash` | string | Yes | Hash binding this receipt to the specific payment requirements the attempt was evaluated against |
+| `attempt_binding.payment_payload_hash` | string | Yes | Hash binding this receipt to the specific payment payload that was refused; computed as in §6 |
+| `attempt_binding.payment_requirements_hash` | string | Yes | Hash binding this receipt to the specific payment requirements the attempt was evaluated against; computed as in §6 |
 | `issuer.resource_origin` | string | Yes | The origin that issued this receipt; also the EIP-712 domain salt input (§5), so a signature cannot be replayed against a different resource server |
 | `issuer.key_id` | string | Yes | `did:web:<host>#<fragment>`; resolves to a `did.json` whose matching `verificationMethod.blockchainAccountId` (CAIP-10, `eip155:<chainId>:<address>`) gives the signing address |
 | `decision.outcome` | string | Yes | MUST be `REJECTED` for this format to apply at all |
@@ -50,10 +50,11 @@ Phase 1 stays narrow in a second way, too: it is a verifier, not an issuer. Noth
 | `decision.evidence_class` | string | Yes | One of `ISSUER_ASSERTED`, `CLIENT_VERIFIABLE`, `CHAIN_VERIFIABLE`, `INDEPENDENTLY_WITNESSED`; MUST NOT exceed the ceiling the reason code allows |
 | `decision.final` | boolean | Conditional | MUST be present and `false` when `payment_observation.state` is `SETTLEMENT_PENDING`; MAY be omitted for the other three states, which already describe a resolved outcome |
 | `payment_observation.state` | string | Yes | One of `NOT_SUBMITTED`, `SETTLEMENT_PENDING`, `REJECTED`, `UNKNOWN`; free text (for example `"payment_failed"`) is non-conformant, because the core x402 specification already treats a pending settlement as non-terminal (its own §9, Error Handling, not this document's) and a flattened "failed" erases exactly that distinction |
+| `payment_observation.block_number` | integer | Conditional | The block at which the resource server observed the chain state its reason depends on. Required for `insufficient_funds` to claim `CHAIN_VERIFIABLE` (see the reason table) |
 | `issued_at` | string | Yes | ISO 8601 timestamp |
 | `client_attempt_id` | string | No | An identifier the buyer chooses per submission attempt. Top-level, never part of `attempt_binding` (§6). Not validated for format or uniqueness by this checker; carried through generically like every other field (§5) |
 | `server_observation_id` | string | No | An identifier the resource server chooses per request it actually receives, even when the content duplicates an earlier one. Top-level, never part of `attempt_binding` (§6). Not validated by this checker |
-| `receipt_id` | string | Yes | sha256 hex digest of the RFC 8785 canonical envelope (every field above, excluding `receipt_id` and `signature` themselves) |
+| `receipt_id` | string | Yes | sha256 hex digest, without a `0x` prefix, of the RFC 8785 canonical envelope (§5) |
 | `signature` | string | Yes | See §5 |
 
 Fixed reason table (the ceiling each `reason_code` is honestly allowed to claim):
@@ -63,9 +64,9 @@ Fixed reason table (the ceiling each `reason_code` is honestly allowed to claim)
 | `invalid_signature` | `CLIENT_VERIFIABLE` |
 | `wrong_amount` | `CLIENT_VERIFIABLE` |
 | `wrong_recipient` | `CLIENT_VERIFIABLE` |
-| `invalid_exact_evm_payload_authorization_valid_before` | `CHAIN_VERIFIABLE` |
-| `invalid_exact_evm_payload_authorization_valid_after` | `CHAIN_VERIFIABLE` |
-| `insufficient_funds` | `CHAIN_VERIFIABLE` |
+| `invalid_exact_evm_payload_authorization_valid_before` | `CLIENT_VERIFIABLE` |
+| `invalid_exact_evm_payload_authorization_valid_after` | `CLIENT_VERIFIABLE` |
+| `insufficient_funds` | `CHAIN_VERIFIABLE` with `payment_observation.block_number`, otherwise `ISSUER_ASSERTED` |
 | `duplicate_payment` | `CHAIN_VERIFIABLE` |
 | `duplicate_payment_internal_record` | `ISSUER_ASSERTED` |
 | `facilitator_timeout` | `ISSUER_ASSERTED` |
@@ -73,27 +74,56 @@ Fixed reason table (the ceiling each `reason_code` is honestly allowed to claim)
 | `commercial_refusal` | `ISSUER_ASSERTED` |
 | anything else | `ISSUER_ASSERTED` (fail closed) |
 
+A balance can only be checked at a block. Without `payment_observation.block_number` a third party can reproduce a similar claim, not this one, so the ceiling for `insufficient_funds` drops to `ISSUER_ASSERTED`. The two validity-window codes compare fields inside the payment payload with a time; anyone holding the payload can check the fields, and the time is the issuer's own `issued_at`, so the chain adds nothing and the honest ceiling is `CLIENT_VERIFIABLE`.
+
 This table belongs to this proposal, not to an x402 enumeration. If x402 later defines its own error codes for refusals, check this table against that list, not the reverse.
 
 `duplicate_payment` and `duplicate_payment_internal_record` are deliberately two different codes for what can look like one fact. Use `duplicate_payment` only when an independent third party can confirm the underlying payment authorization was already consumed on-chain. Use `duplicate_payment_internal_record` when the resource server, or a facilitator relaying for it, recognized the repeat only from internal records (a database row, an in-memory table, a facilitator's own bookkeeping), with nothing on-chain to check. The first is honestly `CHAIN_VERIFIABLE`; claiming that ceiling for the second would be an overclaim this checker now rejects (§10, step 3).
 
-The §9 example also carries `payment_observation.network` and `payment_observation.transaction`: realistic, implementation-useful context, but not part of this format's required schema and not read by the reference implementation's verification logic. An implementation MAY include fields like these; a verifier MUST NOT require them.
+The §9 example also carries `payment_observation.network` and `payment_observation.transaction`: realistic, implementation-useful context, but not part of this format's required schema and not read by the reference implementation's verification logic. An implementation MAY include fields like these; a verifier MUST NOT require them. When present they are part of the envelope and therefore signed (§5).
 
 ## 5. Computing the Receipt Identifier and Signature
 
 ```text
-receipt_id = sha256_hex( canonicalize(envelope) )
-digest     = sha256( canonicalize(envelope) )             // the bytes32 that gets signed
-signature  = EIP-712 typed-data signature over { digest }, domain =
-               { name: "x402-rejection-receipt", version: "1",
-                 salt: sha256(issuer.resource_origin) }
+envelope   = the receipt object with the members receipt_id and signature removed
+receipt_id = sha256_hex( canonicalize(envelope) )        // 64 lowercase hex, no 0x
+digest     = 0x || receipt_id                             // the bytes32 that gets signed
 ```
 
-`envelope` is every field in §4 except `receipt_id` and `signature` themselves. `canonicalize()` is RFC 8785 JSON Canonicalization. Binding the domain `salt` to `resource_origin` means a signature cannot be lifted from one resource server's receipt and replayed as if it were a different server's; the EIP-712 struct is deliberately minimal (one `bytes32` field over a hash of the full canonical envelope) rather than a full field-by-field typed struct, to get real domain separation without a second, parallel schema to keep in sync with §4.
+```json
+{
+  "primaryType": "RejectionReceiptDigest",
+  "types": {
+    "EIP712Domain": [
+      { "name": "name", "type": "string" },
+      { "name": "version", "type": "string" },
+      { "name": "salt", "type": "bytes32" }
+    ],
+    "RejectionReceiptDigest": [
+      { "name": "digest", "type": "bytes32" }
+    ]
+  },
+  "domain": {
+    "name": "x402-rejection-receipt",
+    "version": "1",
+    "salt": "sha256 over the UTF-8 bytes of issuer.resource_origin, as bytes32"
+  },
+  "message": { "digest": "<digest>" }
+}
+```
+
+`envelope` is the whole receipt object with exactly two members removed, `receipt_id` and `signature`, whatever else it carries. A member not listed in §4 is still signed. `canonicalize()` is RFC 8785 JSON Canonicalization. Binding the domain `salt` to `resource_origin` means a signature cannot be lifted from one resource server's receipt and replayed as if it were a different server's; the EIP-712 struct is deliberately minimal (one `bytes32` field over a hash of the full canonical envelope) rather than a full field-by-field typed struct, to get real domain separation without a second, parallel schema to keep in sync with §4.
 
 ## 6. Relationship to the Underlying Attempt
 
-`attempt_binding` ties a receipt to one specific payment attempt via two hashes of this proposal's own, `payment_payload_hash` and `payment_requirements_hash`: these names belong to this proposal, not to [§5.5 of #3776](https://github.com/x402-foundation/x402/pull/3776). §5.5 defines a related but distinct concept, operation identity, derived from a frozen ingress snapshot of the whole request (method, path, query, body), and deliberately keeps that apart from a captured-artifact digest and a signed-content identifier, specifically so one digest is not made to serve all three. `attempt_binding` is narrower: a digest of the payment payload and the payment requirements alone. A verifier that holds the original payment payload and requirements can recompute both hashes and confirm they match before trusting anything else in the receipt. Whether the attempt should have been accepted is outside this format's job; its only job is checking that the resource server's account of refusing it stays internally consistent and does not overclaim.
+`attempt_binding` ties a receipt to one specific payment attempt via two hashes of this proposal's own, `payment_payload_hash` and `payment_requirements_hash`: these names belong to this proposal, not to [§5.5 of #3776](https://github.com/x402-foundation/x402/pull/3776). §5.5 defines a related but distinct concept, operation identity, derived from a frozen ingress snapshot of the whole request (method, path, query, body), and deliberately keeps that apart from a captured-artifact digest and a signed-content identifier, specifically so one digest is not made to serve all three. `attempt_binding` is narrower: a digest of the payment payload and the payment requirements alone. A verifier that holds the original payment payload and requirements can recompute both hashes and confirm they match before trusting anything else in the receipt:
+
+```text
+payment_payload_hash      = 0x || sha256_hex( payment header value as transmitted )
+payment_requirements_hash = 0x || sha256_hex( canonicalize(requirements) )
+```
+
+The payment header value is hashed as the bytes of the header field value that went over the wire, the base64 text itself, after the leading and trailing whitespace HTTP already strips. It is not decoded and not re-serialised, so buyer and resource server hash the same bytes without agreeing on a JSON encoder. `requirements` is the one `PaymentRequirements` object the attempt was evaluated against, the chosen `accepts` entry, not the whole `PaymentRequired` response; `canonicalize()` is RFC 8785. Both values are written as `0x` followed by 64 lowercase hex characters; `receipt_id` (§5) carries no prefix. Whether the attempt should have been accepted is outside this format's job; its only job is checking that the resource server's account of refusing it stays internally consistent and does not overclaim.
 
 Like §5.5's own operation identity, `attempt_binding` is content-addressed: identical content produces an identical value, no matter how many times, or when, that content was submitted. The same payload submitted twice, once settled and once refused as `duplicate_payment`, therefore binds to the same `attempt_binding` both times. Holding only the second receipt, a verifier learns that this payload was refused, not, by `attempt_binding` alone, that this was specifically the submitter's second attempt while a first attempt on the same payload settled.
 
@@ -116,6 +146,7 @@ Worth stating plainly: a claimed limitation that is actually tested carries more
 - The payTo and signing-key check needs both addresses to run. Unlike the signature-verification step (§10, step 6), the reference implementation does not yet return a "not measured" result when it lacks the resource server's `payTo` address or the resolved signing address; today it simply has nothing to compare and moves on. A known gap, tracked for a fix, not a deliberate exception to §3's rule.
 - `client_attempt_id`/`server_observation_id` close the "which submission was this" gap (§6), but not every shape of it. Specifically not covered yet: whether a buyer's timed-out retry should carry the same `client_attempt_id` or a fresh one; whether a receipt may reference an earlier `server_observation_id` (and the privacy question that raises if a third party replays the lookup); behavior across a resource server restart with an in-memory attempt table; and behavior across multiple resource servers sharing one `resource_origin`. An internal adversarial pass listed around sixty further scenarios (concurrent identical submissions, identifier reuse, identifier entropy requirements, and more); naming this list here, not working through all of it, is itself the limitation.
 - `server_observation_id`'s own uniqueness is asserted by the resource server, not provable by a verifier; a resource server could in principle reuse one, including across two receipts with different `attempt_binding` values. This checker does not detect that, the same way it cannot detect a resource server that simply declines to issue a receipt at all.
+- Key rotation is a SHOULD, not a check. The reference implementation resolves whatever `did.json` holds today; it cannot tell a retired key that was dropped from one that never existed (§11).
 - `did:web` resolution accepts only the bare-host form, `did:web:<host>#<fragment>`; path-segment identifiers and other verification method types fall outside what it supports.
 - Nothing yet checks that `issuer.key_id`'s host matches `issuer.resource_origin`. §10, step 8, states the rule; the reference implementation does not yet enforce it. Without that check, the domain-salt binding in §5 only ties a signature to the `resource_origin` a receipt claims, not to the host its signing key actually resolves to.
 
@@ -141,10 +172,11 @@ Worth stating plainly: a claimed limitation that is actually tested carries more
   "payment_observation": {
     "state": "NOT_SUBMITTED",
     "network": "eip155:8453",
-    "transaction": ""
+    "transaction": "",
+    "block_number": 23000000
   },
   "issued_at": "2026-11-10T15:00:00.000Z",
-  "receipt_id": "09a96653127cf6bb33ab3544f0dbfb33b946841dc3cf7d8aaa3bc232bf710332",
+  "receipt_id": "55a91b6b5b11f96d31d426eb02fe6a33473b06849c4db49e57b2ef923a32c815",
   "signature": "0xsig"
 }
 ```
@@ -168,9 +200,10 @@ The values above are test-vector data (`vectors/rejection-receipt/signature-veri
 - A receipt's signature proves who signed it, not that the stated reason is true (§3). A resource server can sign a false `commercial_refusal` as easily as a true `insufficient_funds`; the evidence-class ceiling bounds how convincing a lie can present itself, not whether a lie was told.
 - Verifiers MUST resolve the signing key on their own, instead of trusting a key the receipt itself supplies (§4, §10); otherwise a resource server could make any receipt self-certifying.
 - A `did:web` key document stays a plain, mutable file (§8). A verifier that wants a durable record of what a key resolved to at a given time should keep its own copy at resolution time, rather than re-resolving later.
+- Key rotation. A resource server that rotates its signing key SHOULD keep the retired `verificationMethod` entries in its `did.json`, so receipts signed before the rotation still verify, and MUST NOT reuse a fragment for a different key, so one `key_id` never names two keys.
 - Nothing here gives a resource server an incentive to actually issue a receipt on refusal; it only raises the cost of issuing a dishonest one once it chooses to.
 - Implementations MUST NOT fold `client_attempt_id` into whatever value they use to detect a duplicate payment. Doing so lets a buyer make a reused payment look new to that detection logic simply by choosing a new `client_attempt_id`, which defeats the purpose of detecting it at all. `attempt_binding` and `client_attempt_id` answer different questions (§6) and must stay computed independently.
 
 ## 12. Reference Implementation
 
-`agent-receipt-verify`, `npx -y agent-receipt-verify rejection-receipt`: https://github.com/holistis/agent-receipt-verify/tree/feat/rejection-receipt-v1 for `src/rejection-receipt.mjs` (the checker), `vectors/rejection-receipt/` (26 recorded vectors, one per clause outcome, with a README documenting what was checked against prior art and what this does and does not prove), and `test/rejection-receipt.mjs` (50 tests, including the real EIP-712 and `did:web` cryptography, ten regression tests for bugs an earlier adversarial review found and fixed, and a test demonstrating why `client_attempt_id` must stay out of duplicate-payment detection).
+`agent-receipt-verify`, `npx -y agent-receipt-verify rejection-receipt`: https://github.com/holistis/agent-receipt-verify/tree/feat/rejection-receipt-v1 for `src/rejection-receipt.mjs` (the checker), `vectors/rejection-receipt/` (26 recorded vectors, one per clause outcome, with a README documenting what was checked against prior art and what this does and does not prove), and `test/rejection-receipt.mjs` (79 tests, including the real EIP-712 and `did:web` cryptography, ten regression tests for bugs an earlier adversarial review found and fixed, and a test demonstrating why `client_attempt_id` must stay out of duplicate-payment detection).
