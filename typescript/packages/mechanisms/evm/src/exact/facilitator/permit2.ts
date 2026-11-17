@@ -26,7 +26,7 @@ import {
 } from "../../constants";
 import * as Errors from "./errors";
 import { FacilitatorEvmSigner } from "../../signer";
-import { ExactPermit2Payload } from "../../types";
+import { ExactPermit2Payload, isUint256DecimalString } from "../../types";
 import { startAssetContractCheck } from "../../assetCache";
 import { finalHashFromTwoRequestSend, getEvmChainId, isValidTxHash } from "../../utils";
 import { validateErc20ApprovalForPayment } from "./erc20approval";
@@ -154,7 +154,13 @@ export async function verifyPermit2(
     };
   }
 
-  // Verify amount exactly matches requirements
+  if (!isUint256DecimalString(requirements.amount)) {
+    return {
+      isValid: false,
+      invalidReason: Errors.ErrInvalidRequiredAmount,
+      payer,
+    };
+  }
   if (
     BigInt(permit2Payload.permit2Authorization.permitted.amount) !== BigInt(requirements.amount)
   ) {

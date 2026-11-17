@@ -211,10 +211,10 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         .registerMoneyParser(async _amount => {
           executionOrder.push(2);
-          return { amount: "match", asset: "0xParser2", extra: {} }; // This one wins
+          return { amount: "2", asset: "0xParser2", extra: {} };
         })
         .registerMoneyParser(async _amount => {
-          executionOrder.push(3); // Should not execute
+          executionOrder.push(3);
           return { amount: "3", asset: "0xParser3", extra: {} };
         });
 
@@ -239,19 +239,17 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result.amount).toBe("1000000"); // 1 USDC = 1,000,000 smallest units
     });
 
-    it("should handle mix of sync and async parsers", async () => {
+    it("should use the first parser that returns an amount", async () => {
       const server = new ExactEvmScheme();
 
       server
         .registerMoneyParser(async amount => {
-          // Async parser
           await Promise.resolve();
-          if (Number(amount) > 1000) return { amount: "async", asset: "0xAsync", extra: {} };
+          if (Number(amount) > 1000) return { amount: "4", asset: "0xAsync", extra: {} };
           return null;
         })
         .registerMoneyParser(async amount => {
-          // Also async (all parsers are Promise-based)
-          if (Number(amount) > 100) return { amount: "sync", asset: "0xSync", extra: {} };
+          if (Number(amount) > 100) return { amount: "5", asset: "0xSecond", extra: {} };
           return null;
         });
 
@@ -259,7 +257,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result1.asset).toBe("0xAsync");
 
       const result2 = await server.parsePrice(500, "eip155:8453");
-      expect(result2.asset).toBe("0xSync");
+      expect(result2.asset).toBe("0xSecond");
     });
   });
 
@@ -510,10 +508,10 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         .registerMoneyParser(async _amount => {
           executionOrder.push(2);
-          return { amount: "winner", asset: "0xWinner", extra: {} }; // This one wins
+          return { amount: "2", asset: "0xWinner", extra: {} };
         })
         .registerMoneyParser(async _amount => {
-          executionOrder.push(3); // Should not execute
+          executionOrder.push(3);
           return { amount: "3", asset: "0xParser3", extra: {} };
         });
 
