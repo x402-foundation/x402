@@ -1,7 +1,7 @@
 # [DRAFT] Card acceptance on `x402`
 
 - **Status**: Draft
-- **Version**: 0.2.1
+- **Version**: 0.3.0
 - **Date**: 2026-08-08
 - **Author(s)**: Stefano Amorelli ([@stefanoamorelli](https://github.com/stefanoamorelli))
 - **Contributor(s)**: Erik Reppel ([@erikreppel](https://github.com/erikreppel)), Steve Kaliski (Stripe, [@sjkaliski](https://github.com/sjkaliski)), Carson Roscoe (Coinbase, [@CarsonRoscoe](https://github.com/CarsonRoscoe)), Adam Krochak (American Express)
@@ -471,6 +471,6 @@ The following were drafted in earlier revisions of this document and are left ou
 
 | Version | Date | Changes | Authors |
 |---|---|---|---|
-| 0.2.1 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension and scoped replay protection to the authenticated merchant and PSP | @CarsonRoscoe |
+| 0.3.0 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension and scoped replay protection to the authenticated merchant and PSP | @CarsonRoscoe |
 | 0.2.0 | 2026-10-06 | Reduced to the base binding. `network` stays CAIP-2 with the PSP in `extra.psp`; the payload is the token and a `paymentId`; refunds run at the PSP. Provenance, micropayments, step-up and payment events move to follow-ups (§9) | @stefanoamorelli |
 | 0.1.0 | 2026-08-08 | Initial draft | @stefanoamorelli |
