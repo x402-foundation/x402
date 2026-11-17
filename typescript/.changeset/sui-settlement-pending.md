@@ -2,4 +2,4 @@
 "@x402/sui": patch
 ---
 
-Return settlement_pending for acknowledged submissions whose confirmation cannot be established, enabling automatic settlement recovery.
+Return settlement_pending, with the transaction digest, when a submission's outcome cannot be established, so the caller can reconcile on chain before retrying.

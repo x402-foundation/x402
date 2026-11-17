@@ -53,9 +53,18 @@ export type SettlementKey = {
  * successful claim until the network is two epochs past `maxEpoch`: one epoch
  * for the window to end, and one of margin for a lagging fullnode.
  *
- * When several processes serve `/settle`, they MUST share one claim store with
- * atomic claims. A single process MAY keep claims in memory, as the default
- * {@link SettlementCache} does.
+ * Claims MUST be shared, with atomic claims, by every process serving
+ * `/settle`. They SHOULD survive restarts for as long as they are kept. The
+ * default in-memory {@link SettlementCache} loses them on every restart: until
+ * the transaction's window ends (up to two epochs), a payment that already
+ * settled can be settled again and reported as a second success. Facilitators
+ * running several processes, or that may restart, SHOULD supply a shared,
+ * durable store.
+ *
+ * A claim held by a process that dies mid-settlement, or one whose release
+ * fails, blocks that digest until the store expires it. Settle returns
+ * `duplicate_settlement` meanwhile, and since the expiry outlasts the
+ * transaction's window, the caller should reconcile such a payment by digest.
  */
 export interface SettlementGuard {
   /**
@@ -72,6 +81,15 @@ export interface SettlementGuard {
    * @param key - The settlement identity
    */
   release(key: SettlementKey): void | Promise<void>;
+
+  /**
+   * Optional. Receives each epoch the facilitator reads from a network, so the
+   * store can drop claims more than one epoch past their `maxEpoch`.
+   *
+   * @param network - The CAIP-2 network id
+   * @param epoch - The network's current epoch
+   */
+  observeEpoch?(network: string, epoch: bigint): void | Promise<void>;
 }
 
 /**
@@ -105,7 +123,9 @@ export type FacilitatorSuiOptions = SuiClientOptions & {
    */
   maxSponsoredGasBudget?: bigint;
   /**
-   * Settlement dedup guard. Defaults to an in-process {@link SettlementCache}.
+   * Settlement dedup store. Defaults to an in-memory {@link SettlementCache},
+   * which is lost on restart and not shared across processes: see
+   * {@link SettlementGuard}.
    */
   settlementGuard?: SettlementGuard;
 };

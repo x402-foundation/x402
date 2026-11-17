@@ -10,7 +10,12 @@ import type {
 } from "@x402/core/types";
 import type { ExactSuiPayload, SuiClientOptions } from "../../types";
 import { findDefaultAsset } from "../../defaultAssets";
-import { createSuiClientResolver, parseBase64Bytes, type SuiClientResolver } from "../../utils";
+import {
+  createSuiClientResolver,
+  isPositiveAmount,
+  parseBase64Bytes,
+  type SuiClientResolver,
+} from "../../utils";
 
 /**
  * Sui client implementation for the Exact payment scheme. Builds and signs (but
@@ -56,7 +61,7 @@ export class ExactSuiScheme implements SchemeNetworkClient {
     if (!payTo || !isValidSuiAddress(payTo)) {
       throw new Error(`Invalid pay-to address: ${payTo}`);
     }
-    if (!amount || !/^[0-9]+$/.test(amount) || BigInt(amount) <= 0n) {
+    if (!isPositiveAmount(amount)) {
       throw new Error(`Amount must be a positive atomic-unit integer: ${amount}`);
     }
     const coinType = normalizeStructTag(asset);

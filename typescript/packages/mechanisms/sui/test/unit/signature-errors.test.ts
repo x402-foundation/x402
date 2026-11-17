@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import { ExactSuiScheme } from "../../src/exact/facilitator/scheme";
+import { describe, expect, it, vi } from "vitest";
 import { SUI_TESTNET_CAIP2 } from "../../src/constants";
 import { mockClient, payerKeypair, testRequirements, buildTestTransaction } from "./helpers";
 import { signPayload, testPayload } from "./helpers";

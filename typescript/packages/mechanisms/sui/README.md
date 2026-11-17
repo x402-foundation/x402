@@ -16,7 +16,7 @@ pnpm add @x402/sui
 
 ## Usage
 
-The package exports the `exact` scheme for all three x402 roles under `@x402/sui/exact/{client,server,facilitator}`. Each is registered on the matching core object for the `sui:*` network family.
+The package exports the `exact` scheme for all three x402 roles under `@x402/sui/exact/{client,server,facilitator}`. Each is registered on the matching core object: clients and resource servers can register the `sui:*` network family, and a facilitator registers the concrete networks it serves.
 
 ### Client
 
@@ -32,17 +32,19 @@ const client = new x402Client().register("sui:*", new ExactSuiScheme(keypair));
 
 On a 402 response the client builds a transaction that calls `balance::send_funds` for the required amount to `payTo`, and signs it. The transaction carries a `ValidDuring` expiration covering the current and next epoch. When the requirements advertise `extra.feePayer`, the sponsor is set as gas owner with an empty gas payment, and the client refuses to sign if the gas budget exceeds the advertised `extra.maxGasBudget`.
 
+The client funds each payment with `tx.balance`, which draws on the address balance first and then on coin objects. Coin selection, including the payer's own gas coin, is per transaction, so two payments built at the same time from the same signer can pick the same coin objects, and at least one of them fails to settle. Payments from one signer can only run concurrently when they use no coin objects at all: paid from the address balance, with gas sponsored by the facilitator or a gasless transfer. Otherwise, build and send them one at a time.
+
 Sui USDC is a recognized default asset, so `x402Client` caps each USDC payment at $1 by default (`DEFAULT_MAX_AMOUNT_PER_PAYMENT`). Change the cap, or allow other coin types such as SUI, with the client's `spendControls` option.
 
 ### Server
 
 ```typescript
-import { x402ResourceServer } from "@x402/core/server";
+import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
 import { ExactSuiScheme } from "@x402/sui/exact/server";
 
-const server = new x402ResourceServer({
-  facilitatorUrl: "https://facilitator.example",
-}).register("sui:*", new ExactSuiScheme());
+const server = new x402ResourceServer(
+  new HTTPFacilitatorClient({ url: "https://facilitator.example" }),
+).register("sui:*", new ExactSuiScheme());
 
 // Price resources in USDC ("$0.01") or with an explicit { amount, asset }.
 ```
@@ -54,8 +56,10 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { ExactSuiScheme } from "@x402/sui/exact/facilitator";
 
+// Register concrete networks: `/supported` lists them as registered, and resource
+// servers match requirements against them exactly.
 const facilitator = new x402Facilitator().register(
-  "sui:*",
+  ["sui:mainnet", "sui:testnet", "sui:devnet"],
   new ExactSuiScheme({
     clients: {
       "sui:mainnet": new SuiGrpcClient({ network: "mainnet", baseUrl: "https://my-node:443" }),
@@ -70,7 +74,7 @@ No key is needed unless the facilitator sponsors gas. Options:
 - `feePayer`: a gas sponsor address, advertised as `extra.feePayer`.
 - `executeTransaction`: submits facilitator-sponsored payments. Required when `feePayer` is set.
 - `maxSponsoredGasBudget`: the gas budget cap for sponsored payments, in MIST, advertised as `extra.maxGasBudget`. Defaults to `10_000_000n` (0.01 SUI).
-- `settlementGuard`: settlement deduplication. Defaults to an in-process guard.
+- `settlementGuard`: the settlement dedup store. Defaults to an in-memory store that is lost on restart and not shared across processes. See [Settlement deduplication](#settlement-deduplication).
 
 The facilitator rejects a transaction without a `ValidDuring` or `Validity` expiration, or one that is not valid in at most two consecutive epochs (`maxEpoch - minEpoch <= 1`). Settlement also requires the current epoch to be inside that window.
 
@@ -115,9 +119,13 @@ Per-sender rate limiting is left to the executor or sponsor.
 
 #### Settlement deduplication
 
-Re-submitting an executed Sui transaction returns its original result, so the facilitator claims each transaction digest before submitting. A second settle of the same transaction fails with `duplicate_settlement`. The claim is released if settlement fails. If it succeeds, the claim is kept for as long as the `SettlementGuard` documentation requires. If submission was acknowledged but the finality wait and digest lookup fail, settlement returns `settlement_pending` with the digest in `transaction`, enabling the resource server's single automatic retry of the same signed transaction. If submission itself throws and the lookup fails, it returns `transaction_failed` with the digest for reconciliation.
+Re-submitting an executed Sui transaction returns its original result, so the facilitator claims each transaction digest before submitting. A second settle of the same transaction fails with `duplicate_settlement`. The claim is released if settlement fails, and kept for as long as the `SettlementGuard` documentation requires if it succeeds.
 
-A single facilitator process may keep its claims in memory, which is what the default in-process guard does. If the process restarts and forgets its claims, `verify` still rejects a payment that already executed (`invalid_exact_sui_payload_already_executed`), and the standard resource server flow verifies before it settles. When several processes serve `/settle`, they must share one claim store with atomic claims, for example Redis with `SET NX`. A durable store is also worth it when `settle` can be called without `verify`:
+If the outcome of a submission can't be established, settlement returns `settlement_pending` with the digest in `transaction`, so the caller can reconcile on chain before retrying. Retrying the same signed transaction is safe, since it executes at most once. Within the transaction's window, a retry of a transaction that already executed reports its result. Outside the window, settle refuses it and returns the digest so the caller can look it up.
+
+A sponsored payment's simulated effects are checked before the sponsor co-signs it, so a payment that simulates as not crediting `payTo` with exactly `amount` is rejected without spending the sponsor's gas. Simulation can't guarantee what executes: a transaction can behave differently on chain than in simulation. The gas cap and per-sender rate limiting still bound what the sponsor can lose. If this facilitator verified the same payment against the same requirements within `maxTimeoutSeconds` (capped at 10 minutes), settle reuses that result. Otherwise, for example in the `upfront` flow, it simulates at settle.
+
+By default the facilitator keeps claims in memory, which suits only a single process. Claims are lost on every restart, not only one with payments in flight: until a transaction's window ends (up to two epochs, about 48 hours on mainnet), a payment that already settled can be settled again and reported as a second success. When several processes serve `/settle`, or the facilitator may restart, supply one shared, durable store with atomic claims. A claim held by a process that dies mid-settlement, or whose release fails, blocks that digest until the store expires it, which is after the transaction's window closes; settle returns `duplicate_settlement` meanwhile, so reconcile such a payment by digest. For example, with Redis:
 
 ```typescript
 import type { SettlementGuard } from "@x402/sui";

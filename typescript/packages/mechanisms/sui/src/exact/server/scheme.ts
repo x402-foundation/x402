@@ -12,6 +12,7 @@ import type {
 } from "@x402/core/types";
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { findDefaultAsset, getDefaultAsset } from "../../defaultAssets";
+import { isPositiveAmount } from "../../utils";
 
 /**
  * Sui server implementation for the Exact payment scheme. Parses prices into
@@ -133,7 +134,7 @@ export class ExactSuiScheme implements SchemeNetworkServer {
    * @param amount - The atomic-unit amount string
    */
   private assertPositiveAmount(amount: string): void {
-    if (!/^[0-9]+$/.test(amount) || BigInt(amount) <= 0n) {
+    if (!isPositiveAmount(amount)) {
       throw new Error(
         `invalid_payment_requirements: amount must be a positive integer, got ${amount}`,
       );

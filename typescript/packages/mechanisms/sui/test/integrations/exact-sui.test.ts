@@ -107,7 +107,7 @@ class SuiFacilitatorClient implements FacilitatorClient {
    * @returns The facilitator's supported kinds
    */
   getSupported(): Promise<SupportedResponse> {
-    return Promise.resolve(this.facilitator.getSupported());
+    return Promise.resolve(this.facilitator.getSupported() as SupportedResponse);
   }
 }
 
