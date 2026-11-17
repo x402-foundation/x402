@@ -75,7 +75,16 @@ A payment can be collected once. `capture` and `refund` are repeatable up to the
 
 ### Collect (`authorization` flow)
 
-Steps 1–6 are the same, except the client simulates `charge`. After the resource runs, the server completes the payload with `amount`, `feeAmount`, `feeReceiver`, and a consent entry, and calls `/settle`. There is no hold, so no `capture`, `void`, or `reclaim`.
+1. **Client** requests a resource from the **Resource Server**.
+2. **Resource Server** responds `402 Payment Required` with an `auth-capture` entry in `accepts` and `extra.paymentFlow: "authorization"`.
+3. **Client** builds `PaymentInfo` as in the escrow flow.
+4. **Client** simulates `charge(payment_info, ...)` in recording mode, takes the authorization entry for its own address, and signs it with the same expiration rule as the escrow flow. The entry's root invocation is `charge` with args `[payment_info]` only, so it does not depend on the amount the server will choose.
+5. **Client** retries the request with a `PaymentPayload` carrying the signed entry, `salt`, and `preApprovalExpiry`.
+6. **Resource Server** forwards the raw client payload to the facilitator's `/verify` only. Nothing is written to the ledger.
+7. **Resource Server** runs the resource handler and determines the final `amount` and fee.
+8. **Resource Server** appends `amount`, `feeAmount`, `feeReceiver`, and `consentEntry` to the payload ([Completed `charge` payload](#completed-charge-payload)) and calls `/settle` once. The facilitator submits `charge`.
+
+There is no hold, so no `capture`, `void`, or `reclaim`. `refund` remains available until `refundDeadline`.
 
 ### Lifecycle
 
@@ -216,6 +225,15 @@ For `refund`, `funderEntry` is the funder's signed entry. Its root invocation is
 - `captureDeadline <= refundDeadline`, fee bounds are within `0`–`10000` with `minFeeBps <= maxFeeBps`, and a missing `feeRecipient` comes with zero fee bounds.
 - Every authorization entry in the payload has address credentials, a valid signature for its address, and an unexpired `signatureExpirationLedger`.
 
+### Raw and completed `charge` payloads
+
+For `paymentFlow: "authorization"` the same payment is seen in two forms:
+
+- At `/verify`, a facilitator MUST accept the raw client payload: `authorizationEntry`, `salt`, and `preApprovalExpiry` only. It runs every check that does not depend on the server-authored fields: common checks, facilitator safety, client entry shape and signature, `preApprovalExpiry`, payment not yet collected, and payer balance. It simulates a provisional `charge` with `amount = max_amount`, `fee_amount = 0`, and `fee_receiver = PaymentInfo.fee_receiver`, recording the consent address's authorization instead of enforcing it.
+- At `/settle`, a facilitator MUST require the completed payload: `amount`, `feeAmount`, `feeReceiver` (present, possibly `null`), and `consentEntry` in addition to the client fields. A payload that still lacks any of the four MUST be rejected with `invalid_auth_capture_stellar_incomplete_charge_payload`. Settlement re-verification simulates the exact `charge` it will submit, in enforcing mode.
+- A payload carrying only some of the four fields is invalid at both endpoints (`invalid_auth_capture_stellar_payload_format`). A complete payload MAY be sent to `/verify` and is then verified as at `/settle`.
+- For `paymentFlow: "escrow"` and every lifecycle operation there is a single form; the four fields MUST NOT appear on an `authorize` payload.
+
 ### 🚨 Facilitator safety
 
 - The facilitator's addresses MUST NOT appear in the credentials of any authorization entry in the payload.
@@ -228,7 +246,7 @@ For `refund`, `funderEntry` is the funder's signed entry. Its root invocation is
 | Operation | Checks | Expected balance changes |
 | --- | --- | --- |
 | `authorize` | Client entry shape. `preApprovalExpiry` in the future and within `maxTimeoutSeconds`. Payment not yet collected. | payer `-max_amount`, escrow `+max_amount` |
-| `charge` | As `authorize`, plus `0 < amount <= max_amount`, fee within bounds, `consentEntry` for the consent address. | payer `-amount`, receiver `+(amount - fee)`, fee receiver `+fee` |
+| `charge` | As `authorize`. On the completed payload also `0 < amount <= max_amount`, fee within bounds, `consentEntry` for the consent address (see [Raw and completed `charge` payloads](#raw-and-completed-charge-payloads)). | payer `-amount`, receiver `+(amount - fee)`, fee receiver `+fee` |
 | `capture` | `consentEntry` for the consent address. `amount <= capturable`. Before `captureDeadline`. | escrow `-amount` (`-capturable` if `voidRemainder`), receiver `+(amount - fee)`, fee receiver `+fee`, payer `+(capturable - amount)` if `voidRemainder` |
 | `void` | `consentEntry` for the consent address. `capturable > 0`. | escrow `-capturable`, payer `+capturable` |
 | `refund` | `consentEntry` for the consent address. `amount <= refundable`. Before `refundDeadline`. | funder `-amount`, payer `+amount` |
@@ -237,7 +255,7 @@ The facilitator reads `payment_state(payment_hash)` for balance checks and MUST 
 
 ## Settlement
 
-1. Re-run verification. `/settle` MUST NOT assume a prior `/verify`.
+1. Re-run verification. `/settle` MUST NOT assume a prior `/verify`. For `charge`, require the completed payload.
 2. Build a transaction with source `extra.captureAuthorizer` and one `invokeHostFunction` operation calling the escrow function for the operation.
 3. Attach the payload's authorization entries. The operator's own authorization is satisfied by the transaction source account.
 4. Simulate, derive the fee as `simulationResourceFee + inclusionBuffer` (buffer at least 100 stroops), and refresh the Soroban resource data from that simulation. The facilitator MAY reject with `invalid_auth_capture_stellar_fee_exceeds_maximum` above a configured ceiling.
@@ -318,6 +336,7 @@ Verification errors use the prefix `invalid_auth_capture_stellar_`:
 | Code | Meaning |
 | --- | --- |
 | `..._payload_format` | Payload fields missing or malformed. |
+| `..._incomplete_charge_payload` | `/settle` for `paymentFlow: "authorization"` without `amount`, `feeAmount`, `feeReceiver`, and `consentEntry`. |
 | `..._escrow_mismatch` | `authCaptureEscrow` is not the canonical deployment. |
 | `..._operator_not_admitted` | `captureAuthorizer` is not controlled by the facilitator. |
 | `..._unsupported_payment_flow` | Unknown `paymentFlow`, or an operation not allowed by it. |
