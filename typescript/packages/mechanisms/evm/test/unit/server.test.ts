@@ -161,6 +161,25 @@ describe("ExactEvmScheme (Server)", () => {
           async () => await server.parsePrice({ amount: "123456" } as never, "eip155:84532"),
         ).rejects.toThrow("Asset address must be specified");
       });
+
+      it.each(["1e4", "0x2710", "1_000", "+1000", " 1000 "])(
+        "rejects non-canonical atomic amount %s",
+        async amount => {
+          const asset = "0x1234567890123456789012345678901234567890";
+          await expect(server.parsePrice({ amount, asset }, "eip155:8453")).rejects.toThrow(amount);
+        },
+      );
+
+      it("leaves a dotted amount for enhancePaymentRequirements", async () => {
+        const result = await server.parsePrice(
+          {
+            amount: "0.01",
+            asset: "0x1234567890123456789012345678901234567890",
+          },
+          "eip155:8453",
+        );
+        expect(result.amount).toBe("0.01");
+      });
     });
 
     describe("custom money parser with Permit2", () => {
@@ -268,6 +287,52 @@ describe("ExactEvmScheme (Server)", () => {
 
       expect(result).toEqual(requirements);
     });
+
+    it("converts a dotted base USDC amount before the canonical check", async () => {
+      const network = "eip155:8453";
+      const asset = DEFAULT_ASSETS[network]![0]!;
+      const requirements = {
+        scheme: "exact",
+        network,
+        asset: asset.asset,
+        amount: "0.01",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 3600,
+        extra: {},
+      };
+
+      const result = await server.enhancePaymentRequirements(
+        requirements as never,
+        { x402Version: 2, scheme: "exact", network },
+        [],
+      );
+
+      expect(result.amount).toBe("10000");
+    });
+
+    it.each(["1e4", "0x2710", "1_000", "+1000", " 1000 "])(
+      "rejects non-canonical atomic amount %s",
+      async amount => {
+        const network = "eip155:8453";
+        const requirements = {
+          scheme: "exact",
+          network,
+          asset: DEFAULT_ASSETS[network]![0]!.asset,
+          amount,
+          payTo: "0x1234567890123456789012345678901234567890",
+          maxTimeoutSeconds: 3600,
+          extra: {},
+        };
+
+        await expect(
+          server.enhancePaymentRequirements(
+            requirements as never,
+            { x402Version: 2, scheme: "exact", network },
+            [],
+          ),
+        ).rejects.toThrow(amount);
+      },
+    );
   });
 });
 
