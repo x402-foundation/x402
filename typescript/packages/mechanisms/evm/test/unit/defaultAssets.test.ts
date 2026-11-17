@@ -30,6 +30,11 @@ describe("defaultAssets (EVM)", () => {
       ).toBeUndefined();
     });
 
+    it("returns undefined when asset is not a string", () => {
+      expect(findDefaultAsset(undefined as unknown as string, "eip155:84532")).toBeUndefined();
+      expect(findDefaultAsset(84532 as unknown as string, "eip155:84532")).toBeUndefined();
+    });
+
     it("returns undefined when the network has no default asset table", () => {
       expect(findDefaultAsset(BASE_USDC.asset, "eip155:999999")).toBeUndefined();
     });

@@ -165,6 +165,22 @@ describe("ExactStellarScheme", () => {
       );
     });
 
+    it("should pass rpcConfig to the ledger close time estimate", async () => {
+      const rpcConfig = {
+        url: "https://custom-rpc.example.com",
+        horizonUrl: "https://horizon.example.com",
+      };
+      const client = new ExactStellarScheme(mockSigner, rpcConfig);
+      setupSuccessfulTransaction();
+
+      await client.createPaymentPayload(2, validPaymentReq);
+
+      expect(stellarUtils.getEstimatedLedgerCloseTimeSeconds).toHaveBeenCalledWith(
+        STELLAR_TESTNET_CAIP2,
+        rpcConfig,
+      );
+    });
+
     it("should throw for PUBNET without custom RPC URL", async () => {
       const client = new ExactStellarScheme(mockSigner);
       const pubnetReq = {

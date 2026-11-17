@@ -1183,5 +1183,25 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
       expect(stellarUtils.getRpcClient).toHaveBeenCalledWith(STELLAR_TESTNET_CAIP2, undefined);
       expect(mockServer.simulateTransaction).toHaveBeenCalled();
     });
+
+    it("should pass rpcConfig to the ledger close time estimate", async () => {
+      const rpcConfig = {
+        url: "https://rpc.example.com",
+        horizonUrl: "https://horizon.example.com",
+      };
+      const configuredFacilitator = new ExactStellarScheme(facilitatorSigners, {
+        areFeesSponsored: true,
+        maxTransactionFeeStroops: 1_000_000,
+        rpcConfig,
+      });
+
+      const result = await configuredFacilitator.verify(validPayload, validRequirements);
+
+      expect(result.isValid).toBe(true);
+      expect(stellarUtils.getEstimatedLedgerCloseTimeSeconds).toHaveBeenCalledWith(
+        STELLAR_TESTNET_CAIP2,
+        rpcConfig,
+      );
+    });
   });
 });
