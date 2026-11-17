@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -1027,7 +1026,7 @@ func extraInt(value any) (int, bool) {
 		}
 		return int(typed), true
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || !i.IsInt64() {
 			return 0, false
 		}
@@ -1069,7 +1068,7 @@ func parseWireVoucher(value any) (batchsettlement.BatchVoucher, bool) {
 	if !ok || !batchsettlement.IsBatchVoucher(record) {
 		return batchsettlement.BatchVoucher{}, false
 	}
-	encoded, err := json.Marshal(jsonnum.CanonicalValue(record))
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(record))
 	if err != nil {
 		return batchsettlement.BatchVoucher{}, false
 	}
@@ -1084,7 +1083,7 @@ func parseChannelState(value any) (batchsettlement.BatchChannelState, bool) {
 	if value == nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
-	encoded, err := json.Marshal(jsonnum.CanonicalValue(value))
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
@@ -1099,7 +1098,7 @@ func parseVoucherState(value any) (batchsettlement.BatchVoucherState, bool) {
 	if value == nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}
-	encoded, err := json.Marshal(jsonnum.CanonicalValue(value))
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}

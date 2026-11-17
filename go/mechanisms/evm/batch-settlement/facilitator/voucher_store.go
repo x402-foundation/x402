@@ -14,7 +14,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
@@ -945,7 +944,7 @@ func optionalUintString(value interface{}) *string {
 			return &s
 		}
 	case json.Number:
-		if i, ok := jsonnum.Integer(v); ok && i.Sign() >= 0 {
+		if i, ok := x402.ParseJSONInteger(v); ok && i.Sign() >= 0 {
 			s := i.String()
 			return &s
 		}
@@ -1379,7 +1378,7 @@ func extraNumber(v interface{}) (int, bool) {
 	case float64:
 		return int(n), true
 	case json.Number:
-		i, ok := jsonnum.Integer(n)
+		i, ok := x402.ParseJSONInteger(n)
 		if !ok || !i.IsInt64() {
 			return 0, false
 		}

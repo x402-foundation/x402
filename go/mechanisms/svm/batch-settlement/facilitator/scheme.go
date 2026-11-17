@@ -15,7 +15,6 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -1049,7 +1048,7 @@ func payloadRecord(payload any) (map[string]any, bool) {
 // that payload maps hold json.Number instead of float64.
 func decodeAs[T any](value any) (T, error) {
 	var out T
-	raw, err := json.Marshal(jsonnum.CanonicalValue(value))
+	raw, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return out, err
 	}

@@ -1,6 +1,7 @@
 package batchsettlement
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -193,7 +194,7 @@ func TestIsBatchedPayload(t *testing.T) {
 // ---------- ChannelConfigFromMap ----------
 
 func TestChannelConfigFromMap_AllNumericTypes(t *testing.T) {
-	for _, delay := range []interface{}{float64(900), int(900), int64(900)} {
+	for _, delay := range []interface{}{float64(900), int(900), int64(900), json.Number("900"), json.Number("900.0")} {
 		m := validChannelConfigMap()
 		m["withdrawDelay"] = delay
 		cc, err := ChannelConfigFromMap(m)
@@ -202,6 +203,29 @@ func TestChannelConfigFromMap_AllNumericTypes(t *testing.T) {
 		}
 		if cc.WithdrawDelay != 900 {
 			t.Fatalf("withdrawDelay %T: got %d", delay, cc.WithdrawDelay)
+		}
+	}
+}
+
+func TestExtraInt(t *testing.T) {
+	cases := []struct {
+		in   interface{}
+		want int
+		ok   bool
+	}{
+		{float64(900), 900, true},
+		{json.Number("900"), 900, true},
+		{json.Number("60.0"), 60, true},
+		{json.Number("6e1"), 60, true},
+		{json.Number("60.0000000000000000001"), 0, false},
+		{json.Number("9223372036854775808"), 0, false},
+		{json.Number("abc"), 0, false},
+		{"900", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := ExtraInt(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Fatalf("ExtraInt(%#v) = (%d, %v), want (%d, %v)", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }
@@ -654,6 +678,11 @@ func TestChannelStateRequirements_FromMapAndToMap(t *testing.T) {
 	cs := ChannelStateRequirementsFromMap(in)
 	if cs == nil || cs.ChannelId != "0xabc" || cs.ChargedCumulativeAmount != "200" {
 		t.Fatalf("parsed = %+v", cs)
+	}
+
+	in["withdrawRequestedAt"] = json.Number("1700000000")
+	if got := ChannelStateRequirementsFromMap(in); got == nil || got.WithdrawRequestedAt != 1700000000 {
+		t.Fatalf("json.Number withdrawRequestedAt parsed = %+v", got)
 	}
 
 	out := cs.ToMap()

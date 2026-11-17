@@ -11,7 +11,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -127,7 +127,7 @@ func ParseWithdrawDelay(value interface{}) (uint32, error) {
 	case uint32:
 		seconds = float64(typed)
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || i.Sign() <= 0 || !i.IsUint64() || i.Uint64() > math.MaxUint32 {
 			return 0, invalid
 		}
@@ -180,7 +180,7 @@ func ParseExtraUint64(value interface{}) (uint64, bool) {
 		}
 		return parsed, true
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}

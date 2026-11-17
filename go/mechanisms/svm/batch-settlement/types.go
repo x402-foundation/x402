@@ -9,7 +9,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
 
@@ -573,7 +573,7 @@ func asInt64(value any) (int64, bool) {
 		}
 		return int64(typed), true
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || !i.IsInt64() {
 			return 0, false
 		}

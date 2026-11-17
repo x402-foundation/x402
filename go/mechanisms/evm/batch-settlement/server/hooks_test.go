@@ -2292,6 +2292,9 @@ func TestMapStringField(t *testing.T) {
 	if got := mapStringField(m, "c", "d"); got != "d" {
 		t.Fatalf("missing = %s", got)
 	}
+	if got := mapStringField(map[string]interface{}{"n": json.Number("9007199254740993")}, "n", "d"); got != "9007199254740993" {
+		t.Fatalf("json.Number = %s", got)
+	}
 }
 
 func TestMapIntField(t *testing.T) {
@@ -2313,6 +2316,29 @@ func TestMapIntField(t *testing.T) {
 	}
 	if got := mapIntField(m, "missing", 5); got != 5 {
 		t.Fatalf("missing = %d", got)
+	}
+	if got := mapIntField(map[string]interface{}{"n": json.Number("7")}, "n", -1); got != 7 {
+		t.Fatalf("json.Number = %d", got)
+	}
+	if got := mapIntField(map[string]interface{}{"n": json.Number("x")}, "n", -1); got != -1 {
+		t.Fatalf("bad json.Number fallback = %d", got)
+	}
+}
+
+func TestReadChannelStateFromExtraJSONNumber(t *testing.T) {
+	cs := readChannelStateFromExtra(map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"channelId":               "0x01",
+			"balance":                 json.Number("9007199254740993"),
+			"totalClaimed":            json.Number("9007199254740995"),
+			"withdrawRequestedAt":     json.Number("1700000000"),
+			"refundNonce":             json.Number("3"),
+			"chargedCumulativeAmount": json.Number("12"),
+		},
+	})
+	if cs == nil || cs.Balance != "9007199254740993" || cs.TotalClaimed != "9007199254740995" ||
+		cs.WithdrawRequestedAt != 1700000000 || cs.RefundNonce != "3" || cs.ChargedCumulativeAmount != "12" {
+		t.Fatalf("got %+v", cs)
 	}
 }
 

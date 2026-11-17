@@ -663,3 +663,37 @@ func (s *readSignalStore) Get(ctx context.Context, key string) (string, bool, er
 func uintString(value uint64) string {
 	return new(big.Int).SetUint64(value).String()
 }
+
+func decodedBatchPayload(t *testing.T, inner string) map[string]any {
+	t.Helper()
+	body := `{"x402Version":2,"accepted":{"scheme":"batch-settlement","network":"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1","amount":"1","asset":"a","payTo":"b","maxTimeoutSeconds":60},"payload":` + inner + `}`
+	p, err := types.ToPaymentPayload([]byte(body))
+	require.NoError(t, err)
+	return p.Payload
+}
+
+// TestDecodeAsJSONNumbers decodes payloads through types.ToPaymentPayload, so
+// numbers arrive as json.Number exactly as they do on the wire.
+func TestDecodeAsJSONNumbers(t *testing.T) {
+	t.Run("accepts integral decimals", func(t *testing.T) {
+		for _, delay := range []string{"60", "60.0", "6e1"} {
+			seal, err := decodeAs[batchsettlement.BatchSealPayload](decodedBatchPayload(t, `{"type":"seal","channelId":"c","channelConfig":{"withdrawDelay":`+delay+`}}`))
+			require.NoError(t, err, delay)
+			require.EqualValues(t, 60, seal.ChannelConfig.WithdrawDelay, delay)
+			_, err = decodeAs[batchsettlement.BatchClaimPayload](decodedBatchPayload(t, `{"type":"claim","claims":[{"channelId":"c","channelConfig":{"withdrawDelay":`+delay+`}}]}`))
+			require.NoError(t, err, "claim "+delay)
+		}
+	})
+
+	t.Run("rejects a fractional integer field", func(t *testing.T) {
+		_, err := decodeAs[batchsettlement.BatchSealPayload](decodedBatchPayload(t, `{"type":"seal","channelId":"c","channelConfig":{"withdrawDelay":60.5}}`))
+		require.Error(t, err)
+	})
+
+	t.Run("leaves the record unchanged", func(t *testing.T) {
+		record := decodedBatchPayload(t, `{"type":"seal","channelId":"c","channelConfig":{"withdrawDelay":60.0}}`)
+		_, err := decodeAs[batchsettlement.BatchSealPayload](record)
+		require.NoError(t, err)
+		require.Equal(t, any(json.Number("60.0")), record["channelConfig"].(map[string]any)["withdrawDelay"])
+	})
+}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 )
@@ -33,6 +34,12 @@ func TestMapUintStringField(t *testing.T) {
 		{"nan", math.NaN(), "", false},
 		{"negative number", float64(-1), "", false},
 		{"fractional number", 1.5, "", false},
+		{"json.Number max safe integer", json.Number("9007199254740991"), "9007199254740991", true},
+		{"json.Number integral decimal", json.Number("9007199254740991.0"), "9007199254740991", true},
+		{"json.Number exponent", json.Number("6e1"), "60", true},
+		{"json.Number above max safe integer", json.Number("9007199254740992"), "", false},
+		{"json.Number exact above max safe integer", json.Number("9007199254740993"), "", false},
+		{"json.Number negative", json.Number("-5"), "", false},
 		{"bool", true, "", false},
 		{"absent", nil, "", false},
 	}

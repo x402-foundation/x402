@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -136,7 +136,7 @@ func JSONNumberToUint64(value interface{}) (uint64, bool) {
 	case uint64:
 		return v, true
 	case json.Number:
-		i, ok := jsonnum.Integer(v)
+		i, ok := x402.ParseJSONInteger(v)
 		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}

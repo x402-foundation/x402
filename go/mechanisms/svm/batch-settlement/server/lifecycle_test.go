@@ -1330,3 +1330,18 @@ func TestBatchServerLifecycleBoundaries(t *testing.T) {
 		require.Equal(t, batchsettlement.ErrChannelState, after.Reason)
 	})
 }
+
+func TestRequirementNumbersJSONNumber(t *testing.T) {
+	for _, in := range []json.Number{"60.0", "6e1"} {
+		got, ok := asRequirementInt(in)
+		require.True(t, ok, string(in))
+		require.Equal(t, int64(60), got, string(in))
+	}
+	for _, in := range []json.Number{"1.5", "9223372036854775808"} {
+		_, ok := asRequirementInt(in)
+		require.False(t, ok, string(in))
+	}
+
+	require.Equal(t, 7, advertisedCapacity(json.Number("7.0")))
+	require.Equal(t, maxChannelsPerBatch, advertisedCapacity(json.Number("0")))
+}

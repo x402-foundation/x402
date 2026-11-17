@@ -2,6 +2,7 @@ package paymentchannels
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"testing"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -720,4 +721,23 @@ func TestOpenArgsRoundTrip(t *testing.T) {
 
 	_, err = DecodeOpenArgs(append(encoded, 0x00))
 	require.ErrorContains(t, err, "recipient section")
+}
+
+func TestParseU64JSONNumber(t *testing.T) {
+	valid := map[json.Number]uint64{"60.0": 60, "6e1": 60, "9007199254740993.0": 9007199254740993}
+	for value, want := range valid {
+		got, err := ParseU64(value, "x")
+		require.NoError(t, err, string(value))
+		assert.Equal(t, want, got, string(value))
+	}
+
+	invalid := map[json.Number]string{
+		"1.5":                    "x must be an unsigned integer",
+		"60.0000000000000000001": "x must be an unsigned integer",
+		"18446744073709551616":   "x must fit in u64",
+	}
+	for value, wantErr := range invalid {
+		_, err := ParseU64(value, "x")
+		require.EqualError(t, err, wantErr, string(value))
+	}
 }

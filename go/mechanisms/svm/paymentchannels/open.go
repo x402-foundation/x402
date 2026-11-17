@@ -16,7 +16,7 @@ import (
 	ag_binary "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
@@ -1334,7 +1334,7 @@ func ParseU64(value any, name string) (uint64, error) {
 		}
 		return parsed, nil
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || i.Sign() < 0 {
 			return 0, fmt.Errorf("%s must be an unsigned integer", name)
 		}

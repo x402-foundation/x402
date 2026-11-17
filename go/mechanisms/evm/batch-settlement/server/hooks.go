@@ -12,7 +12,6 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
@@ -1293,7 +1292,7 @@ func mapStringField(m map[string]interface{}, key string, defaultVal string) str
 		return fmt.Sprintf("%.0f", v)
 	}
 	if v, ok := m[key].(json.Number); ok {
-		if i, ok := jsonnum.Integer(v); ok {
+		if i, ok := x402.ParseJSONInteger(v); ok {
 			return i.String()
 		}
 	}
@@ -1327,7 +1326,7 @@ func mapUintStringField(m map[string]interface{}, key string) (string, bool) {
 		}
 		return new(big.Int).SetUint64(uint64(v)).String(), true
 	case json.Number:
-		i, ok := jsonnum.Integer(v)
+		i, ok := x402.ParseJSONInteger(v)
 		if !ok || i.Sign() < 0 || i.Cmp(big.NewInt(1<<53-1)) > 0 {
 			return "", false
 		}

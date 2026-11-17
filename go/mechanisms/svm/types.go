@@ -10,7 +10,7 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 )
 
 // ExactSvmPayload represents a SVM (Solana) payment payload
@@ -111,7 +111,7 @@ func UptoPayloadFromMap(data map[string]interface{}) (*UptoSvmPayload, error) {
 	}
 	// Integer-valued numbers such as 1.9e9 are rewritten as integers so they
 	// still decode into the int64 fields now that payload maps hold json.Number.
-	jsonBytes, err := json.Marshal(jsonnum.CanonicalValue(data))
+	jsonBytes, err := json.Marshal(x402.NormalizeJSONNumbers(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload data: %w", err)
 	}
@@ -206,7 +206,7 @@ func uptoOpenSlotString(value interface{}) (string, bool) {
 	case uint64:
 		return strconv.FormatUint(v, 10), true
 	case json.Number:
-		i, ok := jsonnum.Integer(v)
+		i, ok := x402.ParseJSONInteger(v)
 		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return "", false
 		}
@@ -223,7 +223,7 @@ func jsonNumberIsInt64(value interface{}) bool {
 	case int64, int:
 		return true
 	case json.Number:
-		i, ok := jsonnum.Integer(v)
+		i, ok := x402.ParseJSONInteger(v)
 		return ok && i.IsInt64()
 	default:
 		return false

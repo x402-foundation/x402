@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"strings"
@@ -240,7 +241,7 @@ func TestBuildChannelConfig_RejectsMissingOrZeroReceiverAuthorizer(t *testing.T)
 func TestBuildChannelConfig_WithdrawDelayOverride(t *testing.T) {
 	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0x1"}, nil)
 
-	for _, v := range []interface{}{float64(1800), int(1800)} {
+	for _, v := range []interface{}{float64(1800), int(1800), json.Number("1800")} {
 		req := defaultRequirements()
 		req.Extra["withdrawDelay"] = v
 		cfg, err := scheme.BuildChannelConfig(req)
@@ -250,6 +251,32 @@ func TestBuildChannelConfig_WithdrawDelayOverride(t *testing.T) {
 		if cfg.WithdrawDelay != 1800 {
 			t.Fatalf("%T: withdrawDelay = %d", v, cfg.WithdrawDelay)
 		}
+	}
+}
+
+// TestBuildChannelConfigFromDecodedRequirements runs requirements through the
+// V2 decoder so withdrawDelay arrives as json.Number, as it does on the wire.
+func TestBuildChannelConfigFromDecodedRequirements(t *testing.T) {
+	req := defaultRequirements()
+	req.Extra["withdrawDelay"] = 1234
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := types.ToPaymentRequirements(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded.Extra["withdrawDelay"].(json.Number); !ok {
+		t.Fatalf("withdrawDelay decoded as %T, want json.Number", decoded.Extra["withdrawDelay"])
+	}
+	scheme := NewBatchSettlementEvmScheme(&mockSigner{address: "0xSIGNER"}, nil)
+	config, err := scheme.BuildChannelConfig(*decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.WithdrawDelay != 1234 {
+		t.Fatalf("withdrawDelay = %d, want 1234", config.WithdrawDelay)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
-	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -435,7 +435,7 @@ func transactionVersionEntry(entry interface{}) (int, bool) {
 			return int(v), true
 		}
 	case json.Number:
-		if i, ok := jsonnum.Integer(v); ok && i.IsInt64() && (i.Int64() == 0 || i.Int64() == 1) {
+		if i, ok := x402.ParseJSONInteger(v); ok && i.IsInt64() && (i.Int64() == 0 || i.Int64() == 1) {
 			return int(i.Int64()), true
 		}
 	}
@@ -536,7 +536,7 @@ func parseHintUint64(value any) (uint64, bool) {
 		}
 		return parsed, true
 	case json.Number:
-		i, ok := jsonnum.Integer(typed)
+		i, ok := x402.ParseJSONInteger(typed)
 		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}
