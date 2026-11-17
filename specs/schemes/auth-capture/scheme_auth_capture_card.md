@@ -1,7 +1,7 @@
 # [DRAFT] Card acceptance on `x402`
 
 - **Status**: Draft
-- **Version**: 0.2.0
+- **Version**: 0.4.0
 - **Date**: 2026-08-08
 - **Author(s)**: Stefano Amorelli ([@stefanoamorelli](https://github.com/stefanoamorelli))
 - **Contributor(s)**: Erik Reppel ([@erikreppel](https://github.com/erikreppel)), Steve Kaliski (Stripe, [@sjkaliski](https://github.com/sjkaliski)), Carson Roscoe (Coinbase, [@CarsonRoscoe](https://github.com/CarsonRoscoe)), Adam Krochak (American Express)
@@ -11,10 +11,8 @@
 
 | # | Open item | What it is about | Owner | Possible options |
 |---|---|---|---|---|
-| 1 | What goes in v1 | Whether v1 is only for agents paying for requests, with card checkout for a person in a browser, agent spending permissions, bundled micropayments, bank verification (3DS), post-payment updates, statement text and refunds handled later as separate proposals (§9). | TBD | (a) agents only, extras later; (b) also support a person paying in a browser; (c) bring one of the other extras back into v1 |
-| 2 | What card token does an agent pay with? | A token usually works only with the PSP account that created it, and an agent pays many merchants it has never used before, so it needs a token each merchant's PSP account can charge (§4.2 and §4.4). | TBD | (a) network agent tokens; (b) a token the PSP shares with the merchant; (c) leave it out of the spec |
+| 1 | What goes in v1 | Whether v1 is only for agents paying for requests, with card checkout for a person in a browser, agent spending permissions, interactive bank verification (3DS), post-payment updates, statement text and refunds handled later as separate proposals (§9). | TBD | (a) agents only, extras later; (b) also support a person paying in a browser; (c) bring one of the other extras back into v1 |
 | 3 | How do card networks recognise an agent's x402 payment? | An agent payment fits neither card-network category, cardholder-initiated (CIT) or merchant-initiated (MIT), so the spec has to say what the authorization carries for the network to handle it correctly (§4.4 and §4.7). | TBD | (a) the network agent token carries it; (b) submit it as a payment without the cardholder present (e.g. Stripe `off_session`) and let the PSP set the rest; (c) a dedicated `x402` or agent marker, once a network defines one |
-| 4 | Which ID ties the hold and the charge together? | The `payment-identifier` extension rejects a second message with the same ID and different contents, which is exactly what the charge after a hold is, so the draft uses its own `paymentId` (§4.4). | TBD | (a) `paymentId` on every message; (b) reuse `payment-identifier` with a rule that allows the charge message |
 
 ## Motivation
 
@@ -22,7 +20,7 @@
 
 ## Summary
 
-This document defines one thing: a card network binding for the [`auth-capture`](./scheme_auth_capture.md) scheme. The client presents an opaque PSP token, the facilitator places an authorization before the resource runs, and the resource server captures or voids it afterwards.
+This document defines one thing: a card network binding for the [`auth-capture`](./scheme_auth_capture.md) scheme. The client presents either an encrypted card credential or an opaque reference, the facilitator places an authorization before the resource runs, and the resource server captures or voids it afterwards.
 
 This first version is deliberately small. Delegated authority for agents, micropayments, step-up challenges and post-settlement events are left to follow-up proposals (§9), so that they can be specified once the base binding is agreed.
 
@@ -38,9 +36,9 @@ Card payments involve more steps than the payment exchange, although those proce
 
 | Topic | Out of scope of `x402` | In scope of this binding |
 |---|---|---|
-| PCI DSS | PCI DSS compliance of the parties. | The prohibition on card data on the wire. Payloads MUST NOT carry the PAN, the CVC or track data (§8.1). |
-| Credential issuance and delegated authority | Which token the client holds, how it was provisioned, and whether an agent may use it. These are decided by the PSP, the card network and the issuer. | The token, carried opaque (§4.4). |
-| Cardholder authentication | SCA, 3DS and any other challenge, run by the PSP and the issuer. | A distinct error when the issuer requires authentication (§7.2). |
+| PCI DSS | The compliance assessment of each implementation. | Plaintext card data MUST remain inside the wallet and payment providers. The resource server cannot decrypt card credentials (§8.1). |
+| Credential issuance and delegated authority | How a card credential or reference was provisioned, and whether an agent may use it. These are decided by the wallet, provider, card network and issuer. | Credential profile negotiation and presentation (§4.3 and §4.4). |
+| Cardholder authentication | Interactive SCA, 3DS and other challenges run by the PSP and issuer. | Pre-completed authentication evidence and a distinct error when more authentication is required (§7.2). |
 | Network policy | Pricing, risk checks and dispute rules for `x402` transactions, defined by the card networks. | An `x402` indicator on the authorization, where the PSP exposes one (§4.7). |
 | Post-settlement lifecycle | Clearing, payouts, refunds and disputes, which stay with the card networks and the PSP contract. | Nothing. Refunds run through the PSP (§4.6). |
 | Merchant onboarding | KYC and the payout schedule, matters of the PSP contract. | Nothing. |
@@ -63,7 +61,7 @@ Card payments involve more steps than the payment exchange, although those proce
 
 ## 3 Payment lifecycle comparison between on-chain and card payments
 
-At payment time the two rails run the same steps. The buyer produces a payment instrument (a signed transfer on-chain, a card token on cards), the facilitator checks it, the money moves, and the resource is delivered. `Figure 1` traces the exchange both rails share, then the tail that only cards have. An on-chain payment is final a few dozen seconds after settlement. A card payment is not: the funds reach the merchant days later, and refunds and disputes can move them for months afterwards. That tail is outside the scope of `x402` (§1.1).
+At payment time the two rails run the same steps. The buyer produces a payment instrument (a signed transfer on-chain, an encrypted credential or reference on cards), the facilitator checks it, the money moves, and the resource is delivered. `Figure 1` traces the exchange both rails share, then the tail that only cards have. An on-chain payment is final a few dozen seconds after settlement. A card payment is not: the funds reach the merchant days later, and refunds and disputes can move them for months afterwards. That tail is outside the scope of `x402` (§1.1).
 
 ```mermaid
 sequenceDiagram
@@ -73,7 +71,7 @@ sequenceDiagram
     participant N as Chain or card network
     C->>S: GET /api
     S-->>C: 402 PAYMENT-REQUIRED
-    Note over C: create payment payload<br/>sign on-chain, present a token on cards
+    Note over C: create payment payload<br/>sign on-chain, present a credential on cards
     C->>S: GET /api with PAYMENT-SIGNATURE
     S->>F: check before the resource runs<br/>POST /verify on-chain, POST /settle as authorize on cards
     F->>N: check the balance on-chain, place the hold on cards
@@ -101,7 +99,7 @@ Card payments can be modeled on top of the existing `auth-capture` scheme instea
 
 | Step | On-chain, `exact` | Card, `auth-capture` |
 |---|---|---|
-| Create the payment instrument | sign the transfer with the wallet | present a PSP token (§4.4) |
+| Create the payment instrument | sign the transfer with the wallet | present an encrypted card credential or reference (§4.4) |
 | Check before the resource runs | `/verify`, check the signature and the balance | `/settle` as `authorize`, place a hold |
 | Move the funds | `/settle`, execute the on-chain transfer | `/settle` with `payload.type` `capture`, collect the held funds |
 | Deliver the resource | same on both rails | same on both rails |
@@ -117,7 +115,7 @@ The card lifecycle (authorize, then capture or void) is the lifecycle of the `au
 
 Network identifiers follow CAIP-2 as `card:<card-network>`, for example `card:visa`, `card:mastercard` and `card:amex`. Interchange, surcharge rules and acceptance differ across card networks, so the reference names the network. A server that accepts several networks lists one `accepts[]` entry per network, and a client can register `card:*` for any of them.
 
-The PSP is named in `extra.psp` (§4.3), not in the identifier. A token is redeemable only at the PSP that minted it, so a client MUST NOT present a token minted by a PSP other than `extra.psp`.
+The credential profile is named in `extra.credentialProfile` (§4.3), not in the identifier. Each `accepts[]` entry describes one complete credential route; clients MUST NOT combine fields from different entries.
 
 ### 4.3 `PaymentRequirements`
 
@@ -130,11 +128,20 @@ The PSP is named in `extra.psp` (§4.3), not in the identifier. A token is redee
       "network": "card:visa",
       "amount": "100",
       "asset": "USD",
-      "payTo": "acct_1Nxyz",
+      "payTo": "merchant_1Nxyz",
       "maxTimeoutSeconds": 900,
       "extra": {
-        "psp": "stripe",
-        "paymentFlow": "escrow"
+        "paymentFlow": "escrow",
+        "facilitator": "https://pay.example",
+        "credentialProfile": "card-cryptogram-v1",
+        "credentialProfileDetails": {
+          "credentialType": "card",
+          "proofType": "cryptogram",
+          "recipient": "https://pay.example",
+          "encryptionFormat": "jwe",
+          "keyId": "key-2026-11",
+          "authenticationMethods": ["3ds", "passkey"]
+        }
       }
     }
   ]
@@ -143,25 +150,95 @@ The PSP is named in `extra.psp` (§4.3), not in the identifier. A token is redee
 
 - `asset` is an ISO 4217 alphabetic currency code.
 - `amount` is the amount to authorize, in minor units of `asset`. It is the ceiling for the capture.
-- `payTo` is the merchant's account identifier at the PSP named in `extra.psp`.
+- `payTo` is the merchant identifier understood by the facilitator.
 
 **Table 2. `extra` fields**
 
 | Field | Required | Type | Description |
 |---|---|---|---|
-| `psp` | Yes | `string` | PSP that redeems the token and executes the authorization, lowercase (e.g. `"stripe"`, `"adyen"`) |
 | `paymentFlow` | Yes | `"escrow"` | MUST be `"escrow"`. Cards do not offer the `authorization` flow (§4.5) |
+| `facilitator` | Yes | `string` | HTTPS origin of the facilitator selected by the resource server |
+| `credentialProfile` | Yes | `string` | ID of one credential profile supported by the facilitator |
+| `credentialProfileDetails` | Yes | `object` | Definition of the selected profile, copied from the facilitator's advertisement |
+| `merchantReference` | for `reference` | `string` | Merchant identifier understood by the reference system |
 | `captureDeadline` | No | `number` | Absolute Unix seconds. When absent, the PSP's authorization validity applies |
 
+`credentialProfileDetails.credentialType` is either `card` or `reference`:
+
+- A `card` profile carries `proofType` (`cvv` or `cryptogram`), `recipient`, `encryptionFormat` (`jwe`), `keyId` and, when supported, `authenticationMethods`. `recipient` is the HTTPS origin of the party that decrypts the credential. It MAY be the facilitator or a downstream payment provider; the profile does not expose that provider's role.
+- A `reference` profile carries `referenceSystem`, `proofType` and, when supported, `authenticationMethods`. The facilitator is responsible for resolving the reference itself or routing it to a provider that can. Processor selection remains behind the facilitator.
+
+Profile IDs and field values are case-sensitive. A server MUST copy a profile advertised by its facilitator without modification. It emits separate `accepts[]` entries for separate profiles so that every entry is independently usable.
+
+For a `card` profile, the wallet MUST resolve `keyId` from the JWK set at `recipient`'s `/.well-known/x402-card-keys` endpoint over HTTPS. The `402` identifies the recipient and key; it does not carry the public key itself. Key ownership follows from the authenticated origin. Whether the wallet trusts that origin is wallet policy.
+
+The selected JWK MUST have `kty: "RSA"`, `use: "enc"`, `alg: "RSA-OAEP-256"`, a modulus of at least 2048 bits, and a `kid` equal to `keyId`. The wallet MUST reject any other key. The compact JWE MUST use `alg: "RSA-OAEP-256"` and `enc: "A256GCM"` in its protected header and MUST NOT use compression.
+
+Key rotation follows an overlap model:
+
+1. The recipient publishes the new key before the facilitator advertises its `keyId`.
+2. The facilitator stops advertising the old `keyId` before the recipient removes it.
+3. The recipient keeps the old public and private key available until every credential created while it was advertised has expired.
+
+At payload creation, the wallet MUST set `exp` no later than the current time plus `PaymentRequirements.maxTimeoutSeconds`. A compromised key MAY be withdrawn immediately; the facilitator then rejects affected credentials with `card_credential_key_unavailable`, and the resource server returns fresh requirements using an active key.
+
 ### 4.4 Client payload
+
+EXAMPLE Encrypted card credential:
 
 ```json
 {
   "x402Version": 2,
   "accepted": { "scheme": "auth-capture", "network": "card:visa", "...": "..." },
   "payload": {
-    "token": "pm_1Nxyz",
-    "paymentId": "pay_7d5d747be160e280504c099d984bcfe0"
+    "paymentId": "pay_7d5d747be160e280504c099d984bcfe0",
+    "credential": {
+      "type": "card",
+      "value": "<compact JWE>"
+    },
+    "authentication": {
+      "method": "3ds",
+      "evidence": "<opaque authentication artifact>"
+    }
+  }
+}
+```
+
+The decrypted JWE plaintext is:
+
+```json
+{
+  "pan": "<card number>",
+  "expiry": "12/29",
+  "cryptogram": "<payment cryptogram>",
+  "eci": "05",
+  "paymentId": "pay_7d5d747be160e280504c099d984bcfe0",
+  "requirementsHash": "<base64url SHA-256 digest>",
+  "nonce": "n_7af24c819ebb4c18865c6044cc4c800e",
+  "exp": 1794873600
+}
+```
+
+For `proofType: "cvv"`, the plaintext carries `pan`, `expiry` and `cvv`. For `proofType: "cryptogram"`, it carries `pan`, `expiry`, `cryptogram` and `eci`. FPAN, VPAN and DPAN are not separate wire types: the profile describes the fields and proof the recipient can process.
+
+EXAMPLE Opaque reference credential:
+
+```json
+{
+  "x402Version": 2,
+  "accepted": { "scheme": "auth-capture", "network": "card:visa", "...": "..." },
+  "payload": {
+    "paymentId": "pay_7d5d747be160e280504c099d984bcfe0",
+    "credential": {
+      "type": "reference",
+      "system": "example-vault",
+      "value": "ref_1Nxyz",
+      "proof": "<provider authorization>"
+    },
+    "authentication": {
+      "method": "passkey",
+      "evidence": "<opaque authentication artifact>"
+    }
   }
 }
 ```
@@ -170,14 +247,26 @@ The PSP is named in `extra.psp` (§4.3), not in the identifier. A token is redee
 
 | Field | Required | Description |
 |---|---|---|
-| `token` | Yes | Opaque PSP token for the card. MUST NOT be a PAN or contain card data (§8.1) |
-| `paymentId` | Yes | Client-generated identity of the payment, 16 to 128 characters, alphanumeric, hyphens and underscores. Reused unchanged on every retry of the same payment |
+| `paymentId` | Yes | Client-generated identity of the logical payment, 16 to 128 characters, alphanumeric, hyphens and underscores. Reused unchanged throughout the payment lifecycle |
+| `credential` | Yes | Credential matching the selected `credentialProfile` |
+| `authentication` | No | Pre-completed authentication evidence matching a method advertised by the selected profile |
 
-The token is the whole client authorization. The binding does not say how the client obtained it (hosted fields, a card on file, a wallet, a network or agentic token), nor whether an agent may use it. The PSP and the issuer decide that when they receive the authorization.
+The client MUST generate a fresh `paymentId` for each logical payment and preserve it across retries. `paymentId` identifies the payment through its whole lifecycle: the authorization carries it on the client payload, and the resource server copies it into the corresponding `capture` or `void` payload (§4.6).
 
-NOTE: Whether the payload carries more than the token depends on open items 2 and 3. A field is added once a party that consumes it is identified.
+Where a credential or proof carries `requirementsHash`, it MUST equal `base64url(SHA-256(JCS(accepted)))`, where `accepted` is the selected `PaymentRequirements` canonicalized with RFC 8785 JCS.
 
-`paymentId` identifies the payment through its whole lifecycle, on the client payload and on every lifecycle payload (§4.6). It serves the same idempotency purpose as the `payment-identifier` extension, but is part of the payload so that the binding does not depend on an optional extension.
+For a card credential:
+
+- the wallet, not the agent or resource server, constructs the JWE for the selected profile;
+- the JWE protected header MUST contain `alg: "RSA-OAEP-256"`, `enc: "A256GCM"` and a `kid` equal to `keyId`;
+- the plaintext MUST carry `requirementsHash`;
+- the inner and outer `paymentId` MUST match;
+- the recipient MUST reject an expired `exp` or a repeated `nonce`; and
+- neither the client nor the resource server may possess the recipient's private key.
+
+For a reference credential, `system` MUST equal the selected profile's `referenceSystem`. The wallet uses `merchantReference` when obtaining the reference. The reference itself MUST be scoped to that merchant and payment, or `proof` MUST verifiably bind `merchantReference`, `paymentId`, `requirementsHash` and an expiry. Placing restrictions next to an unrestricted bearer reference does not bind that reference.
+
+`authentication` carries evidence completed before the paid request, not an interactive challenge. When present, its `method` MUST appear in the selected profile's `authenticationMethods`, and `evidence` MUST be an opaque artifact that the credential recipient can verify against `paymentId` and `requirementsHash`. The client and resource server MUST NOT parse it. An unsupported or invalid artifact is rejected as `card_authentication_required`.
 
 ### 4.5 Payment flow and settlement
 
@@ -193,7 +282,7 @@ Cards therefore bind to the `escrow` payment flow, the default of the parent sch
 
 The resource server MAY capture during the request or later from durable state, as the parent scheme allows. Either way:
 
-- the facilitator MUST deduplicate authorizations on `payTo` and `paymentId`. A retry with the same `paymentId` and the same token resumes the existing PSP intent instead of opening a second hold. A retry with the same `paymentId` and a different token or amount MUST be rejected;
+- the facilitator MUST scope `paymentId` to the authenticated merchant and facilitator, and MUST bind it to the original authorization terms. A retry with the same `paymentId` and the same terms resumes the existing payment intent instead of opening a second hold. Reusing the same `paymentId` with different authorization terms MUST be rejected;
 - the facilitator MUST void any authorization it will not capture, and at the latest at `captureDeadline`, since an open authorization blocks the buyer's funds. A hold nobody touches lapses at the issuer when the authorization expires. That lapse is the card equivalent of `reclaim` and needs no action from the client; and
 - the capture amount MUST NOT exceed the authorized amount. A capture for less releases the remainder of the hold.
 
@@ -255,13 +344,28 @@ The `auth-capture` scheme lists eight things every network binding MUST specify.
 | Requirement | Card binding |
 |---|---|
 | Hold and settlement mechanism | PSP authorization, capture and void against the card network; the capture deadline is `captureDeadline` or the PSP's authorization validity (§4.5) |
-| Client authorization format | an opaque PSP token; the payment's identity is `paymentId` (§4.4) |
+| Client authorization format | an encrypted card credential or opaque reference; the payment's identity is `paymentId` (§4.4) |
 | Operator model | the facilitator, through its PSP integration, drives every relayed operation; the resource server initiates `capture` and `void`; refunds run out of band at the PSP (§4.6) |
 | Server consent | authenticated identity of the resource server on each lifecycle settle (§4.6) |
-| Replay protection | one authorization, and then one `capture` or `void`, per `payTo` and `paymentId` (§4.5 and §4.6) |
+| Replay protection | credential binding plus one authorization, and then one `capture` or `void`, per authenticated merchant, facilitator and `paymentId` (§4.4 through §4.6) |
 | Per-operation verification and settlement | amount ceilings and PSP calls (§4.5 and §4.6), decline classes (§7.3) |
 | Refund funding | the merchant's PSP balance, out of band (§4.6) |
 | Sync capture-and-void | a single `capture` for the final amount releases the remainder of the hold (§4.5) |
+
+### 4.9 Clarifying idempotency in spec vs extension
+
+`payload.paymentId` is required by this card binding. It identifies one logical payment across authorization, capture or void, and retries.
+
+[`payment-identifier`](../../extensions/payment_identifier.md) is a general, optional extension that resource servers or facilitators MAY support across their payment schemes. Its ID is an idempotency key for one request operation and its retries; it does not follow the payment through its lifecycle. Each lifecycle operation therefore uses a new extension ID while retaining the same `payload.paymentId`.
+
+| Operation | `payload.paymentId` | Extension ID, if included |
+| :---- | :---- | :---- |
+| Authorize \$1.00 | P | A |
+| Retry authorization | P | A |
+| Capture \$0.73 | P | B |
+| Retry capture | P | B |
+
+*P, A, and B are symbolic identifiers.*
 
 ## 5 Client integration
 
@@ -299,7 +403,7 @@ paymentRequirementsSelector: (v, reqs) =>
 
 ### 5.2 Scheme client
 
-`CardScheme` implements `SchemeNetworkClient` and registers under `card:*`. It takes a `vault` that returns a token the client already holds for a PSP, and a `ui` delegate for cardholder-present checkout. Either may be absent.
+`CardScheme` implements `SchemeNetworkClient` and registers under `card:*`. It delegates credential creation to a wallet that supports one or more card profiles. A cardholder-present flow may instead collect card data directly in a vault or payment-provider UI and return a reference credential; the agent never receives the card data.
 
 EXAMPLE Core of the scheme client:
 
@@ -307,25 +411,21 @@ EXAMPLE Core of the scheme client:
 export class CardScheme implements SchemeNetworkClient {
   readonly scheme = "auth-capture";
 
-  constructor(private deps: { vault?: CardTokenVault; ui?: CardUiDelegate }) {}
+  constructor(private wallet: CardWallet) {}
 
   async createPaymentPayload(v: number, req: PaymentRequirements): Promise<PaymentPayloadResult> {
     const paymentId = this.paymentIds.for(req);   // stable across retries of this payment
-
-    // A token already held for this PSP: card on file, wallet, network or agentic token.
-    const held = await this.deps.vault?.tokenFor(req.extra.psp, req);
-    if (held) return this.payloadFrom(v, req, { token: held, paymentId });
-
-    // Cardholder present. PSP hosted fields; the PAN goes browser -> PSP iframe,
-    // the client receives an opaque single-use token.
-    if (!this.deps.ui) throw new CardCheckoutUnavailable(req);
-    const tok = await this.deps.ui.collectPaymentMethod(req);   // unbounded async is permitted here
-    return this.payloadFrom(v, req, { token: tok.id, paymentId });
+    const { credential, authentication } = await this.wallet.createCredential({
+      profile: req.extra.credentialProfileDetails,
+      requirements: req,
+      paymentId,
+    });
+    return this.payloadFrom(v, req, { paymentId, credential, authentication });
   }
 }
 ```
 
-NOTE: `PAYMENT-SIGNATURE` is an HTTP header, and header values reach access logs and proxies. The prohibition on card data in payloads is specified in §8.1.
+NOTE: `PAYMENT-SIGNATURE` is an HTTP header, and header values reach access logs and proxies. Encrypted credentials and references remain sensitive and MUST NOT be logged (§8.1).
 
 ### 5.3 Payment flow
 
@@ -336,8 +436,8 @@ sequenceDiagram
     participant F as Facilitator (PSP adapter)
     participant N as PSP / network / issuer
     A->>RS: GET /resource
-    RS-->>A: 402, accepts includes auth-capture on card:visa, extra.psp stripe
-    A->>RS: retry with PAYMENT-SIGNATURE (token, paymentId)
+    RS-->>A: 402, accepts includes concrete card credential profiles
+    A->>RS: retry with PAYMENT-SIGNATURE (credential, paymentId, optional authentication)
     RS->>F: POST /settle, client payload, settles as authorize
     F->>N: authorization
     alt declined
@@ -365,21 +465,29 @@ EXAMPLE Mixed route configuration:
 ```ts
 accepts: [
   { scheme: "exact", network: "eip155:8453", payTo: PAY_TO_EVM, price: "$0.97", maxTimeoutSeconds: 60 },
-  { scheme: "auth-capture", network: "card:visa", payTo: "acct_1Nxyz",
+  { scheme: "auth-capture", network: "card:visa", payTo: "merchant_1Nxyz",
     price: "$1.00", maxTimeoutSeconds: 900,
-    extra: { psp: "stripe", paymentFlow: "escrow" } },
+    extra: {
+      facilitator: "https://pay.example",
+      paymentFlow: "escrow",
+      credentialProfile: "card-cryptogram-v1",
+      credentialProfileDetails: CARD_CRYPTOGRAM_PROFILE,
+    } },
 ]
 ```
 
-Configuration order is preserved into `accepts[]`, and the default client selector takes the first supported entry. Surcharging consumer cards can be prohibited depending on jurisdiction.
+The server creates one entry per credential profile it and its facilitator support. Configuration order is preserved into `accepts[]`, and the default client selector takes the first supported entry. Surcharging consumer cards can be prohibited depending on jurisdiction.
 
 ### 6.2 Facilitator requirements
 
-The complexity of card acceptance is mostly on the facilitator, by design. The client learns to present a token, and the resource server is unchanged. The PSP integration (idempotency, decline handling, webhook ingestion) is concentrated in the facilitator, which is where `x402` already places trust.
+The complexity of card acceptance is mostly on the facilitator, by design. The client learns to present one advertised credential profile, and the resource server remains unaware of downstream processor routing. Credential resolution, idempotency, decline handling and webhook ingestion are concentrated behind the facilitator.
 
 A facilitator for a `card:<card-network>` network:
 
-- MUST deduplicate authorizations on `payTo` and `paymentId` (§4.5);
+- MUST scope `paymentId` to the authenticated merchant and facilitator, bind it to the original authorization terms, and deduplicate authorization retries (§4.5);
+- MUST advertise only credential profiles it can process for that merchant and network;
+- MUST verify the credential's payment restrictions before authorization (§4.4);
+- MUST verify any submitted authentication evidence using the selected profile (§4.4);
 - MUST authenticate the resource server on every lifecycle settle and bind lifecycle payloads to the payment's `payTo` (§4.6);
 - MUST void any authorization it will not capture (§4.5);
 - MUST rate-limit authorizations and collapse hard-decline detail (§8.2); and
@@ -392,28 +500,63 @@ EXAMPLE `/supported` entry:
   "x402Version": 2,
   "scheme": "auth-capture",
   "network": "card:visa",
-  "extra": { "psps": ["stripe", "adyen"] }
+  "capabilities": {
+    "credentialProfile": [
+      "card-cryptogram-v1",
+      "vault-reference-v1"
+    ]
+  },
+  "extra": {
+    "facilitator": "https://pay.example",
+    "credentialProfiles": {
+      "card-cryptogram-v1": {
+        "credentialType": "card",
+        "proofType": "cryptogram",
+        "recipient": "https://pay.example",
+        "encryptionFormat": "jwe",
+        "keyId": "key-2026-11",
+        "authenticationMethods": ["3ds", "passkey"]
+      },
+      "vault-reference-v1": {
+        "credentialType": "reference",
+        "referenceSystem": "example-vault",
+        "proofType": "provider-authorization",
+        "authenticationMethods": ["3ds", "passkey"]
+      }
+    }
+  }
 }
 ```
 
-`extra.psps` lists the PSPs the facilitator can authorize through on that card network.
+This binding uses the proposed [`SupportedKind.capabilities`](https://github.com/x402-foundation/x402/pull/2498) field. `capabilities.credentialProfile` is the authoritative list of profile IDs the facilitator supports for this scheme and network. A card facilitator MUST emit it and MUST provide one matching definition in `extra.credentialProfiles` for every listed ID.
+
+The resource server selects an ID from `capabilities.credentialProfile`, copies it into `PaymentRequirements.extra.credentialProfile`, and copies its definition into `extra.credentialProfileDetails`. It MUST NOT select an unadvertised ID or modify the definition.
+
+A `card` profile means the named recipient can decrypt and process that proof type. A `reference` profile means the facilitator has the commercial and technical relationship needed to resolve that reference system. Downstream processors and proprietary resolution APIs are implementation details and are not advertised to the client.
+
+Profiles remain structured and atomic. Independent arrays for `credentialType`, `proofType`, recipient and reference system would imply unsupported Cartesian combinations.
 
 ### 6.3 Error codes
 
 In addition to the protocol codes of the core specification, this binding defines:
 
 - **`card_declined`**: the issuer refused the authorization. The facilitator returns this single code for every hard decline (§7.3 and §8.2)
-- **`card_authentication_required`**: the issuer requires cardholder authentication that this version cannot carry out in the exchange (§7.2)
+- **`card_authentication_required`**: the issuer requires authentication and the submitted pre-completed evidence was absent or insufficient (§7.2)
+- **`card_credential_key_unavailable`**: the selected encryption key was withdrawn before the facilitator could process the credential (§4.3)
 
 ## 7 Card-specific considerations
 
 ### 7.1 Wallets
 
-Apple Pay and Google Pay collapse tokenization and authentication into one sheet when the cardholder is present. The sheet needs a user gesture and a merchant domain registered with the PSP in advance, which the `402` response cannot carry. What reaches the binding is a PSP token like any other.
+The wallet selects a complete credential profile it can satisfy. A wallet may produce an encrypted card credential, a network-token credential using `proofType: "cryptogram"`, or a reference. x402 does not distinguish FPAN, VPAN and DPAN when their wire shape and proof requirements are the same.
+
+Without a wallet, a merchant may present provider-hosted card entry that returns a reference matching an advertised profile. The browser experience and card collection remain outside the protocol; the resulting reference uses the same authorization, capture and void lifecycle.
 
 ### 7.2 Cardholder authentication
 
-An issuer may condition an authorization on cardholder authentication. In the EU, PSD2 SCA makes this a common outcome rather than an edge case. This version defines no challenge round trip inside the `402` loop. When the issuer requires authentication, the authorization fails with `card_authentication_required` and no hold is placed. The client may pick another `accepts[]` entry, or obtain a new token while the cardholder is present, so that the PSP SDK can authenticate them during checkout.
+An issuer may condition an authorization on cardholder authentication. In the EU, PSD2 SCA makes this a common outcome rather than an edge case. A profile MAY advertise authentication methods that the wallet or hosted checkout can complete before submitting the paid request. The resulting opaque evidence is carried in `payload.authentication` and verified by the credential recipient (§4.4).
+
+This version defines no interactive challenge round trip inside the `402` loop. When pre-completed evidence is absent or insufficient, the authorization fails with `card_authentication_required` and no hold is placed. The response does not carry a challenge URL. The client may pick another `accepts[]` entry or obtain new evidence while the cardholder is present.
 
 A challenge round trip over the `402` loop is proposed as a follow-up (§9).
 
@@ -425,22 +568,28 @@ Card errors divide into soft declines (retriable with backoff), hard declines (n
 
 ### 8.1 Cardholder data and PCI DSS scope
 
-Payloads MUST NOT contain the PAN, the CVC or track data; the payload carries PSP tokens and references only. `PAYMENT-SIGNATURE` is an HTTP header, and hence can easily reach access logs, proxies and monitoring. A single leaked PAN would contaminate every log pipeline on the path. Facilitators SHOULD reject payloads containing Luhn-valid 13- to 19-digit strings as defense in depth.
+Plaintext PAN, CVV and track data MUST NOT be exposed to the agent, resource server, prompts, tools, logs or storage. A `card` credential carries that data only inside a JWE encrypted to the selected recipient. The resource server and any relay-only facilitator MUST NOT possess the corresponding private key.
 
-PCI DSS scope follows the data flow. `Table 6` lists the resulting posture per party.
+`PAYMENT-SIGNATURE` is an HTTP header and can reach access logs, proxies and monitoring. Encrypted card credentials, references and authentication evidence remain sensitive bearer material and MUST NOT be logged. A recipient that decrypts CVV MUST use it only for authorization and MUST NOT retain it afterwards, including in recoverable ciphertext.
+
+PCI DSS scope follows the implementation and data flow; encryption and outsourcing do not automatically remove a system from scope. `Table 6` states the intended separation, not a compliance determination.
 
 **Table 6. PCI DSS scope per party**
 
 | Party | Card data seen | PCI DSS posture |
 |---|---|---|
-| Resource server | none, only tokens (and receipts) | SAQ A |
-| x402 client library | none, tokens only | outside the CDE |
-| Facilitator | tokens and charge ids | outside cardholder-data scope while token-only; a facilitator that proxies PANs becomes a PCI service provider requiring a full assessment |
-| PSP | PAN | Level 1 service provider |
+| Agent and x402 client | encrypted credential or reference only | no plaintext card-data access; implementation must preserve wallet isolation |
+| Resource server | encrypted credential or reference only | cannot decrypt; scope depends on implementation and assessor guidance |
+| Facilitator | reference, ciphertext, or plaintext when it is the recipient | a decrypting facilitator handles card data and must meet the applicable PCI DSS requirements |
+| Wallet, vault or payment provider | card data according to its role | subject to the controls required for the data and keys it handles |
+
+Each party MUST confirm its scope and responsibilities with its assessor and acquiring provider.
 
 ### 8.2 Abuse resistance
 
-For on-chain transactions the `/verify` check costs nothing, but with cards the check before the resource runs reaches a real issuer, holds the buyer's funds and counts against the merchant's fraud ratios. The facilitator MUST rate-limit authorizations by card fingerprint and IP, MUST collapse hard-decline detail into `card_declined`, and MUST NOT authorize a single-use token more than once.
+For on-chain transactions the `/verify` check costs nothing, but with cards the check before the resource runs reaches a real issuer, holds the buyer's funds and counts against the merchant's fraud ratios. The facilitator MUST rate-limit authorizations by credential fingerprint and IP, MUST collapse hard-decline detail into `card_declined`, and MUST NOT authorize a single-use credential more than once.
+
+The wallet MUST verify that a card credential's key belongs to the selected recipient origin before releasing it. After decryption, the recipient MUST validate `requirementsHash`, `paymentId`, `nonce` and `exp` before using the credential for authorization. A resource server cannot make its own key trustworthy merely by placing it in a `402`.
 
 ## 9 Follow-up proposals
 
@@ -457,5 +606,7 @@ The following were drafted in earlier revisions of this document and are left ou
 
 | Version | Date | Changes | Authors |
 |---|---|---|---|
+| 0.4.0 | 2026-11-17 | Replaced the PSP-token-only payload with negotiated encrypted-card and reference credential profiles; added recipient-origin key discovery and rotation, payment and merchant binding, pre-completed authentication evidence, and per-kind facilitator capabilities | @SteveReis, @SuryaNaragani, @stefanoamorelli, @CarsonRoscoe |
+| 0.3.0 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension and scoped replay protection to the authenticated merchant and PSP | @CarsonRoscoe |
 | 0.2.0 | 2026-10-06 | Reduced to the base binding. `network` stays CAIP-2 with the PSP in `extra.psp`; the payload is the token and a `paymentId`; refunds run at the PSP. Provenance, micropayments, step-up and payment events move to follow-ups (§9) | @stefanoamorelli |
 | 0.1.0 | 2026-08-08 | Initial draft | @stefanoamorelli |
