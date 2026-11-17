@@ -20,6 +20,7 @@ from ..constants import (
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
     ERR_INVALID_PAYLOAD,
+    ERR_INVALID_REQUIRED_AMOUNT,
     ERR_INVALID_SIGNATURE,
     ERR_INVALID_SIGNATURE_S,
     ERR_MISSING_EIP712_DOMAIN,
@@ -57,6 +58,7 @@ from ..types import (
     ERC6492SignatureData,
     ExactEIP3009Payload,
     TransactionReceipt,
+    _is_uint256_string,
     get_payload_payer,
     is_permit2_payload,
     validate_exact_evm_payload,
@@ -245,6 +247,15 @@ class ExactEvmScheme:
             )
 
         # Validate amount
+        if not _is_uint256_string(requirements.amount):
+            return (
+                VerifyResponse(
+                    is_valid=False,
+                    invalid_reason=ERR_INVALID_REQUIRED_AMOUNT,
+                    payer=payer,
+                ),
+                None,
+            )
         if int(evm_payload.authorization.value) != int(requirements.amount):
             return (
                 VerifyResponse(

@@ -23,6 +23,7 @@ from x402.http.middleware.flask import (
     ResponseWrapper,
     _check_if_bazaar_needed,
     payment_middleware,
+    set_settlement_overrides,
 )
 from x402.http.types import (
     HTTPProcessResult,
@@ -1060,6 +1061,49 @@ class TestFlaskMiddlewareIntegration:
             dispatcher.cancel_sync.assert_called_once_with(
                 VerifiedPaymentCancelOptions(reason="handler_failed", response_status=500)
             )
+            mock_http_server_instance.process_settlement.assert_not_called()
+
+    def test_strips_settlement_overrides_on_handler_error_status(self):
+        """Test that a failing handler's settlement overrides never reach the client."""
+        app = Flask(__name__)
+
+        @app.route("/api/protected")
+        def protected_route():
+            response = app.make_response(("failed", 502))
+            set_settlement_overrides(response, {"amount": "$0.004"})
+            return response
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=make_v2_payload(),
+                payment_requirements=make_payment_requirements(),
+                cancellation_dispatcher=MagicMock(spec=PaymentCancellationDispatcher),
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = {}
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get("/api/protected")
+
+            assert response.status_code == 502
+            assert "Settlement-Overrides" not in response.headers
             mock_http_server_instance.process_settlement.assert_not_called()
 
     def test_cancels_when_handler_throws(self):

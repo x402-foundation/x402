@@ -99,13 +99,44 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
       facilitator.register("eip155:8453", new MockSchemeFacilitator());
 
       facilitator.onBeforeVerify(async () => {
-        return { abort: true, reason: "Facilitator security check failed" };
+        return {
+          abort: true,
+          reason: "Facilitator security check failed",
+          message: "Verification aborted by facilitator hook",
+        };
       });
 
       const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
 
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe("Facilitator security check failed");
+      expect(result.invalidMessage).toBe("Verification aborted by facilitator hook");
+    });
+
+    it("should keep an empty verify abort message", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onBeforeVerify(async () => {
+        return { abort: true, reason: "denied", message: "" };
+      });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.invalidMessage).toBe("");
+    });
+
+    it("should leave invalidMessage undefined when the verify abort omits message", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onBeforeVerify(async () => {
+        return { abort: true, reason: "denied" };
+      });
+
+      const result = await facilitator.verify(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.invalidMessage).toBe(undefined);
     });
 
     it("should execute multiple hooks in order", async () => {
@@ -264,15 +295,63 @@ describe("x402Facilitator - Lifecycle Hooks", () => {
   describe("onBeforeSettle", () => {
     it("should abort settlement when hook returns abort", async () => {
       const facilitator = new x402Facilitator();
-      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+      const settle = vi.fn();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator(undefined, settle));
+
+      const onAfterSettle = vi.fn();
+      const onSettleFailure = vi.fn();
+      facilitator.onAfterSettle(onAfterSettle);
+      facilitator.onSettleFailure(onSettleFailure);
 
       facilitator.onBeforeSettle(async () => {
-        return { abort: true, reason: "Gas price too high" };
+        return {
+          abort: true,
+          reason: "Gas price too high",
+          message: "Settlement aborted by facilitator hook",
+        };
       });
 
       await expect(
         facilitator.settle(buildPaymentPayload(), buildPaymentRequirements()),
-      ).rejects.toThrow("Settlement aborted: Gas price too high");
+      ).resolves.toEqual({
+        success: false,
+        errorReason: "Gas price too high",
+        errorMessage: "Settlement aborted by facilitator hook",
+        transaction: "",
+        network: "eip155:8453",
+      });
+
+      expect(settle).not.toHaveBeenCalled();
+      expect(onAfterSettle).not.toHaveBeenCalled();
+      expect(onSettleFailure).not.toHaveBeenCalled();
+    });
+
+    it("should keep an empty settle abort message", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onBeforeSettle(async () => {
+        return { abort: true, reason: "denied", message: "" };
+      });
+
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.errorMessage).toBe("");
+      expect(result.success).toBe(false);
+    });
+
+    it("should leave errorMessage undefined when the settle abort omits message", async () => {
+      const facilitator = new x402Facilitator();
+      facilitator.register("eip155:8453", new MockSchemeFacilitator());
+
+      facilitator.onBeforeSettle(async () => {
+        return { abort: true, reason: "denied" };
+      });
+
+      const result = await facilitator.settle(buildPaymentPayload(), buildPaymentRequirements());
+
+      expect(result.errorMessage).toBe(undefined);
+      expect(result.success).toBe(false);
     });
   });
 

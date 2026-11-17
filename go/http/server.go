@@ -966,6 +966,19 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 		return s.buildSettlementFailureResult(err.Error(), x402.Network(requirements.Network), "", nil)
 	}
 
+	// When overrides is nil, read and delete Settlement-Overrides so a skipped
+	// settle cannot send the internal header to the client.
+	resolved := overrides
+	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
+		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {
+			var parsed x402.SettlementOverrides
+			if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+				resolved = &parsed
+			}
+			transportContext.ResponseHeaders.Del(SettlementOverridesHeader)
+		}
+	}
+
 	// After-handler path for flows that do not settle again: echo before-handler settle or no-op.
 	if phase != x402.SettlePhaseBeforeHandler && !phases.SettleAfterHandler {
 		if beforeHandlerSettlement != nil && beforeHandlerSettlement.Result != nil {
@@ -1013,17 +1026,6 @@ func (s *x402HTTPResourceServer) ProcessSettlement(
 	resolvedPhase := phase
 	if resolvedPhase == "" {
 		resolvedPhase = x402.SettlePhaseAfterHandler
-	}
-
-	resolved := overrides
-	if resolved == nil && transportContext != nil && transportContext.ResponseHeaders != nil {
-		if val := transportContext.ResponseHeaders.Get(SettlementOverridesHeader); val != "" {
-			var parsed x402.SettlementOverrides
-			if err := json.Unmarshal([]byte(val), &parsed); err == nil {
-				resolved = &parsed
-			}
-			transportContext.ResponseHeaders.Del(SettlementOverridesHeader)
-		}
 	}
 
 	settleResult, err := s.SettlePaymentWithExtensions(ctx, payload, requirements, resolved, declaredExtensions, resolvedPhase)

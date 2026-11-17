@@ -138,6 +138,8 @@ export {
   getFacilitatorResponseError,
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
+export { prepareHttpServer } from "./prepareHttpServer";
+export type { PreparedHttpServer } from "./prepareHttpServer";
 export {
   MAX_CONTROL_PLANE_RESPONSE_BYTES,
   ResponseBodyTooLargeError,

@@ -3,6 +3,7 @@ package facilitator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -551,7 +552,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		}
 		replay, err := restarted.settleDistributions(context.Background(), payload, requirements)
 		require.NoError(t, err)
-		require.Equal(t, asMap(t, response), asMap(t, replay))
+		require.Equal(t, response, replay)
 		require.Zero(t, restartedSubmits.Load())
 
 		restarted.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
@@ -917,6 +918,32 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.False(t, matched)
 		require.Equal(t, int32(8), waits.Load())
 	})
+}
+
+func TestStoredDistributionExtraShadowsEmbeddedField(t *testing.T) {
+	raw := `{"success":true,"transaction":"sig","network":"solana:devnet","amount":"800","payer":"payer","errorReason":"","extensions":{"memo":"keep"},"extra":{"channels":["chan-a"]}}`
+	var stored storedDistribution
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.Equal(t, []string{"chan-a"}, stored.Extra.Channels)
+	require.Nil(t, stored.SettleResponse.Extra)
+	require.Equal(t, "keep", stored.Extensions["memo"])
+	require.Equal(t, "payer", stored.Payer)
+	require.Equal(t, "800", stored.Amount)
+
+	response, err := decodeDistributionResult(raw)
+	require.NoError(t, err)
+	channels, ok := response.Extra["channels"].([]string)
+	require.True(t, ok)
+	require.Equal(t, []string{"chan-a"}, channels)
+	require.Equal(t, "keep", response.Extensions["memo"])
+	require.Equal(t, "payer", response.Payer)
+	require.Equal(t, "800", response.Amount)
+
+	reloaded, err := decodeDistributionResult(`{"success":false,"errorReason":"payout_attribution_ambiguous","transaction":"sig","network":"solana:devnet","extensions":{"memo":"keep"}}`)
+	require.NoError(t, err)
+	require.Nil(t, reloaded.Extra)
+	require.Equal(t, "payout_attribution_ambiguous", reloaded.ErrorReason)
+	require.Equal(t, "keep", reloaded.Extensions["memo"])
 }
 
 type slotAccountSigner struct {

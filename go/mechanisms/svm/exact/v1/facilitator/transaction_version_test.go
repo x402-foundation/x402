@@ -102,7 +102,7 @@ func TestExactSvmSchemeV1_GetExtraAdvertisesTransactionVersions(t *testing.T) {
 
 	extra := scheme.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))
 	assert.Equal(t, addr.String(), extra["feePayer"])
-	assert.Equal(t, []int{0, 1}, extra[svm.ExtraTransactionVersions])
+	assert.Equal(t, svm.AdvertisedTransactionVersions, extra[svm.ExtraTransactionVersions])
 }
 
 func TestExactSvmSchemeV1_VerifyRejectsUnknownTransactionVersion(t *testing.T) {

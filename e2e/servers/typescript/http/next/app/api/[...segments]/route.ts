@@ -4,6 +4,8 @@ import { createWithX402GetHandler, isKnownCatalogPath } from "@/lib/setup";
 
 export const runtime = "nodejs";
 
+const handlers = new Map<string, ReturnType<typeof createWithX402GetHandler>>();
+
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ segments: string[] }> },
@@ -16,7 +18,12 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const server = await getServer();
-    return createWithX402GetHandler(catalogPath, server)(req);
+    let handler = handlers.get(catalogPath);
+    if (!handler) {
+      handler = createWithX402GetHandler(catalogPath, server);
+      handlers.set(catalogPath, handler);
+    }
+    return handler(req);
   }
 
   return NextResponse.json({ error: "Not found" }, { status: 404 });

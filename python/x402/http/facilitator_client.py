@@ -17,6 +17,7 @@ from ..schemas import (
     SettleResponse,
     SupportedResponse,
     VerifyResponse,
+    detect_version,
 )
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 from .extension_responses import extract_extension_responses_header, log_extension_responses
@@ -96,6 +97,21 @@ def _parse_facilitator_response(
 
 def _decode_error_body(body: bytes) -> str:
     return body.decode("utf-8", errors="replace")
+
+
+def _load_requirements(requirements_bytes: bytes) -> dict[str, Any]:
+    requirements = json.loads(requirements_bytes)
+    if not isinstance(requirements, dict):
+        raise ValueError("Payment requirements must be a JSON object")
+    return requirements
+
+
+def _load_payment_bytes(
+    payload_bytes: bytes,
+    requirements_bytes: bytes,
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    version = detect_version(payload_bytes)
+    return version, json.loads(payload_bytes), _load_requirements(requirements_bytes)
 
 
 def _read_sync_response_body(response: Any) -> bytes:
@@ -279,12 +295,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         Returns:
             VerifyResponse.
         """
-        from ..schemas.helpers import detect_version
-
-        version = detect_version(payload_bytes)
-        payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
-
+        version, payload_dict, requirements_dict = _load_payment_bytes(
+            payload_bytes, requirements_bytes
+        )
         return await self._verify_http(version, payload_dict, requirements_dict)
 
     async def settle_from_bytes(
@@ -303,12 +316,9 @@ class HTTPFacilitatorClient(HTTPFacilitatorClientBase):
         Returns:
             SettleResponse.
         """
-        from ..schemas.helpers import detect_version
-
-        version = detect_version(payload_bytes)
-        payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
-
+        version, payload_dict, requirements_dict = _load_payment_bytes(
+            payload_bytes, requirements_bytes
+        )
         return await self._settle_http(version, payload_dict, requirements_dict)
 
     # =========================================================================
@@ -507,12 +517,9 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         Returns:
             VerifyResponse.
         """
-        from ..schemas.helpers import detect_version
-
-        version = detect_version(payload_bytes)
-        payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
-
+        version, payload_dict, requirements_dict = _load_payment_bytes(
+            payload_bytes, requirements_bytes
+        )
         return self._verify_http(version, payload_dict, requirements_dict)
 
     def settle_from_bytes(
@@ -531,12 +538,9 @@ class HTTPFacilitatorClientSync(HTTPFacilitatorClientBase):
         Returns:
             SettleResponse.
         """
-        from ..schemas.helpers import detect_version
-
-        version = detect_version(payload_bytes)
-        payload_dict = json.loads(payload_bytes)
-        requirements_dict = json.loads(requirements_bytes)
-
+        version, payload_dict, requirements_dict = _load_payment_bytes(
+            payload_bytes, requirements_bytes
+        )
         return self._settle_http(version, payload_dict, requirements_dict)
 
     # =========================================================================

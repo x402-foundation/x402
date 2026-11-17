@@ -181,16 +181,28 @@ class TestChannelDataclass:
             pending_id="pid", signed_max_claimable="1000", expires_at=1000
         )
         ch.onchain_synced_at = 500
+        ch.network = "eip155:8453"
         d = ch.to_dict()
         assert "pendingRequest" in d
         assert "onchainSyncedAt" in d
+        assert d["network"] == "eip155:8453"
         assert Channel.from_dict(d) == ch
+
+    def test_legacy_row_without_network_round_trips(self):
+        d = _sample_channel().to_dict()
+        assert "network" not in d
+        assert Channel.from_dict(d).network is None
 
     def test_copy_is_independent(self):
         ch = _sample_channel()
         c2 = ch.copy()
         c2.balance = "999"
         assert ch.balance == "900"
+
+    def test_copy_preserves_network(self):
+        ch = _sample_channel()
+        ch.network = "eip155:8453"
+        assert ch.copy().network == "eip155:8453"
 
 
 class TestPendingRequest:

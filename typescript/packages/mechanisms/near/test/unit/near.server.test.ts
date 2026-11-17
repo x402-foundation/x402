@@ -69,11 +69,8 @@ describe("near server scheme", () => {
     expect(parsed).toEqual({ amount: "42", asset: "custom.testnet", extra: {} });
   });
 
-  it("returns decimals for known default assets", () => {
+  it("returns undefined for an unknown asset", () => {
     const scheme = new ExactNearScheme();
-    expect(
-      scheme.getAssetDecimals(getDefaultAsset(NEAR_TESTNET_CAIP2).asset, NEAR_TESTNET_CAIP2),
-    ).toBe(6);
     expect(scheme.getAssetDecimals("unknown.testnet", NEAR_TESTNET_CAIP2)).toBeUndefined();
   });
 

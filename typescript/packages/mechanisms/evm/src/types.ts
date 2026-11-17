@@ -295,6 +295,8 @@ export type {
   BatchSettlementDepositAuthorization,
   BatchSettlementAssetTransferMethod,
   BatchSettlementClaimPayload,
+  BatchSettlementEnrichedDepositPayload,
+  BatchSettlementEnrichedVoucherPayload,
   BatchSettlementEnrichedRefundPayload,
   BatchSettlementVoucherClaim,
   BatchSettlementPayload,

@@ -25,13 +25,13 @@ from x402.mechanisms.svm import (
     ERR_COMPUTE_LIMIT_TOO_HIGH,
     ERR_COMPUTE_PRICE_TOO_HIGH,
     ERR_INVALID_COMPUTE_LIMIT,
-    ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
     ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING,
     ERR_MEMO_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_PROTOCOL_INSTRUCTION_ORDER,
     ERR_TRANSACTION_SIZE_EXCEEDED,
-    ERR_UNKNOWN_FOURTH_INSTRUCTION,
-    ERR_UNKNOWN_SEVENTH_INSTRUCTION,
+    ERR_UNKNOWN_INSTRUCTION,
     ERR_V1_COMPUTE_BUDGET_INSTRUCTION,
     ERR_V1_HEAP_SIZE,
     LIGHTHOUSE_PROGRAM_ADDRESS,
@@ -219,39 +219,45 @@ class TestClientBuildsVersion1:
 
 
 class TestFacilitatorVersion1Layout:
+    @pytest.mark.parametrize("data", [b"", b"\x00", b"\x01", b"\x12", b"\xff"])
+    def test_invalid_lighthouse_is_rejected_before_layout_errors(self, data):
+        bad_guard = _program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, data)
+        result = _verify(_v1_wire([_memo_ix(), bad_guard, _transfer_ix()]))
+        assert result.invalid_reason == ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+
     def test_transfer_alone_is_valid(self):
         assert _verify(_v1_wire([_transfer_ix()])).is_valid is True
 
     def test_lighthouse_and_memo_slots_are_allowed(self):
-        lighthouse = _program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, b"\x01")
+        lighthouse = _program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, b"\x02")
         lighthouse_2 = _program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, b"\x02")
         lighthouse_3 = _program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, b"\x03")
         wire = _v1_wire([_transfer_ix(), lighthouse, lighthouse_2, lighthouse_3, _memo_ix()])
         result = _verify(wire)
         assert result.is_valid is True, result.invalid_reason
 
-    def test_more_than_four_optional_instructions_is_rejected(self):
-        extra = [_program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, bytes([i])) for i in range(5)]
-        result = _verify(_v1_wire([_transfer_ix(), *extra]))
-        assert result.invalid_reason == ERR_INVALID_INSTRUCTION_COUNT
+    def test_many_assertion_guards_are_allowed_anywhere(self):
+        extra = [_program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, bytes([i])) for i in range(2, 10)]
+        result = _verify(_v1_wire([*extra[:3], _transfer_ix(), *extra[3:]]))
+        assert result.is_valid is True, result.invalid_reason
 
     def test_empty_instruction_list_is_rejected(self):
-        assert _verify(_v1_wire([])).invalid_reason == ERR_INVALID_INSTRUCTION_COUNT
+        assert _verify(_v1_wire([])).invalid_reason == ERR_NO_TRANSFER_INSTRUCTION
 
-    def test_unknown_optional_instruction_uses_slot_codes(self):
+    def test_unknown_optional_instruction_uses_identity_reason(self):
         unknown = _program_ix("11111111111111111111111111111111", b"\x09")
         assert _verify(_v1_wire([_transfer_ix(), unknown])).invalid_reason == (
-            ERR_UNKNOWN_FOURTH_INSTRUCTION
+            ERR_UNKNOWN_INSTRUCTION
         )
-        lighthouse = [_program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, bytes([i])) for i in range(3)]
+        lighthouse = [_program_ix(LIGHTHOUSE_PROGRAM_ADDRESS, bytes([i])) for i in range(2, 5)]
         assert _verify(_v1_wire([_transfer_ix(), *lighthouse, unknown])).invalid_reason == (
-            ERR_UNKNOWN_SEVENTH_INSTRUCTION
+            ERR_UNKNOWN_INSTRUCTION
         )
 
     def test_transfer_must_come_first(self):
         result = _verify(_v1_wire([_memo_ix(), _transfer_ix()]))
         assert result.is_valid is False
-        assert result.invalid_reason == ERR_NO_TRANSFER_INSTRUCTION
+        assert result.invalid_reason == ERR_PROTOCOL_INSTRUCTION_ORDER
 
     def test_memo_is_bound_to_extra_memo(self):
         result = _verify(_v1_wire([_transfer_ix(), _memo_ix(b"other")]), {"memo": "order-42"})

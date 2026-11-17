@@ -9,6 +9,7 @@ This directory contains **mechanism implementations** for the x402 protocol.
 For example:
 - The **exact** scheme on **EVM** networks uses EIP-3009 for USDC transfers
 - The **exact** scheme on **SVM** networks uses Solana token transfers
+- The **exact** scheme on **Casper** networks uses CEP-3009 `transfer_with_authorization`
 
 ## Directory Structure
 
@@ -16,6 +17,12 @@ Mechanisms are organized by network type and scheme:
 
 ```
 mechanisms/
+├── casper/                 - Casper Network
+│   └── exact/              - Exact payment scheme for Casper
+│       ├── client/         - Client-side: create payments
+│       ├── server/         - Server-side: verify payments
+│       └── facilitator/    - Facilitator-side: settle payments
+│
 ├── evm/                    - Ethereum Virtual Machine networks
 │   └── exact/              - Exact payment scheme for EVM
 │       ├── client/         - Client-side: create payments
@@ -71,6 +78,12 @@ Solana-based exact payments using token transfers.
 
 **See:** [svm/README.md](svm/README.md)
 
+### Casper - Exact
+
+Casper CEP-18 exact payments using CEP-3009 transfer with authorization.
+
+**See:** [casper/README.md](casper/README.md)
+
 ## Future Mechanisms
 
 As new payment schemes are developed, they will be added to this directory:
@@ -125,4 +138,5 @@ For questions about contributing mechanisms, please:
 
 - **[EVM Mechanisms](evm/README.md)** - Ethereum Virtual Machine payment schemes
 - **[SVM Mechanisms](svm/README.md)** - Solana Virtual Machine payment schemes
+- **[Casper Mechanisms](casper/README.md)** - Casper Network payment schemes
 

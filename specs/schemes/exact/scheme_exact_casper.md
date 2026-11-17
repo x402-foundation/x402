@@ -95,7 +95,7 @@ Settlement is performed by the facilitator submitting a Casper transaction that 
 
 The token contract recomputes the CEP-3009 EIP-712 digest, verifies the signature, enforces the validity window and nonce uniqueness, records `(from, nonce)` as used, and transfers `value` from `from` to `to`.
 
-The facilitator MUST perform full verification again during settlement and MUST NOT assume that a prior `/verify` result is still valid. The facilitator MUST wait for the submitted Casper transaction to be included and executed successfully on chain before returning `success: true`. If execution fails, the facilitator MUST return `success: false` with an `errorReason` and an empty `transaction` value.
+The facilitator MUST perform full verification again during settlement and MUST NOT assume that a prior `/verify` result is still valid. The facilitator MUST wait for the submitted Casper transaction to be included and executed successfully on chain before returning `success: true`. If execution fails, the facilitator MUST return `success: false` with an `errorReason` and the hash of the failed transaction in `transaction`.
 
 ## `SettlementResponse`
 
@@ -112,7 +112,7 @@ The `SettlementResponse` returned to the client for the `exact` scheme in Casper
 
 - `success`: Boolean indicating the settlement outcome.
 - `payer`: 33-byte hex address of the payer (`authorization.from`).
-- `transaction`: 32-byte hex Casper transaction hash.
+- `transaction`: 32-byte hex Casper transaction hash. Empty string if no transaction was submitted.
 - `network`: CAIP-2 network identifier.
 
 On failure (`success: false`), the response additionally contains:

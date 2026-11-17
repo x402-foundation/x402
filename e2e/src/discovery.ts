@@ -20,13 +20,22 @@ import {
 
 /**
  * Catalog `sdks` lists languages that implement the route for every role.
- * `clientSdks` lists client-only languages. Legacy endpoints omit both and stay unrestricted.
+ * `clientSdks` lists client-only languages, and `facilitatorSdks` narrows
+ * facilitator support when a route is not implemented by every SDK.
+ * Legacy endpoints omit all three and stay unrestricted.
  */
 function roleImplementsEndpoint(
   language: string,
   endpoint: TestEndpoint,
   role: 'client' | 'facilitator',
 ): boolean {
+  if (
+    role === 'facilitator' &&
+    endpoint.facilitatorSdks &&
+    !endpoint.facilitatorSdks.includes(language)
+  ) {
+    return false;
+  }
   const listed = endpoint.sdks;
   const clientOnly = endpoint.clientSdks;
   if ((!listed || listed.length === 0) && (!clientOnly || clientOnly.length === 0)) {

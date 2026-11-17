@@ -131,6 +131,45 @@ func TestBatchSettlementRedemptionWorker(t *testing.T) {
 		assert.Equal(t, uint64(0), stored.Settled)
 	})
 
+	t.Run("reports a thrown settlement_pending claim and continues the pass", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		settled := newChannel("chan-b")
+		settled.Settled = 3000
+		require.NoError(t, store.Put(settled))
+		var errors []error
+		var submitted []string
+		options := withPayout(managerOptions(store, receiverAuthorizer, func(ctx context.Context, request server.RedemptionRequest, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+			payloadType, _ := redemptionFacts(request.Payload)
+			submitted = append(submitted, payloadType)
+			if payloadType == batchsettlement.PayloadTypeClaim {
+				return nil, x402.NewSettleError(x402.ErrSettlementPending, "payer", svm.SolanaDevnetCAIP2, "claim-tx", "")
+			}
+			return recoveredResponse(request.Payload), nil
+		}), 3000)
+		options.OnError = func(err error) { errors = append(errors, err) }
+		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, result.Claimed)
+		assert.Equal(t, []string{"chan-b"}, result.Distributed)
+		assert.Equal(t, []string{"claim", "settle"}, submitted)
+		require.Len(t, errors, 1)
+		assert.Contains(t, errors[0].Error(), x402.ErrSettlementPending)
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), stored.Settled)
+	})
+
+	t.Run("propagates a settle error that carries no transaction", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		options := withPayout(managerOptions(store, receiverAuthorizer, func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
+			return nil, assert.AnError
+		}), 3000)
+		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		require.ErrorIs(t, err, assert.AnError)
+	})
+
 	t.Run("repairs merchant state and finishes payout after a lost response and restart", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()
 		require.NoError(t, store.Put(newChannel("chan-a")))

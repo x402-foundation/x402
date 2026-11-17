@@ -27,6 +27,8 @@ from ..constants import (
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
     ERR_FEE_PAYER_TRANSFERRING,
+    ERR_INVALID_COMPUTE_LIMIT,
+    ERR_INVALID_COMPUTE_PRICE,
     ERR_MEMO_COUNT,
     ERR_MEMO_MISMATCH,
     ERR_MINT_MISMATCH,
@@ -40,24 +42,17 @@ from ..constants import (
     ERR_TRANSACTION_DECODE_FAILED,
     ERR_TRANSACTION_FAILED,
     ERR_TRANSACTION_SIZE_EXCEEDED,
-    ERR_UNKNOWN_FIFTH_INSTRUCTION,
-    ERR_UNKNOWN_FOURTH_INSTRUCTION,
-    ERR_UNKNOWN_SEVENTH_INSTRUCTION,
-    ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
     ERR_UNSUPPORTED_TRANSACTION_VERSION,
-    LIGHTHOUSE_PROGRAM_ADDRESS,
-    MEMO_PROGRAM_ADDRESS,
+    MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     SCHEME_EXACT,
-    TOKEN_2022_PROGRAM_ADDRESS,
-    TOKEN_PROGRAM_ADDRESS,
 )
 from ..errors import TransactionOnchainFailureError
 from ..settlement_cache import SettlementCache
 from ..signer import FacilitatorSvmSigner, FacilitatorSvmSignerWithGetAccountInfo
 from ..types import ExactSvmPayload
 from ..utils import (
-    check_exact_compute_budget,
+    check_transaction_v1_config,
     decode_transaction_from_payload,
     derive_ata,
     get_token_payer_from_transaction,
@@ -69,6 +64,7 @@ from ..utils import (
     transaction_size_exceeded,
     validate_svm_address,
 )
+from .instruction_layout import InstructionTuple, LayoutError, resolve_protocol_layout
 
 
 class ExactSvmScheme:
@@ -90,6 +86,8 @@ class ExactSvmScheme:
         settlement_cache: SettlementCache | None = None,
         pending_store: PendingSettlementStore | None = None,
         transaction_versions: Sequence[int] | None = None,
+        preflight_instruction_allowlist: list[InstructionTuple] | None = None,
+        postflight_instruction_allowlist: list[InstructionTuple] | None = None,
     ):
         """Create ExactSvmScheme facilitator.
 
@@ -107,6 +105,15 @@ class ExactSvmScheme:
                 whose signer or RPC does not yet handle version 1. Defaults to
                 ``[0, 1]``.
 
+            preflight_instruction_allowlist: Instruction tuples that may appear as a
+                contiguous block (guard instructions aside) immediately BEFORE the
+                required protocol instructions. Extension point for prefixing the
+                payment with out-of-band setup. A matched block is fee-payer-isolation
+                checked. Defaults to no allowlisted tuples (current behavior).
+            postflight_instruction_allowlist: Instruction tuples that may appear as a
+                contiguous block (guard instructions aside) immediately AFTER the
+                required protocol instructions. See preflight_instruction_allowlist.
+
         Raises:
             ValueError: If ``transaction_versions`` is empty or holds anything
                 but 0 and 1.
@@ -116,6 +123,12 @@ class ExactSvmScheme:
         self._settlement_cache = settlement_cache or SettlementCache()
         self._pending_store: PendingSettlementStore = (
             pending_store or InMemoryPendingSettlementStore()
+        )
+        self._preflight_instruction_allowlist: list[InstructionTuple] = (
+            preflight_instruction_allowlist or []
+        )
+        self._postflight_instruction_allowlist: list[InstructionTuple] = (
+            postflight_instruction_allowlist or []
         )
 
     def get_extra(self, network: Network) -> dict[str, Any] | None:
@@ -165,8 +178,11 @@ class ExactSvmScheme:
         Validates:
         - Scheme and network match
         - Transaction version is legacy, 0 or 1
-        - Transaction structure (3-6 instructions, or 1-5 on version 1)
-        - Compute budget instructions (or message.config on version 1) are valid
+        - Transaction instructions: ComputeLimit, ComputePrice, TransferChecked, and an
+          optional Memo must appear in that fixed relative order, identified by program
+          ID + instruction discriminator rather than absolute position. Guard
+          instructions (currently only Lighthouse) may appear anywhere in the sequence.
+        - Compute budget instructions are valid
         - TransferChecked instruction:
           - Token program is known (Token or Token-2022)
           - Mint matches requirements.asset
@@ -238,12 +254,60 @@ class ExactSvmScheme:
             )
 
         message = tx.message
-        instructions = message.instructions
         static_accounts = list(message.account_keys)
 
-        budget_error, transfer_index = check_exact_compute_budget(message)
-        if budget_error:
-            return VerifyResponse(is_valid=False, invalid_reason=budget_error, payer="")
+        # Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
+        # optional Memo) are identified by program ID + instruction discriminator and
+        # MUST appear in that fixed relative order. Guard instructions (currently only
+        # permitted Lighthouse assertion variants -- Phantom/Solflare's
+        # wallet-protection assertions) may appear anywhere. A configured
+        # preflight/postflight allowlist block is stripped (and
+        # fee-payer-isolation-checked) first.
+        # See: https://github.com/x402-foundation/x402/issues/828
+        #  and: https://github.com/x402-foundation/x402/issues/2097
+        try:
+            partitioned = resolve_protocol_layout(
+                static_accounts,
+                message.instructions,
+                self._preflight_instruction_allowlist,
+                self._postflight_instruction_allowlist,
+                Pubkey.from_string(fee_payer_str),
+                version=version,
+            )
+        except LayoutError as e:
+            return VerifyResponse(is_valid=False, invalid_reason=e.reason, payer="")
+
+        if version == 1:
+            budget_error = check_transaction_v1_config(
+                message.config, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS
+            )
+            if budget_error:
+                return VerifyResponse(is_valid=False, invalid_reason=budget_error, payer="")
+        # Step 3: Verify Compute Budget Instructions
+        if version != 1:
+            assert partitioned.compute_limit_ix is not None
+            assert partitioned.compute_price_ix is not None
+            # Roles (discriminators) were established by classification; check payloads.
+            cu_limit_data = bytes(partitioned.compute_limit_ix.data)
+            if len(cu_limit_data) < 5:  # discriminator + u32 units
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+                )
+
+            cu_price_data = bytes(partitioned.compute_price_ix.data)
+            if len(cu_price_data) < 9:  # discriminator + u64 microLamports
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_PRICE, payer=""
+                )
+
+            # Parse microLamports (u64, little-endian) and check against max
+            micro_lamports = int.from_bytes(cu_price_data[1:9], "little")
+            if micro_lamports > MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS:
+                return VerifyResponse(
+                    is_valid=False,
+                    invalid_reason="invalid_exact_svm_payload_transaction_instructions_compute_price_instruction_too_high",
+                    payer="",
+                )
 
         # Get token payer
         payer = get_token_payer_from_transaction(tx)
@@ -253,56 +317,17 @@ class ExactSvmScheme:
             )
 
         # Step 4: Verify Transfer Instruction
-        transfer_ix = instructions[transfer_index]
+        transfer_ix = partitioned.transfer_ix
         transfer_program = static_accounts[transfer_ix.program_id_index]
         transfer_program_str = str(transfer_program)
 
-        token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
-        token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
-
-        if transfer_program != token_program and transfer_program != token_2022_program:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
-        # Step 5: Verify optional instructions (if present)
-        optional_instructions = instructions[transfer_index + 1 :]
-        if optional_instructions:
-            lighthouse_program = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
-            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
-            # Named by optional slot, so the same codes apply on version 1,
-            # whose optional slots start at index 1 rather than 3.
-            invalid_reasons = [
-                ERR_UNKNOWN_FOURTH_INSTRUCTION,
-                ERR_UNKNOWN_FIFTH_INSTRUCTION,
-                ERR_UNKNOWN_SIXTH_INSTRUCTION,
-                ERR_UNKNOWN_SEVENTH_INSTRUCTION,
-            ]
-
-            for idx, optional_ix in enumerate(optional_instructions):
-                optional_program = static_accounts[optional_ix.program_id_index]
-                if optional_program in (lighthouse_program, memo_program):
-                    continue
-
-                reason = (
-                    invalid_reasons[idx]
-                    if idx < len(invalid_reasons)
-                    else ERR_UNKNOWN_SIXTH_INSTRUCTION
-                )
-                return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
-
-        # Step 5b: Verify memo content matches extra.memo when present
+        # Step 5: Verify memo content matches extra.memo when present (exactly one
+        # Memo instruction is required in that case).
         expected_memo = extra.get("memo")
         if expected_memo and isinstance(expected_memo, str):
-            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
-            memo_ixs = [
-                ix
-                for ix in optional_instructions
-                if static_accounts[ix.program_id_index] == memo_program
-            ]
-            if len(memo_ixs) != 1:
+            if partitioned.memo_ix is None or partitioned.memo_count != 1:
                 return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
-            actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
+            actual_memo = bytes(partitioned.memo_ix.data).decode("utf-8")
             if actual_memo != expected_memo:
                 return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
 
@@ -311,11 +336,7 @@ class ExactSvmScheme:
         transfer_data = bytes(transfer_ix.data)
 
         # TransferChecked data: [12 (discriminator), u64 amount, u8 decimals]
-        if len(transfer_data) < 10 or transfer_data[0] != 12:
-            return VerifyResponse(
-                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
-            )
-
+        # (discriminator and length were established by classification)
         # TransferChecked accounts: [source, mint, destination, owner]
         if len(transfer_accounts) < 4:
             return VerifyResponse(
@@ -361,7 +382,6 @@ class ExactSvmScheme:
         # Step 5: Sign and Simulate Transaction
         # CRITICAL: Simulation proves transaction will succeed
         try:
-            # Sign transaction with the feePayer's signer
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer_str, network
             )
@@ -516,7 +536,6 @@ class ExactSvmScheme:
             extra = requirements.extra or {}
             fee_payer = extra["feePayer"]
 
-            # Sign transaction with the feePayer's signer
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer, network
             )
@@ -532,7 +551,6 @@ class ExactSvmScheme:
             )
 
         try:
-            # Send transaction to network
             signature = self._signer.send_transaction(fully_signed_tx, network)
         except Exception as e:
             self._settlement_cache.delete(tx_key)

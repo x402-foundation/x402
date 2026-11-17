@@ -291,19 +291,6 @@ app.post("/settle", async (req, res) => {
   } catch (error) {
     console.error("Settle error:", error);
 
-    // Check if this was an abort from hook
-    if (
-      error instanceof Error &&
-      error.message.includes("Settlement aborted:")
-    ) {
-      // Return a proper SettleResponse instead of 500 error
-      return res.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        network: req.body?.paymentPayload?.network || "unknown",
-      } as SettleResponse);
-    }
-
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
     });

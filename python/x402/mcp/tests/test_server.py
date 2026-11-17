@@ -23,7 +23,7 @@ class MockResourceServer:
 
     def __init__(self):
         """Initialize mock server."""
-        self.verify_payment = Mock(return_value=Mock(is_valid=True, skip_handler=None))
+        self.verify_payment = Mock(return_value=Mock(is_valid=True))
         self.settle_payment = Mock(
             return_value=SettleResponse(
                 success=True,
@@ -544,8 +544,8 @@ def test_create_payment_wrapper_handler_error_no_settlement():
     server.settle_payment.assert_not_called()
 
 
-def test_create_payment_wrapper_hook_errors_non_fatal():
-    """Test that on_after_execution errors are swallowed and don't propagate."""
+def test_create_payment_wrapper_metering_error_prevents_settlement():
+    """A failed metering hook cancels the verified payment instead of charging."""
     from x402.mcp.types import SyncPaymentWrapperHooks as PaymentWrapperHooks
 
     server = MockResourceServer()
@@ -604,8 +604,9 @@ def test_create_payment_wrapper_hook_errors_non_fatal():
         },
     )
 
-    assert result.is_error is False
-    assert "x402/payment-response" in result.meta
+    assert result.is_error is True
+    server.settle_payment.assert_not_called()
+    assert "x402/payment-response" not in result.meta
 
 
 def test_create_payment_wrapper_find_matching_requirement():
@@ -668,6 +669,50 @@ def test_create_payment_wrapper_find_matching_requirement():
     call_args = server.verify_payment.call_args
     matched_req = call_args[0][1] if call_args[0] else call_args[1].get("requirements")
     assert matched_req.network == "eip155:1"
+
+
+def test_create_payment_wrapper_settlement_failure_uses_matched_network():
+    """Test that settlement failure on a non-first accept reports the matched network."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockResourceServer()
+    server.settle_payment.side_effect = Exception("boom")
+
+    accepts = [
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:84532",
+            amount="1000",
+            asset="USDC",
+            pay_to="0xA",
+            max_timeout_seconds=300,
+        ),
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:1",
+            amount="2000",
+            asset="USDC",
+            pay_to="0xB",
+            max_timeout_seconds=300,
+        ),
+    ]
+
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=accepts))
+
+    def handler(args, context):
+        return {"content": [{"type": "text", "text": "success"}]}
+
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted=accepts[1].model_dump(),
+        payload={"signature": "0x123"},
+    )
+    result = paid(handler)({}, {"_meta": {"x402/payment": payload.model_dump()}})
+
+    assert result.is_error is True
+    settled_req = server.settle_payment.call_args[0][1]
+    assert settled_req.network == "eip155:1"
+    assert result.structured_content[MCP_PAYMENT_RESPONSE_META_KEY]["network"] == "eip155:1"
 
 
 def test_create_payment_wrapper_hooks_order():

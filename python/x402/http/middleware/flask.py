@@ -471,6 +471,13 @@ class PaymentMiddleware:
                     return _internal_error_wsgi_response(start_response, failure_headers)
 
                 if response_wrapper.status_code is not None and response_wrapper.status_code >= 400:
+                    # Overrides only apply when a settlement runs; never send the
+                    # internal header to the client.
+                    response_wrapper.headers = [
+                        (k, v)
+                        for k, v in response_wrapper.headers
+                        if k.lower() != SETTLEMENT_OVERRIDES_HEADER.lower()
+                    ]
                     cancel_settlement = None
                     if dispatcher is not None:
                         cancel_settlement = dispatcher.cancel_sync(
