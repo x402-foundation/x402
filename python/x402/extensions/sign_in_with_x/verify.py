@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .evm import extract_evm_chain_id, format_siwe_message, verify_evm_signature
+from .evm import (
+    canonical_evm_address,
+    extract_evm_chain_id,
+    format_siwe_message,
+    verify_evm_signature,
+)
 from .solana import decode_base58, format_siws_message, verify_solana_signature
 from .types import SIWxPayload, SIWxVerifyCode, SIWxVerifyOptions, SIWxVerifyResult
 
@@ -40,18 +45,21 @@ async def _verify_evm_payload(payload: SIWxPayload, options: SIWxVerifyOptions) 
     except ValueError as error:
         return _verify_failure("invalid_siwx_chain_id", str(error))
 
-    message = format_siwe_message(payload, payload.address)
+    # Use the EIP-55 form the message carries for the message, the verifier and
+    # the payer, so the result does not depend on the casing the client sent.
+    address = canonical_evm_address(payload.address)
+    message = format_siwe_message(payload, address)
     try:
         valid = await verify_evm_signature(
             message,
-            payload.address,
+            address,
             payload.signature,
             options.evm_verifier,
             provider=options.provider,
         )
         if not valid:
             return _verify_failure("invalid_siwx_signature", "Signature verification failed")
-        return SIWxVerifyResult(is_valid=True, payer=payload.address)
+        return SIWxVerifyResult(is_valid=True, payer=address)
     except Exception as error:
         return _verify_failure(
             "invalid_siwx_verifier_error",

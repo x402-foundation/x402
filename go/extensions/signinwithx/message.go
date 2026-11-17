@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	siwe "github.com/signinwithethereum/siwe-go"
 )
 
@@ -72,7 +73,19 @@ func createSIWEMessage(payload Payload) (*siwe.Message, error) {
 		options["resources"] = payload.Resources
 	}
 
-	return siwe.NewMessage(payload.Domain, payload.Address, payload.URI, payload.Nonce, options)
+	// Normalize the account address to its EIP-55 checksummed form so that the
+	// rendered message is byte-identical across SIWX implementations. EIP-4361
+	// requires the address line to carry the EIP-55 checksum, and the TypeScript
+	// library (@signinwithethereum/siwe) always checksums it. Rebuilding from a
+	// non-checksummed payload address without this step yields a different
+	// message, a different EIP-191 hash, and rejects an otherwise valid
+	// signature produced by a client using a different implementation.
+	address := payload.Address
+	if common.IsHexAddress(address) {
+		address = common.HexToAddress(address).Hex()
+	}
+
+	return siwe.NewMessage(payload.Domain, address, payload.URI, payload.Nonce, options)
 }
 
 // ExtractSolanaChainReference returns the chain reference from a solana CAIP-2 chain ID.
