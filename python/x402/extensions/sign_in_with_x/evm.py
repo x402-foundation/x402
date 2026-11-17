@@ -18,6 +18,22 @@ def extract_evm_chain_id(chain_id: str) -> int:
     return int(match.group(1))
 
 
+def canonical_evm_address(address: str) -> str:
+    """Return the EIP-55 checksummed form of a hex address, or the input unchanged.
+
+    EIP-4361 requires the address line to carry the EIP-55 checksum, and the
+    TypeScript library (@signinwithethereum/siwe) and the Go SDK always checksum
+    it. Rebuilding the message from a non-checksummed payload address without
+    this step yields a different message and EIP-191 hash, so a valid signature
+    from another implementation would be rejected.
+    """
+    from eth_utils import is_hex_address, to_checksum_address
+
+    if isinstance(address, str) and is_hex_address(address):
+        return to_checksum_address(address)
+    return address
+
+
 def format_siwe_message(info: Any, address: str) -> str:
     """Format SIWE message following EIP-4361."""
     try:
@@ -36,21 +52,9 @@ def format_siwe_message(info: Any, address: str) -> str:
             return getattr(info, name)
         return info.get(alias or name)
 
-    # Normalize the account address to its EIP-55 checksummed form so the
-    # rendered message is byte-identical across SIWX implementations. EIP-4361
-    # requires the address line to carry the EIP-55 checksum, and the TypeScript
-    # library (@signinwithethereum/siwe) always checksums it. Rebuilding from a
-    # non-checksummed payload address without this step yields a different
-    # message, a different EIP-191 hash, and rejects an otherwise valid
-    # signature produced by a client using a different implementation.
-    from eth_utils import is_hex_address, to_checksum_address
-
-    if isinstance(address, str) and is_hex_address(address):
-        address = to_checksum_address(address)
-
     siwe_message = SiweMessage(
         domain=_get("domain"),
-        address=address,
+        address=canonical_evm_address(address),
         statement=_get("statement"),
         uri=_get("uri"),
         version=_get("version"),
