@@ -441,7 +441,7 @@ def _validate_upto_permit2_authorization(authorization: Any) -> str | None:
         "witness.validAfter": witness.get("validAfter"),
     }
     for name, value in numbers.items():
-        if not _is_uint256_string(value):
+        if not is_uint256_string(value):
             return f"permit2Authorization.{name} must be a uint256 decimal string"
     return None
 

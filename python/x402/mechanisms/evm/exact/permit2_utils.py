@@ -59,7 +59,7 @@ from ..types import (  # noqa: E402
     ExactPermit2TokenPermissions,
     ExactPermit2Witness,
     TypedDataField,
-    _is_uint256_string,
+    is_uint256_string,
 )
 from ..utils import (  # noqa: E402
     create_permit2_nonce,
@@ -253,7 +253,7 @@ def verify_permit2(
         return VerifyResponse(is_valid=False, invalid_reason=ERR_PERMIT2_NOT_YET_VALID, payer=payer)
 
     # 7. Amount check
-    if not _is_uint256_string(requirements.amount):
+    if not is_uint256_string(requirements.amount):
         return VerifyResponse(
             is_valid=False,
             invalid_reason=ERR_INVALID_REQUIRED_AMOUNT,
