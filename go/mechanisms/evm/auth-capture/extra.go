@@ -2,12 +2,11 @@ package authcapture
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -137,18 +136,11 @@ func JSONNumberToUint64(value interface{}) (uint64, bool) {
 	case uint64:
 		return v, true
 	case json.Number:
-		if n, err := v.Int64(); err == nil {
-			return nonNegative(n)
-		}
-		if n, err := strconv.ParseUint(string(v), 10, 64); err == nil {
-			return n, true
-		} else if errors.Is(err, strconv.ErrRange) {
+		i, ok := jsonnum.Integer(v)
+		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}
-		if f, err := v.Float64(); err == nil {
-			return JSONNumberToUint64(f)
-		}
-		return 0, false
+		return i.Uint64(), true
 	default:
 		return 0, false
 	}

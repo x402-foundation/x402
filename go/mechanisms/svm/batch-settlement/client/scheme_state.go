@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -1026,13 +1027,11 @@ func extraInt(value any) (int, bool) {
 		}
 		return int(typed), true
 	case json.Number:
-		if parsed, err := typed.Int64(); err == nil {
-			return int(parsed), true
+		i, ok := jsonnum.Integer(typed)
+		if !ok || !i.IsInt64() {
+			return 0, false
 		}
-		if f, err := typed.Float64(); err == nil {
-			return extraInt(f)
-		}
-		return 0, false
+		return extraInt(i.Int64())
 	default:
 		return 0, false
 	}

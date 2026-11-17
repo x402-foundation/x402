@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 )
 
 // AuthorizerSigner is the interface for a dedicated key that provides EIP-712
@@ -724,13 +726,11 @@ func ExtraInt(v interface{}) (int, bool) {
 	case float64:
 		return int(n), true
 	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return int(i), true
+		i, ok := jsonnum.Integer(n)
+		if !ok || !i.IsInt64() {
+			return 0, false
 		}
-		if f, err := n.Float64(); err == nil {
-			return int(f), true
-		}
-		return 0, false
+		return int(i.Int64()), true
 	default:
 		return 0, false
 	}

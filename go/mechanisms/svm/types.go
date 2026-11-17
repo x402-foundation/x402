@@ -9,6 +9,8 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 )
 
 // ExactSvmPayload represents a SVM (Solana) payment payload
@@ -202,13 +204,11 @@ func uptoOpenSlotString(value interface{}) (string, bool) {
 	case uint64:
 		return strconv.FormatUint(v, 10), true
 	case json.Number:
-		if parsed, err := strconv.ParseUint(v.String(), 10, 64); err == nil {
-			return strconv.FormatUint(parsed, 10), true
+		i, ok := jsonnum.Integer(v)
+		if !ok || i.Sign() < 0 || !i.IsUint64() {
+			return "", false
 		}
-		if f, err := v.Float64(); err == nil {
-			return uptoOpenSlotString(f)
-		}
-		return "", false
+		return i.String(), true
 	default:
 		return "", false
 	}
@@ -221,11 +221,8 @@ func jsonNumberIsInt64(value interface{}) bool {
 	case int64, int:
 		return true
 	case json.Number:
-		if _, err := v.Int64(); err == nil {
-			return true
-		}
-		f, err := v.Float64()
-		return err == nil && jsonNumberIsInt64(f)
+		i, ok := jsonnum.Integer(v)
+		return ok && i.IsInt64()
 	default:
 		return false
 	}

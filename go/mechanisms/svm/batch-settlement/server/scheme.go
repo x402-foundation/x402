@@ -14,6 +14,7 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -1597,13 +1598,11 @@ func asRequirementInt(value any) (int64, bool) {
 		}
 		return int64(typed), true
 	case json.Number:
-		if parsed, err := typed.Int64(); err == nil {
-			return parsed, true
+		i, ok := jsonnum.Integer(typed)
+		if !ok || !i.IsInt64() {
+			return 0, false
 		}
-		if f, err := typed.Float64(); err == nil {
-			return asRequirementInt(f)
-		}
-		return 0, false
+		return i.Int64(), true
 	default:
 		return 0, false
 	}

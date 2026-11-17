@@ -15,6 +15,7 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -1043,9 +1044,12 @@ func payloadRecord(payload any) (map[string]any, bool) {
 	return record, ok
 }
 
+// decodeAs re-encodes a decoded payload map into T. Integer-valued numbers such
+// as 60.0 are rewritten as 60 first, so they still decode into int fields now
+// that payload maps hold json.Number instead of float64.
 func decodeAs[T any](value any) (T, error) {
 	var out T
-	raw, err := json.Marshal(value)
+	raw, err := json.Marshal(canonicalNumbers(value))
 	if err != nil {
 		return out, err
 	}
@@ -1053,6 +1057,29 @@ func decodeAs[T any](value any) (T, error) {
 		return out, err
 	}
 	return out, nil
+}
+
+// canonicalNumbers returns a copy of value with every integer-valued
+// json.Number in canonical integer form. The input is not modified.
+func canonicalNumbers(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = canonicalNumbers(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = canonicalNumbers(item)
+		}
+		return out
+	case json.Number:
+		return jsonnum.Canonical(v)
+	default:
+		return v
+	}
 }
 
 func wireKey(network, signature string) string {

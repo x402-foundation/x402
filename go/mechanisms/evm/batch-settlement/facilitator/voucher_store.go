@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
@@ -944,12 +945,8 @@ func optionalUintString(value interface{}) *string {
 			return &s
 		}
 	case json.Number:
-		if atomicAmountPattern.MatchString(string(v)) {
-			s := string(v)
-			return &s
-		}
-		if f, err := v.Float64(); err == nil && f >= 0 && f == float64(int(f)) {
-			s := fmt.Sprintf("%d", int(f))
+		if i, ok := jsonnum.Integer(v); ok && i.Sign() >= 0 {
+			s := i.String()
 			return &s
 		}
 	}
@@ -1382,13 +1379,11 @@ func extraNumber(v interface{}) (int, bool) {
 	case float64:
 		return int(n), true
 	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return int(i), true
+		i, ok := jsonnum.Integer(n)
+		if !ok || !i.IsInt64() {
+			return 0, false
 		}
-		if f, err := n.Float64(); err == nil {
-			return int(f), true
-		}
-		return 0, false
+		return int(i.Int64()), true
 	case string:
 		if !atomicAmountPattern.MatchString(n) {
 			return 0, false

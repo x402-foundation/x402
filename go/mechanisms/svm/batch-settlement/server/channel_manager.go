@@ -14,6 +14,7 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
@@ -580,11 +581,11 @@ func advertisedCapacity(value any) int {
 	case float64:
 		n = v
 	case json.Number:
-		parsed, err := v.Float64()
-		if err != nil {
+		i, ok := jsonnum.Integer(v)
+		if !ok || !i.IsInt64() {
 			return maxChannelsPerBatch
 		}
-		n = parsed
+		n = float64(i.Int64())
 	default:
 		return maxChannelsPerBatch
 	}

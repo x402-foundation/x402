@@ -6,11 +6,14 @@ import (
 )
 
 func TestMapUintStringFieldJSONNumber(t *testing.T) {
-	got, ok := mapUintStringField(map[string]interface{}{"k": json.Number("9007199254740993")}, "k")
-	if !ok || got != "9007199254740993" {
-		t.Fatalf("got (%q, %v)", got, ok)
+	for in, want := range map[json.Number]string{"9007199254740991": "9007199254740991", "9007199254740991.0": "9007199254740991", "6e1": "60"} {
+		got, ok := mapUintStringField(map[string]interface{}{"k": in}, "k")
+		if !ok || got != want {
+			t.Fatalf("mapUintStringField(%q) = (%q, %v), want %q", in, got, ok, want)
+		}
 	}
-	for _, bad := range []json.Number{"-5", "1.5"} {
+	// JSON numbers are capped at 2^53-1, the same as the float64 branch.
+	for _, bad := range []json.Number{"9007199254740992", "9007199254740993", "-5", "1.5"} {
 		if got, ok := mapUintStringField(map[string]interface{}{"k": bad}, "k"); ok {
 			t.Fatalf("mapUintStringField(%q) = %q, want ok=false", bad, got)
 		}

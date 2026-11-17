@@ -12,6 +12,7 @@ import (
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/facilitator"
@@ -1292,11 +1293,8 @@ func mapStringField(m map[string]interface{}, key string, defaultVal string) str
 		return fmt.Sprintf("%.0f", v)
 	}
 	if v, ok := m[key].(json.Number); ok {
-		if n, ok := new(big.Int).SetString(string(v), 10); ok {
-			return n.String()
-		}
-		if f, err := v.Float64(); err == nil {
-			return fmt.Sprintf("%.0f", f)
+		if i, ok := jsonnum.Integer(v); ok {
+			return i.String()
 		}
 	}
 	return defaultVal
@@ -1329,17 +1327,11 @@ func mapUintStringField(m map[string]interface{}, key string) (string, bool) {
 		}
 		return new(big.Int).SetUint64(uint64(v)).String(), true
 	case json.Number:
-		if n, ok := new(big.Int).SetString(string(v), 10); ok {
-			if n.Sign() < 0 {
-				return "", false
-			}
-			return n.String(), true
-		}
-		f, err := v.Float64()
-		if err != nil || f < 0 || f > maxSafeJSONInteger || f != math.Trunc(f) {
+		i, ok := jsonnum.Integer(v)
+		if !ok || i.Sign() < 0 || i.Cmp(big.NewInt(1<<53-1)) > 0 {
 			return "", false
 		}
-		return new(big.Int).SetUint64(uint64(f)).String(), true
+		return i.String(), true
 	}
 	return "", false
 }

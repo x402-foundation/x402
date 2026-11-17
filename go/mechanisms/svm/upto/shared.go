@@ -6,10 +6,12 @@ package upto
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 
 	solana "github.com/gagliardetto/solana-go"
 
+	"github.com/x402-foundation/x402/go/v2/internal/jsonnum"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -125,11 +127,11 @@ func ParseWithdrawDelay(value interface{}) (uint32, error) {
 	case uint32:
 		seconds = float64(typed)
 	case json.Number:
-		f, err := typed.Float64()
-		if err != nil {
+		i, ok := jsonnum.Integer(typed)
+		if !ok || i.Sign() <= 0 || !i.IsUint64() || i.Uint64() > math.MaxUint32 {
 			return 0, invalid
 		}
-		seconds = f
+		return uint32(i.Uint64()), nil
 	default:
 		return 0, invalid
 	}
@@ -178,14 +180,11 @@ func ParseExtraUint64(value interface{}) (uint64, bool) {
 		}
 		return parsed, true
 	case json.Number:
-		if parsed, err := strconv.ParseUint(string(typed), 10, 64); err == nil {
-			return parsed, true
-		}
-		f, err := typed.Float64()
-		if err != nil || f < 0 || f != float64(uint64(f)) {
+		i, ok := jsonnum.Integer(typed)
+		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}
-		return uint64(f), true
+		return i.Uint64(), true
 	default:
 		return 0, false
 	}
