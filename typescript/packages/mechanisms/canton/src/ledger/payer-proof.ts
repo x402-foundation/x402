@@ -69,17 +69,6 @@ export function canonicalTxHashHex(hex: string): string | null {
   return body;
 }
 
-/**
- * Decode a claimed hash to its 32 digest bytes, or null when not a valid hash.
- *
- * @param hex - The claimed hash, hex-encoded.
- * @returns The 32 digest bytes, or null.
- */
-export function digestBytes(hex: string): Buffer | null {
-  const body = canonicalTxHashHex(hex);
-  return body === null ? null : Buffer.from(body, "hex");
-}
-
 /** DER SPKI header for an Ed25519 public key; the raw 32 bytes follow it. */
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
@@ -113,8 +102,9 @@ export function createPayerProofVerifier(
     // refused rather than assumed (a wrong guess yields a non-matching hash).
     if (input.hashingSchemeVersion !== "HASHING_SCHEME_VERSION_V2") return NO;
 
-    const claimed = digestBytes(input.claimedPreparedTxHash);
-    if (!claimed) return NO;
+    const claimedHex = canonicalTxHashHex(input.claimedPreparedTxHash);
+    if (claimedHex === null) return NO;
+    const claimed = Buffer.from(claimedHex, "hex");
 
     // ── A. hash binding ────────────────────────────────────────────────────
     let recomputed: Buffer;

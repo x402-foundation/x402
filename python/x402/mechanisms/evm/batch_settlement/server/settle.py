@@ -109,6 +109,7 @@ def handle_before_settle(scheme: BatchSettlementEvmScheme, ctx: SettleContext):
             return next_ch
 
         next_ch = current.copy()
+        next_ch.network = requirements.network or current.network
         next_ch.charged_cumulative_amount = str(new_charged)
         next_ch.signed_max_claimable = str(voucher["maxClaimableAmount"])
         next_ch.signature = voucher.get("signature", current.signature)
@@ -272,6 +273,7 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
                 # Channel fully drained — delete the record.
                 return None
             next_ch = current.copy()
+            next_ch.network = requirements.network or current.network
             next_ch.balance = snapshot.balance
             next_ch.total_claimed = snapshot.total_claimed
             next_ch.withdraw_requested_at = snapshot.withdraw_requested_at
@@ -314,6 +316,7 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
             charged_actual = str(int(current.charged_cumulative_amount) + int(requirements.amount))
             next_ch = current.copy()
             next_ch.channel_config = channel_config
+            next_ch.network = requirements.network or current.network
             next_ch.charged_cumulative_amount = charged_actual
             next_ch.signed_max_claimable = signed_max_claimable
             next_ch.signature = signature

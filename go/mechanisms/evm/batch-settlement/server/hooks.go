@@ -20,8 +20,6 @@ import (
 
 const zeroAddress = "0x0000000000000000000000000000000000000000"
 
-// Pending reservation TTL bounds. Cleanup hooks normally release admission
-// locks on failure; these bounds release the channel if cleanup never runs.
 type admissionHold int
 
 const (
@@ -305,12 +303,14 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{
 		ChannelId: channelId,
 		PendingId: pendingId,
-	})
+	}, requestContextTtl(ctx.Requirements.GetMaxTimeoutSeconds()))
 
 	acquired, acquireErr := s.lockStorage.Acquire(ctx.Ctx, channelId, pendingId, storage.PendingTtlMs(ctx.Requirements.GetMaxTimeoutSeconds()))
 	if impl := RethrowLockImplementationError(acquireErr); impl != nil {
+		// Abort with a stable reason, not the raw lock-store error.
 		s.TakeRequestContext(ctx.Payload)
-		return nil, impl
+		log.Printf("[batched] BeforeVerify: lock acquire failed: %v", impl)
+		return verificationStateUnavailable(), nil
 	}
 	if acquireErr == nil {
 		if !acquired {
@@ -360,12 +360,9 @@ func handleBeforeVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyContext) (*x
 		if localResult != nil {
 			if !localResult.IsValid {
 				_ = s.ClearPendingRequest(ctx.Payload)
-				return &x402.BeforeHookResult{
-					Skip:             true,
-					SkipVerifyResult: localResult,
-				}, nil
+			} else {
+				s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			}
-			s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{LocalVerify: true})
 			return &x402.BeforeHookResult{
 				Skip:             true,
 				SkipVerifyResult: localResult,
@@ -461,10 +458,18 @@ func invalidLocalVerifyResponse(payer, invalidReason string) *x402.VerifyRespons
 	}
 }
 
+// stampNetwork binds a session to the network of the request that wrote it.
+// An empty network never overwrites an already-bound row.
+func stampNetwork(session *ChannelSession, network string) {
+	if network != "" {
+		session.Network = network
+	}
+}
+
 // buildProvisionalChannelFromPayload constructs the minimal ChannelSession
 // needed to host a pending reservation when storage has no row yet.
 func buildProvisionalChannelFromPayload(
-	channelId, signedMax, signature string,
+	channelId, signedMax, signature, network string,
 	payload map[string]interface{},
 	chargedCumulativeAmount string,
 	now int64,
@@ -475,7 +480,7 @@ func buildProvisionalChannelFromPayload(
 			cfg = parsed
 		}
 	}
-	return &ChannelSession{
+	session := &ChannelSession{
 		ChannelId:               channelId,
 		ChannelConfig:           cfg,
 		ChargedCumulativeAmount: chargedCumulativeAmount,
@@ -487,6 +492,8 @@ func buildProvisionalChannelFromPayload(
 		RefundNonce:             0,
 		LastRequestTimestamp:    now,
 	}
+	stampNetwork(session, network)
+	return session
 }
 
 // AfterVerifyHook stashes facilitator extras on the request snapshot.
@@ -606,7 +613,7 @@ func handleAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResultContext
 		stale := prior
 		if stale == nil {
 			stale = buildProvisionalChannelFromPayload(
-				normalizedId, signedMaxClaimable, signature, payload, base, now,
+				normalizedId, signedMaxClaimable, signature, ctx.Requirements.GetNetwork(), payload, base, now,
 			)
 			stale.Balance = balance
 			stale.TotalClaimed = totalClaimed
@@ -640,6 +647,7 @@ func handleAfterVerify(s *BatchSettlementEvmScheme, ctx x402.VerifyResultContext
 		OnchainSyncedAt:         onchainSyncedAt,
 		LastRequestTimestamp:    now,
 	}
+	stampNetwork(channelSnapshot, ctx.Requirements.GetNetwork())
 
 	s.MergeRequestContext(ctx.Payload, BatchSettlementRequestContext{ChannelSnapshot: channelSnapshot})
 
@@ -696,8 +704,6 @@ func handleBeforeSettle(s *BatchSettlementEvmScheme, ctx x402.SettleContext) (*x
 	if !batchsettlement.IsVoucherPayload(payload) {
 		return nil, nil
 	}
-
-	// --- Voucher path: short-circuit on-chain settlement ---
 
 	voucherMap, _ := payload["voucher"].(map[string]interface{})
 	if voucherMap == nil {
@@ -1068,9 +1074,11 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		now := time.Now().UnixMilli()
 		reqAmount := bigOrZero(ctx.Requirements.GetAmount())
 
+		// Only AfterSettleAbortError fails the settle closed; any other error is logged and
+		// would leave a successful settle without a recorded charge.
 		hold, holdErr := inspectAdmission(ctx.Ctx, s, normalizedId, pendingId)
 		if holdErr != nil {
-			return holdErr
+			return x402.NewAfterSettleAbort(batchsettlement.ErrVoucherStoreUnavailable, holdErr.Error())
 		}
 		if hold == admissionOther {
 			return x402.NewAfterSettleAbort(batchsettlement.ErrChannelBusy, "")
@@ -1099,6 +1107,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			next.ChargedCumulativeAmount = new(big.Int).Add(curCharged, reqAmount).String()
 			next.SignedMaxClaimable = dp.Voucher.MaxClaimableAmount
 			next.Signature = dp.Voucher.Signature
+			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			if cs != nil {
 				applyChannelStateExtra(&next, cs)
 			}
@@ -1107,9 +1116,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			return &next
 		})
 		if updateErr != nil {
-			if impl := RethrowLockImplementationError(updateErr); impl != nil {
-				return impl
-			}
 			return x402.NewAfterSettleAbort(batchsettlement.ErrVoucherStoreUnavailable, updateErr.Error())
 		}
 		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
@@ -1173,6 +1179,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 				return nil
 			}
 			next := *existing
+			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			applyChannelStateExtra(&next, snapshot)
 			next.OnchainSyncedAt = now
 			next.LastRequestTimestamp = now
@@ -1233,8 +1240,6 @@ func handleEnrichSettlementResponse(s *BatchSettlementEvmScheme, ctx x402.Settle
 	return out, nil
 }
 
-// readChannelStateFromExtra extracts the nested channelState map from a
-// settle-response extra. Returns nil when absent or wrong-typed.
 func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettlementChannelStateExtra) {
 	if cs.Balance != "" {
 		next.Balance = cs.Balance

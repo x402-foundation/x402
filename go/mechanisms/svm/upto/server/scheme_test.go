@@ -386,8 +386,9 @@ func TestValidateFacilitatorSupport(t *testing.T) {
 func TestGetAssetDecimals(t *testing.T) {
 	scheme, _ := newTestScheme(t)
 
-	assert.Equal(t, 6, scheme.GetAssetDecimals(svm.USDCDevnetAddress, testNetwork))
-	assert.Equal(t, 6, scheme.GetAssetDecimals("USDC", testNetwork), "symbols resolve like mint addresses")
+	usdc := svm.DefaultAssets[svm.SolanaDevnetCAIP2][0]
+	assert.Equal(t, usdc.Decimals, scheme.GetAssetDecimals(usdc.Asset, testNetwork))
+	assert.Equal(t, usdc.Decimals, scheme.GetAssetDecimals(usdc.Symbol, testNetwork), "symbols resolve like mint addresses")
 	assert.Equal(t, svm.DefaultDecimals, scheme.GetAssetDecimals(solana.SysVarRentPubkey.String(), testNetwork),
 		"unregistered mints fall back to the stablecoin default rather than guessing")
 }

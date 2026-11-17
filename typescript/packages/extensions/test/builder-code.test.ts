@@ -569,6 +569,37 @@ describe("Builder Code Extension", () => {
       });
     });
 
+    it("encodes batch-settlement x402ChargeCounts as a positional uint array without a builder code", () => {
+      const ext = new BuilderCodeFacilitatorExtension();
+      const suffix = ext.buildDataSuffix({
+        ...suffixContext({}),
+        metadata: { x402ChargeCounts: [3n, 0n, 41n] },
+      });
+
+      // "m" key, 1-entry map, 16-byte text key, then array(3) of 03 00 18 29 (25 bytes in total).
+      const mEntry =
+        "616da170" + Buffer.from("x402ChargeCounts").toString("hex") + "830300" + "1829";
+      expect(mEntry).toHaveLength(25 * 2);
+      expect(suffix).toContain(mEntry);
+      expect(parseBuilderCodeSuffixFromCalldata(`0xdeadbeef${suffix!.slice(2)}`)).toEqual({
+        m: { x402ChargeCounts: [3n, 0n, 41n] },
+      });
+    });
+
+    it("keeps a 100-row x402ChargeCounts suffix under 350 bytes and next to builder codes", () => {
+      const counts = Array.from({ length: 100 }, (_, index) => BigInt(index % 4 === 0 ? 300 : 3));
+      const suffix = encodeBuilderCodeSuffix({
+        w: WALLET,
+        m: { x402ChargeCounts: counts },
+      });
+
+      expect((suffix.length - 2) / 2).toBeLessThan(350);
+      expect(parseBuilderCodeSuffixFromCalldata(`0xdeadbeef${suffix.slice(2)}`)).toEqual({
+        w: WALLET,
+        m: { x402ChargeCounts: counts },
+      });
+    });
+
     it("emits no suffix for empty metadata and no attribution", () => {
       const ext = new BuilderCodeFacilitatorExtension();
 

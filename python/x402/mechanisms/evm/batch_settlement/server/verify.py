@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .....schemas import VerifyResponse
@@ -97,6 +98,7 @@ def _read_required_uint_extra(extra: dict, key: str) -> str | None:
 def _build_provisional_channel(
     raw: dict,
     charged_cumulative_amount: str,
+    network: str,
     balance: str = "0",
     total_claimed: str = "0",
     withdraw_requested_at: int = 0,
@@ -108,6 +110,7 @@ def _build_provisional_channel(
     return Channel(
         channel_id=voucher["channelId"],
         channel_config=ChannelConfig.from_dict(raw["channelConfig"]),
+        network=network or None,
         charged_cumulative_amount=charged_cumulative_amount,
         signed_max_claimable=str(voucher["maxClaimableAmount"]),
         signature=voucher.get("signature", "0x"),
@@ -239,6 +242,8 @@ def handle_before_verify(scheme: BatchSettlementEvmScheme, ctx: VerifyContext):
         pending_id = create_nonce()
 
         channel_snapshot = scheme.get_storage().get(channel_id)
+        if channel_snapshot is not None and requirements.network:
+            channel_snapshot = replace(channel_snapshot, network=requirements.network)
 
         # Without a local record the baseline is the facilitator-verified onchain totalClaimed,
         # which is only known after verify; the cumulative check then runs in handle_after_verify.
@@ -341,7 +346,13 @@ def handle_after_verify(
                 current
                 if current
                 else _build_provisional_channel(
-                    raw, base, balance, total_claimed, withdraw_requested_at, refund_nonce
+                    raw,
+                    base,
+                    requirements.network,
+                    balance,
+                    total_claimed,
+                    withdraw_requested_at,
+                    refund_nonce,
                 )
             )
             return current
@@ -350,6 +361,7 @@ def handle_after_verify(
         channel = Channel(
             channel_id=channel_id,
             channel_config=channel_config,
+            network=requirements.network or (current.network if current else None),
             charged_cumulative_amount=base,
             signed_max_claimable=signed_max_claimable,
             signature=signature,
@@ -412,7 +424,12 @@ def handle_verified_payment_canceled(
     ctx: VerifiedPaymentCanceledContext,
 ) -> None:
     """Clear this request's reservation when handler work is canceled."""
-    if ctx.reason not in ("handler_threw", "handler_failed", "after_verify_aborted"):
+    if ctx.reason not in (
+        "handler_threw",
+        "handler_failed",
+        "after_verify_aborted",
+        "settlement_preflight_failed",
+    ):
         return
     scheme.clear_pending_request(ctx.payment_payload)
 

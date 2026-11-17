@@ -7,7 +7,7 @@ Async is the default with full async hook support.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from typing import Any, TypeVar
 
 from typing_extensions import Self
@@ -62,6 +62,12 @@ __all__ = [
     "prefer_scheme",
     "max_amount",
 ]
+
+
+def _signals_recovery(result: Any) -> bool:
+    if isinstance(result, Mapping):
+        return result.get("recovered") is True
+    return getattr(result, "recovered", None) is True
 
 
 # ============================================================================
@@ -162,8 +168,8 @@ class x402Client(x402ClientBase):
             declared,
         ):
             result = await self._execute_hook(hook, ctx)
-            if result is not None:
-                return result
+            if _signals_recovery(result):
+                return RecoveredResponseResult()
         return None
 
     # ========================================================================
@@ -356,8 +362,8 @@ class x402ClientSync(x402ClientBase):
             declared,
         ):
             result = self._execute_hook_sync(hook, ctx)
-            if result is not None:
-                return result
+            if _signals_recovery(result):
+                return RecoveredResponseResult()
         return None
 
     # ========================================================================

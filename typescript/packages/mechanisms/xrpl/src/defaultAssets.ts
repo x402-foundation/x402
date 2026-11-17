@@ -24,12 +24,15 @@ export const RLUSD_MAINNET_ISSUER = "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De";
 /** Official Ripple RLUSD issuer on XRPL testnet. */
 export const RLUSD_TESTNET_ISSUER = "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
 
-/** Default USD-pegged assets by CAIP-2 network; index 0 is the `"$0.10"` default. */
+/**
+ * Default USD-pegged assets by CAIP-2 network; index 0 is the `"$0.10"` default.
+ * IOU amounts are already ledger values, so spend caps must not scale them.
+ */
 export const DEFAULT_ASSETS: DefaultAssetTable<XrplDefaultAsset> = {
   [XRPL_MAINNET]: [
     {
       asset: RLUSD_CURRENCY,
-      decimals: 15,
+      decimals: 0,
       symbol: "RLUSD",
       issuer: RLUSD_MAINNET_ISSUER,
     },
@@ -37,7 +40,7 @@ export const DEFAULT_ASSETS: DefaultAssetTable<XrplDefaultAsset> = {
   [XRPL_TESTNET]: [
     {
       asset: RLUSD_CURRENCY,
-      decimals: 15,
+      decimals: 0,
       symbol: "RLUSD",
       issuer: RLUSD_TESTNET_ISSUER,
     },

@@ -8,6 +8,7 @@ from ..schemas import (
     PaymentPayload,
     PaymentRequired,
     PaymentRequiredV1,
+    PaymentRequirements,
     SettleResponse,
     parse_payment_required,
 )
@@ -85,13 +86,11 @@ def extract_payment_from_meta(params: dict[str, Any]) -> PaymentPayload | None:
     if payment_data is None:
         return None
 
-    # Convert to PaymentPayload
     try:
         if isinstance(payment_data, PaymentPayload):
             return payment_data
         if isinstance(payment_data, dict):
             return PaymentPayload(**payment_data)
-        # Try JSON string
         if isinstance(payment_data, str):
             data = json.loads(payment_data)
             return PaymentPayload(**data)
@@ -145,10 +144,10 @@ def attach_payment_to_meta(params: dict[str, Any], payload: PaymentPayload) -> d
     result = params.copy()
     meta = result.get("_meta", {}).copy() if isinstance(result.get("_meta"), dict) else {}
     # exclude_none mirrors the HTTP encoder (encode_payment_signature_header uses
-    # model_dump_json(by_alias=True, exclude_none=True)). Without it, optional fields serialize
-    # as explicit nulls (e.g. resource.mimeType: null); strict facilitators — and proxies that
-    # re-marshal this payload into a PAYMENT-SIGNATURE header (CDP Bazaar) — reject such payloads
-    # as 'paymentPayload is invalid'. Keeping the two encoders consistent fixes that.
+    # model_dump_json(by_alias=True, exclude_none=True)). Without it, optional fields
+    # serialize as explicit nulls (for example resource.mimeType: null). Strict
+    # facilitators and proxies that re-marshal this payload into a PAYMENT-SIGNATURE
+    # header reject those payloads as 'paymentPayload is invalid'.
     meta[MCP_PAYMENT_META_KEY] = (
         payload.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payload, "model_dump")
@@ -181,13 +180,53 @@ def extract_payment_response_from_meta(
             return response_data
         if isinstance(response_data, dict):
             return SettleResponse(**response_data)
-        # Try JSON string
         if isinstance(response_data, str):
             data = json.loads(response_data)
             return SettleResponse(**data)
         return None
     except (TypeError, ValueError, KeyError):
         return None
+
+
+def metered_payment_requirements(
+    requirements: PaymentRequirements, amount: str | int
+) -> PaymentRequirements:
+    """Normalize an atomic amount within the verified payment ceiling."""
+    if type(amount) is int and amount >= 0:
+        amount = str(amount)
+    for value in (amount, requirements.amount):
+        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+            raise ValueError("Settlement amount must be an ASCII decimal string")
+    if int(amount) > int(requirements.amount):
+        raise ValueError("Settlement amount exceeds the verified ceiling")
+    return requirements.model_copy(deep=True, update={"amount": amount})
+
+
+def extract_payment_response_from_result(result: MCPToolResult) -> SettleResponse | None:
+    """Read a success receipt from metadata, or a failed receipt from the error body.
+
+    Hooks still receive the failure so an uncertain payment is not submitted again.
+    """
+    response = extract_payment_response_from_meta(result)
+    if response is not None or not result.is_error:
+        return response
+    candidates = [result.structured_content]
+    for item in result.content:
+        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+        if not isinstance(text, str):
+            continue
+        try:
+            candidates.append(json.loads(text))
+        except ValueError:
+            continue
+    for data in candidates:
+        if not isinstance(data, dict):
+            continue
+        response = extract_payment_response_from_meta(MCPToolResult(content=[], meta=data))
+        # An error body is only a failure-recovery envelope, not a success receipt.
+        if response is not None and not response.success:
+            return response
+    return None
 
 
 def attach_payment_response_to_meta(
@@ -211,6 +250,26 @@ def attach_payment_response_to_meta(
         is_error=result.is_error,
         meta=new_meta,
         structured_content=result.structured_content,
+    )
+
+
+def attach_failure_path_receipt(result: MCPToolResult, response: SettleResponse) -> MCPToolResult:
+    """Preserve recovery receipts without advertising a failed cancel as paid."""
+    if response.success:
+        return attach_payment_response_to_meta(result, response)
+    error_data = dict(result.structured_content or {})
+    error_data[MCP_PAYMENT_RESPONSE_META_KEY] = response.model_dump(
+        by_alias=True, exclude_none=True
+    )
+    return MCPToolResult(
+        content=[*result.content, {"type": "text", "text": json.dumps(error_data)}],
+        is_error=True,
+        meta={
+            key: value
+            for key, value in (result.meta or {}).items()
+            if key != MCP_PAYMENT_RESPONSE_META_KEY
+        },
+        structured_content=error_data,
     )
 
 
@@ -262,7 +321,6 @@ def _extract_payment_required_from_object(
     Returns:
         PaymentRequired / PaymentRequiredV1 if valid, None otherwise
     """
-    # Check for x402Version/x402_version and accepts fields
     if "x402Version" not in obj and "x402_version" not in obj:
         return None
 
@@ -395,12 +453,10 @@ def extract_payment_required_from_error(error: Any) -> PaymentRequired | Payment
     if not is_object(error):
         return None
 
-    # Check if this is a 402 payment required error
     code = error.get("code")
     if code != MCP_PAYMENT_REQUIRED_CODE:
         return None
 
-    # Extract and validate the data field
     data = error.get("data")
     if not is_object(data):
         return None
@@ -422,7 +478,6 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     Returns:
         MCPToolResult
     """
-    # Extract content
     content = getattr(mcp_result, "content", [])
     if not isinstance(content, list):
         content = []
@@ -432,13 +487,15 @@ def convert_mcp_result(mcp_result: Any) -> "MCPToolResult":
     if is_error is None:
         is_error = getattr(mcp_result, "is_error", False)
 
-    # Extract meta
-    meta = getattr(mcp_result, "_meta", {})
+    meta = getattr(mcp_result, "meta", None)
+    if not isinstance(meta, dict):
+        meta = getattr(mcp_result, "_meta", {})
     if not isinstance(meta, dict):
         meta = {}
 
-    # Extract structuredContent
     structured_content = getattr(mcp_result, "structuredContent", None)
+    if structured_content is None:
+        structured_content = getattr(mcp_result, "structured_content", None)
 
     return MCPToolResult(
         content=content,
@@ -494,28 +551,6 @@ def build_x402_client_config(
         spend_controls=spend_controls,
         payment_requirements_selector=payment_requirements_selector,
     )
-
-
-def register_schemes(payment_client: Any, schemes: list[dict[str, Any]]) -> None:
-    """Register payment schemes on a payment client.
-
-    Shared helper used by factory functions in both sync and async clients
-    to avoid duplicating scheme registration logic.
-
-    Args:
-        payment_client: x402 payment client (sync or async)
-        schemes: List of scheme registrations, each with 'network' and 'client' keys,
-                 and optional 'x402_version' (defaults to 2)
-    """
-    for scheme in schemes:
-        network = scheme["network"]
-        client_scheme = scheme["client"]
-        x402_version = scheme.get("x402_version", 2)
-
-        if x402_version == 1:
-            payment_client.register_v1(network, client_scheme)
-        else:
-            payment_client.register(network, client_scheme)
 
 
 def is_payment_required_error(error: Exception) -> bool:

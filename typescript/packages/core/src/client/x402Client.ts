@@ -765,10 +765,11 @@ export class x402Client {
    * Selection process:
    * 1. Filter by registered schemes (network + scheme support)
    * 2. Drop accepts with unrecognized `extra.paymentFlow`
-   * 3. Enforce spend controls (allowlist, per-asset caps, USD cap on default assets)
-   * 4. Apply all registered policies in order
-   * 5. Prefer authorization (omit or explicit) over upfront/escrow when both remain
-   * 6. Use selector to choose final requirement
+   * 3. Drop accepts whose `asset` is not a non-empty string
+   * 4. Enforce spend controls (allowlist, per-asset caps, USD cap on default assets)
+   * 5. Apply all registered policies in order
+   * 6. Prefer authorization (omit or explicit) over upfront/escrow when both remain
+   * 7. Use selector to choose final requirement
    *
    * @param x402Version - The x402 protocol version
    * @param paymentRequirements - Array of available payment requirements
@@ -816,14 +817,24 @@ export class x402Client {
       );
     }
 
-    // Step 3: Enforce spend controls
+    // Step 3: Drop accepts whose asset is not a non-empty string
+    const assetRequirements = recognizedFlowRequirements.filter(
+      requirement => typeof requirement.asset === "string" && requirement.asset.length > 0,
+    );
+    if (assetRequirements.length === 0) {
+      throw new Error(
+        `Payment requirement is missing asset for x402 version: ${x402Version}`,
+      );
+    }
+
+    // Step 4: Enforce spend controls
     let filteredRequirements = this.applySpendControls(
       x402Version,
-      recognizedFlowRequirements,
+      assetRequirements,
       clientSchemesByNetwork,
     );
 
-    // Step 4: Apply all policies in order
+    // Step 5: Apply all policies in order
     for (const policy of this.policies) {
       filteredRequirements = policy(x402Version, filteredRequirements);
 
@@ -832,7 +843,7 @@ export class x402Client {
       }
     }
 
-    // Step 5: Prefer authorization when both post- and pre-handler flows remain
+    // Step 6: Prefer authorization when both post- and pre-handler flows remain
     const authorizationAccepts = filteredRequirements.filter(
       requirement =>
         requirement.extra?.paymentFlow == null ||
@@ -842,7 +853,7 @@ export class x402Client {
       filteredRequirements = authorizationAccepts;
     }
 
-    // Step 6: Use selector to choose final requirement
+    // Step 7: Use selector to choose final requirement
     return this.paymentRequirementsSelector(x402Version, filteredRequirements);
   }
 

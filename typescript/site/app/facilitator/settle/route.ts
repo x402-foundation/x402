@@ -65,18 +65,6 @@ export async function POST(req: Request) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Settle error:", errorMessage);
 
-    // Check if this was an abort from hook
-    if (error instanceof Error && error.message.includes("Settlement aborted:")) {
-      // Return a proper SettleResponse instead of 500 error
-      return Response.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        errorMessage: error.message.replace("Settlement aborted: ", ""),
-        transaction: "",
-        network: network,
-      } as SettleResponse);
-    }
-
     return Response.json(
       {
         success: false,

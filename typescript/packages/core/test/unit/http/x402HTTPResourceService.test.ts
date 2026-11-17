@@ -3,7 +3,6 @@ import {
   x402HTTPResourceServer,
   HTTPRequestContext,
   HTTPAdapter,
-  PAYMENT_REQUIRED_CACHE_CONTROL,
   withPrivateCacheControl,
 } from "../../../src/http/x402HTTPResourceServer";
 import { x402ResourceServer, AfterSettleAbortError } from "../../../src/server/x402ResourceServer";
@@ -1703,10 +1702,6 @@ describe("x402HTTPResourceServer", () => {
   });
 
   describe("withPrivateCacheControl", () => {
-    it("exports no-store for payment-required responses", () => {
-      expect(PAYMENT_REQUIRED_CACHE_CONTROL).toBe("no-store");
-    });
-
     it("returns private when no existing header is set", () => {
       expect(withPrivateCacheControl(null)).toBe("private");
       expect(withPrivateCacheControl("")).toBe("private");

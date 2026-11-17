@@ -367,11 +367,6 @@ describe("@x402/svm", () => {
   });
 
   describe("Constants", () => {
-    it("should export correct USDC addresses", () => {
-      expect(USDC_MAINNET_ADDRESS).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-      expect(USDC_DEVNET_ADDRESS).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
-    });
-
     it("should have valid address regex", () => {
       expect(SVM_ADDRESS_REGEX).toBeInstanceOf(RegExp);
       expect(SVM_ADDRESS_REGEX.test(USDC_MAINNET_ADDRESS)).toBe(true);

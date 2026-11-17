@@ -147,6 +147,10 @@ export function buildVersion0WireTransaction(feePayer: Address): string {
 
 /**
  * Build a standard-wallet exact payment: compute budget + TransferChecked + memo.
+ * `beforeInstructions` are inserted ahead of the compute-budget instructions and
+ * `extraInstructions` are appended after the transfer/memo — reproducing wallets
+ * (e.g. Phantom) that inject guard instructions both before and after the
+ * payment instructions.
  *
  * @param args - Transfer fields and optional memo text
  * @returns Base64 wire transaction signed by the token authority
@@ -157,6 +161,7 @@ export async function buildExactPaymentTransaction(args: {
   mint: Address;
   payTo: Address;
   payer: MessageSigner;
+  beforeInstructions?: Parameters<typeof appendTransactionMessageInstructions>[0];
   extraInstructions?: Parameters<typeof appendTransactionMessageInstructions>[0];
   includeMemo?: boolean;
   memo?: string;
@@ -201,6 +206,7 @@ export async function buildExactPaymentTransaction(args: {
       data: new TextEncoder().encode(args.memo ?? "nonce"),
     });
   }
+  const before = [...(args.beforeInstructions ?? [])];
   const leading = [...(args.leadingInstructions ?? [])];
   const msg =
     args.version === 1
@@ -216,7 +222,11 @@ export async function buildExactPaymentTransaction(args: {
               m,
             ),
           m => setTransactionMessageFeePayer(args.feePayer, m),
-          m => appendTransactionMessageInstructions([...leading, transferIx, ...trailing], m),
+          m =>
+            appendTransactionMessageInstructions(
+              [...before, ...leading, transferIx, ...trailing],
+              m,
+            ),
           m => setTransactionMessageLifetimeUsingBlockhash(FAKE_BLOCKHASH, m),
         )
       : pipe(
@@ -229,6 +239,7 @@ export async function buildExactPaymentTransaction(args: {
               m,
             ),
           m => appendTransactionMessageInstructions([...leading, transferIx, ...trailing], m),
+          m => before.reduceRight((acc, ix) => prependTransactionMessageInstruction(ix, acc), m),
           m => setTransactionMessageLifetimeUsingBlockhash(FAKE_BLOCKHASH, m),
         );
   const messageBytes = getCompiledTransactionMessageEncoder().encode(
