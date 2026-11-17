@@ -379,8 +379,13 @@ Operator notes:
   meets a transport error may still have reached a node, so it is reported as
   `settlement_pending` with the transaction id too. Only a node's precheck
   rejection, or a failure before submission, gives `unexpected_settle_error`
-  with no transaction id. The guard is per process. The executor's single-use
-  authorization is the authoritative replay protection.
+  with no transaction id. The guard is per process: a restart drops every held
+  and pending key, and separate facilitator processes do not share them. A
+  duplicate that slips through is still a single payment, because the
+  executor's single-use authorization is the authoritative replay protection
+  and reverts the second call, but the facilitator pays the gas for that
+  reverted call. To avoid it, route settles for the same payload to one
+  instance.
 - **Staking rewards.** When a touched account has pending staking rewards, the
   record shows `0.0.800` debited and the reward credited. Before the debit and
   credit checks, the facilitator nets out only the payouts the record itself

@@ -589,6 +589,10 @@ async function readTransactionRecord(
       item.parent_consensus_timestamp === parent.consensus_timestamp,
   );
 
+  // No `nonce` query: the default nonce-0 result is enough. The mirror node
+  // stores every log of the EVM run, nested EVM-to-EVM calls included, under the
+  // parent's consensus timestamp. Child contract results (nonce >= 1) come from
+  // system-contract calls such as HTS at 0x167 and carry no logs.
   const result = await mirrorFetch(baseUrl, `/api/v1/contracts/results/${mirrorId}`);
   if (result.status === 404) {
     return undefined;
