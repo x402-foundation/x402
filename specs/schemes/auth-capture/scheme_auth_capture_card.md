@@ -471,6 +471,6 @@ The following were drafted in earlier revisions of this document and are left ou
 
 | Version | Date | Changes | Authors |
 |---|---|---|---|
-| 0.2.1 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension, scoped replay protection to the authenticated merchant and PSP, and removed micropayment economics as an implementation-level open item | @CarsonRoscoe |
+| 0.2.1 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension and scoped replay protection to the authenticated merchant and PSP | @CarsonRoscoe |
 | 0.2.0 | 2026-10-06 | Reduced to the base binding. `network` stays CAIP-2 with the PSP in `extra.psp`; the payload is the token and a `paymentId`; refunds run at the PSP. Provenance, micropayments, step-up and payment events move to follow-ups (§9) | @stefanoamorelli |
 | 0.1.0 | 2026-08-08 | Initial draft | @stefanoamorelli |
