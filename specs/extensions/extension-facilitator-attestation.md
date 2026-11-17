@@ -284,7 +284,7 @@ The `payment-identifier` extension MAY be used to correlate artifacts at the app
 
 **8. Facilitator Implementation**
 
-The attestation is produced on the facilitator side, through the `enrichSettleResponse` hook of `FacilitatorExtension`. The hook runs after a successful settlement; its return value is placed at `SettleResponse.extensions[key]`, and an error thrown by it is logged and never fails the settlement.
+The attestation is produced on the facilitator side, through the `enrichSettleResponse` hook of `FacilitatorExtension`. The hook runs once the scheme's settlement returns without throwing, after the `afterSettle` hooks, and that includes a result with `success: false`; it does not run when settlement throws. Its return value is placed at `SettleResponse.extensions[key]`, and an error thrown by it is logged and never fails the settlement. A facilitator MUST NOT emit an attestation for a result with `success: false`: the hook MUST return `undefined` for it, which omits the key.
 
 Illustrative sketch (non-normative):
 
@@ -292,6 +292,7 @@ Illustrative sketch (non-normative):
 const facilitatorAttestation: FacilitatorExtension = {
   key: "facilitator-attestation",
   async enrichSettleResponse(ctx) {
+    if (!ctx.result.success) return undefined; // no attestation for a failed settlement
     const payload = buildAttestationPayload(ctx); // §4; payer per §4.3, never copied blindly
     const signature = await signTypedData({ domain, types, primaryType: "SettlementAttestation", message: payload });
     return { info: { attestation: { format: "eip712", payload, signature } } };
