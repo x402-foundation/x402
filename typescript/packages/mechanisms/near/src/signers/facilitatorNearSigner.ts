@@ -176,6 +176,19 @@ export function createFacilitatorNearSigner(
   }));
   const relayerById = new Map(relayers.map(relayer => [relayer.accountId, relayer]));
 
+  // A relayer's access-key nonce is read from final state and only advances once its
+  // transaction reaches FINAL. Submissions on one relayer therefore run one at a time;
+  // otherwise two concurrent settlements would both sign the same nonce.
+  const relayerQueues = new Map<string, Promise<unknown>>();
+  const serializeByRelayer = <T>(relayerId: string, task: () => Promise<T>): Promise<T> => {
+    const run = (relayerQueues.get(relayerId) ?? Promise.resolve()).then(task);
+    relayerQueues.set(
+      relayerId,
+      run.catch(() => undefined),
+    );
+    return run;
+  };
+
   return {
     getRelayerIds(): readonly string[] {
       return relayers.map(relayer => relayer.accountId);
@@ -252,39 +265,42 @@ export function createFacilitatorNearSigner(
       if (!relayer) {
         throw new Error(`unknown_relayer:${relayerId}`);
       }
-      const provider = getProvider(network);
 
-      // Decode the client SignedDelegate to wrap it and to address the outer
-      // transaction to the delegate sender (NEP-366).
-      const decoded = deserialize(SCHEMA.SignedDelegate, fromBase64(signedDelegateAction)) as {
-        delegateAction: { receiverId: string; senderId: string };
-      } & SignedDelegate;
-      const tokenContractId = decoded.delegateAction.receiverId;
-      const senderId = decoded.delegateAction.senderId;
+      return serializeByRelayer(relayerId, async (): Promise<NearSettlementOutcome> => {
+        const provider = getProvider(network);
 
-      const publicKey = await relayer.signer.getPublicKey();
-      const [accessKey, block] = await Promise.all([
-        provider.viewAccessKey(relayer.accountId, publicKey, { finality: "final" }),
-        provider.block({ finality: "final" }),
-      ]);
+        // Decode the client SignedDelegate to wrap it and to address the outer
+        // transaction to the delegate sender (NEP-366).
+        const decoded = deserialize(SCHEMA.SignedDelegate, fromBase64(signedDelegateAction)) as {
+          delegateAction: { receiverId: string; senderId: string };
+        } & SignedDelegate;
+        const tokenContractId = decoded.delegateAction.receiverId;
+        const senderId = decoded.delegateAction.senderId;
 
-      const delegateActionWrapper: Action = actionCreators.signedDelegate(decoded);
-      const transaction = createTransaction(
-        relayer.accountId,
-        publicKey,
-        senderId,
-        BigInt(accessKey.nonce) + 1n,
-        [delegateActionWrapper],
-        baseDecode(block.header.hash),
-      );
+        const publicKey = await relayer.signer.getPublicKey();
+        const [accessKey, block] = await Promise.all([
+          provider.viewAccessKey(relayer.accountId, publicKey, { finality: "final" }),
+          provider.block({ finality: "final" }),
+        ]);
 
-      const [, signedTransaction] = await relayer.signer.signTransaction(transaction);
-      const outcome = await provider.sendTransactionUntil(signedTransaction, "FINAL");
+        const delegateActionWrapper: Action = actionCreators.signedDelegate(decoded);
+        const transaction = createTransaction(
+          relayer.accountId,
+          publicKey,
+          senderId,
+          BigInt(accessKey.nonce) + 1n,
+          [delegateActionWrapper],
+          baseDecode(block.header.hash),
+        );
 
-      return {
-        transaction: outcome.transaction_outcome.id,
-        innerReceipt: interpretSettlementOutcome(outcome, tokenContractId),
-      };
+        const [, signedTransaction] = await relayer.signer.signTransaction(transaction);
+        const outcome = await provider.sendTransactionUntil(signedTransaction, "FINAL");
+
+        return {
+          transaction: outcome.transaction_outcome.id,
+          innerReceipt: interpretSettlementOutcome(outcome, tokenContractId),
+        };
+      });
     },
   };
 }

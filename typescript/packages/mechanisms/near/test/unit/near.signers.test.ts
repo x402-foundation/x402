@@ -383,4 +383,84 @@ describe("createFacilitatorNearSigner", () => {
       }),
     ).rejects.toThrow("unknown_relayer:unknown.testnet");
   });
+
+  describe("relayer submission ordering", () => {
+    afterEach(() => {
+      mockProvider.sendTransactionUntil.mockReset();
+    });
+
+    const finalOutcome = {
+      status: { SuccessValue: "" },
+      receipts_outcome: [{ outcome: { executor_id: FIXTURE.asset, status: { SuccessValue: "" } } }],
+    };
+
+    it("does not sign two concurrent relayer transactions with the same nonce", async () => {
+      const signer = createFacilitatorNearSigner({
+        relayers: [{ accountId: relayerId, secretKey: relayerKey.toString() as KeyPairString }],
+      });
+      const first = await buildSignedDelegateB64();
+      const second = await buildSignedDelegateB64();
+
+      // Model the chain: each relayer transaction that reaches FINAL advances the access-key nonce.
+      let landed = 0;
+      const sentNonces: bigint[] = [];
+      mockProvider.viewAccessKey.mockImplementation(async () => ({
+        nonce: landed,
+        permission: "FullAccess",
+      }));
+      mockProvider.sendTransactionUntil.mockImplementation(
+        async (signedTransaction: { transaction: { nonce: bigint } }) => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          sentNonces.push(signedTransaction.transaction.nonce);
+          landed += 1;
+          return { transaction_outcome: { id: `TX${landed}` }, ...finalOutcome };
+        },
+      );
+
+      const outcomes = await Promise.all([
+        signer.submitSignedDelegateAction({
+          network: FIXTURE.network,
+          relayerId,
+          signedDelegateAction: first.b64,
+        }),
+        signer.submitSignedDelegateAction({
+          network: FIXTURE.network,
+          relayerId,
+          signedDelegateAction: second.b64,
+        }),
+      ]);
+
+      expect(outcomes.map(outcome => outcome.innerReceipt.kind)).toEqual(["success", "success"]);
+      expect(sentNonces).toEqual([1n, 2n]);
+    });
+
+    it("keeps later submissions moving after an earlier one is rejected", async () => {
+      const signer = createFacilitatorNearSigner({
+        relayers: [{ accountId: relayerId, secretKey: relayerKey.toString() as KeyPairString }],
+      });
+      const first = await buildSignedDelegateB64();
+      const second = await buildSignedDelegateB64();
+
+      mockProvider.sendTransactionUntil
+        .mockRejectedValueOnce(new Error("InvalidNonce"))
+        .mockResolvedValueOnce({ transaction_outcome: { id: "TX2" }, ...finalOutcome });
+
+      const rejected = signer.submitSignedDelegateAction({
+        network: FIXTURE.network,
+        relayerId,
+        signedDelegateAction: first.b64,
+      });
+      const accepted = signer.submitSignedDelegateAction({
+        network: FIXTURE.network,
+        relayerId,
+        signedDelegateAction: second.b64,
+      });
+
+      await expect(rejected).rejects.toThrow("InvalidNonce");
+      await expect(accepted).resolves.toMatchObject({
+        transaction: "TX2",
+        innerReceipt: { kind: "success" },
+      });
+    });
+  });
 });
