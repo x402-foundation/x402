@@ -2,6 +2,10 @@ import { TransactionError, type ClientWithCoreApi, type SuiClientTypes } from "@
 import { Transaction } from "@mysten/sui/transactions";
 import { fromBase64, normalizeSuiAddress } from "@mysten/sui/utils";
 import { isValidTransactionSignature } from "@mysten/sui/verify";
+import {
+  InMemoryPendingSettlementStore,
+  type PendingSettlementStore,
+} from "@x402/core/facilitator";
 import type {
   Network,
   PaymentPayload,
@@ -13,7 +17,6 @@ import type {
 import { DEFAULT_MAX_SPONSORED_GAS_BUDGET } from "../../constants";
 import { SettlementCache } from "../../settlement-cache";
 import type {
-  ClaimResult,
   ExactSuiPayload,
   FacilitatorSuiOptions,
   SettlementGuard,
@@ -73,6 +76,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
   private readonly feePayer?: string;
   private readonly maxSponsoredGasBudget: bigint;
   private readonly guard: SettlementGuard;
+  private readonly pendingStore: PendingSettlementStore;
   /**
    * Sponsored payments whose simulation passed at verify, keyed by digest and
    * requirements, with the time the result expires. Lets settle skip a second
@@ -94,6 +98,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     this.feePayer = options?.feePayer;
     this.maxSponsoredGasBudget = options?.maxSponsoredGasBudget ?? DEFAULT_MAX_SPONSORED_GAS_BUDGET;
     this.guard = options?.settlementGuard ?? new SettlementCache();
+    this.pendingStore = options?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
   }
 
   /**
@@ -183,8 +188,9 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
    * the transaction's window, claim the digest, reject a transaction that
    * already executed (unless this retries the facilitator's own pending
    * submission), then submit and report success only if the executed effects
-   * match. The claim is kept on success and on `settlement_pending`, which
-   * marks it pending so a retry can proceed.
+   * match. The claim is kept on success. On `settlement_pending` the digest is
+   * recorded in the pending store and the claim released, so a retry can claim
+   * it again and be recognized as this facilitator's own.
    *
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
@@ -232,7 +238,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     }
 
     const key: SettlementKey = { network, digest, maxEpoch };
-    let claimed: ClaimResult;
+    let claimed: boolean;
     try {
       claimed = await this.guard.claim(key);
     } catch (error) {
@@ -247,13 +253,14 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       );
     }
 
-    // A new claim says only that this facilitator hasn't settled the digest.
+    // A claim says only that this facilitator hasn't settled the digest.
     // Settle can't assume a verify ran (the `upfront` flow), and resubmitting
     // an executed transaction returns its original result as a success, so
     // check the chain unless this retries our own pending submission.
-    const retry = claimed === "pending";
+    const pendingKey = `${network}:${digest}`;
     let result: SettleResponse;
     try {
+      const retry = (await this.pendingStore.get(pendingKey)) === digest;
       if (!retry && (await this.isExecuted(client, digest))) {
         // Keep the claim: the transaction can never settle here.
         return settleFailure(
@@ -282,16 +289,34 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       result = settleFailure(network, "transaction_failed", errorMessage(error), sender, digest);
     }
 
+    if (result.errorReason === "settlement_pending") {
+      try {
+        await this.pendingStore.set(pendingKey, digest);
+      } catch (error) {
+        // Without the record a retry would be rejected as already executed,
+        // so don't invite one. Keep the claim and leave the digest to reconcile.
+        return settleFailure(
+          network,
+          "transaction_failed",
+          `submission outcome unknown, and recording it for retry failed: ${errorMessage(error)}`,
+          sender,
+          digest,
+        );
+      }
+    } else {
+      try {
+        await this.pendingStore.delete(pendingKey);
+      } catch {
+        // A stale record only lets a later settle of this digest skip the
+        // already-executed check; the claim still prevents a second success.
+      }
+    }
     if (!result.success) {
       try {
-        if (result.errorReason === "settlement_pending") {
-          await this.guard.markPending(key);
-        } else {
-          await this.guard.release(key);
-        }
+        await this.guard.release(key);
       } catch {
-        // The claim stays as it was until the guard expires it, and the payer
-        // cannot retry before then.
+        // If release fails, the claim stays until the guard expires it, and the
+        // payer cannot retry before then.
       }
     }
     return result;

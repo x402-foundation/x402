@@ -75,6 +75,7 @@ No key is needed unless the facilitator sponsors gas. Options:
 - `executeTransaction`: submits facilitator-sponsored payments. Required when `feePayer` is set.
 - `maxSponsoredGasBudget`: the gas budget cap for sponsored payments, in MIST, advertised as `extra.maxGasBudget`. Defaults to `10_000_000n` (0.01 SUI).
 - `settlementGuard`: the settlement dedup store. Defaults to an in-memory store that is lost on restart and not shared across processes. See [Settlement deduplication](#settlement-deduplication).
+- `pendingSettlementStore`: remembers this facilitator's `settlement_pending` submissions so a retry is recognized. Defaults to core's in-memory store; share one across processes alongside `settlementGuard`.
 
 The facilitator rejects a transaction without a `ValidDuring` or `Validity` expiration, or one that is not valid in at most two consecutive epochs (`maxEpoch - minEpoch <= 1`). Settlement also requires the current epoch to be inside that window.
 
@@ -123,7 +124,7 @@ Re-submitting an executed Sui transaction returns its original result, so the fa
 
 A claim covers only this facilitator's settlements, and settle can't assume a verify ran (the `upfront` flow), so settle also looks the digest up before submitting and rejects a transaction that already executed elsewhere with `invalid_exact_sui_payload_already_executed`.
 
-If the outcome of a submission can't be established, settlement returns `settlement_pending` with the digest in `transaction`, so the caller can reconcile on chain before retrying. The claim is then marked pending rather than released, so a retry of the same signed transaction is recognized as this facilitator's own: it skips the already-executed check and reports the result if the transaction has since executed. Outside the window, settle refuses it and returns the digest so the caller can look it up.
+If the outcome of a submission can't be established, settlement returns `settlement_pending` with the digest in `transaction`, so the caller can reconcile on chain before retrying. The digest is then recorded in the `pendingSettlementStore` (core's `PendingSettlementStore`, as in `@x402/evm`) and the claim released, so a retry of the same signed transaction can claim it again and is recognized as this facilitator's own: it skips the already-executed check and reports the result if the transaction has since executed. If the record can't be written, settle returns `transaction_failed` with the digest and keeps the claim. A record lost to a restart or its TTL means the retry is rejected as already executed, even though the payment landed; reconcile it by digest. Outside the window, settle refuses a retry and returns the digest so the caller can look it up.
 
 A sponsored payment's simulated effects are checked before the sponsor co-signs it, so a payment that simulates as not crediting `payTo` with exactly `amount` is rejected without spending the sponsor's gas. Simulation can't guarantee what executes: a transaction can behave differently on chain than in simulation. The gas cap and per-sender rate limiting still bound what the sponsor can lose. If this facilitator verified the same payment against the same requirements within `maxTimeoutSeconds` (capped at 10 minutes), settle reuses that result. Otherwise, for example in the `upfront` flow, it simulates at settle.
 
@@ -136,21 +137,16 @@ import type { SettlementGuard } from "@x402/sui";
 // 24 hours, so four days leaves room to spare.
 const CLAIM_TTL_SECONDS = 4 * 24 * 60 * 60;
 
-const key = ({ network, digest }: { network: string; digest: string }) =>
-  `x402:sui:${network}:${digest}`;
-
 const settlementGuard: SettlementGuard = {
-  async claim(k) {
-    if (await redis.set(key(k), "1", { NX: true, EX: CLAIM_TTL_SECONDS })) return true;
-    // Atomically take a pending mark back, so only one retry proceeds.
-    const previous = await redis.set(key(k), "1", { XX: true, KEEPTTL: true, GET: true });
-    return previous === "pending" ? "pending" : false;
+  async claim({ network, digest }) {
+    const set = await redis.set(`x402:sui:${network}:${digest}`, "1", {
+      NX: true,
+      EX: CLAIM_TTL_SECONDS,
+    });
+    return set !== null;
   },
-  async markPending(k) {
-    await redis.set(key(k), "pending", { XX: true, KEEPTTL: true });
-  },
-  async release(k) {
-    await redis.del(key(k));
+  async release({ network, digest }) {
+    await redis.del(`x402:sui:${network}:${digest}`);
   },
 };
 ```

@@ -1,3 +1,4 @@
+import type { PendingSettlementStore } from "@x402/core/facilitator";
 import type { ClientWithCoreApi, SuiClientTypes } from "@mysten/sui/client";
 
 /**
@@ -49,9 +50,7 @@ export type SettlementKey = {
 /**
  * Records which transactions have been settled so the facilitator reports
  * success at most once per digest. The facilitator claims a key before
- * submitting and releases it when settlement does not succeed, except after
- * `settlement_pending`, when it marks the claim pending instead so a retry is
- * recognized as its own submission. Keep a
+ * submitting and releases it when settlement does not succeed. Keep a
  * successful claim until the network is two epochs past `maxEpoch`: one epoch
  * for the window to end, and one of margin for a lagging fullnode.
  *
@@ -68,30 +67,14 @@ export type SettlementKey = {
  * `duplicate_settlement` meanwhile, and since the expiry outlasts the
  * transaction's window, the caller should reconcile such a payment by digest.
  */
-/**
- * The result of {@link SettlementGuard.claim}.
- */
-export type ClaimResult = boolean | "pending";
-
 export interface SettlementGuard {
   /**
-   * Atomically claim a key. A key marked pending is claimed again, and returns
-   * `"pending"`, so one retry of the facilitator's own submission can proceed.
+   * Atomically claim a key.
    *
    * @param key - The settlement identity
-   * @returns `true` if the key was claimed, `"pending"` if it was claimed from a
-   * pending mark, `false` if it is already held
+   * @returns `true` if the key was claimed, `false` if it is already held
    */
-  claim(key: SettlementKey): ClaimResult | Promise<ClaimResult>;
-
-  /**
-   * Mark a claimed key as this facilitator's pending submission, after a
-   * settle that returned `settlement_pending`. Kept as long as a successful
-   * claim.
-   *
-   * @param key - The settlement identity
-   */
-  markPending(key: SettlementKey): void | Promise<void>;
+  claim(key: SettlementKey): boolean | Promise<boolean>;
 
   /**
    * Release a claimed key after a settlement that did not succeed.
@@ -146,4 +129,11 @@ export type FacilitatorSuiOptions = SuiClientOptions & {
    * {@link SettlementGuard}.
    */
   settlementGuard?: SettlementGuard;
+  /**
+   * Remembers this facilitator's submissions that returned
+   * `settlement_pending`, so a retry of one is recognized as its own rather
+   * than rejected as already executed. Defaults to core's in-memory store;
+   * share one across processes alongside `settlementGuard`.
+   */
+  pendingSettlementStore?: PendingSettlementStore;
 };
