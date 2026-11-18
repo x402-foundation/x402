@@ -296,7 +296,9 @@ fetches the transaction by digest. If they're still missing, it returns `transac
 3. Claim the transaction digest. If it is already claimed, return `duplicate_settlement`.
 4. Submit the transaction and wait for finality. If the payer covers its own gas, or the transfer is
    gasless, the facilitator just submits the signed bytes. If the payment is sponsored, the sponsor
-   co-signs and submits it, or declines (`sponsor_rejected`).
+   co-signs and submits it, or declines (`sponsor_rejected`). Unless this is a retry of the
+   facilitator's own pending submission, it first looks the digest up and rejects an executed
+   transaction (`invalid_exact_sui_payload_already_executed`), since settle can't assume a verify ran.
 5. Require a successful execution status (`transaction_failed`) and pass the
    [effects check](#effects-check) on the executed `balanceChanges` (`settlement_effects_mismatch`).
 
@@ -304,8 +306,8 @@ If submitting or waiting for finality fails, the facilitator SHOULD look the tra
 digest and report what actually happened. If the outcome still can't be established, the transaction
 may yet execute, so the facilitator MAY return `settlement_pending` (core spec
 [§9](../../x402-specification-v2.md#9-error-handling)) with the digest in `transaction`, so the
-caller can reconcile on chain before retrying. Retrying the same signed transaction is safe and
-idempotent.
+caller can reconcile on chain before retrying. It then keeps the claim, marked as its own
+submission, so a retry can proceed.
 
 On success the facilitator returns a `SettlementResponse` (core spec
 [§5.3](../../x402-specification-v2.md)) with the digest as `transaction`, the `network`, and the
@@ -358,7 +360,7 @@ Replay and repeat settlement are covered in [Expiration](#expiration) and
 | `invalid_exact_sui_payload_missing_nonce`                    | verify / settle | Declared `extra.nonce` is not valid Base64 or no `Pure` input equals it.                    |
 | `invalid_exact_sui_payload_invalid_expiration`               | verify / settle | Expiration missing or malformed, span exceeds one epoch, or (settle) outside window.        |
 | `invalid_exact_sui_payload_sponsorship_rejected`             | verify / settle | A sponsored transaction fails the sponsorship checks.                                       |
-| `invalid_exact_sui_payload_already_executed`                 | verify          | Transaction has already executed.                                                           |
+| `invalid_exact_sui_payload_already_executed`                 | verify / settle | Transaction has already executed.                                                           |
 | `invalid_exact_sui_payload_simulation_failed`                | verify / settle | Simulation failed, including for an expired transaction.                                    |
 | `invalid_exact_sui_payload_transfer_mismatch`                | verify / settle | Simulated effects do not credit `payTo` with exactly `amount`.                              |
 | `invalid_exact_sui_payload_verification_error`               | verify          | Unexpected error or RPC failure during verification.                                        |
