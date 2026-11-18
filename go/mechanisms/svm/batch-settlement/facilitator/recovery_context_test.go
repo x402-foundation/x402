@@ -92,16 +92,14 @@ func TestBatchSettlementRecoveryOutlivesRequestContext(t *testing.T) {
 		store := newStrictContextStore()
 		scheme := newScheme(t, store)
 
-		_, got, response, err := scheme.settleDurably(context.Background(), durableArgs{
+		got, response, err := scheme.settleDurably(context.Background(), durableArgs{
 			key:     key,
 			network: network,
 			payer:   payer,
 			send: func(func(string, string) error) (string, error) {
 				return signature, nil
 			},
-			postcondition: func(string, bool) (any, error) {
-				return nil, nil
-			},
+			postcondition: func(bool) error { return nil },
 		})
 
 		require.NoError(t, err)

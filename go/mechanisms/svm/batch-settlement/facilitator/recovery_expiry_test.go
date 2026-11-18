@@ -209,16 +209,14 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		}
 		args := func(send func(func(string, string) error) (string, error)) durableArgs {
 			return durableArgs{
-				key:     key,
-				network: network,
-				send:    send,
-				postcondition: func(string, bool) (any, error) {
-					return nil, nil
-				},
+				key:           key,
+				network:       network,
+				send:          send,
+				postcondition: func(bool) error { return nil },
 			}
 		}
 
-		_, _, response, err := scheme.settleDurably(context.Background(), args(timedOut))
+		_, response, err := scheme.settleDurably(context.Background(), args(timedOut))
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		assert.Equal(t, x402.ErrSettlementPending, response.ErrorReason)
@@ -228,7 +226,7 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, timedOutRecord, stored)
 
-		_, _, response, err = scheme.settleDurably(context.Background(), args(landed))
+		_, response, err = scheme.settleDurably(context.Background(), args(landed))
 		require.NoError(t, err)
 		require.NotNil(t, response)
 		assert.Equal(t, "transaction_failed", response.ErrorReason)
@@ -239,7 +237,7 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok)
 
-		_, signed, response, err := scheme.settleDurably(context.Background(), args(landed))
+		signed, response, err := scheme.settleDurably(context.Background(), args(landed))
 		require.NoError(t, err)
 		assert.Nil(t, response)
 		assert.Equal(t, "fresh-signature", signed)

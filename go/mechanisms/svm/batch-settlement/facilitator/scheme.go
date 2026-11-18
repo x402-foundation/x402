@@ -445,7 +445,7 @@ func (f *BatchSvmScheme) verifyParsed(ctx context.Context, record map[string]any
 		if err := AssertNotClosing(channel, channelID); err != nil {
 			return nil, err
 		}
-		if err := f.assertClaimChannel(channel, parsed.ChannelConfig, terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Open}); err != nil {
+		if err := f.assertClaimChannel(channel, parsed.ChannelConfig, terms, requirements, openStatuses); err != nil {
 			return nil, err
 		}
 		ceiling, err := paymentchannels.ParseU64(requirements.Amount, "amount")
@@ -781,7 +781,7 @@ func (f *BatchSvmScheme) broadcastDurably(
 		}
 		return recovered, err
 	}
-	return f.sendDurably(ctx, key, key, network, payer, broadcast)
+	return f.broadcastUnchecked(ctx, key, network, payer, broadcast)
 }
 
 // broadcastUnchecked is broadcastDurably for callers that already read the pending key.
@@ -790,10 +790,7 @@ func (f *BatchSvmScheme) broadcastUnchecked(
 	key, network, payer string,
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
-	if f.hooks.broadcastDurably != nil {
-		return f.hooks.broadcastDurably(ctx, key, network, payer, broadcast)
-	}
-	return f.sendDurably(ctx, key, key, network, payer, broadcast)
+	return f.broadcastReserving(key)(ctx, key, network, payer, broadcast)
 }
 
 // broadcastReserving is broadcastUnchecked under a separate reservation key, for
@@ -815,7 +812,6 @@ func (f *BatchSvmScheme) sendDurably(
 	broadcast func(func(signature, wire string) error) (string, error),
 ) (durableResult, error) {
 	var reserved, reservedWire string
-	lostReservation := false
 	signature, err := broadcast(func(broadcastSignature, wire string) error {
 		record := encodeBroadcastRecord(broadcastSignature, blockhashOfWire(wire), "")
 		_, ok, err := f.duplicateStore.Reserve(ctx, reservation, record, ReservationTTL)
@@ -826,11 +822,10 @@ func (f *BatchSvmScheme) sendDurably(
 			reserved, reservedWire = record, wire
 			return nil
 		}
-		lostReservation = true
 		return errReservationHeld
 	})
 	if err != nil {
-		if lostReservation {
+		if errors.Is(err, errReservationHeld) {
 			return durableResult{Response: SettleFailure(x402.Network(network), ChannelBusy, payer, "another settlement of this operation is in flight")}, nil
 		}
 		pending, found := PendingSignatureOf(err)
@@ -873,22 +868,16 @@ func (f *BatchSvmScheme) reconcileBroadcast(ctx context.Context, key, signature,
 	return f.reconcileBroadcastAt(ctx, key, key, signature, network, payer)
 }
 
-// reconcileBroadcastAt is reconcileBroadcast for an operation that reserves under
-// a key other than its pending key.
-func (f *BatchSvmScheme) reconcileBroadcastAt(ctx context.Context, key, reservation, signature, network, payer string) (durableResult, error) {
-	if f.hooks.reconcileBroadcast != nil {
-		return f.hooks.reconcileBroadcast(ctx, key, signature, network, payer)
-	}
-	return f.reconcileBroadcastImpl(ctx, key, reservation, signature, network, payer)
-}
-
-// reconcileBroadcastImpl awaits the confirmation of the broadcast record
-// already held under key, sending its kept transaction again first. One that
-// failed onchain, or expired without landing, clears the pending record and
+// reconcileBroadcastAt awaits the confirmation of the broadcast record already
+// held under key and reserved under reservationKey, sending its kept transaction
+// again first. One that failed onchain, or expired without landing, clears the pending record and
 // frees the reservation so a retry sends afresh. An unconfirmed one that may
 // still land stays pending. The caller clears the pending record once it has
 // finished the operation.
-func (f *BatchSvmScheme) reconcileBroadcastImpl(ctx context.Context, key, reservationKey, record, network, payer string) (durableResult, error) {
+func (f *BatchSvmScheme) reconcileBroadcastAt(ctx context.Context, key, reservationKey, record, network, payer string) (durableResult, error) {
+	if f.hooks.reconcileBroadcast != nil {
+		return f.hooks.reconcileBroadcast(ctx, key, record, network, payer)
+	}
 	signature, blockhash, wire := parseBroadcastRecord(record)
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
@@ -944,16 +933,11 @@ func (f *BatchSvmScheme) submitRedemption(ctx context.Context, feePayer, network
 	return f.submitWith(ctx, f.broadcastDurably, feePayer, network, instructions, key, payer)
 }
 
-// submitRedemptionUnchecked sends a redemption for a caller that already read the pending record of key.
-func (f *BatchSvmScheme) submitRedemptionUnchecked(ctx context.Context, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {
-	return f.submitWith(ctx, f.broadcastUnchecked, feePayer, network, instructions, key, payer)
-}
-
 func (f *BatchSvmScheme) submitWith(ctx context.Context, broadcastWith broadcaster, feePayer, network string, instructions []solana.Instruction, key, payer string) (durableResult, error) {
 	if f.hooks.submitRedemption != nil {
 		return f.hooks.submitRedemption(ctx, feePayer, network, instructions, key, payer)
 	}
-	broadcast, err := broadcastWith(ctx, key, network, payer, func(onPrepared func(string, string) error) (string, error) {
+	return broadcastWith(ctx, key, network, payer, func(onPrepared func(string, string) error) (string, error) {
 		feeKey, err := solana.PublicKeyFromBase58(feePayer)
 		if err != nil {
 			return "", err
@@ -972,10 +956,6 @@ func (f *BatchSvmScheme) submitWith(ctx context.Context, broadcastWith broadcast
 		}
 		return signature, nil
 	})
-	if err != nil {
-		return durableResult{}, err
-	}
-	return broadcast, nil
 }
 
 func (f *BatchSvmScheme) assertClaimChannel(channel *generated.Channel, config batchsettlement.BatchChannelConfig, terms BatchTerms, requirements types.PaymentRequirements, allowed []generated.ChannelStatus) error {
@@ -994,15 +974,8 @@ func (f *BatchSvmScheme) assertClaimChannel(channel *generated.Channel, config b
 	if err != nil {
 		return fmt.Errorf("%s", batchsettlement.ErrChannelState)
 	}
-	statusOK := false
-	for _, status := range allowed {
-		if generated.ChannelStatus(channel.Status) == status {
-			statusOK = true
-			break
-		}
-	}
 	if channel.Discriminator != uint8(generated.AccountDiscriminator_Channel) ||
-		!statusOK ||
+		!statusIn(channel, allowed) ||
 		channel.Payer.String() != config.Payer ||
 		channel.Payee.String() != terms.FeePayer ||
 		channel.RentPayer.String() != terms.FeePayer ||

@@ -74,8 +74,7 @@ func AssertNotClosing(channel *generated.Channel, channelID string) error {
 // distributed) with the close code: such a channel cannot be closed again
 // (spec 4.5, 7).
 func AssertRefundable(channel *generated.Channel, channelID string) error {
-	status := generated.ChannelStatus(channel.Status)
-	if status != generated.ChannelStatus_Open && status != generated.ChannelStatus_Closing {
+	if !statusIn(channel, refundableStatuses) {
 		return fmt.Errorf("%s: a refund needs an Open or Closing channel; %s has status %d", batchsettlement.ErrCloseState, channelID, channel.Status)
 	}
 	return nil
@@ -240,12 +239,16 @@ func settleSeal(
 	return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, sealed, requirements, intent), nil
 }
 
-var allChannelStatuses = []generated.ChannelStatus{
-	generated.ChannelStatus_Open,
-	generated.ChannelStatus_Closing,
-	generated.ChannelStatus_Sealed,
-	generated.ChannelStatus_Distributed,
-}
+var (
+	openStatuses       = []generated.ChannelStatus{generated.ChannelStatus_Open}
+	refundableStatuses = []generated.ChannelStatus{generated.ChannelStatus_Open, generated.ChannelStatus_Closing}
+	allChannelStatuses = []generated.ChannelStatus{
+		generated.ChannelStatus_Open,
+		generated.ChannelStatus_Closing,
+		generated.ChannelStatus_Sealed,
+		generated.ChannelStatus_Distributed,
+	}
+)
 
 func sealResync(network, payer, message string, state batchsettlement.BatchRedemptionChannelState) *x402.SettleResponse {
 	response := ResyncFailure(x402.Network(network), batchsettlement.ErrCloseState, message, []batchsettlement.BatchRedemptionChannelState{state})
@@ -363,10 +366,7 @@ func ValidateRefund(
 	if err := AssertRefundable(channel, prepared.ChannelID); err != nil {
 		return nil, "", BatchTerms{}, err
 	}
-	if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, prepared.Terms, requirements, []generated.ChannelStatus{
-		generated.ChannelStatus_Open,
-		generated.ChannelStatus_Closing,
-	}); err != nil {
+	if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, prepared.Terms, requirements, refundableStatuses); err != nil {
 		return nil, "", BatchTerms{}, err
 	}
 	return channel, prepared.ChannelID, prepared.Terms, nil
@@ -451,22 +451,7 @@ func verifyCloseVoucher(voucher batchsettlement.BatchVoucher, config batchsettle
 	if voucher.ChannelID != channelID {
 		return 0, fmt.Errorf("%s", batchsettlement.ErrChannelIDMismatch)
 	}
-	if voucher.ExpiresAt != batchsettlement.ClientVoucherExpiresAt {
-		return 0, fmt.Errorf("%s", batchsettlement.ErrVoucherExpiry)
-	}
-	cumulative, err := paymentchannels.ParseU64(voucher.MaxClaimableAmount, "maxClaimableAmount")
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", batchsettlement.ErrVoucherSignature, err)
-	}
-	channelKey, err := solana.PublicKeyFromBase58(channelID)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", batchsettlement.ErrVoucherSignature, err)
-	}
-	message := paymentchannels.EncodeVoucherMessage(channelKey, cumulative, batchsettlement.ClientVoucherExpiresAt)
-	if err := paymentchannels.VerifyVoucherSignature(voucher.Signature, config.PayerAuthorizer, message); err != nil {
-		return 0, fmt.Errorf("%s", batchsettlement.ErrVoucherSignature)
-	}
-	return cumulative, nil
+	return verifySignedVoucher(channelID, voucher, config.PayerAuthorizer)
 }
 
 func authenticateServer(

@@ -189,18 +189,15 @@ func (m *BatchChannelManager) runPass(ctx context.Context) (RedemptionResult, er
 }
 
 func (m *BatchChannelManager) claim(ctx context.Context, channels []ChannelState) ([]string, []string, error) {
-	var unclaimed []ChannelState
-	for _, channel := range channels {
-		if channel.HighestVoucherSignature != "" && channel.SignedMaxClaimable > channel.Settled {
-			unclaimed = append(unclaimed, channel)
-		}
-	}
 	var claimable, closing []ChannelState
-	for _, channel := range unclaimed {
-		if channel.Status == ChannelStatusOpen {
-			claimable = append(claimable, channel)
+	for _, channel := range channels {
+		if channel.HighestVoucherSignature == "" || channel.SignedMaxClaimable <= channel.Settled {
+			continue
 		}
-		if channel.Status == ChannelStatusClosing {
+		switch channel.Status {
+		case ChannelStatusOpen:
+			claimable = append(claimable, channel)
+		case ChannelStatusClosing:
 			closing = append(closing, channel)
 		}
 	}
@@ -276,7 +273,8 @@ func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelSta
 		m.report(fmt.Errorf("%s claim response bound to another network", batchsettlement.Scheme))
 		return nil
 	}
-	if accepts, present := extraField(response.Extra, "accepts"); present {
+	accepts, hasAccepts := extraField(response.Extra, "accepts")
+	if hasAccepts {
 		if !claimAcceptsMatch(accepts, batch) {
 			m.report(fmt.Errorf("%s claim missing confirmed settled watermark", batchsettlement.Scheme))
 			return nil
@@ -285,7 +283,7 @@ func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelSta
 	claimedInBatch := 0
 	for _, channel := range batch {
 		settled := channel.SignedMaxClaimable
-		if _, present := extraField(response.Extra, "accepts"); !present && m.hasSettledReader() {
+		if !hasAccepts && m.hasSettledReader() {
 			observed, ok, err := m.readSettledWatermark(ctx, channel.ChannelID)
 			if err != nil {
 				m.report(err)
@@ -297,14 +295,7 @@ func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelSta
 			}
 			settled = observed
 		}
-		if err := m.record(channel.ChannelID, func(state ChannelState) ChannelState {
-			if state.Settled > settled {
-				settled = state.Settled
-			}
-			state.OnchainSyncedAt = time.Now().UnixMilli()
-			state.Settled = settled
-			return state
-		}); err != nil {
+		if err := m.recordObserved(channel.ChannelID, observedChannel{settled: settled}); err != nil {
 			return err
 		}
 		result.claimed = append(result.claimed, channel.ChannelID)
@@ -330,11 +321,7 @@ func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelSt
 			behind = append(behind, channel)
 			continue
 		}
-		if err := m.record(channel.ChannelID, func(state ChannelState) ChannelState {
-			state.Settled = max(state.Settled, settled)
-			state.OnchainSyncedAt = time.Now().UnixMilli()
-			return state
-		}); err != nil {
+		if err := m.recordObserved(channel.ChannelID, observedChannel{settled: settled}); err != nil {
 			return err
 		}
 	}
@@ -414,18 +401,8 @@ func (m *BatchChannelManager) seal(ctx context.Context, channel ChannelState) (b
 		m.report(fmt.Errorf("%s seal failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
 		return false, nil
 	}
-	finalAmount := channel.SignedMaxClaimable
-	if err := m.record(channel.ChannelID, func(state ChannelState) ChannelState {
-		if state.PayoutWatermark < finalAmount {
-			state.PayoutWatermark = finalAmount
-		}
-		if state.Settled < finalAmount {
-			state.Settled = finalAmount
-		}
-		state.OnchainSyncedAt = time.Now().UnixMilli()
-		state.Status = ChannelStatusDistributed
-		return state
-	}); err != nil {
+	final := channel.SignedMaxClaimable
+	if err := m.recordObserved(channel.ChannelID, observedChannel{status: ChannelStatusDistributed, settled: final, payout: final}); err != nil {
 		return false, err
 	}
 	if m.config.OnSeal != nil {
@@ -453,13 +430,9 @@ func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelSta
 	}
 	switch observed.status {
 	case batchsettlement.ChannelStatusDistributed:
-		return true, m.recordPayout(channel.ChannelID, observed.payout, &observed)
+		return true, m.recordObserved(channel.ChannelID, observed)
 	case batchsettlement.ChannelStatusSealed:
-		return false, m.record(channel.ChannelID, func(state ChannelState) ChannelState {
-			state.Settled = max(state.Settled, observed.settled)
-			state.OnchainSyncedAt = time.Now().UnixMilli()
-			return state
-		})
+		return false, m.recordObserved(channel.ChannelID, observedChannel{settled: observed.settled})
 	default:
 		return false, nil
 	}
@@ -517,15 +490,15 @@ func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []Channel
 	states := m.adoptChannelStates(response, batch)
 	var covered []string
 	for _, channel := range batch {
-		paid, observed, ok := m.observePayout(ctx, channel, states, infer)
+		observed, ok := m.observePayout(ctx, channel, states, infer)
 		if !ok {
 			continue
 		}
-		if err := m.recordPayout(channel.ChannelID, paid, observed); err != nil {
+		if err := m.recordObserved(channel.ChannelID, observed); err != nil {
 			m.report(err)
 			continue
 		}
-		if paid >= channel.Settled {
+		if observed.payout >= channel.Settled {
 			covered = append(covered, channel.ChannelID)
 		}
 	}
@@ -535,23 +508,23 @@ func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []Channel
 // observePayout is a channel's confirmed payout watermark: the facilitator's
 // state, else a configured reader, else (infer) the settled value a confirmed
 // distribute pays out to.
-func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel, infer bool) (uint64, *observedChannel, bool) {
+func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel, infer bool) (observedChannel, bool) {
 	if state, ok := states[channel.ChannelID]; ok {
-		return state.payout, &state, true
+		return state, true
 	}
 	if m.hasPayoutReader() {
 		paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
 		if err != nil {
 			m.report(err)
-			return 0, nil, false
+			return observedChannel{}, false
 		}
 		if !ok || paid > channel.Deposit {
 			m.report(errors.New("confirmed payout watermark unavailable or invalid"))
-			return 0, nil, false
+			return observedChannel{}, false
 		}
-		return paid, nil, true
+		return observedChannel{payout: paid}, true
 	}
-	return channel.Settled, nil, infer
+	return observedChannel{payout: channel.Settled}, infer
 }
 
 // observeSettled is a channel's confirmed settled watermark from the
@@ -571,14 +544,14 @@ func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID stri
 	return settled, ok
 }
 
-func (m *BatchChannelManager) recordPayout(channelID string, paid uint64, observed *observedChannel) error {
+// recordObserved raises a channel's watermarks to the observed ones (a zero value
+// leaves its field alone) and marks it distributed once the chain says it is.
+func (m *BatchChannelManager) recordObserved(channelID string, observed observedChannel) error {
 	return m.record(channelID, func(state ChannelState) ChannelState {
-		state.PayoutWatermark = max(state.PayoutWatermark, paid)
-		if observed != nil {
-			state.Settled = max(state.Settled, observed.settled)
-			if observed.status == batchsettlement.ChannelStatusDistributed {
-				state.Status = ChannelStatusDistributed
-			}
+		state.Settled = max(state.Settled, observed.settled)
+		state.PayoutWatermark = max(state.PayoutWatermark, observed.payout)
+		if observed.status == batchsettlement.ChannelStatusDistributed {
+			state.Status = ChannelStatusDistributed
 		}
 		state.OnchainSyncedAt = time.Now().UnixMilli()
 		return state
