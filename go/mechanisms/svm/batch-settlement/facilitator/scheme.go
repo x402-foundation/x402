@@ -363,6 +363,10 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 	if !ok || !batchsettlement.IsBatchFacilitatorPayload(record) {
 		return SettleFailure(x402.Network(payload.Accepted.Network), batchsettlement.ErrPayloadType, "", ""), nil
 	}
+	payer := recordPayer(record)
+	if reason := EnvelopeFailure(payload.Accepted, requirements); reason != "" {
+		return SettleFailure(x402.Network(payload.Accepted.Network), reason, payer, ""), nil
+	}
 	var facilitatorContext any
 	if fctx != nil {
 		facilitatorContext = fctx
@@ -370,10 +374,6 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 	response, err := f.settleParsed(ctx, record, requirements, facilitatorContext)
 	if err != nil {
 		if reason, ok := classifyKnownError(err); ok {
-			payer := ""
-			if config, ok := record["channelConfig"].(map[string]any); ok {
-				payer, _ = config["payer"].(string)
-			}
 			return SettleFailure(x402.Network(payload.Accepted.Network), reason, payer, err.Error()), nil
 		}
 		return nil, err
@@ -382,6 +382,15 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 		return nil, x402.NewSettleError(response.ErrorReason, response.Payer, response.Network, response.Transaction, response.ErrorMessage)
 	}
 	return response, nil
+}
+
+func recordPayer(record map[string]any) string {
+	config, ok := record["channelConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	payer, _ := config["payer"].(string)
+	return payer
 }
 
 func (f *BatchSvmScheme) verifyParsed(ctx context.Context, record map[string]any, parsed batchsettlement.ParsedBatchPayload, requirements types.PaymentRequirements) (*x402.VerifyResponse, error) {

@@ -668,6 +668,40 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		))
 	})
 
+	t.Run("settle rejects an envelope that differs from the requirements before any work", func(t *testing.T) {
+		scheme := newScheme(t, newSigner(t), nil)
+		req := requirements()
+		voucher := batchsettlement.BatchVoucher{ChannelID: channelID, ExpiresAt: 0, MaxClaimableAmount: "1", Signature: "x"}
+		claim := batchsettlement.BatchClaimPayload{Type: batchsettlement.PayloadTypeClaim, Claims: []batchsettlement.BatchVoucherClaim{{
+			ChannelConfig: channelConfig, ChannelID: channelID, Voucher: voucher,
+		}}}
+		matching := payment(claim, req)
+
+		for name, tamper := range map[string]func(*types.PaymentPayload){
+			"network": func(p *types.PaymentPayload) { p.Accepted.Network = "solana:other" },
+			"amount":  func(p *types.PaymentPayload) { p.Accepted.Amount = "999" },
+			"payTo":   func(p *types.PaymentPayload) { p.Accepted.PayTo = mint },
+			"scheme":  func(p *types.PaymentPayload) { p.Accepted.Scheme = "exact" },
+		} {
+			t.Run(name, func(t *testing.T) {
+				tampered := matching
+				tamper(&tampered)
+
+				result, err := scheme.Settle(ctx, tampered, req, nil)
+
+				require.NoError(t, err)
+				require.False(t, result.Success)
+				wantReason := InvalidPaymentRequirements
+				if name == "scheme" {
+					wantReason = "unsupported_scheme"
+				}
+				require.Equal(t, wantReason, result.ErrorReason)
+				require.Empty(t, result.Transaction)
+				require.Equal(t, x402.Network(tampered.Accepted.Network), result.Network)
+			})
+		}
+	})
+
 	t.Run("maps setup-transaction failures to their spec codes", func(t *testing.T) {
 		scheme := newScheme(t, newSigner(t), nil)
 		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
@@ -1098,9 +1132,8 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			TokenProgram: svm.TokenProgramAddress, VoucherSigner: batchsettlement.VoucherSignerClient, WithdrawDelay: 900,
 		})
 		hookChannelID(scheme, actualChannelID)
-		clientSettle, err := scheme.Settle(ctx, payment(actualDeposit, requirements()), requirements(func(r *types.PaymentRequirements) {
-			r.Amount = "500"
-		}), nil)
+		lowerCharge := requirements(func(r *types.PaymentRequirements) { r.Amount = "500" })
+		clientSettle, err := scheme.Settle(ctx, payment(actualDeposit, lowerCharge), lowerCharge, nil)
 		require.NoError(t, err)
 		require.False(t, clientSettle.Success)
 		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, clientSettle.ErrorReason)
