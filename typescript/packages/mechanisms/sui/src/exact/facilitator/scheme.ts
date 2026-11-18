@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_MAX_SPONSORED_GAS_BUDGET } from "../../constants";
 import { SettlementCache } from "../../settlement-cache";
 import type {
+  ClaimResult,
   ExactSuiPayload,
   FacilitatorSuiOptions,
   SettlementGuard,
@@ -179,8 +180,11 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
 
   /**
    * Settle a payment: re-run the offline checks, check the current epoch is in
-   * the transaction's window, claim the digest, then submit and report success
-   * only if the executed effects match. The claim is kept only on success.
+   * the transaction's window, claim the digest, reject a transaction that
+   * already executed (unless this retries the facilitator's own pending
+   * submission), then submit and report success only if the executed effects
+   * match. The claim is kept on success and on `settlement_pending`, which
+   * marks it pending so a retry can proceed.
    *
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
@@ -228,7 +232,7 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
     }
 
     const key: SettlementKey = { network, digest, maxEpoch };
-    let claimed: boolean;
+    let claimed: ClaimResult;
     try {
       claimed = await this.guard.claim(key);
     } catch (error) {
@@ -243,10 +247,29 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
       );
     }
 
+    // A new claim says only that this facilitator hasn't settled the digest.
+    // Settle can't assume a verify ran (the `upfront` flow), and resubmitting
+    // an executed transaction returns its original result as a success, so
+    // check the chain unless this retries our own pending submission.
+    const retry = claimed === "pending";
     let result: SettleResponse;
     try {
+      if (!retry && (await this.isExecuted(client, digest))) {
+        // Keep the claim: the transaction can never settle here.
+        return settleFailure(
+          network,
+          "invalid_exact_sui_payload_already_executed",
+          `transaction ${digest} already executed`,
+          sender,
+        );
+      }
       result = sponsored
-        ? await this.settleSponsored(payload.payload as ExactSuiPayload, validated, requirements)
+        ? await this.settleSponsored(
+            payload.payload as ExactSuiPayload,
+            validated,
+            requirements,
+            retry,
+          )
         : await this.submit(
             payload.payload as ExactSuiPayload,
             transactionBytes,
@@ -261,10 +284,14 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
 
     if (!result.success) {
       try {
-        await this.guard.release(key);
+        if (result.errorReason === "settlement_pending") {
+          await this.guard.markPending(key);
+        } else {
+          await this.guard.release(key);
+        }
       } catch {
-        // If release fails, the claim stays until the guard expires it, and the
-        // payer cannot retry before then.
+        // The claim stays as it was until the guard expires it, and the payer
+        // cannot retry before then.
       }
     }
     return result;
@@ -274,27 +301,31 @@ export class ExactSuiScheme implements SchemeNetworkFacilitator {
    * Settle a sponsored payment. The sponsor pays gas for whatever it co-signs,
    * so the payment's simulated effects are checked first, unless a recent
    * verify of the same payment already checked them. Settle can't assume a
-   * verify ran (the `upfront` flow, or a direct call). A transaction that has
-   * already executed, such as a retry after `settlement_pending`, is reported
+   * verify ran (the `upfront` flow, or a direct call). On a retry after
+   * `settlement_pending`, a transaction that has since executed is reported
    * from its effects without being co-signed again.
    *
    * @param suiPayload - The signed payload
    * @param validated - The payment, after the offline checks
    * @param requirements - The payment requirements
+   * @param retry - Whether this retries the facilitator's own pending submission
    * @returns The settlement response
    */
   private async settleSponsored(
     suiPayload: ExactSuiPayload,
     validated: ValidatedPayment & { ok: true },
     requirements: PaymentRequirements,
+    retry: boolean,
   ): Promise<SettleResponse> {
     const network = requirements.network;
     const { sender, digest, transactionBytes } = validated;
     const client = this.getClient(network);
 
     if (!this.takeVerifiedSimulation(digest, requirements)) {
-      const executed = await this.lookup(client, digest);
-      if (executed) return this.finish(client, executed, digest, sender, requirements);
+      if (retry) {
+        const executed = await this.lookup(client, digest);
+        if (executed) return this.finish(client, executed, digest, sender, requirements);
+      }
 
       const rejection = await this.simulate(client, transactionBytes, requirements);
       if (rejection) {
