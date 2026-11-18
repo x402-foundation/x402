@@ -189,13 +189,31 @@ function readSingleAuthEntry(transactionXDR: string): {
   credentialType: string;
   entry: xdr.SorobanAuthorizationEntry;
 } {
-  const envelope = xdr.TransactionEnvelope.fromXDR(transactionXDR, "base64");
-  const auth = envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth();
+  const { auth } = getInvokeHostFunctionOp(
+    xdr.TransactionEnvelope.fromXdr(transactionXDR, "base64"),
+  );
 
   if (auth.length !== 1) {
     throw new Error(`Expected exactly 1 auth entry, got ${auth.length}`);
   }
-  return { credentialType: auth[0].credentials().switch().name, entry: auth[0] };
+  return { credentialType: auth[0].credentials.type, entry: auth[0] };
+}
+
+/**
+ * Returns the InvokeHostFunction operation body of a single-operation v1 envelope.
+ *
+ * @param envelope - The decoded transaction envelope
+ * @returns The InvokeHostFunction operation body
+ */
+function getInvokeHostFunctionOp(envelope: xdr.TransactionEnvelope): xdr.InvokeHostFunctionOp {
+  if (envelope.type !== "envelopeTypeTx") {
+    throw new Error(`Expected a v1 transaction envelope, got ${envelope.type}`);
+  }
+  const body = envelope.v1.tx.operations[0].body;
+  if (body.type !== "invokeHostFunction") {
+    throw new Error(`Expected an InvokeHostFunction operation, got ${body.type}`);
+  }
+  return body.invokeHostFunctionOp;
 }
 
 /**
@@ -207,9 +225,17 @@ function readSingleAuthEntry(transactionXDR: string): {
  * @returns The re-serialized base64 transaction envelope XDR
  */
 function replaceAuthEntries(transactionXDR: string, auth: xdr.SorobanAuthorizationEntry[]): string {
-  const envelope = xdr.TransactionEnvelope.fromXDR(transactionXDR, "base64");
-  envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth(auth);
-  return envelope.toXDR("base64");
+  // XDR values are immutable, so edit the plain wire form and re-encode it.
+  const wire = xdr.TransactionEnvelope.fromXdr(transactionXDR, "base64").toXdrObject();
+  if (!("v1" in wire)) {
+    throw new Error("Expected a v1 transaction envelope");
+  }
+  const body = wire.v1.tx.operations[0].body;
+  if (!("invokeHostFunctionOp" in body)) {
+    throw new Error("Expected an InvokeHostFunction operation");
+  }
+  body.invokeHostFunctionOp.auth = auth.map(entry => entry.toXdrObject());
+  return xdr.TransactionEnvelope.fromXdrObject(wire).toXdr("base64");
 }
 
 /**
@@ -392,13 +418,14 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
           `credential arm: ${credentialType}\n`,
       );
 
-      // Simulation currently returns the legacy arm on Protocol 28; the point of
-      // this assertion is that whatever arm it returns is address-based and the
-      // shared helper reads it, so a future flip to V2 keeps working.
+      // stellar-sdk 17 asks simulation for V2 (CAP-71) entries by default, but
+      // an RPC that ignores `useUpgradedAuth` still returns the legacy arm. The
+      // point of this assertion is that whichever arm comes back is
+      // address-based and the shared helper reads it.
       expect(["sorobanCredentialsAddress", "sorobanCredentialsAddressV2"]).toContain(
         credentialType,
       );
-      expect(getAddressCredentials(entry.credentials())).toBeDefined();
+      expect(getAddressCredentials(entry.credentials)).toBeDefined();
 
       const verifyResponse = await server.verifyPayment(paymentPayload, accepted);
       expect(verifyResponse.isValid).toBe(true);
@@ -420,7 +447,7 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       const { transaction } = paymentPayload.payload as ExactStellarPayloadV2;
       const { entry } = readSingleAuthEntry(transaction);
 
-      const credentials = getAddressCredentials(entry.credentials());
+      const credentials = getAddressCredentials(entry.credentials);
       if (!credentials) {
         throw new Error("Expected address credentials on the simulated auth entry");
       }
@@ -433,16 +460,16 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
         new xdr.SorobanAuthorizationEntry({
           credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
             new xdr.SorobanAddressCredentials({
-              address: credentials.address(),
-              nonce: credentials.nonce(),
+              address: credentials.address,
+              nonce: credentials.nonce,
               signatureExpirationLedger: 0, // replaced by authorizeEntry
               signature: xdr.ScVal.scvVoid(),
             }),
           ),
-          rootInvocation: entry.rootInvocation(),
+          rootInvocation: entry.rootInvocation,
         }),
         Keypair.fromSecret(CLIENT_PRIVATE_KEY),
-        credentials.signatureExpirationLedger(),
+        credentials.signatureExpirationLedger,
         StellarNetworks.TESTNET,
       );
 
@@ -476,24 +503,24 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       const { transaction } = paymentPayload.payload as ExactStellarPayloadV2;
       const { entry } = readSingleAuthEntry(transaction);
 
-      const credentials = getAddressCredentials(entry.credentials());
+      const credentials = getAddressCredentials(entry.credentials);
       if (!credentials) {
         throw new Error("Expected address credentials on the simulated auth entry");
       }
-      const expirationLedger = credentials.signatureExpirationLedger();
+      const expirationLedger = credentials.signatureExpirationLedger;
 
       // Sign the legacy, non-address-bound preimage...
       const v1Signed = await authorizeEntry(
         new xdr.SorobanAuthorizationEntry({
           credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
             new xdr.SorobanAddressCredentials({
-              address: credentials.address(),
-              nonce: credentials.nonce(),
+              address: credentials.address,
+              nonce: credentials.nonce,
               signatureExpirationLedger: 0, // replaced by authorizeEntry
               signature: xdr.ScVal.scvVoid(),
             }),
           ),
-          rootInvocation: entry.rootInvocation(),
+          rootInvocation: entry.rootInvocation,
         }),
         Keypair.fromSecret(CLIENT_PRIVATE_KEY),
         expirationLedger,
@@ -505,9 +532,9 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
       // it: enforce-mode simulation has to reject this.
       const relabelledEntry = new xdr.SorobanAuthorizationEntry({
         credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
-          v1Signed.credentials().address(),
+          getAddressCredentials(v1Signed.credentials)!,
         ),
-        rootInvocation: v1Signed.rootInvocation(),
+        rootInvocation: v1Signed.rootInvocation,
       });
 
       const tamperedPayload: PaymentPayload = {

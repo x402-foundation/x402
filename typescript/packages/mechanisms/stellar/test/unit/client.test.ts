@@ -61,7 +61,7 @@ describe("ExactStellarScheme", () => {
     needsNonInvokerSigningBy: vi.fn(),
     signAuthEntries: vi.fn(),
     simulate: vi.fn(),
-    built: { toXDR: vi.fn().mockReturnValue("mock-xdr") },
+    built: { toXdr: vi.fn().mockReturnValue("mock-xdr") },
   };
 
   const setupSuccessfulTransaction = () => {

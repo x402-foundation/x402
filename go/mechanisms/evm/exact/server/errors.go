@@ -6,4 +6,5 @@ const (
 	ErrAssetAddressRequired = "invalid_exact_evm_server_asset_address_required"
 	ErrNoAssetSpecified     = "invalid_exact_evm_server_no_asset_specified"
 	ErrFailedToParseAmount  = "invalid_exact_evm_server_failed_to_parse_amount"
+	ErrAmountNotUint256     = "invalid_exact_evm_server_amount_not_uint256"
 )

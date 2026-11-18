@@ -21,6 +21,7 @@ export const ErrValidAfterInFuture = "invalid_exact_evm_payload_authorization_va
 export const ErrInvalidAuthorizationValue = "invalid_exact_evm_authorization_value";
 export const ErrAuthorizationValueMismatch =
   "invalid_exact_evm_payload_authorization_value_mismatch";
+export const ErrInvalidRequiredAmount = "invalid_exact_evm_required_amount";
 export const ErrUndeployedSmartWallet = "invalid_exact_evm_payload_undeployed_smart_wallet";
 export const ErrTransactionFailed = "invalid_exact_evm_transaction_failed";
 export const ErrTransferEventMismatch = "invalid_exact_evm_transfer_event_mismatch";
