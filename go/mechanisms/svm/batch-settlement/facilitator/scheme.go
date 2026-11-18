@@ -349,7 +349,10 @@ func (f *BatchSvmScheme) Verify(ctx context.Context, payload types.PaymentPayloa
 	}
 	response, err := f.verifyParsed(ctx, record, parsed, requirements)
 	if err != nil {
-		return VerifyFailure(ClassifyError(err), payer, err.Error()), nil
+		if reason, ok := classifyKnownError(err); ok {
+			return VerifyFailure(reason, payer, err.Error()), nil
+		}
+		return nil, err
 	}
 	return response, nil
 }
@@ -366,11 +369,14 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 	}
 	response, err := f.settleParsed(ctx, record, requirements, facilitatorContext)
 	if err != nil {
-		payer := ""
-		if config, ok := record["channelConfig"].(map[string]any); ok {
-			payer, _ = config["payer"].(string)
+		if reason, ok := classifyKnownError(err); ok {
+			payer := ""
+			if config, ok := record["channelConfig"].(map[string]any); ok {
+				payer, _ = config["payer"].(string)
+			}
+			return SettleFailure(x402.Network(payload.Accepted.Network), reason, payer, err.Error()), nil
 		}
-		return SettleFailure(x402.Network(payload.Accepted.Network), ClassifyError(err), payer, err.Error()), nil
+		return nil, err
 	}
 	if !response.Success && response.Transaction != "" {
 		return nil, x402.NewSettleError(response.ErrorReason, response.Payer, response.Network, response.Transaction, response.ErrorMessage)
@@ -435,7 +441,7 @@ func (f *BatchSvmScheme) verifyParsed(ctx context.Context, record map[string]any
 		}
 		ceiling, err := paymentchannels.ParseU64(requirements.Amount, "amount")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", InvalidPaymentRequirements, err)
 		}
 		if ceiling > channel.Deposit {
 			return nil, fmt.Errorf("%s", batchsettlement.ErrCumulativeExceedsDeposit)
@@ -570,6 +576,9 @@ func (f *BatchSvmScheme) resolveTerms(ctx context.Context, config batchsettlemen
 			Encoding:   solana.EncodingBase64,
 			Commitment: paymentchannels.StateCommitment,
 		})
+		if err != nil && !errors.Is(err, rpc.ErrNotFound) {
+			return BatchTerms{}, err
+		}
 		if err != nil || account == nil || account.Value == nil || account.Value.Owner.String() != tokenProgram.String() {
 			return BatchTerms{}, fmt.Errorf("%s", batchsettlement.ErrTokenProgram)
 		}
@@ -598,31 +607,31 @@ func (f *BatchSvmScheme) deriveChannelID(ctx context.Context, config batchsettle
 	}
 	payer, err := solana.PublicKeyFromBase58(config.Payer)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	payee, err := solana.PublicKeyFromBase58(feePayer)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	mint, err := solana.PublicKeyFromBase58(config.Token)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	authorizer, err := solana.PublicKeyFromBase58(config.PayerAuthorizer)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	salt, err := paymentchannels.ParseU64(config.Salt, "channelConfig.salt")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	openSlot, err := paymentchannels.ParseU64(config.OpenSlot, "channelConfig.openSlot")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	pda, err := paymentchannels.FindChannelPDA(payer, payee, mint, authorizer, salt, openSlot)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", batchsettlement.ErrChannelIDMismatch, err)
 	}
 	return pda.String(), nil
 }

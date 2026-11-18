@@ -1231,6 +1231,210 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.False(t, matched)
 		require.Equal(t, int32(8), waits.Load())
 	})
+
+	t.Run("records pending and recovers an open deposit whose postcondition failed", func(t *testing.T) {
+		salt := uint64(0)
+		binding := batchsettlement.EncodeReceiverBindingMemo(receiver)
+		openConfig := channelConfig
+		openConfig.OpenSlot = 123
+		openBuilt, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
+			Payer:            payer.PublicKey(),
+			Payee:            feePayer.PublicKey(),
+			Mint:             solana.MustPublicKeyFromBase58(mint),
+			AuthorizedSigner: payer.PublicKey(),
+			FeePayer:         feePayer.PublicKey(),
+			TokenProgram:     solana.MustPublicKeyFromBase58(svm.TokenProgramAddress),
+			Deposit:          10_000,
+			Blockhash:        solana.Hash(solana.MustPublicKeyFromBase58(svm.USDCMainnetAddress)),
+			OpenSlot:         uint64(openConfig.OpenSlot),
+			GracePeriod:      900,
+			Recipients:       []paymentchannels.Split{{Recipient: receiver, BPS: batchsettlement.FullSplitBPS}},
+			Salt:             &salt,
+			BindingMemo:      &binding,
+		})
+		require.NoError(t, err)
+		_, err = openBuilt.Transaction.PartialSign(func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(payer.PublicKey()) {
+				return &payer
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		openWire, err := svm.EncodeTransaction(openBuilt.Transaction)
+		require.NoError(t, err)
+		openChannelID := openBuilt.ChannelID.String()
+		openSig, err := paymentchannels.SignVoucher(context.Background(), ed25519Signer{payer}, openBuilt.ChannelID, 1_000, 0)
+		require.NoError(t, err)
+		openPayload := batchsettlement.BatchDepositPayload{
+			Type:          batchsettlement.PayloadTypeDeposit,
+			ChannelConfig: openConfig,
+			Deposit:       batchsettlement.BatchDeposit{Amount: "10000", Transaction: openWire},
+			Voucher: &batchsettlement.BatchVoucher{
+				ChannelID: openChannelID, ExpiresAt: 0, MaxClaimableAmount: "1000", Signature: openSig,
+			},
+		}
+
+		depositStore := x402.NewInMemoryPendingSettlementStore()
+		channelStore := paymentchannels.NewInMemoryPaymentChannelStorage()
+		depositSigner := newTokenOwnerSigner(feePayer)
+		depositSigner.payer = payer.PublicKey()
+		depositScheme := newScheme(t, depositSigner, depositStore, nil)
+		depositScheme.channelStorage = channelStore
+		var openConfirmed atomic.Bool
+		var postReadFails atomic.Bool
+		postReadFails.Store(true)
+		depositScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if !openConfirmed.Load() {
+				return nil, nil
+			}
+			if postReadFails.Load() {
+				return nil, context.DeadlineExceeded
+			}
+			return channel(func(ch *generated.Channel) { ch.OpenSlot = uint64(openConfig.OpenSlot) }), nil
+		}
+		depositScheme.hooks.waitForChannelRead = func(int) error {
+			openConfirmed.Store(true)
+			return context.DeadlineExceeded
+		}
+
+		depositResp, err := depositScheme.Settle(context.Background(), types.PaymentPayload{
+			X402Version: 2, Accepted: requirements, Payload: asMap(t, openPayload),
+		}, requirements, nil)
+		require.Nil(t, depositResp)
+		var settleErr *x402.SettleError
+		require.ErrorAs(t, err, &settleErr)
+		require.Equal(t, x402.ErrSettlementPending, settleErr.ErrorReason)
+		require.NotEmpty(t, settleErr.Transaction, "confirmed open signature must be returned")
+		openTxSig := settleErr.Transaction
+
+		recordedSig, ok, err := depositStore.Get(context.Background(), depositKey(network, openChannelID))
+		require.NoError(t, err)
+		require.True(t, ok, "confirmed open must record a pending entry when its postcondition fails")
+		require.Equal(t, openTxSig, recordedSig)
+		storedChannel, err := channelStore.Get(context.Background(), network, openChannelID)
+		require.NoError(t, err)
+		require.NotNil(t, storedChannel, "confirmed open must keep its channel row")
+		require.Len(t, depositSigner.sentTransactions(), 1)
+
+		var replayReads atomic.Int32
+		depositScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if postReadFails.Load() && replayReads.Add(1)%2 == 0 {
+				return nil, context.DeadlineExceeded
+			}
+			return channel(func(ch *generated.Channel) { ch.OpenSlot = uint64(openConfig.OpenSlot) }), nil
+		}
+		replayPending, err := depositScheme.Settle(context.Background(), types.PaymentPayload{
+			X402Version: 2, Accepted: requirements, Payload: asMap(t, openPayload),
+		}, requirements, nil)
+		require.Nil(t, replayPending)
+		require.ErrorAs(t, err, &settleErr)
+		require.Equal(t, x402.ErrSettlementPending, settleErr.ErrorReason)
+		require.Equal(t, openTxSig, settleErr.Transaction)
+
+		postReadFails.Store(false)
+		depositScheme.hooks.waitForChannelRead = func(int) error { return nil }
+		recoveredDeposit, err := depositScheme.Settle(context.Background(), types.PaymentPayload{
+			X402Version: 2, Accepted: requirements, Payload: asMap(t, openPayload),
+		}, requirements, nil)
+		require.NoError(t, err)
+		require.True(t, recoveredDeposit.Success)
+		require.Equal(t, openTxSig, recoveredDeposit.Transaction)
+		require.Len(t, depositSigner.sentTransactions(), 1, "replay must not broadcast again")
+		_, ok, err = depositStore.Get(context.Background(), depositKey(network, openChannelID))
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+
+	t.Run("records pending and recovers a claim whose postcondition failed", func(t *testing.T) {
+		claim := claimPayload(t, 1_000)
+		claimStore := x402.NewInMemoryPendingSettlementStore()
+		claimScheme := newScheme(t, confirming(t, 1, nil), claimStore, nil)
+		configure(claimScheme)
+		var claimSettled atomic.Uint64
+		var claimPostErr atomic.Bool
+		claimPostErr.Store(true)
+		claimScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			s := claimSettled.Load()
+			if s > 0 && claimPostErr.Load() {
+				return nil, context.DeadlineExceeded
+			}
+			return channel(func(ch *generated.Channel) { ch.Settlement.Settled = s }), nil
+		}
+		claimScheme.hooks.waitForChannelRead = func(int) error { return context.DeadlineExceeded }
+		var claimSubmits atomic.Int32
+		claimScheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+			claimSubmits.Add(1)
+			claimSettled.Store(1_000)
+			return durableResult{OK: true, Signature: tx}, nil
+		}
+		claimResp, err := claimScheme.settleClaims(context.Background(), claim, requirements)
+		require.NoError(t, err)
+		require.Equal(t, x402.ErrSettlementPending, claimResp.ErrorReason)
+		require.Equal(t, tx, claimResp.Transaction)
+		gotClaim, ok, err := claimStore.Get(context.Background(), "batch:claim:"+network+":"+channelID+":1000")
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, tx, gotClaim)
+
+		claimPostErr.Store(false)
+		claimScheme.hooks.waitForChannelRead = func(int) error { return nil }
+		claimRecovered, err := claimScheme.settleClaims(context.Background(), claim, requirements)
+		require.NoError(t, err)
+		require.True(t, claimRecovered.Success)
+		require.Equal(t, tx, claimRecovered.Transaction)
+		require.Equal(t, int32(1), claimSubmits.Load())
+	})
+
+	t.Run("records pending and recovers a request_close refund whose postcondition failed", func(t *testing.T) {
+		refund := batchsettlement.BatchRefundPayload{
+			Type:          batchsettlement.PayloadTypeRefund,
+			ChannelConfig: channelConfig,
+			Transaction:   closeWire,
+			Voucher: &batchsettlement.BatchVoucher{
+				ChannelID: channelID, ExpiresAt: 0, MaxClaimableAmount: "1000", Signature: "signature",
+			},
+		}
+		refundStore := x402.NewInMemoryPendingSettlementStore()
+		refundSigner := confirming(t, 1, nil)
+		refundScheme := newScheme(t, refundSigner, refundStore, nil)
+		configure(refundScheme)
+		stubPrepareRefund(refundScheme)
+		var closeConfirmed atomic.Bool
+		var refundPostErr atomic.Bool
+		refundPostErr.Store(true)
+		refundScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if !closeConfirmed.Load() {
+				return channel(nil), nil
+			}
+			if refundPostErr.Load() {
+				return nil, context.DeadlineExceeded
+			}
+			return channel(func(ch *generated.Channel) {
+				ch.Status = uint8(generated.ChannelStatus_Closing)
+				ch.ClosureStartedAt = 42
+			}), nil
+		}
+		refundScheme.hooks.waitForChannelRead = func(int) error {
+			closeConfirmed.Store(true)
+			return context.DeadlineExceeded
+		}
+		refundPending, err := refundScheme.settleRefund(context.Background(), refund, requirements, nil)
+		require.NoError(t, err)
+		require.Equal(t, x402.ErrSettlementPending, refundPending.ErrorReason)
+		require.Equal(t, refundPending.Transaction, refundSigner.sentTransactions()[0].Signatures[0].String())
+		gotRefund, ok, err := refundStore.Get(context.Background(), refundKey)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, refundPending.Transaction, gotRefund)
+
+		refundPostErr.Store(false)
+		refundScheme.hooks.waitForChannelRead = func(int) error { return nil }
+		refundRecovered, err := refundScheme.settleRefund(context.Background(), refund, requirements, nil)
+		require.NoError(t, err)
+		require.True(t, refundRecovered.Success)
+		require.Equal(t, refundPending.Transaction, refundRecovered.Transaction)
+		require.Len(t, refundSigner.sentTransactions(), 1)
+	})
 }
 
 func TestStoredDistributionExtraShadowsEmbeddedField(t *testing.T) {

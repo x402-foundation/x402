@@ -441,6 +441,30 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.Equal(t, "2500", payouts.calls()[0].response.Amount)
 	})
 
+	t.Run("answers settlement_pending with the signature when the post-confirmation seal read errors", func(t *testing.T) {
+		payouts := &payoutLog{}
+		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, context.DeadlineExceeded
+		}
+		payload := sealPayload(t, 3_000)
+
+		pending := settleThrown(t, fixture.scheme, payload)
+		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+		assert.Equal(t, signature, pending.Transaction)
+		assert.Empty(t, payouts.calls())
+
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		recovered := settle(t, fixture.scheme, payload)
+		assert.True(t, recovered.Success)
+		assert.Equal(t, "2500", recovered.Amount)
+		assert.Equal(t, signature, recovered.Transaction)
+		assert.Len(t, fixture.submits, 1)
+		require.Len(t, payouts.calls(), 1)
+	})
+
 	t.Run("seals at the current watermark without a precompile when the voucher equals settled", func(t *testing.T) {
 		fixture := facilitator(t, nil, true)
 		response := settle(t, fixture.scheme, sealPayload(t, 1_000))

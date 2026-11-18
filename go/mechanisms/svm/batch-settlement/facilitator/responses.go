@@ -20,10 +20,11 @@ import (
 // paymentPayload.accepted that does not equal the requirements.
 const InvalidPaymentRequirements = "invalid_payment_requirements"
 
-var (
-	statusCodePattern = regexp.MustCompile(`\b429\b|\b503\b`)
-	transientPattern  = regexp.MustCompile(`(?i)\b429\b|\b503\b|too many requests`)
-)
+// UnexpectedSettleError is the non-terminal fallback reason for an unclassified
+// settlement error when a caller asks ClassifyError for a reason string.
+const UnexpectedSettleError = "unexpected_settle_error"
+
+var transientPattern = regexp.MustCompile(`(?i)\b429\b|\b503\b|too many requests`)
 
 const extraPaidToReceiver = "paidToReceiver"
 
@@ -261,27 +262,39 @@ func RecordPendingOrTerminal(
 	return SettlementPending(network, payer, signature, message)
 }
 
-// ClassifyError maps an error onto the scheme's reason vocabulary.
-func ClassifyError(err error) string {
+func classifyKnownError(err error) (string, bool) {
 	if err == nil {
-		return "transaction_failed"
+		return "", false
+	}
+	var onchain *svm.TransactionOnchainFailureError
+	if errors.As(err, &onchain) {
+		return "transaction_failed", true
 	}
 	message := err.Error()
 	if contains(message, ChannelBusy) {
-		return ChannelBusy
+		return ChannelBusy, true
 	}
-	if statusCodePattern.MatchString(message) {
-		return batchsettlement.ErrChannelState
+	if contains(message, InvalidPaymentRequirements) {
+		return InvalidPaymentRequirements, true
 	}
 	if strings.HasPrefix(message, svm.ErrUnsupportedTransactionVersion) {
-		return svm.ErrUnsupportedTransactionVersion
+		return svm.ErrUnsupportedTransactionVersion, true
 	}
 	for _, reason := range batchsettlement.ErrorReasons() {
 		if contains(message, reason) {
-			return reason
+			return reason, true
 		}
 	}
-	return "transaction_failed"
+	return "", false
+}
+
+// ClassifyError maps an error onto the scheme's reason vocabulary, returning
+// UnexpectedSettleError for an unclassified error.
+func ClassifyError(err error) string {
+	if reason, ok := classifyKnownError(err); ok {
+		return reason
+	}
+	return UnexpectedSettleError
 }
 
 func contains(message, part string) bool {
@@ -295,7 +308,7 @@ func ParseOptionalSlot(value any) (*uint64, error) {
 	}
 	parsed, err := paymentchannels.ParseU64(value, "extra.recentSlot")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", InvalidPaymentRequirements, err)
 	}
 	return &parsed, nil
 }

@@ -212,8 +212,8 @@ func TestExpiryOfABroadcastThatWasNeverConfirmed(t *testing.T) {
 				key:     key,
 				network: network,
 				send:    send,
-				postcondition: func(string, bool) (any, *x402.SettleResponse, error) {
-					return nil, nil, nil
+				postcondition: func(string, bool) (any, error) {
+					return nil, nil
 				},
 			}
 		}

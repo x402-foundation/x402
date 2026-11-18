@@ -225,12 +225,14 @@ func settleSeal(
 	}
 	if deps.OnDistributionConfirmed != nil {
 		if err := storePayoutResult(ctx, deps.PendingStore, key, sealed); err != nil {
-			return nil, err
+			recoveryCtx, cancel := recoveryContext(ctx)
+			defer cancel()
+			return RecordPendingOrTerminal(recoveryCtx, deps.PendingStore, key, submitted.Signature, payer, x402.Network(network), err), nil
 		}
 	}
 	observed, err := deps.ReadChannel(ctx, network, channelID)
 	if err != nil {
-		return nil, err
+		return SettlementPending(x402.Network(network), payer, submitted.Signature, err.Error()), nil
 	}
 	if observed != nil && generated.ChannelStatus(observed.Status) == required {
 		return SettlementPending(x402.Network(network), payer, submitted.Signature, string(intent)+" confirmed but the sealed state is not visible yet"), nil
@@ -454,11 +456,11 @@ func verifyCloseVoucher(voucher batchsettlement.BatchVoucher, config batchsettle
 	}
 	cumulative, err := paymentchannels.ParseU64(voucher.MaxClaimableAmount, "maxClaimableAmount")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s: %w", batchsettlement.ErrVoucherSignature, err)
 	}
 	channelKey, err := solana.PublicKeyFromBase58(channelID)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s: %w", batchsettlement.ErrVoucherSignature, err)
 	}
 	message := paymentchannels.EncodeVoucherMessage(channelKey, cumulative, batchsettlement.ClientVoucherExpiresAt)
 	if err := paymentchannels.VerifyVoucherSignature(voucher.Signature, config.PayerAuthorizer, message); err != nil {

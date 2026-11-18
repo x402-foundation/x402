@@ -850,10 +850,12 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			return ValidatedDeposit{}, errors.New("plain validation failure")
 		}
 		result, err = scheme.Verify(ctx, payment(deposit, req), req, nil)
-		require.NoError(t, err)
-		require.False(t, result.IsValid)
-		require.Equal(t, "transaction_failed", result.InvalidReason)
-		require.Equal(t, "plain validation failure", result.InvalidMessage)
+		require.Nil(t, result)
+		require.EqualError(t, err, "plain validation failure")
+		require.Equal(t, UnexpectedSettleError, ClassifyError(err))
+		require.Equal(t, UnexpectedSettleError, ClassifyError(errors.New("http 429 too many requests")))
+		require.Equal(t, UnexpectedSettleError, ClassifyError(errors.New("http 503 service unavailable")))
+		require.Equal(t, "transaction_failed", ClassifyError(&svm.TransactionOnchainFailureError{Message: "reverted"}))
 
 		result, err = scheme.Verify(ctx, types.PaymentPayload{
 			X402Version: 2, Accepted: req, Payload: map[string]any{"nope": true},
@@ -1348,11 +1350,20 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.False(t, voucherResult.Success)
 		require.Equal(t, batchsettlement.ErrPayloadType, voucherResult.ErrorReason)
 
-		// Error conversion through deposit settle path (voucher settle is terminal PAYLOAD_TYPE in Go).
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{}, errors.New("rpc down")
 		}
 		failed, err := scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
+			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
+			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
+		}, req), req, nil)
+		require.Nil(t, failed)
+		require.EqualError(t, err, "rpc down")
+
+		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
+			return ValidatedDeposit{}, &svm.TransactionOnchainFailureError{Message: "tx failed onchain"}
+		}
+		failed, err = scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
 			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
 			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
 		}, req), req, nil)
