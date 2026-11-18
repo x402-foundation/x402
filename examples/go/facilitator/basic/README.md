@@ -60,7 +60,7 @@ For production deployments with additional features (Bazaar discovery, multiple 
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - EVM private key with Base Sepolia ETH for transaction fees
 - SVM private key with Solana Devnet SOL for transaction fees (optional)
 

@@ -3,7 +3,8 @@
 At settlement time, the facilitator encodes its wallet code (``w``) into the
 ERC-8021 suffix when configured. App code (``a``) and service code(s) (``s``) are
 read from the client payment payload extensions, and the facilitator's own
-service code may be appended to ``s`` when configured.
+service code may be appended to ``s`` when configured. Settlement metadata
+(``m``) comes from the settling mechanism and is never read from the payload.
 """
 
 from __future__ import annotations
@@ -19,7 +20,9 @@ from .types import (
     BUILDER_CODE_PATTERN,
     MAX_CLIENT_SERVICE_CODES,
     MAX_SERVER_SERVICE_CODES,
-    BuilderCodeExtensionData,
+    BuilderCodeSuffixData,
+    DataSuffixContext,
+    SettlementMetadata,
 )
 
 # Maximum echoed client+server service codes, before the facilitator's own
@@ -86,8 +89,9 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
 
     def build_data_suffix(
         self,
-        payload: PaymentPayload,
-        requirements: PaymentRequirements,
+        payload: PaymentPayload | DataSuffixContext,
+        requirements: PaymentRequirements | None = None,
+        metadata: SettlementMetadata | None = None,
     ) -> str | None:
         """Build the ERC-8021 Schema 2 calldata suffix for a settlement transaction.
 
@@ -96,23 +100,39 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
         is still read. ``w`` is the facilitator's own code when configured. The
         facilitator's own ``s`` entry (``service_code``) is appended after the echoed
         client/server codes, within its own ``MAX_FACILITATOR_SERVICE_CODES``
-        reservation.
+        reservation. ``m`` is ``metadata`` from the settling mechanism, or
+        ``DataSuffixContext.metadata`` when ``payload`` is a context. It is never
+        read from the client payload.
 
         Args:
-            payload: The payment payload being settled.
+            payload: The payment payload being settled, or a ``DataSuffixContext``.
             requirements: The matched payment requirements (unused; attribution comes
-                from the client payload echo).
+                from the client payload echo). Required when ``payload`` is not a
+                ``DataSuffixContext``.
+            metadata: Facilitator-authored settlement metadata encoded as ``m``.
+                When ``payload`` is a ``DataSuffixContext`` and this argument is
+                omitted, ``DataSuffixContext.metadata`` is used.
 
         Returns:
             Hex-encoded ERC-8021 builder-code calldata suffix, or ``None`` when no
-            attribution is present.
+            attribution or metadata is present.
         """
-        info = _extract_client_info(payload.extensions)
+        if isinstance(payload, DataSuffixContext):
+            payment = payload.payload
+            requirements = payload.requirements
+            if metadata is None:
+                metadata = payload.metadata
+        else:
+            payment = payload
+        if requirements is None:
+            raise TypeError("requirements is required")
+
+        info = _extract_client_info(payment.extensions)
         raw_a = info.get("a") if info else None
         # v1 payloads omit `a`: the resource-server echo gate does not run on v1.
         a = (
             raw_a
-            if getattr(payload, "x402_version", None) == 2
+            if getattr(payment, "x402_version", None) == 2
             and isinstance(raw_a, str)
             and BUILDER_CODE_PATTERN.match(raw_a)
             else None
@@ -124,8 +144,8 @@ class BuilderCodeFacilitatorExtension(FacilitatorExtension):
             else echoed_service_codes
         )
 
-        data = BuilderCodeExtensionData(a=a, w=self.builder_code, s=s or None)
-        if not data.a and not data.w and not data.s:
+        data = BuilderCodeSuffixData(a=a, w=self.builder_code, s=s or None, m=metadata or None)
+        if not data.a and not data.w and not data.s and not data.m:
             return None
 
         return encode_builder_code_suffix(data)

@@ -104,6 +104,8 @@ class CatalogRoute:
     extensions: list[str]
     settlement_override: dict[str, str] | None
     payment_flow: str | None
+    max_timeout_seconds: int | None = None
+    scheme_extra: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -116,9 +118,10 @@ class ResolvedRoute:
     network: str
     pay_to: str
     price: Any
-    extra: dict[str, str] | None
+    extra: dict[str, Any] | None
     extensions: list[str] = field(default_factory=list)
     settlement_override: dict[str, str] | None = None
+    max_timeout_seconds: int | None = None
 
 
 def _network_definition(network_id: str) -> dict[str, Any]:
@@ -147,9 +150,21 @@ def _route_filter() -> tuple[set[str], set[str]]:
     return parse("E2E_EXCLUDE_SCHEMES"), parse("E2E_EXCLUDE_NETWORKS")
 
 
+def _batch_server_role() -> str:
+    """Harness-assigned custody role for this server process (defaults to standard)."""
+    return (os.getenv("E2E_BATCH_SERVER_ROLE", "").strip().lower() or "standard")
+
+
+def _is_managed_batch(definition: dict[str, Any]) -> bool:
+    return definition.get("scheme") == "batch-settlement" and bool(
+        (definition.get("schemeOptions") or {}).get("facilitatorManaged")
+    )
+
+
 def catalog_routes() -> list[CatalogRoute]:
     """Routes this SDK implements, after applying the harness exclusions."""
     excluded_schemes, excluded_networks = _route_filter()
+    role = _batch_server_role()
     routes: list[CatalogRoute] = []
 
     for path, definition in _CATALOG["routes"].items():
@@ -157,6 +172,12 @@ def catalog_routes() -> list[CatalogRoute]:
             continue
         network = definition["network"]
         if definition["scheme"] in excluded_schemes or network in excluded_networks:
+            continue
+        managed = _is_managed_batch(definition)
+        if role == "managed-batch":
+            if not managed:
+                continue
+        elif managed:
             continue
         routes.append(
             CatalogRoute(
@@ -168,6 +189,8 @@ def catalog_routes() -> list[CatalogRoute]:
                 extensions=list(definition.get("extensions", [])),
                 settlement_override=definition.get("settlementOverride"),
                 payment_flow=definition.get("paymentFlow"),
+                max_timeout_seconds=definition.get("maxTimeoutSeconds"),
+                scheme_extra=definition.get("schemeExtra"),
             )
         )
 
@@ -277,6 +300,31 @@ def _merge_route_extra(
     return extra
 
 
+def _cardano_route(
+    route: CatalogRoute, network: str, pay_to: str, env: Callable[[str], str | None]
+) -> tuple[str, dict[str, Any]]:
+    from x402.mechanisms.cardano import masumi_escrow_address
+
+    extra: dict[str, Any] = {}
+    depth = (env("CARDANO_L1_CONFIRMATIONS") or "").strip()
+    if depth:
+        if not re.fullmatch(r"-?(0|[1-9]\d?)", depth) or not -1 <= int(depth) <= 20:
+            raise ValueError("CARDANO_L1_CONFIRMATIONS must be a plain integer from -1 to 20")
+        extra["confirmationPolicy"] = {"l1Confirmations": int(depth)}
+    if route.asset_transfer_method == "masumi":
+        pay_to = masumi_escrow_address(network)
+    elif route.asset_transfer_method == "script":
+        pay_to = env("SERVER_CARDANO_SCRIPT_ADDRESS") or (
+            "addr_test1wp8l7eylksmjas7ypzm0q35dwnjdxxvsfn0z0lflqzgs55stpd682"
+        )
+        extra["script"] = {
+            "type": "plutusV3",
+            "code": env("SERVER_CARDANO_SCRIPT_CODE") or "4d01000033222220051200120011",
+        }
+        extra["datum"] = env("SERVER_CARDANO_SCRIPT_DATUM") or "d8799f182aff"
+    return pay_to, extra
+
+
 def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[ResolvedRoute]:
     """Resolve catalog routes for one server process.
 
@@ -294,6 +342,11 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
         caip2 = network_caip2(route.network, env)
         price, extra = _resolve_price(route, caip2, env)
         extra = _merge_route_extra(extra, route.payment_flow)
+        if route.network == "cardano":
+            pay_to, cardano_extra = _cardano_route(route, caip2, pay_to, env)
+            extra = {**(extra or {}), **cardano_extra} or None
+        if route.scheme_extra:
+            extra = {**(extra or {}), **route.scheme_extra}
 
         resolved.append(
             ResolvedRoute(
@@ -306,6 +359,7 @@ def resolve_routes(env: Callable[[str], str | None] = os.getenv) -> list[Resolve
                 extra=extra,
                 extensions=route.extensions,
                 settlement_override=route.settlement_override,
+                max_timeout_seconds=route.max_timeout_seconds,
             )
         )
 

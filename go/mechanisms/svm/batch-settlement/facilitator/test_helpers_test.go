@@ -201,8 +201,36 @@ func (s *scriptedSigner) GetLatestBlockhash(context.Context, string) (solana.Has
 	return s.blockhash, 1, nil
 }
 
+// GetSlot reports a cluster slot inside the open-slot window of the opens the
+// fixtures build (openSlot 77 and 123).
 func (s *scriptedSigner) GetSlot(context.Context, string, rpc.CommitmentType) (uint64, error) {
-	return 1, nil
+	return 200, nil
+}
+
+// healthyTokenAccount returns a funded, initialized token account for account
+// when it is the associated token account of one of owners for mint (under
+// SPL Token or Token-2022), owned by program; otherwise nil.
+func healthyTokenAccount(account, mint, program solana.PublicKey, owners ...solana.PublicKey) *rpc.Account {
+	for _, owner := range owners {
+		for _, tokenProgram := range []solana.PublicKey{solana.TokenProgramID, solana.Token2022ProgramID} {
+			ata, err := paymentchannels.FindATA(owner, mint, tokenProgram)
+			if err != nil || !ata.Equals(account) {
+				continue
+			}
+			return &rpc.Account{Owner: program, Data: rpc.DataBytesOrJSONFromBytes(tokenAccountBytes(mint, owner, 1_000_000_000, 1))}
+		}
+	}
+	return nil
+}
+
+// tokenAccountBytes is the 165-byte SPL token account layout.
+func tokenAccountBytes(mint, owner solana.PublicKey, amount uint64, state byte) []byte {
+	data := make([]byte, paymentchannels.TokenAccountLen)
+	copy(data[0:32], mint[:])
+	copy(data[32:64], owner[:])
+	binary.LittleEndian.PutUint64(data[64:72], amount)
+	data[108] = state
+	return data
 }
 
 type confirmCall struct {

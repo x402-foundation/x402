@@ -54,6 +54,8 @@ export interface FacilitatorResult<T> {
 export interface FacilitatorConfig {
   port: number;
   networks: NetworkSet;
+  /** When true, enable the facilitator-managed batch voucher store + channel manager. */
+  voucherStore?: boolean;
 }
 
 export interface FacilitatorProxy {
@@ -107,6 +109,7 @@ export class GenericFacilitatorProxy extends BaseProxy implements FacilitatorPro
       ...forwardRoleCredentials('facilitator'),
       // Network configs from NetworkSet
       ...injectNetworkEnv(config.networks),
+      ...(config.voucherStore ? { E2E_FACILITATOR_VOUCHER_STORE: 'true' } : {}),
     };
 
     // Pass through any additional environment variables required by the facilitator.

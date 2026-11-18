@@ -1,10 +1,20 @@
 """V2 payment types for the x402 Python SDK."""
 
-from typing import Any
+import re
+from typing import Annotated, Any
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
-from .base import BaseX402Model, Network
+from .base import BaseX402Model
+
+
+def _validate_caip2_network(value: str) -> str:
+    if re.fullmatch(r"^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$", value) is None:
+        raise ValueError("Network must be in CAIP-2 format (e.g., 'eip155:84532')")
+    return value
+
+
+NetworkV2 = Annotated[str, AfterValidator(_validate_caip2_network)]
 
 
 class ResourceInfo(BaseX402Model):
@@ -44,7 +54,7 @@ class PaymentRequirements(BaseX402Model):
     """
 
     scheme: str
-    network: Network
+    network: NetworkV2
     asset: str
     amount: str
     pay_to: str

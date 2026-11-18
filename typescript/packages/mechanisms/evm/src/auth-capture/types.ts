@@ -15,6 +15,11 @@
 import type { PendingSettlementStore } from "@x402/core/facilitator";
 import type { TypedData } from "viem";
 import type { AssetTransferMethod } from "../types";
+import type {
+  AuthCaptureDelegatedAuthStorage,
+  DelegatedSettleContext,
+  OnDelegatedAuthStorageError,
+} from "./facilitator/delegatedAuth";
 
 export type AuthCapturePaymentFlow = "escrow" | "authorization";
 export type AuthCaptureCaptureMode = "sync" | "deferred";
@@ -29,6 +34,15 @@ export interface AuthorizerSigner {
     message: Record<string, unknown>;
   }): Promise<`0x${string}`>;
 }
+
+/**
+ * Who produces `authorizerSignature` for a published `receiverAuthorizer`:
+ * - `self`: the scheme's `receiverAuthorizerSigner`, which signs locally.
+ * - `delegated`: a non-zero authorizer the server holds no key for; payloads go out unsigned
+ *   and the facilitator signs after authenticating the request out of band.
+ * - `collect-only`: the zero address; the facilitator relays no lifecycle.
+ */
+export type AuthorizerMode = "self" | "delegated" | "collect-only";
 
 type AuthCaptureLifecycleExtra =
   | {
@@ -123,7 +137,47 @@ export type OperatorAllowlistEntry = {
 export type AuthCaptureFacilitatorConfig = {
   feeTerms?: AuthCaptureFeeTerms;
   operators?: OperatorAllowlistEntry[];
-  receiverAuthorizer?: `0x${string}`;
+  /**
+   * Operator addresses `/supported` advertises one at a time as `extra.captureAuthorizer`.
+   * Each MUST be an address of one of the facilitator signers, and stay usable (and funded
+   * when {@link refundFunding} is on) until its payments pass `refundDeadline`. Omitted or
+   * empty advertises every signer address. Settlement still accepts any signer address, so
+   * narrowing the pool retires an address from new payments without stranding old ones.
+   */
+  captureAuthorizers?: `0x${string}`[];
+  /**
+   * Picks the pool member for one `/supported` response. An omitted selector, or a result
+   * outside `candidates`, falls back to a random pick.
+   */
+  selectCaptureAuthorizer?: (
+    network: string,
+    candidates: readonly `0x${string}`[],
+  ) => `0x${string}` | undefined;
+  /**
+   * Enables facilitator-delegated receiver authorization. Advertised as `/supported`
+   * `extra.receiverAuthorizer`; the facilitator signs `charge` and lifecycle digests with it
+   * when the server omits `authorizerSignature`. Requires {@link resolveCallerIdentity}.
+   */
+  authorizerSigner?: AuthorizerSigner;
+  /**
+   * Authenticates the caller of a delegated settle out of band and returns a stable identity.
+   * Returning `undefined` or an empty string (or throwing) rejects the settle. The identity
+   * must be the same across the `authorize` and the later lifecycle settles of one payment.
+   * Required when {@link authorizerSigner} is set, and only valid with it.
+   */
+  resolveCallerIdentity?: (
+    ctx: DelegatedSettleContext,
+  ) => Promise<string | undefined> | string | undefined;
+  /**
+   * Caller bindings for delegated payments. Required with {@link authorizerSigner},
+   * {@link resolveCallerIdentity}, and {@link onStorageError}; omitted means delegation is off.
+   */
+  delegatedAuthStorage?: AuthCaptureDelegatedAuthStorage;
+  /**
+   * Called when reverting or deleting a binding fails. Required with delegation; must not
+   * replace the settle result.
+   */
+  onStorageError?: OnDelegatedAuthStorageError;
   /**
    * Max gas for a custom-operator collect relay (`authorize` or `charge`).
    * Used as the verify reject threshold and as a hard broadcast ceiling.
@@ -199,14 +253,15 @@ type ChargeCompletionV1_0 = {
   amount: string;
   feeBps: number;
   feeReceiver: `0x${string}`;
-  authorizerSignature: `0x${string}`;
+  /** Omitted when the authorizer is delegated to the facilitator. */
+  authorizerSignature?: `0x${string}`;
 };
 
 type ChargeCompletionV1_1 = {
   amount: string;
   feeAmount: string;
   feeReceiver: `0x${string}`;
-  authorizerSignature: `0x${string}`;
+  authorizerSignature?: `0x${string}`;
 };
 
 type ChargeCompletion = ChargeCompletionV1_0 | ChargeCompletionV1_1;
@@ -259,7 +314,8 @@ export type AuthCaptureCollectPayload = Eip3009Payload | Permit2Payload;
 type LifecycleBase = {
   paymentInfo: PaymentInfoStruct;
   saltNonce: `0x${string}`;
-  authorizerSignature: `0x${string}`;
+  /** Omitted when the authorizer is delegated to the facilitator, which signs after authenticating the caller. */
+  authorizerSignature?: `0x${string}`;
 };
 
 export type CapturePayload = LifecycleBase & {
@@ -269,11 +325,17 @@ export type CapturePayload = LifecycleBase & {
   expectedCapturableAmount: string;
   expectedRefundableAmount: string;
   voidAuthorizerSignature?: `0x${string}`;
+  /**
+   * Delegated authorizer only: asks the facilitator to sign the `Void` leg for the remaining
+   * hold. Requires `authorizerSignature` and `voidAuthorizerSignature` to be absent.
+   */
+  voidRemainder?: true;
 } & ({ feeBps: number; feeAmount?: never } | { feeAmount: string; feeBps?: never });
 
 export type VoidPayload = LifecycleBase & {
   type: "void";
   voidAuthorizerSignature?: never;
+  voidRemainder?: never;
 };
 
 export type RefundPayload = LifecycleBase & {
@@ -282,9 +344,15 @@ export type RefundPayload = LifecycleBase & {
   expectedCapturableAmount: string;
   expectedRefundableAmount: string;
   voidAuthorizerSignature?: never;
+  voidRemainder?: never;
 };
 
 export type AuthCaptureLifecyclePayload = CapturePayload | VoidPayload | RefundPayload;
+
+/** A lifecycle payload carrying the authorizer signature, whoever produced it. */
+export type SignedLifecyclePayload = AuthCaptureLifecyclePayload & {
+  authorizerSignature: `0x${string}`;
+};
 
 export type AuthCapturePayload = AuthCaptureCollectPayload | AuthCaptureLifecyclePayload;
 
@@ -320,9 +388,28 @@ export function isCapturePayload(value: unknown): value is CapturePayload {
     typeof v.feeReceiver === "string" &&
     typeof v.expectedCapturableAmount === "string" &&
     typeof v.expectedRefundableAmount === "string" &&
-    typeof v.authorizerSignature === "string" &&
-    (v.voidAuthorizerSignature === undefined || typeof v.voidAuthorizerSignature === "string")
+    (v.authorizerSignature === undefined || typeof v.authorizerSignature === "string") &&
+    (v.voidAuthorizerSignature === undefined || typeof v.voidAuthorizerSignature === "string") &&
+    isDelegatedCaptureShape(v)
   );
+}
+
+/**
+ * Cross-field rules for a capture whose signatures may be delegated: a void signature needs
+ * the capture signature, and `voidRemainder` is the unsigned stand-in for the void signature.
+ *
+ * @param v - Capture payload fields.
+ * @returns True when the signature fields are mutually consistent.
+ */
+function isDelegatedCaptureShape(v: Record<string, unknown>): boolean {
+  if (v.voidRemainder !== undefined) {
+    return (
+      v.voidRemainder === true &&
+      v.authorizerSignature === undefined &&
+      v.voidAuthorizerSignature === undefined
+    );
+  }
+  return v.authorizerSignature !== undefined || v.voidAuthorizerSignature === undefined;
 }
 
 /**
@@ -337,8 +424,9 @@ export function isVoidPayload(value: unknown): value is VoidPayload {
   return (
     isPaymentInfoStruct(v.paymentInfo) &&
     typeof v.saltNonce === "string" &&
-    typeof v.authorizerSignature === "string" &&
-    v.voidAuthorizerSignature === undefined
+    (v.authorizerSignature === undefined || typeof v.authorizerSignature === "string") &&
+    v.voidAuthorizerSignature === undefined &&
+    v.voidRemainder === undefined
   );
 }
 
@@ -357,8 +445,9 @@ export function isRefundPayload(value: unknown): value is RefundPayload {
     typeof v.amount === "string" &&
     typeof v.expectedCapturableAmount === "string" &&
     typeof v.expectedRefundableAmount === "string" &&
-    typeof v.authorizerSignature === "string" &&
-    v.voidAuthorizerSignature === undefined
+    (v.authorizerSignature === undefined || typeof v.authorizerSignature === "string") &&
+    v.voidAuthorizerSignature === undefined &&
+    v.voidRemainder === undefined
   );
 }
 
@@ -398,7 +487,18 @@ function isHexString(value: unknown): value is `0x${string}` {
 }
 
 /**
- * Parse the four charge-completion fields as an all-or-none group.
+ * Whether `value` is absent or a string.
+ *
+ * @param value - Candidate wire field.
+ * @returns True when `value` is undefined or a string.
+ */
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+/**
+ * Parse the charge-completion fields as an all-or-none group. The authorizer signature is
+ * optional because a facilitator-delegated authorizer produces it at settle time.
  *
  * @param v - Collect payload fields.
  * @returns ChargeCompletion when all four are present and well-typed; undefined when all are absent.
@@ -416,13 +516,13 @@ function readChargeCompletion(v: Record<string, unknown>): ChargeCompletion | un
     typeof v.feeBps === "number" &&
     v.feeAmount === undefined &&
     typeof v.feeReceiver === "string" &&
-    typeof v.authorizerSignature === "string"
+    isOptionalString(v.authorizerSignature)
   ) {
     return {
       amount: v.amount,
       feeBps: v.feeBps,
       feeReceiver: v.feeReceiver as `0x${string}`,
-      authorizerSignature: v.authorizerSignature as `0x${string}`,
+      authorizerSignature: v.authorizerSignature as `0x${string}` | undefined,
     };
   }
   if (
@@ -430,13 +530,13 @@ function readChargeCompletion(v: Record<string, unknown>): ChargeCompletion | un
     typeof v.feeAmount === "string" &&
     v.feeBps === undefined &&
     typeof v.feeReceiver === "string" &&
-    typeof v.authorizerSignature === "string"
+    isOptionalString(v.authorizerSignature)
   ) {
     return {
       amount: v.amount,
       feeAmount: v.feeAmount,
       feeReceiver: v.feeReceiver as `0x${string}`,
-      authorizerSignature: v.authorizerSignature as `0x${string}`,
+      authorizerSignature: v.authorizerSignature as `0x${string}` | undefined,
     };
   }
   return undefined;

@@ -60,6 +60,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	voucherStoreMode := batchedserver.VoucherStoreModeSelf
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("VOUCHER_STORE_MODE")), "facilitator") {
+		voucherStoreMode = batchedserver.VoucherStoreModeFacilitator
+	}
+
 	withdrawDelay := 86400
 	if v := strings.TrimSpace(os.Getenv("DEFERRED_WITHDRAW_DELAY_SECONDS")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -72,75 +77,96 @@ func main() {
 	})
 
 	var (
-		err                  error
-		evmManager           *batchedserver.BatchSettlementChannelManager
-		svmManager           *batchsvmserver.BatchChannelManager
-		schemes              []nethttpmw.SchemeConfig
-		accepts              x402http.PaymentOptions
+		err                   error
+		evmManager            *batchedserver.BatchSettlementChannelManager
+		svmManager            *batchsvmserver.BatchChannelManager
+		schemes               []nethttpmw.SchemeConfig
+		accepts               x402http.PaymentOptions
 		svmReceiverAuthorizer svm.ReceiverAuthorizerSigner
-		svmOperator          svm.ReceiverAuthorizerSigner
+		svmOperator           svm.ReceiverAuthorizerSigner
 	)
 
 	if evmAddress != "" && evmAddressPattern.MatchString(evmAddress) {
 		receiverAuthKey := strings.TrimSpace(os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY"))
 		storageDir := strings.TrimSpace(os.Getenv("STORAGE_DIR"))
 
-		cfg := &batchedserver.BatchSettlementEvmSchemeServerConfig{
-			WithdrawDelay:     withdrawDelay,
-			EnforceMinDeposit: false,
+		refundAuthKey := strings.TrimSpace(os.Getenv("EVM_REFUND_AUTHORIZER_PRIVATE_KEY"))
+
+		if voucherStoreMode == batchedserver.VoucherStoreModeFacilitator && receiverAuthKey != "" {
+			fmt.Println("VOUCHER_STORE_MODE=facilitator cannot be combined with EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")
+			os.Exit(1)
 		}
-		if receiverAuthKey != "" {
-			signer, err := newReceiverAuthorizerSigner(receiverAuthKey)
+
+		cfg := &batchedserver.BatchSettlementEvmSchemeServerConfig{
+			EnforceMinDeposit: false,
+			VoucherStoreMode:  voucherStoreMode,
+		}
+		if voucherStoreMode == batchedserver.VoucherStoreModeSelf {
+			cfg.WithdrawDelay = withdrawDelay
+			if receiverAuthKey != "" {
+				signer, err := newReceiverAuthorizerSigner(receiverAuthKey)
+				if err != nil {
+					fmt.Printf("Invalid EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+					os.Exit(1)
+				}
+				cfg.ReceiverAuthorizerSigner = signer
+			}
+		} else if refundAuthKey != "" {
+			signer, err := newReceiverAuthorizerSigner(refundAuthKey)
 			if err != nil {
-				fmt.Printf("Invalid EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY: %v\n", err)
+				fmt.Printf("Invalid EVM_REFUND_AUTHORIZER_PRIVATE_KEY: %v\n", err)
 				os.Exit(1)
 			}
-			cfg.ReceiverAuthorizerSigner = signer
+			cfg.RefundAuthorizerSigner = signer
 		}
 		if storageDir != "" {
 			cfg.Storage = batchedserver.NewFileChannelStorage(evmbatch.FileChannelStorageOptions{
 				Directory: storageDir,
 			})
+			// LockStorage is inferred from FileChannelStorage in self-managed mode.
+			// Hosts that do not share STORAGE_DIR need an explicit LockStorage;
+			// otherwise each host admits independently and only the charge CAS
+			// protects revenue. Facilitator-managed Storage is a post-settle
+			// replica only.
 		}
 
 		evmScheme := batchedserver.NewBatchSettlementEvmScheme(evmAddress, cfg)
 		schemes = append(schemes, nethttpmw.SchemeConfig{Network: evmNetwork, Server: evmScheme})
 
-		evmManager = evmScheme.CreateChannelManager(facilitator, evmNetwork)
-		evmManager.Start(batchedserver.AutoSettlementConfig{
-			ClaimIntervalSecs:  60,
-			SettleIntervalSecs: 120,
-			RefundIntervalSecs: 180,
-			MaxClaimsPerBatch:  100,
-			SelectRefundChannels: func(channels []*batchedserver.ChannelSession, ctx batchedserver.AutoSettlementContext) ([]*batchedserver.ChannelSession, error) {
-				out := make([]*batchedserver.ChannelSession, 0, len(channels))
-				for _, c := range channels {
-					if c.Balance == "" || c.Balance == "0" {
-						continue
+		if voucherStoreMode == batchedserver.VoucherStoreModeSelf {
+			evmManager = evmScheme.CreateChannelManager(facilitator, evmNetwork)
+			evmManager.Start(batchedserver.AutoSettlementConfig{
+				ClaimIntervalSecs:  60,
+				SettleIntervalSecs: 120,
+				RefundIntervalSecs: 180,
+				MaxClaimsPerBatch:  100,
+				SelectRefundChannels: func(channels []*batchedserver.ChannelSession, ctx batchedserver.AutoSettlementContext) ([]*batchedserver.ChannelSession, error) {
+					out := make([]*batchedserver.ChannelSession, 0, len(channels))
+					for _, c := range channels {
+						if c.Balance == "" || c.Balance == "0" {
+							continue
+						}
+						if ctx.Now-c.LastRequestTimestamp < 180_000 {
+							continue
+						}
+						out = append(out, c)
 					}
-					if c.PendingRequest != nil && c.PendingRequest.ExpiresAt > ctx.Now {
-						continue
-					}
-					if ctx.Now-c.LastRequestTimestamp < 180_000 {
-						continue
-					}
-					out = append(out, c)
-				}
-				return out, nil
-			},
-			OnClaim: func(r batchedserver.ClaimResult) {
-				fmt.Printf("[EVM] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
-			},
-			OnSettle: func(r batchedserver.SettleResult) {
-				fmt.Printf("[EVM] Settled to %s (tx: %s)\n", evmAddress, r.Transaction)
-			},
-			OnRefund: func(r batchedserver.RefundResult) {
-				fmt.Printf("[EVM] Refunded channel %s (tx: %s)\n", r.Channel, r.Transaction)
-			},
-			OnError: func(err error) {
-				fmt.Printf("[EVM] Settlement error: %v\n", err)
-			},
-		})
+					return out, nil
+				},
+				OnClaim: func(r batchedserver.ClaimResult) {
+					fmt.Printf("[EVM] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
+				},
+				OnSettle: func(r batchedserver.SettleResult) {
+					fmt.Printf("[EVM] Settled to %s (tx: %s)\n", evmAddress, r.Transaction)
+				},
+				OnRefund: func(r batchedserver.RefundResult) {
+					fmt.Printf("[EVM] Refunded channel %s (tx: %s)\n", r.Channel, r.Transaction)
+				},
+				OnError: func(err error) {
+					fmt.Printf("[EVM] Settlement error: %v\n", err)
+				},
+			})
+		}
 
 		accepts = append(accepts, x402http.PaymentOption{
 			Scheme:  evmbatch.SchemeBatched,
@@ -331,9 +357,17 @@ func main() {
 	fmt.Printf("Batch-settlement server listening at http://localhost:%s\n", port)
 	fmt.Printf("  GET /weather (%s)\n", strings.Join(enabled, ", "))
 	if evmAddress != "" && evmAddressPattern.MatchString(evmAddress) {
-		if strings.TrimSpace(os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")) != "" {
+		switch {
+		case voucherStoreMode == batchedserver.VoucherStoreModeFacilitator:
+			fmt.Println("  EVM voucher custody: facilitator-managed (pass-through verify/settle)")
+			if strings.TrimSpace(os.Getenv("EVM_REFUND_AUTHORIZER_PRIVATE_KEY")) != "" {
+				fmt.Println("  EVM refund authorizer: local signer configured")
+			} else {
+				fmt.Println("  EVM refund authorizer: facilitator delegatedRefund (402 omits refundAuthorizer)")
+			}
+		case strings.TrimSpace(os.Getenv("EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY")) != "":
 			fmt.Println("  EVM receiver authorizer: local signer configured")
-		} else {
+		default:
 			fmt.Println("  EVM receiver authorizer: facilitator")
 		}
 	}

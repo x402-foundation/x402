@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ...schemas import PaymentPayload, PaymentRequirements
+
 # Extension identifier constant
 BUILDER_CODE = "builder-code"
 
@@ -58,6 +60,38 @@ class BuilderCodeExtensionData:
     a: str | None = None
     w: str | None = None
     s: str | list[str] | None = None
+
+
+SettlementMetadataValue = (
+    int | str | list["SettlementMetadataValue"] | dict[str, "SettlementMetadataValue"]
+)
+SettlementMetadata = dict[str, SettlementMetadataValue]
+
+
+@dataclass
+class BuilderCodeSuffixData:
+    """Fields present in a settlement calldata suffix.
+
+    ``m`` is not part of ``PaymentRequired`` or ``PaymentPayload``.
+    """
+
+    a: str | None = None
+    w: str | None = None
+    s: str | list[str] | None = None
+    m: SettlementMetadata | None = None
+
+
+@dataclass
+class DataSuffixContext:
+    """Settlement inputs the builder-code facilitator reads when building a suffix.
+
+    ``metadata`` is supplied by the settling mechanism and encoded as ``m``.
+    Any ``m`` on the payment payload is ignored.
+    """
+
+    payload: PaymentPayload
+    requirements: PaymentRequirements
+    metadata: SettlementMetadata | None = None
 
 
 @dataclass

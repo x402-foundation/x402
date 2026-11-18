@@ -28,7 +28,7 @@ console.log(response.data);
 
 - Node.js v20+ (install via [nvm](https://github.com/nvm-sh/nvm))
 - pnpm v10 (install via [pnpm.io/installation](https://pnpm.io/installation))
-- A running x402 server (see [express server example](../../servers/express))
+- A running x402 server (see [express server example](../../servers/express) or [auth-capture server example](../../servers/auth-capture))
 - Valid EVM and/or SVM private keys for making payments
 
 ## Setup

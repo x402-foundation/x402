@@ -13,6 +13,7 @@ import {
   buildHealthResponse,
   buildCloseResponse,
   formatStartupBanner,
+  registerAuthCaptureE2eRoutes,
 } from "../../index.ts";
 
 async function main(): Promise<void> {
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   const app = express();
   const facilitatorClients = createFacilitatorClients(facilitatorUrl);
   const server = new x402ResourceServer(facilitatorClients);
-  await configureResourceServer(server, cfg);
+  await configureResourceServer(server, cfg, facilitatorClients[0]);
 
   console.log(
     `Facilitator account: ${facilitatorUrl ? facilitatorUrl.substring(0, 10) + "..." : "not configured"}`,
@@ -38,6 +39,8 @@ async function main(): Promise<void> {
   });
 
   app.use(paymentMiddleware(buildPaymentRoutes(cfg), server));
+  app.use(express.json());
+  registerAuthCaptureE2eRoutes(app);
 
   for (const route of E2E_GET_ROUTES) {
     app.get(route.path, (req, res) => {

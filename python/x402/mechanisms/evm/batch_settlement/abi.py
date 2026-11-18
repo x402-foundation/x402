@@ -208,6 +208,16 @@ BATCH_SETTLEMENT_ABI: list[dict[str, Any]] = [
         ],
         "anonymous": False,
     },
+    {
+        "type": "event",
+        "name": "Refunded",
+        "inputs": [
+            {"name": "channelId", "type": "bytes32", "indexed": True},
+            {"name": "sender", "type": "address", "indexed": True},
+            {"name": "amount", "type": "uint128", "indexed": False},
+        ],
+        "anonymous": False,
+    },
 ]
 
 ERC20_BALANCE_OF_ABI: list[dict[str, Any]] = [

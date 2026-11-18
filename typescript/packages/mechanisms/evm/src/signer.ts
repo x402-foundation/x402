@@ -72,6 +72,7 @@ export type FacilitatorEvmSigner = {
     abi: readonly unknown[];
     functionName: string;
     args?: readonly unknown[];
+    account?: `0x${string}`;
   }): Promise<unknown>;
   verifyTypedData(args: {
     address: `0x${string}`;
@@ -99,6 +100,25 @@ export type FacilitatorEvmSigner = {
     logs?: readonly Log[];
   }>;
   getCode(args: { address: `0x${string}` }): Promise<`0x${string}` | undefined>;
+  simulateCalls?(args: {
+    account: `0x${string}`;
+    calls: readonly {
+      to: `0x${string}`;
+      data?: `0x${string}`;
+      abi?: readonly unknown[];
+      functionName?: string;
+      args?: readonly unknown[];
+      gas?: bigint;
+    }[];
+  }): Promise<{
+    results: readonly {
+      status: "success" | "failure";
+      result?: unknown;
+      logs?: readonly Log[];
+      data?: `0x${string}`;
+      gasUsed?: bigint;
+    }[];
+  }>;
 };
 
 /**

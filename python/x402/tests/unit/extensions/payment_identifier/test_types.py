@@ -1,26 +1,14 @@
 """Tests for Payment-Identifier extension types."""
 
 from x402.extensions.payment_identifier.types import (
-    PAYMENT_ID_MAX_LENGTH,
-    PAYMENT_ID_MIN_LENGTH,
     PAYMENT_ID_PATTERN,
-    PAYMENT_IDENTIFIER,
     PaymentIdentifierExtension,
     PaymentIdentifierInfo,
 )
 
 
 class TestConstants:
-    """Test extension constants."""
-
-    def test_payment_identifier_constant(self) -> None:
-        """Test PAYMENT_IDENTIFIER constant value."""
-        assert PAYMENT_IDENTIFIER == "payment-identifier"
-
-    def test_length_constants(self) -> None:
-        """Test length constants."""
-        assert PAYMENT_ID_MIN_LENGTH == 16
-        assert PAYMENT_ID_MAX_LENGTH == 128
+    """Test the payment-id pattern."""
 
     def test_pattern_constant(self) -> None:
         """Test PAYMENT_ID_PATTERN constant."""

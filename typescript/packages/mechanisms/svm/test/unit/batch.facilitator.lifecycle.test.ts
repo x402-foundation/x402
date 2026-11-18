@@ -2,6 +2,7 @@ import { findAssociatedTokenPda } from "@solana-program/token-2022";
 import { address, generateKeyPairSigner, type Signature } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { settlementAtaReader } from "./helpers/tokenAccount";
 
 import { signBatchAuthorization } from "../../src/batch-settlement/authorization";
 import {
@@ -12,6 +13,8 @@ import {
 import { BatchError } from "../../src/batch-settlement/errors";
 import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { MAX_CHANNELS_PER_SETTLE_TX } from "../../src/batch-settlement/facilitator/constants";
+import { assertRefundable } from "../../src/batch-settlement/facilitator/seal";
+import { assertDepositProof } from "../../src/batch-settlement/facilitator/voucherMode";
 import {
   BatchSvmScheme,
   calculateDistributionAmount,
@@ -28,7 +31,7 @@ import {
 } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
-import { ChannelStatus } from "../../src/payment-channels/onchain";
+import { ChannelStatus, getPaymentChannelsTreasuryOwner } from "../../src/payment-channels/onchain";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
 import { ChannelBroadcastConfirmationError } from "../../src/payment-channels/facilitator";
 import { TransactionOnchainFailureError } from "../../src/utils";
@@ -123,7 +126,12 @@ function channel(overrides: Partial<Channel> = {}): Channel {
 function signer(overrides: Record<string, unknown> = {}) {
   return {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
-    getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
+    getAccountInfo: vi.fn().mockImplementation(
+      settlementAtaReader({
+        mint: MINT,
+        owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
+      }),
+    ),
     getConfirmedTransaction: vi.fn(() => payoutEvidence()),
     getAddresses: vi.fn(() => [feePayer.address]),
     getLatestBlockhash: vi.fn(),
@@ -196,6 +204,7 @@ type FacilitatorInternals = {
     requirements: PaymentRequirements,
     payer: string,
     tokenProgram: string,
+    deposit: bigint,
   ): Promise<void>;
   readChannel: ReturnType<typeof vi.fn>;
   settlementCache: {
@@ -239,10 +248,14 @@ describe("batch facilitator lifecycle", () => {
     ["payment-channel treasury", 2],
   ])("identifies a missing %s settlement ATA", async (label, missingIndex) => {
     let readIndex = 0;
-    const getAccountInfo = vi.fn().mockImplementation(async () => {
+    const healthy = settlementAtaReader({
+      mint: MINT,
+      owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
+    });
+    const getAccountInfo = vi.fn().mockImplementation(async (ata: string) => {
       const exists = readIndex !== missingIndex;
       readIndex += 1;
-      return exists ? { owner: TOKEN_PROGRAM_ADDRESS } : null;
+      return exists ? healthy(ata) : null;
     });
     const api = internals(
       new BatchSvmScheme(signer({ getAccountInfo }) as never, {
@@ -251,7 +264,7 @@ describe("batch facilitator lifecycle", () => {
     );
 
     await expect(
-      api.assertSettlementAccounts(requirements(), payer.address, TOKEN_PROGRAM_ADDRESS),
+      api.assertSettlementAccounts(requirements(), payer.address, TOKEN_PROGRAM_ADDRESS, 1n),
     ).rejects.toThrow(`missing ${label} ATA`);
     expect(getAccountInfo).toHaveBeenCalledTimes(missingIndex + 1);
   });
@@ -267,8 +280,8 @@ describe("batch facilitator lifecycle", () => {
     );
 
     await expect(
-      api.assertSettlementAccounts(requirements(), payer.address, TOKEN_PROGRAM_ADDRESS),
-    ).rejects.toThrow(`payer ATA is not owned by ${TOKEN_PROGRAM_ADDRESS}`);
+      api.assertSettlementAccounts(requirements(), payer.address, TOKEN_PROGRAM_ADDRESS, 1n),
+    ).rejects.toThrow(new RegExp(`payer ATA \\w+ is not owned by ${TOKEN_PROGRAM_ADDRESS}`));
   });
 
   it("requires account reads for settlement-path preflight", async () => {
@@ -466,8 +479,44 @@ describe("batch facilitator lifecycle", () => {
       scheme.verify(payment, { ...requirements(), scheme: "exact" }),
     ).resolves.toMatchObject({ isValid: false, invalidReason: "unsupported_scheme" });
     await expect(
-      scheme.verify(payment, { ...requirements(), network: "solana:other" }),
-    ).resolves.toMatchObject({ isValid: false, invalidReason: "network_mismatch" });
+      scheme.verify(
+        { ...payment, accepted: { ...requirements(), scheme: "exact" } },
+        requirements(),
+      ),
+    ).resolves.toMatchObject({ isValid: false, invalidReason: "unsupported_scheme" });
+    // Spec 4.5: `accepted` must equal the requirements in every payment field.
+    const mismatches: Partial<PaymentRequirements>[] = [
+      { network: "solana:other" },
+      { amount: "999" },
+      { asset: RECEIVER },
+      { payTo: MINT },
+      { maxTimeoutSeconds: 301 },
+      { extra: { ...requirements().extra, withdrawDelay: 901 } },
+      { extra: { ...requirements().extra, memo: "extra" } },
+    ];
+    for (const overrides of mismatches) {
+      await expect(scheme.verify(payment, requirements(overrides))).resolves.toMatchObject({
+        isValid: false,
+        invalidReason: "invalid_payment_requirements",
+        payer: payer.address,
+      });
+    }
+    // Fields a server regenerates per 402 are not part of the comparison, and
+    // key order is not either.
+    const api = internals(scheme);
+    api.resolveTerms = vi.fn().mockResolvedValue({ feePayer: feePayer.address });
+    api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
+    api.validateVoucherOnly = vi.fn().mockResolvedValue(channel());
+    const { extra, ...core } = requirements();
+    await expect(
+      scheme.verify(
+        { ...payment, accepted: { ...requirements(), extra: { ...extra, recentSlot: "1" } } },
+        { extra: { recentBlockhash: "fresh", recentSlot: "2", ...extra }, ...core },
+      ),
+    ).resolves.toMatchObject({ isValid: true });
+    await expect(
+      scheme.verify({ ...payment, accepted: { ...core } }, { ...core, extra: {} }),
+    ).resolves.toMatchObject({ isValid: true });
   });
 
   it("routes verify variants and classifies validation failures", async () => {
@@ -799,7 +848,11 @@ describe("batch facilitator lifecycle", () => {
       type: "deposit" as const,
     };
     const payment = { accepted: serverRequirements, payload: deposit, x402Version: 2 } as never;
-    const verify = (amount: string) => scheme.verify(payment, { ...serverRequirements, amount });
+    const verify = (amount: string) =>
+      scheme.verify(
+        { accepted: { ...serverRequirements, amount }, payload: deposit, x402Version: 2 },
+        { ...serverRequirements, amount },
+      );
     const settle = (amount: string) => scheme.settle(payment, { ...serverRequirements, amount });
 
     // Verify still requires the proof to equal the advertised ceiling, even
@@ -915,6 +968,172 @@ describe("batch facilitator lifecycle", () => {
         success: false,
       });
     }
+  });
+
+  it("maps setup-transaction failures to their spec codes", async () => {
+    const scheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+    });
+    const api = internals(scheme);
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const verifyDeposit = (payload = actualDeposit, req = requirements()) =>
+      scheme.verify({ accepted: req, payload, x402Version: 2 }, req);
+
+    // A transaction that does not even decode fails the sponsor checks.
+    await expect(
+      verifyDeposit({
+        ...actualDeposit,
+        deposit: { ...actualDeposit.deposit, transaction: "AAAA" },
+      }),
+    ).resolves.toMatchObject({ invalidReason: BatchError.SETUP_TRANSACTION, isValid: false });
+
+    const failures: [unknown, string][] = [
+      [
+        new Error(
+          "verifyOpenTransaction: the receiver binding Memo names another receiver authorizer",
+        ),
+        BatchError.RECEIVER_AUTHORIZER_MISMATCH,
+      ],
+      [
+        new Error("verifyOpenTransaction: expected exactly one receiver-binding Memo, found 0"),
+        BatchError.SETUP_TRANSACTION,
+      ],
+      [
+        new Error("verifyOpenTransaction: gracePeriod 901 != expected withdrawDelay 900"),
+        BatchError.WITHDRAW_DELAY_MISMATCH,
+      ],
+      [
+        new Error(
+          "unsupported_transaction_version: verifyOpenTransaction: transaction message version 2 is not accepted",
+        ),
+        "unsupported_transaction_version",
+      ],
+      [
+        new Error(
+          "verifyOpenTransaction: transaction is 4097 bytes, above the 4096-byte limit for version 1",
+        ),
+        BatchError.SETUP_TRANSACTION,
+      ],
+      ["not an Error", BatchError.SETUP_TRANSACTION],
+    ];
+    const openSpy = vi.spyOn(paymentChannelsOpen, "verifyOpenTransaction");
+    for (const [failure, reason] of failures) {
+      openSpy.mockRejectedValueOnce(failure);
+      await expect(verifyDeposit()).resolves.toMatchObject({
+        invalidReason: reason,
+        isValid: false,
+      });
+    }
+    openSpy.mockRestore();
+
+    api.readChannel = vi.fn().mockResolvedValue(channel());
+    api.assertClaimChannel = vi.fn();
+    api.assertSettlementAccounts = vi.fn().mockResolvedValue(undefined);
+    const topUpSpy = vi.spyOn(paymentChannelsOpen, "verifyTopUpTransaction");
+    for (const [failure, reason] of [
+      [new Error("verifyTopUpTransaction: top-up amount mismatch"), BatchError.SETUP_TRANSACTION],
+      [
+        new Error(
+          "verifyTopUpTransaction: transaction is 1300 bytes, above the 1232-byte limit for version 0",
+        ),
+        BatchError.SETUP_TRANSACTION,
+      ],
+      [
+        new Error("unsupported_transaction_version: verifyTopUpTransaction: version 2"),
+        "unsupported_transaction_version",
+      ],
+    ] as const) {
+      topUpSpy.mockRejectedValueOnce(failure);
+      await expect(verifyDeposit()).resolves.toMatchObject({
+        invalidReason: reason,
+        isValid: false,
+      });
+    }
+    topUpSpy.mockRestore();
+  });
+
+  it("splits cumulative mismatches from deposits that cannot cover the proof", async () => {
+    const scheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+    });
+    const api = internals(scheme);
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const verifyDeposit = (amount: string, req = requirements()) =>
+      scheme.verify(
+        {
+          accepted: req,
+          payload: { ...actualDeposit, deposit: { ...actualDeposit.deposit, amount } },
+          x402Version: 2,
+        },
+        req,
+      );
+    // Open: a first voucher above the deposit, and one that is not the charge.
+    await expect(verifyDeposit("999")).resolves.toMatchObject({
+      invalidReason: BatchError.CUMULATIVE_EXCEEDS_DEPOSIT,
+    });
+    await expect(verifyDeposit("10000", requirements({ amount: "999" }))).resolves.toMatchObject({
+      invalidReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+    });
+    // Top-up: a voucher behind the watermark, and one above the topped-up deposit.
+    api.assertClaimChannel = vi.fn();
+    api.readChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 0n, settled: 1_000n } }));
+    await expect(verifyDeposit("10000")).resolves.toMatchObject({
+      invalidReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+    });
+    api.readChannel = vi.fn().mockResolvedValue(channel({ deposit: 0n }));
+    await expect(verifyDeposit("999")).resolves.toMatchObject({
+      invalidReason: BatchError.CUMULATIVE_EXCEEDS_DEPOSIT,
+    });
+
+    // Server mode bounds the charge by the deposit, open or top-up.
+    for (const settled of [undefined, 0n]) {
+      expect(() =>
+        assertDepositProof("server", { charge: 2n, deposit: 1n, proof: 2n, settled }),
+      ).toThrow(BatchError.CUMULATIVE_EXCEEDS_DEPOSIT);
+      expect(() =>
+        assertDepositProof("server", { charge: 1n, deposit: 1n, proof: 1n, settled }),
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses refunds of channels past Closing with the close-state code", async () => {
+    const store = new InMemoryPaymentChannelStorage();
+    const scheme = new BatchSvmScheme(signer() as never, { channelStorage: store });
+    const api = internals(scheme);
+    const refundArgs = {
+      channelConfig: actualDeposit.channelConfig,
+      channelId: actualChannelId,
+      feePayer: feePayer.address,
+      payer,
+      voucher: actualDeposit.voucher,
+    };
+    const fallback = await buildRefundPayload({
+      ...refundArgs,
+      blockhash: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 1n },
+    });
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    for (const status of [ChannelStatus.Sealed, ChannelStatus.Distributed]) {
+      const closed = channel({ authorizedSigner: address(payer.address), openSlot: 123n, status });
+      api.fetchChannel = vi.fn().mockResolvedValue(closed);
+      await expect(
+        scheme.verify(
+          { accepted: requirements(), payload: fallback, x402Version: 2 },
+          requirements(),
+        ),
+      ).resolves.toMatchObject({ invalidReason: BatchError.CLOSE_STATE, isValid: false });
+      await expect(
+        scheme.settle(
+          { accepted: requirements(), payload: fallback, x402Version: 2 },
+          requirements(),
+        ),
+      ).resolves.toMatchObject({ errorReason: BatchError.CLOSE_STATE, success: false });
+    }
+    expect(() => assertRefundable(channel(), actualChannelId)).not.toThrow();
+    expect(() =>
+      assertRefundable(channel({ status: ChannelStatus.Closing }), actualChannelId),
+    ).not.toThrow();
   });
 
   it("validates real open, voucher, and refund transactions", async () => {

@@ -198,6 +198,20 @@ describe("findMatchingRoute", () => {
     expect(result).toEqual(routePatterns[1]);
   });
 
+  it("should match HEAD to a GET route", () => {
+    const result = findMatchingRoute(routePatterns, "/api/test", "HEAD");
+    expect(result).toEqual(routePatterns[0]);
+  });
+
+  it("should prefer an explicit HEAD route over the GET fallback", () => {
+    const explicitPatterns = computeRoutePatterns({
+      "GET /api/test": "$0.01",
+      "HEAD /api/test": "$0.02",
+    });
+    const result = findMatchingRoute(explicitPatterns, "/api/test", "HEAD");
+    expect(result).toEqual(explicitPatterns[1]);
+  });
+
   it("should not match routes with wrong verbs", () => {
     const result = findMatchingRoute(routePatterns, "/api/test", "PUT");
     expect(result).toBeUndefined();
@@ -497,7 +511,7 @@ describe("processPriceToAtomicAmount", () => {
   it("should handle zero price", () => {
     const result = processPriceToAtomicAmount("$0", "base-sepolia");
     expect(result).toEqual({
-      error: expect.stringContaining("Number must be greater than or equal to 0.0001"),
+      error: expect.stringContaining("expected number to be >=0.0001"),
     });
   });
 });

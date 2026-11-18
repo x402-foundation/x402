@@ -94,7 +94,10 @@ type catalogRouteDefinition struct {
 	Network             string                 `json:"network"`
 	AssetTransferMethod string                 `json:"assetTransferMethod"`
 	Sdks                []string               `json:"sdks"`
+	SchemeOptions       map[string]bool        `json:"schemeOptions"`
 	RequiresEnv         string                 `json:"requiresEnv"`
+	RequiresEnvAbsent   string                 `json:"requiresEnvAbsent"`
+	SchemeExtra         map[string]interface{} `json:"schemeExtra"`
 	Price               catalogPrice           `json:"price"`
 	Extensions          []string               `json:"extensions"`
 	SettlementOverride  *SettlementAmount      `json:"settlementOverride"`
@@ -122,7 +125,10 @@ type CatalogRoute struct {
 	Scheme              string
 	Network             string
 	AssetTransferMethod string
+	SchemeOptions       map[string]bool
 	RequiresEnv         string
+	RequiresEnvAbsent   string
+	SchemeExtra         map[string]interface{}
 	Price               catalogPrice
 	Extensions          []string
 	SettlementOverride  *SettlementAmount
@@ -343,12 +349,28 @@ func routeImplementsSDK(definition catalogRouteDefinition, sdk string) bool {
 	return false
 }
 
+// batchServerRole returns the harness-assigned custody role for this server process.
+// Empty (unset) means "standard": mount everything except facilitator-managed batch routes.
+func batchServerRole() string {
+	role := strings.TrimSpace(strings.ToLower(os.Getenv("E2E_BATCH_SERVER_ROLE")))
+	if role == "" {
+		return "standard"
+	}
+	return role
+}
+
+// isFacilitatorManagedBatch reports whether a catalog route uses facilitator-managed custody.
+func isFacilitatorManagedBatch(definition catalogRouteDefinition) bool {
+	return definition.Scheme == "batch-settlement" && definition.SchemeOptions["facilitatorManaged"]
+}
+
 // CatalogRoutes returns the routes this SDK implements, minus the exclusions the
 // harness injects for surfaces that expose less than the full catalog.
 func CatalogRoutes() []CatalogRoute {
 	catalog := mustLoadCatalog()
 	excludedSchemes := excludedFromEnv("E2E_EXCLUDE_SCHEMES")
 	excludedNetworks := excludedFromEnv("E2E_EXCLUDE_NETWORKS")
+	role := batchServerRole()
 
 	routes := make([]CatalogRoute, 0, len(catalog.RouteOrder))
 	for _, path := range catalog.RouteOrder {
@@ -359,7 +381,17 @@ func CatalogRoutes() []CatalogRoute {
 		if excludedSchemes[definition.Scheme] || excludedNetworks[definition.Network] {
 			continue
 		}
+		if role == "managed-batch" {
+			if !isFacilitatorManagedBatch(definition) {
+				continue
+			}
+		} else if isFacilitatorManagedBatch(definition) {
+			continue
+		}
 		if definition.RequiresEnv != "" && os.Getenv(definition.RequiresEnv) == "" {
+			continue
+		}
+		if definition.RequiresEnvAbsent != "" && os.Getenv(definition.RequiresEnvAbsent) != "" {
 			continue
 		}
 
@@ -368,7 +400,10 @@ func CatalogRoutes() []CatalogRoute {
 			Scheme:              definition.Scheme,
 			Network:             definition.Network,
 			AssetTransferMethod: definition.AssetTransferMethod,
+			SchemeOptions:       definition.SchemeOptions,
 			RequiresEnv:         definition.RequiresEnv,
+			RequiresEnvAbsent:   definition.RequiresEnvAbsent,
+			SchemeExtra:         definition.SchemeExtra,
 			Price:               definition.Price,
 			Extensions:          definition.Extensions,
 			SettlementOverride:  definition.SettlementOverride,
@@ -551,6 +586,14 @@ func ResolvedRoutes() []ResolvedRoute {
 			os.Exit(1)
 		}
 		extra := mergeRouteExtra(priceExtra, route.RequirementsExtra, route.PaymentFlow)
+		if len(route.SchemeExtra) > 0 {
+			if extra == nil {
+				extra = map[string]interface{}{}
+			}
+			for key, value := range route.SchemeExtra {
+				extra[key] = value
+			}
+		}
 
 		resolved = append(resolved, ResolvedRoute{
 			Path:                route.Path,

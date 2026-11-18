@@ -31,6 +31,13 @@ export type ClientSvmConfig = {
    * Optional custom RPC URL for the client to use
    */
   rpcUrl?: string;
+  /**
+   * Transaction message versions the client and its signer can build. The
+   * client builds the highest of these that the facilitator advertises in
+   * `extra.transactionVersions`. Defaults to `[0, 1]`; set `[0]` for a signer
+   * (such as a wallet) that cannot sign version-1 transactions.
+   */
+  transactionVersions?: readonly (0 | 1)[];
 };
 
 /**
@@ -286,8 +293,9 @@ export type FacilitatorSvmSigner = {
   ): Promise<Record<string, string[]>>;
 
   /**
-   * Fetch one account's onchain data. Optional — required by the `upto` scheme;
-   * {@link toFacilitatorSvmSigner} provides an implementation.
+   * Fetch one account's onchain data. Optional — required by the `upto` scheme
+   * and used for best-effort recipient ATA diagnostics after failed exact
+   * simulation. {@link toFacilitatorSvmSigner} provides an implementation.
    */
   getAccountInfo?(
     accountAddress: string,
@@ -712,7 +720,7 @@ export function toFacilitatorSvmSigner(
           signature as never,
           {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: 1,
             encoding: "jsonParsed",
           } as never,
         )
@@ -730,7 +738,7 @@ export function toFacilitatorSvmSigner(
           signature as never,
           {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: 1,
             encoding: "jsonParsed",
           } as never,
         )

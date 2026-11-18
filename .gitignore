@@ -19,6 +19,7 @@ cdk.out/
 
 # e2e Go build artifacts (compiled binaries)
 e2e/clients/go/http/go-http/go-http
+e2e/clients/go/http/svm-v0/svm-v0
 e2e/clients/go/mcp/mcp
 e2e/clients/go/mcp/mcp-go
 e2e/facilitators/go/facilitator

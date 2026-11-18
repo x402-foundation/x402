@@ -18,6 +18,7 @@ Three parties each contribute an attribution code:
 | `a` | Resource server | App code — identifies the application exposing the paid endpoint |
 | `w` | Facilitator | Wallet code — identifies the facilitator settling the payment on-chain |
 | `s` | Client, server, and/or facilitator | Service code(s) — attribution codes from the payment path; each party has its own dedicated reservation (`MAX_CLIENT_SERVICE_CODES`, `MAX_SERVER_SERVICE_CODES`, `MAX_FACILITATOR_SERVICE_CODES`) so declaring up to that amount never crowds out another party's codes |
+| `m` | Facilitator (at settlement) | Settlement metadata — facilitator-authored key/value map supplied by the settling mechanism; keys must start with `x402` and values must be unsigned integers, strings, arrays, or maps with string keys |
 
 These codes are CBOR-encoded as an [ERC-8021](https://eip.tools/eip/8021) Schema 2 suffix and appended to the settlement transaction calldata. Off-chain tools can parse the calldata to verify attribution.
 
@@ -337,7 +338,7 @@ const tx = await publicClient.getTransaction({ hash: txHash });
 const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
 
 console.log(attribution);
-// { a: "bc_my_app", s: ["bc_my_client"], w: "bc_my_facilitator" }
+// { a: "bc_my_app", s: ["bc_my_client"], w: "bc_my_facilitator", m: { x402Example: 7n } }
 ```
 
 ## ERC-8021 Schema 2 Calldata Format
@@ -349,7 +350,7 @@ The suffix appended to settlement calldata (reading from the end backwards):
 | `ercMarker` | 16 bytes | Constant: `80218021802180218021802180218021` |
 | `schemaId` | 1 byte | `0x02` for Schema 2 |
 | `cborLength` | 2 bytes | Length of CBOR data (big-endian) |
-| `cborData` | variable | CBOR-encoded map with `a`, `w`, and/or `s` fields |
+| `cborData` | variable | CBOR-encoded map with `a`, `w`, `s`, and/or `m` fields |
 
 Wire order: `[cborData][cborLength (2B)][schemaId (1B)][ercMarker (16B)]`
 
@@ -411,18 +412,25 @@ facilitator.registerExtension(
 );
 ```
 
-Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
+Reads `a` and `s` from the payment payload at settlement time, adds `w`, appends its own `serviceCode` to `s` (deduped), includes `m` when the settling mechanism supplies settlement metadata, and encodes the ERC-8021 CBOR suffix. On v1 payloads, `a` is omitted from the suffix (the resource-server echo gate that validates `a` does not run on v1).
+
+The `m` field is written exclusively by the facilitator at settlement — it never appears in `PaymentRequired` or `PaymentPayload`, and the facilitator ignores any `m` found in a client payload. Keys inside `m` must start with `x402` and are defined by the scheme spec that emits them.
 
 ### Utilities
 
 #### `encodeBuilderCodeSuffix(data)`
 
-Encodes builder code fields as an ERC-8021 Schema 2 hex suffix.
+Encodes builder code fields as an ERC-8021 Schema 2 hex suffix. Accepts `a`, `w`, `s`, and `m` fields. Throws when the resulting CBOR exceeds 65,535 bytes.
 
 ```typescript
 import { encodeBuilderCodeSuffix } from "@x402/extensions/builder-code";
 
-const suffix = encodeBuilderCodeSuffix({ a: "bc_my_app", w: "bc_my_fac", s: ["bc_my_client"] });
+const suffix = encodeBuilderCodeSuffix({
+  a: "bc_my_app",
+  w: "bc_my_fac",
+  s: ["bc_my_client"],
+  m: { x402Example: 7n },
+});
 // Returns hex string to append to calldata
 ```
 
@@ -434,7 +442,8 @@ Parses ERC-8021 Schema 2 attribution from settlement transaction calldata.
 import { parseBuilderCodeSuffixFromCalldata } from "@x402/extensions/builder-code";
 
 const attribution = parseBuilderCodeSuffixFromCalldata(tx.input);
-// Returns { a?, w?, s? } or null if no valid suffix found
+// Returns { a?, w?, s?, m? } or null if no valid suffix found
+// Unsigned integers inside `m` are returned as bigint
 ```
 
 ### Constants
@@ -451,6 +460,8 @@ import {
   SCHEMA_2_ID,                     // 0x02
 } from "@x402/extensions/builder-code";
 ```
+
+Types exported include `BuilderCodeExtensionData`, `BuilderCodeSuffixData` (extends `BuilderCodeExtensionData` with `m?`), `SettlementMetadata`, `BuilderCodeFacilitatorConfig`, `BuilderCodeRequiredExtension`, and `DataSuffixContext`.
 
 ## Examples
 

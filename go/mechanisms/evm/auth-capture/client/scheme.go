@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"time"
@@ -46,7 +45,7 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 	requirements types.PaymentRequirements,
 	_ x402.PaymentPayloadContext,
 ) (types.PaymentPayload, error) {
-	extra, deployment, err := parseAuthCaptureExtra(requirements)
+	extra, deployment, err := authcapture.ParseAuthCaptureExtra(requirements)
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
@@ -60,22 +59,14 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	maxAmount := requirements.Amount
-	nowSeconds := c.now().Unix()
-	preApprovalExpiry := uint64(nowSeconds + int64(requirements.MaxTimeoutSeconds))
-
-	assetTransferMethod := extra.AssetTransferMethod
-	if assetTransferMethod == "" {
-		assetTransferMethod = string(evm.AssetTransferMethodEIP3009)
-	}
+	preApprovalExpiry := uint64(c.now().Unix() + int64(requirements.MaxTimeoutSeconds))
 
 	bindOn := authcapture.IsSaltBindingOn(extra)
 	saltNonce, err := authcapture.GenerateSalt()
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
-
-	var salt string
+	salt := saltNonce
 	if bindOn {
 		salt, err = authcapture.DeriveBoundSalt(
 			authcapture.ExtraAddress(extra.ReceiverAuthorizer),
@@ -85,256 +76,118 @@ func (c *AuthCaptureEvmScheme) CreatePaymentPayload(
 		if err != nil {
 			return types.PaymentPayload{}, err
 		}
-	} else {
-		salt = saltNonce
 	}
 
-	paymentInfo := authcapture.PaymentInfoStruct{
-		Operator:            extra.CaptureAuthorizer,
-		Payer:               c.signer.Address(),
-		Receiver:            requirements.PayTo,
-		Token:               requirements.Asset,
-		MaxAmount:           maxAmount,
-		PreApprovalExpiry:   preApprovalExpiry,
-		AuthorizationExpiry: extra.CaptureDeadline,
-		RefundExpiry:        extra.RefundDeadline,
-		MinFeeBps:           extra.MinFeeBps,
-		MaxFeeBps:           extra.MaxFeeBps,
-		FeeReceiver:         extra.FeeRecipient,
-		Salt:                salt,
-	}
-
+	paymentInfo := authcapture.ReconstructPaymentInfo(c.signer.Address(), preApprovalExpiry, salt, requirements, extra)
 	nonce, err := authcapture.ComputePayerAgnosticPaymentInfoHash(chainID, paymentInfo, deployment.Escrow)
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
 
-	if assetTransferMethod == string(evm.AssetTransferMethodPermit2) {
-		return c.createPermit2Payload(ctx, requirements, bindOn, salt, saltNonce, nonce, preApprovalExpiry, chainID, deployment)
-	}
-
-	return c.createEIP3009Payload(ctx, requirements, extra, bindOn, salt, saltNonce, nonce, preApprovalExpiry, chainID, deployment)
-}
-
-func (c *AuthCaptureEvmScheme) createEIP3009Payload(
-	ctx context.Context,
-	requirements types.PaymentRequirements,
-	extra authcapture.AuthCaptureExtra,
-	bindOn bool,
-	salt string,
-	saltNonce string,
-	nonce string,
-	preApprovalExpiry uint64,
-	chainID *big.Int,
-	deployment authcapture.AuthCaptureDeployment,
-) (types.PaymentPayload, error) {
-	authorization := authcapture.Eip3009Authorization{
-		From:        c.signer.Address(),
-		To:          deployment.EIP3009Collector,
-		Value:       requirements.Amount,
-		ValidAfter:  "0",
-		ValidBefore: fmt.Sprintf("%d", preApprovalExpiry),
-		Nonce:       nonce,
-	}
-
-	signature, err := authcapture.SignERC3009(ctx, c.signer, authorization, extra, requirements.Asset, chainID)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to sign ERC-3009 authorization: %w", err)
-	}
-
-	payload := map[string]interface{}{
-		"authorization": map[string]interface{}{
-			"from":        authorization.From,
-			"to":          authorization.To,
-			"value":       authorization.Value,
-			"validAfter":  authorization.ValidAfter,
-			"validBefore": authorization.ValidBefore,
-			"nonce":       authorization.Nonce,
-		},
-		"signature": evm.BytesToHex(signature),
-		"salt":      salt,
+	params := collectParams{
+		requirements:      requirements,
+		extra:             extra,
+		deployment:        deployment,
+		chainID:           chainID,
+		nonce:             nonce,
+		preApprovalExpiry: preApprovalExpiry,
+		salt:              salt,
 	}
 	if bindOn {
-		payload["saltNonce"] = saltNonce
+		params.saltNonce = saltNonce
 	}
 
-	return types.PaymentPayload{
-		X402Version: 2,
-		Payload:     payload,
-	}, nil
-}
-
-func (c *AuthCaptureEvmScheme) createPermit2Payload(
-	ctx context.Context,
-	requirements types.PaymentRequirements,
-	bindOn bool,
-	salt string,
-	saltNonce string,
-	nonce string,
-	preApprovalExpiry uint64,
-	chainID *big.Int,
-	deployment authcapture.AuthCaptureDeployment,
-) (types.PaymentPayload, error) {
-	permitNonce, err := authcapture.NonceHexToDecimalString(nonce)
+	var authorization map[string]interface{}
+	var signature []byte
+	if extra.AssetTransferMethod == string(evm.AssetTransferMethodPermit2) {
+		authorization, signature, err = c.signPermit2(ctx, params)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		return params.payload("permit2Authorization", authorization, signature), nil
+	}
+	authorization, signature, err = c.signEIP3009(ctx, params)
 	if err != nil {
 		return types.PaymentPayload{}, err
 	}
+	return params.payload("authorization", authorization, signature), nil
+}
 
+// collectParams are the values shared by the EIP-3009 and Permit2 collect payloads.
+// saltNonce is empty when the salt binding is off.
+type collectParams struct {
+	requirements      types.PaymentRequirements
+	extra             authcapture.AuthCaptureExtra
+	deployment        authcapture.AuthCaptureDeployment
+	chainID           *big.Int
+	nonce             string
+	preApprovalExpiry uint64
+	salt              string
+	saltNonce         string
+}
+
+func (p collectParams) payload(authorizationKey string, authorization map[string]interface{}, signature []byte) types.PaymentPayload {
+	payload := map[string]interface{}{
+		authorizationKey: authorization,
+		"signature":      evm.BytesToHex(signature),
+		"salt":           p.salt,
+	}
+	if p.saltNonce != "" {
+		payload["saltNonce"] = p.saltNonce
+	}
+	return types.PaymentPayload{X402Version: 2, Payload: payload}
+}
+
+func (c *AuthCaptureEvmScheme) signEIP3009(ctx context.Context, p collectParams) (map[string]interface{}, []byte, error) {
+	authorization := authcapture.Eip3009Authorization{
+		From:        c.signer.Address(),
+		To:          p.deployment.EIP3009Collector,
+		Value:       p.requirements.Amount,
+		ValidAfter:  "0",
+		ValidBefore: fmt.Sprintf("%d", p.preApprovalExpiry),
+		Nonce:       p.nonce,
+	}
+	signature, err := authcapture.SignERC3009(ctx, c.signer, authorization, p.extra, p.requirements.Asset, p.chainID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to sign ERC-3009 authorization: %w", err)
+	}
+	return map[string]interface{}{
+		"from":        authorization.From,
+		"to":          authorization.To,
+		"value":       authorization.Value,
+		"validAfter":  authorization.ValidAfter,
+		"validBefore": authorization.ValidBefore,
+		"nonce":       authorization.Nonce,
+	}, signature, nil
+}
+
+func (c *AuthCaptureEvmScheme) signPermit2(ctx context.Context, p collectParams) (map[string]interface{}, []byte, error) {
+	permitNonce, err := authcapture.NonceHexToDecimalString(p.nonce)
+	if err != nil {
+		return nil, nil, err
+	}
 	permit := authcapture.Permit2Authorization{
 		From: c.signer.Address(),
 		Permitted: authcapture.Permit2TokenPermissions{
-			Token:  requirements.Asset,
-			Amount: requirements.Amount,
+			Token:  p.requirements.Asset,
+			Amount: p.requirements.Amount,
 		},
-		Spender:  deployment.Permit2Collector,
+		Spender:  p.deployment.Permit2Collector,
 		Nonce:    permitNonce,
-		Deadline: fmt.Sprintf("%d", preApprovalExpiry),
+		Deadline: fmt.Sprintf("%d", p.preApprovalExpiry),
 	}
-
-	signature, err := authcapture.SignPermit2(ctx, c.signer, permit, chainID)
+	signature, err := authcapture.SignPermit2(ctx, c.signer, permit, p.chainID)
 	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf("failed to sign Permit2 authorization: %w", err)
+		return nil, nil, fmt.Errorf("failed to sign Permit2 authorization: %w", err)
 	}
-
-	payload := map[string]interface{}{
-		"permit2Authorization": map[string]interface{}{
-			"from": permit.From,
-			"permitted": map[string]interface{}{
-				"token":  permit.Permitted.Token,
-				"amount": permit.Permitted.Amount,
-			},
-			"spender":  permit.Spender,
-			"nonce":    permit.Nonce,
-			"deadline": permit.Deadline,
+	return map[string]interface{}{
+		"from": permit.From,
+		"permitted": map[string]interface{}{
+			"token":  permit.Permitted.Token,
+			"amount": permit.Permitted.Amount,
 		},
-		"signature": evm.BytesToHex(signature),
-		"salt":      salt,
-	}
-	if bindOn {
-		payload["saltNonce"] = saltNonce
-	}
-
-	return types.PaymentPayload{
-		X402Version: 2,
-		Payload:     payload,
-	}, nil
-}
-
-func parseAuthCaptureExtra(requirements types.PaymentRequirements) (authcapture.AuthCaptureExtra, authcapture.AuthCaptureDeployment, error) {
-	if requirements.Extra == nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'captureAuthorizer' is required in payment requirements extra")
-	}
-	ex := requirements.Extra
-
-	name, _ := ex["name"].(string)
-	if name == "" {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("EIP-712 domain parameter 'name' is required in payment requirements for asset %s", requirements.Asset)
-	}
-	version, _ := ex["version"].(string)
-	if version == "" {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("EIP-712 domain parameter 'version' is required in payment requirements for asset %s", requirements.Asset)
-	}
-
-	captureAuthorizer, _ := ex["captureAuthorizer"].(string)
-	if captureAuthorizer == "" {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'captureAuthorizer' is required in payment requirements extra")
-	}
-	feeRecipient, _ := ex["feeRecipient"].(string)
-	if feeRecipient == "" {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'feeRecipient' is required in payment requirements extra")
-	}
-
-	captureDeadline, err := extraUint64(ex, "captureDeadline")
-	if err != nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'captureDeadline' is required in payment requirements extra")
-	}
-	refundDeadline, err := extraUint64(ex, "refundDeadline")
-	if err != nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'refundDeadline' is required in payment requirements extra")
-	}
-	minFeeBps, err := extraUint16(ex, "minFeeBps")
-	if err != nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'minFeeBps' is required in payment requirements extra")
-	}
-	maxFeeBps, err := extraUint16(ex, "maxFeeBps")
-	if err != nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("'maxFeeBps' is required in payment requirements extra")
-	}
-
-	authCaptureEscrow := stringFromExtra(ex, "authCaptureEscrow")
-	deployment := authcapture.ResolveAuthCaptureDeployment(authCaptureEscrow)
-	if deployment == nil {
-		return authcapture.AuthCaptureExtra{}, authcapture.AuthCaptureDeployment{}, fmt.Errorf("invalid authCaptureEscrow in payment requirements extra")
-	}
-
-	extraOut := authcapture.AuthCaptureExtra{
-		CaptureAuthorizer:   captureAuthorizer,
-		CaptureDeadline:     captureDeadline,
-		RefundDeadline:      refundDeadline,
-		FeeRecipient:        feeRecipient,
-		MinFeeBps:           minFeeBps,
-		MaxFeeBps:           maxFeeBps,
-		Name:                name,
-		Version:             version,
-		ReceiverAuthorizer:  stringFromExtra(ex, "receiverAuthorizer"),
-		Policy:              stringFromExtra(ex, "policy"),
-		PaymentFlow:         stringFromExtra(ex, "paymentFlow"),
-		CaptureMode:         stringFromExtra(ex, "captureMode"),
-		OperatorType:        stringFromExtra(ex, "operatorType"),
-		AssetTransferMethod: stringFromExtra(ex, "assetTransferMethod"),
-		AuthCaptureEscrow:   deployment.Escrow,
-	}
-	return extraOut, *deployment, nil
-}
-
-func stringFromExtra(ex map[string]interface{}, key string) string {
-	if v, ok := ex[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-func extraUint64(ex map[string]interface{}, key string) (uint64, error) {
-	value, ok := ex[key]
-	if !ok {
-		return 0, fmt.Errorf("missing %s", key)
-	}
-	switch v := value.(type) {
-	case float64:
-		if v < 0 || v != float64(uint64(v)) {
-			return 0, fmt.Errorf("invalid %s", key)
-		}
-		return uint64(v), nil
-	case int:
-		if v < 0 {
-			return 0, fmt.Errorf("invalid %s", key)
-		}
-		return uint64(v), nil
-	case int64:
-		if v < 0 {
-			return 0, fmt.Errorf("invalid %s", key)
-		}
-		return uint64(v), nil
-	case uint64:
-		return v, nil
-	case json.Number:
-		n, err := v.Int64()
-		if err != nil || n < 0 {
-			return 0, fmt.Errorf("invalid %s", key)
-		}
-		return uint64(n), nil
-	default:
-		return 0, fmt.Errorf("invalid %s", key)
-	}
-}
-
-func extraUint16(ex map[string]interface{}, key string) (uint16, error) {
-	n, err := extraUint64(ex, key)
-	if err != nil {
-		return 0, err
-	}
-	if n > 65535 {
-		return 0, fmt.Errorf("invalid %s", key)
-	}
-	return uint16(n), nil
+		"spender":  permit.Spender,
+		"nonce":    permit.Nonce,
+		"deadline": permit.Deadline,
+	}, signature, nil
 }

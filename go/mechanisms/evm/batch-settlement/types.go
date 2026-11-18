@@ -113,6 +113,8 @@ type BatchSettlementDepositPayload struct {
 	ChannelConfig ChannelConfig                `json:"channelConfig"`
 	Voucher       BatchSettlementVoucherFields `json:"voucher"`
 	Deposit       BatchSettlementDepositData   `json:"deposit"`
+	PendingId     string                       `json:"pendingId,omitempty"`
+	Cancel        bool                         `json:"cancel,omitempty"`
 }
 
 // BatchSettlementVoucherPayload is sent on subsequent requests (no new deposit).
@@ -120,6 +122,8 @@ type BatchSettlementVoucherPayload struct {
 	Type          string                       `json:"type"` // "voucher"
 	ChannelConfig ChannelConfig                `json:"channelConfig"`
 	Voucher       BatchSettlementVoucherFields `json:"voucher"`
+	PendingId     string                       `json:"pendingId,omitempty"`
+	Cancel        bool                         `json:"cancel,omitempty"`
 }
 
 // BatchSettlementRefundPayload is the client-side cooperative-refund request.
@@ -129,6 +133,8 @@ type BatchSettlementRefundPayload struct {
 	ChannelConfig ChannelConfig                `json:"channelConfig"`
 	Voucher       BatchSettlementVoucherFields `json:"voucher"`
 	Amount        string                       `json:"amount,omitempty"`
+	PendingId     string                       `json:"pendingId,omitempty"`
+	Cancel        bool                         `json:"cancel,omitempty"`
 }
 
 // BatchSettlementVoucherClaim is used in claim operations onchain.
@@ -162,6 +168,7 @@ type BatchSettlementVoucherStateExtra struct {
 // BatchSettlementPaymentResponseExtra carries channel state in settle/verify responses.
 type BatchSettlementPaymentResponseExtra struct {
 	ChargedAmount string                            `json:"chargedAmount,omitempty"`
+	ChargeCount   *int                              `json:"chargeCount,omitempty"`
 	ChannelState  *BatchSettlementChannelStateExtra `json:"channelState,omitempty"`
 	VoucherState  *BatchSettlementVoucherStateExtra `json:"voucherState,omitempty"`
 }
@@ -172,13 +179,20 @@ type BatchSettlementPaymentResponseExtra struct {
 // `channelState` (channel snapshot) and `voucherState` (latest signed voucher
 // proof).
 type BatchSettlementPaymentRequirementsExtra struct {
-	ReceiverAuthorizer  string                            `json:"receiverAuthorizer"`
-	WithdrawDelay       int                               `json:"withdrawDelay"`
-	Name                string                            `json:"name"`
-	Version             string                            `json:"version"`
-	AssetTransferMethod string                            `json:"assetTransferMethod,omitempty"` // "eip3009" or "permit2"
-	ChannelState        *BatchSettlementChannelStateExtra `json:"channelState,omitempty"`
-	VoucherState        *BatchSettlementVoucherStateExtra `json:"voucherState,omitempty"`
+	ReceiverAuthorizer  string `json:"receiverAuthorizer"`
+	WithdrawDelay       int    `json:"withdrawDelay"`
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	AssetTransferMethod string `json:"assetTransferMethod,omitempty"` // "eip3009" or "permit2"
+	// VoucherManager is "server" or "facilitator". Omitted means "server".
+	VoucherManager string `json:"voucherManager,omitempty"`
+	// RefundAuthorizer is the server-owned EOA that consents to cooperative refunds. Set only
+	// when VoucherManager is "facilitator" and the server signs refunds with its own key; it
+	// is then packed into the channel salt. Omitted when the server relies on the
+	// facilitator's delegatedRefund (caller-identity refunds, raw salt).
+	RefundAuthorizer string                            `json:"refundAuthorizer,omitempty"`
+	ChannelState     *BatchSettlementChannelStateExtra `json:"channelState,omitempty"`
+	VoucherState     *BatchSettlementVoucherStateExtra `json:"voucherState,omitempty"`
 }
 
 // FileChannelStorageOptions configures file-backed channel storage.
@@ -221,6 +235,8 @@ type BatchSettlementEnrichedRefundPayload struct {
 	Claims                    []BatchSettlementVoucherClaim `json:"claims"`
 	RefundAuthorizerSignature string                        `json:"refundAuthorizerSignature,omitempty"`
 	ClaimAuthorizerSignature  string                        `json:"claimAuthorizerSignature,omitempty"`
+	PendingId                 string                        `json:"pendingId,omitempty"`
+	Cancel                    bool                          `json:"cancel,omitempty"`
 }
 
 // ============================================================================
@@ -324,8 +340,9 @@ func ChannelConfigFromMap(data map[string]interface{}) (ChannelConfig, error) {
 	return config, nil
 }
 
-// voucherFieldsFromMap parses BatchSettlementVoucherFields from a raw map.
-func voucherFieldsFromMap(data map[string]interface{}) BatchSettlementVoucherFields {
+// VoucherFieldsFromMap parses BatchSettlementVoucherFields from a raw map.
+// Absent or non-string fields stay empty.
+func VoucherFieldsFromMap(data map[string]interface{}) BatchSettlementVoucherFields {
 	v := BatchSettlementVoucherFields{}
 	v.ChannelId, _ = data["channelId"].(string)
 	v.MaxClaimableAmount, _ = data["maxClaimableAmount"].(string)
@@ -387,7 +404,7 @@ func DepositPayloadFromMap(data map[string]interface{}) (*BatchSettlementDeposit
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	payload.Voucher = VoucherFieldsFromMap(voucherMap)
 
 	depositMap, ok := data["deposit"].(map[string]interface{})
 	if !ok {
@@ -404,6 +421,7 @@ func DepositPayloadFromMap(data map[string]interface{}) (*BatchSettlementDeposit
 		}
 	}
 
+	payload.PendingId, payload.Cancel = pendingFieldsFromMap(data)
 	return payload, nil
 }
 
@@ -425,7 +443,8 @@ func VoucherPayloadFromMap(data map[string]interface{}) (*BatchSettlementVoucher
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	payload.Voucher = VoucherFieldsFromMap(voucherMap)
+	payload.PendingId, payload.Cancel = pendingFieldsFromMap(data)
 	return payload, nil
 }
 
@@ -447,8 +466,9 @@ func RefundPayloadFromMap(data map[string]interface{}) (*BatchSettlementRefundPa
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	payload.Voucher = VoucherFieldsFromMap(voucherMap)
 	payload.Amount, _ = data["amount"].(string)
+	payload.PendingId, payload.Cancel = pendingFieldsFromMap(data)
 	return payload, nil
 }
 
@@ -533,7 +553,7 @@ func EnrichedRefundPayloadFromMap(data map[string]interface{}) (*BatchSettlement
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid voucher")
 	}
-	payload.Voucher = voucherFieldsFromMap(voucherMap)
+	payload.Voucher = VoucherFieldsFromMap(voucherMap)
 
 	payload.Amount, _ = data["amount"].(string)
 	payload.RefundNonce, _ = data["refundNonce"].(string)
@@ -546,7 +566,14 @@ func EnrichedRefundPayloadFromMap(data map[string]interface{}) (*BatchSettlement
 		}
 		payload.Claims = claims
 	}
+	payload.PendingId, payload.Cancel = pendingFieldsFromMap(data)
 	return payload, nil
+}
+
+func pendingFieldsFromMap(data map[string]interface{}) (pendingId string, cancel bool) {
+	pendingId, _ = data["pendingId"].(string)
+	cancel, _ = data["cancel"].(bool)
+	return pendingId, cancel
 }
 
 // ============================================================================
@@ -603,7 +630,7 @@ func (p *BatchSettlementDepositPayload) ToMap() map[string]interface{} {
 			"signature": a.Signature,
 		}
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"type":          "deposit",
 		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
 		"voucher":       voucherFieldsToMap(p.Voucher),
@@ -612,15 +639,19 @@ func (p *BatchSettlementDepositPayload) ToMap() map[string]interface{} {
 			"authorization": authMap,
 		},
 	}
+	writePendingFields(result, p.PendingId, p.Cancel)
+	return result
 }
 
 // ToMap converts a BatchSettlementVoucherPayload to a map.
 func (p *BatchSettlementVoucherPayload) ToMap() map[string]interface{} {
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"type":          "voucher",
 		"channelConfig": ChannelConfigToMap(p.ChannelConfig),
 		"voucher":       voucherFieldsToMap(p.Voucher),
 	}
+	writePendingFields(result, p.PendingId, p.Cancel)
+	return result
 }
 
 // ToMap converts a BatchSettlementRefundPayload to a map.
@@ -633,6 +664,7 @@ func (p *BatchSettlementRefundPayload) ToMap() map[string]interface{} {
 	if p.Amount != "" {
 		result["amount"] = p.Amount
 	}
+	writePendingFields(result, p.PendingId, p.Cancel)
 	return result
 }
 
@@ -673,7 +705,31 @@ func (p *BatchSettlementEnrichedRefundPayload) ToMap() map[string]interface{} {
 	if p.ClaimAuthorizerSignature != "" {
 		result["claimAuthorizerSignature"] = p.ClaimAuthorizerSignature
 	}
+	writePendingFields(result, p.PendingId, p.Cancel)
 	return result
+}
+
+func writePendingFields(result map[string]interface{}, pendingId string, cancel bool) {
+	if pendingId != "" {
+		result["pendingId"] = pendingId
+	}
+	if cancel {
+		result["cancel"] = true
+	}
+}
+
+// ExtraInt reads a JSON number stored as int, int64, or float64.
+func ExtraInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 // VoucherClaimToMap converts a BatchSettlementVoucherClaim to a map.
@@ -703,30 +759,14 @@ func (e *BatchSettlementPaymentResponseExtra) ToMap() map[string]interface{} {
 	if e.ChargedAmount != "" {
 		out["chargedAmount"] = e.ChargedAmount
 	}
-	if cs := e.ChannelState; cs != nil {
-		csMap := map[string]interface{}{
-			"channelId":           cs.ChannelId,
-			"balance":             cs.Balance,
-			"totalClaimed":        cs.TotalClaimed,
-			"withdrawRequestedAt": cs.WithdrawRequestedAt,
-			"refundNonce":         cs.RefundNonce,
-		}
-		if cs.ChargedCumulativeAmount != "" {
-			csMap["chargedCumulativeAmount"] = cs.ChargedCumulativeAmount
-		}
+	if e.ChargeCount != nil {
+		out["chargeCount"] = *e.ChargeCount
+	}
+	if csMap := e.ChannelState.ToMap(); csMap != nil {
 		out["channelState"] = csMap
 	}
-	if vs := e.VoucherState; vs != nil {
-		vsMap := map[string]interface{}{}
-		if vs.SignedMaxClaimable != "" {
-			vsMap["signedMaxClaimable"] = vs.SignedMaxClaimable
-		}
-		if vs.Signature != "" {
-			vsMap["signature"] = vs.Signature
-		}
-		if len(vsMap) > 0 {
-			out["voucherState"] = vsMap
-		}
+	if vsMap := e.VoucherState.ToMap(); vsMap != nil {
+		out["voucherState"] = vsMap
 	}
 	return out
 }
@@ -740,6 +780,9 @@ func PaymentResponseExtraFromMap(data map[string]interface{}) (*BatchSettlementP
 	}
 	if v, ok := data["chargedAmount"].(string); ok {
 		extra.ChargedAmount = v
+	}
+	if n, ok := ExtraInt(data["chargeCount"]); ok {
+		extra.ChargeCount = &n
 	}
 	if csRaw, ok := data["channelState"].(map[string]interface{}); ok && csRaw != nil {
 		cs := &BatchSettlementChannelStateExtra{}

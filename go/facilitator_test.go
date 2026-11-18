@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/x402-foundation/x402/go/v2/types"
@@ -588,5 +590,134 @@ func TestFacilitatorNetworkPatternMatching(t *testing.T) {
 	}
 	if !response.IsValid {
 		t.Fatal("Expected valid verification with pattern match")
+	}
+}
+
+func TestFacilitatorKeepsNamespaceWildcardWhenMixed(t *testing.T) {
+	facilitator := Newx402Facilitator()
+	mockFacilitator := &mockSchemeNetworkFacilitator{scheme: "exact"}
+	facilitator.Register([]Network{"stellar:testnet", "stellar:futurenet", "eip155:8453"}, mockFacilitator)
+
+	stellarResult, err := verifyExactNetwork(t, facilitator, "stellar:pubnet")
+	if err != nil {
+		t.Fatalf("unlisted stellar network should match stellar:*: %v", err)
+	}
+	if !stellarResult.IsValid {
+		t.Fatal("expected valid verification for stellar:pubnet")
+	}
+
+	evmResult, err := verifyExactNetwork(t, facilitator, "eip155:8453")
+	if err != nil {
+		t.Fatalf("listed eip155 network should match exactly: %v", err)
+	}
+	if !evmResult.IsValid {
+		t.Fatal("expected valid verification for eip155:8453")
+	}
+
+	_, err = verifyExactNetwork(t, facilitator, "eip155:11155111")
+	requireNoFacilitator(t, err, "eip155:11155111")
+
+	_, err = verifyExactNetwork(t, facilitator, "solana:mainnet")
+	requireNoFacilitator(t, err, "solana:mainnet")
+}
+
+func TestFacilitatorDerivesIndependentNamespaceWildcards(t *testing.T) {
+	facilitator := Newx402Facilitator()
+	calls := 0
+	mockFacilitator := &mockSchemeNetworkFacilitator{
+		scheme: "exact",
+		verifyFunc: func(context.Context, types.PaymentPayload, types.PaymentRequirements) (*VerifyResponse, error) {
+			calls++
+			return &VerifyResponse{IsValid: true}, nil
+		},
+	}
+	facilitator.Register([]Network{"stellar:testnet", "stellar:futurenet", "eip155:8453", "eip155:1"}, mockFacilitator)
+
+	stellarResult, err := verifyExactNetwork(t, facilitator, "stellar:pubnet")
+	if err != nil {
+		t.Fatalf("unlisted stellar network should match stellar:*: %v", err)
+	}
+	if !stellarResult.IsValid {
+		t.Fatal("expected valid verification for stellar:pubnet")
+	}
+
+	evmResult, err := verifyExactNetwork(t, facilitator, "eip155:11155111")
+	if err != nil {
+		t.Fatalf("unlisted eip155 network should match eip155:*: %v", err)
+	}
+	if !evmResult.IsValid {
+		t.Fatal("expected valid verification for eip155:11155111")
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 verify calls, got %d", calls)
+	}
+}
+
+func TestFacilitatorGetSupportedAdvertisesEachNetworkOnce(t *testing.T) {
+	facilitator := Newx402Facilitator()
+	mockFacilitator := &mockSchemeNetworkFacilitator{scheme: "exact"}
+	facilitator.Register([]Network{"stellar:testnet", "stellar:pubnet", "eip155:8453"}, mockFacilitator)
+
+	supported := facilitator.GetSupported()
+	networksSeen := make([]string, 0, len(supported.Kinds))
+	for _, kind := range supported.Kinds {
+		networksSeen = append(networksSeen, kind.Network)
+	}
+	if len(networksSeen) != 3 {
+		t.Fatalf("expected 3 kinds, got %d (%v)", len(networksSeen), networksSeen)
+	}
+	sort.Strings(networksSeen)
+	expected := []string{"eip155:8453", "stellar:pubnet", "stellar:testnet"}
+	if strings.Join(networksSeen, ",") != strings.Join(expected, ",") {
+		t.Fatalf("expected %v, got %v", expected, networksSeen)
+	}
+
+	if _, err := verifyExactNetwork(t, facilitator, "stellar:testnet"); err != nil {
+		t.Fatalf("listed stellar network should match exactly: %v", err)
+	}
+	if _, err := verifyExactNetwork(t, facilitator, "eip155:8453"); err != nil {
+		t.Fatalf("listed eip155 network should match exactly: %v", err)
+	}
+}
+
+func verifyExactNetwork(t *testing.T, facilitator *x402Facilitator, network string) (*VerifyResponse, error) {
+	t.Helper()
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: network,
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	requirementsBytes, err := json.Marshal(requirements)
+	if err != nil {
+		t.Fatalf("marshal requirements: %v", err)
+	}
+	return facilitator.Verify(context.Background(), payloadBytes, requirementsBytes)
+}
+
+func requireNoFacilitator(t *testing.T, err error, network string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected no facilitator for network %s", network)
+	}
+	var verifyErr *VerifyError
+	if !errors.As(err, &verifyErr) {
+		t.Fatalf("expected VerifyError, got %T: %v", err, err)
+	}
+	if verifyErr.InvalidReason != ErrNoFacilitatorForNetwork {
+		t.Fatalf("expected %s, got %s", ErrNoFacilitatorForNetwork, verifyErr.InvalidReason)
+	}
+	if !strings.Contains(verifyErr.InvalidMessage, `scheme "exact"`) || !strings.Contains(verifyErr.InvalidMessage, fmt.Sprintf("network %q", network)) {
+		t.Fatalf("expected message to name scheme exact and network %s, got %q", network, verifyErr.InvalidMessage)
 	}
 }

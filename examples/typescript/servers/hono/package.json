@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "dotenv": "^16.4.7",
-    "@hono/node-server": "^1.14.0",
+    "@hono/node-server": "^1.19.15",
     "@x402/core": "workspace:*",
     "@x402/hono": "workspace:*",
     "@x402/evm": "workspace:*",
     "@x402/svm": "workspace:*",
-    "hono": "^4.7.1"
+    "hono": "^4.13.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",

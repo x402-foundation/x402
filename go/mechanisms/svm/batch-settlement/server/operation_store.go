@@ -32,6 +32,7 @@ func (s *MemoryBatchOperationStore) Get(channelID, requestID string) (*BatchOper
 }
 
 // Reserve atomically creates a request reservation unless the operation already exists.
+// An existing operation is returned unchanged, whatever its ceiling; the scheme rejects the reuse.
 func (s *MemoryBatchOperationStore) Reserve(channelID, requestID string, ceiling uint64) (ReserveResult, error) {
 	key := operationKey(channelID, requestID)
 	lk := s.keyLock(key)
@@ -41,9 +42,6 @@ func (s *MemoryBatchOperationStore) Reserve(channelID, requestID string, ceiling
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.operations[key]; ok {
-		if existing.Ceiling != ceiling {
-			return ReserveResult{}, fmt.Errorf("batch operation ceiling changed for a request id")
-		}
 		return ReserveResult{Created: false, Operation: existing}, nil
 	}
 	operation := BatchOperation{

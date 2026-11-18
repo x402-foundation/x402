@@ -2,7 +2,6 @@ package facilitator
 
 import (
 	"context"
-	"encoding/binary"
 	"sync"
 	"testing"
 	"time"
@@ -135,8 +134,8 @@ func (h *cleanupHarness) exists(channelID string) bool {
 }
 
 // sentInstructionData returns the settlement instruction data for the
-// transaction at index, excluding the leading ComputeBudget prefix submitSettle
-// always attaches.
+// transaction at index. The ComputeBudget skip preserves compatibility with
+// simulated/client-built fixtures; facilitator v1 settlements contain none.
 func (h *cleanupHarness) sentInstructionData(index int) [][]byte {
 	h.t.Helper()
 	sent := h.signer.sentTransactions()
@@ -155,23 +154,16 @@ func (h *cleanupHarness) sentInstructionData(index int) [][]byte {
 	return data
 }
 
-// sentComputeUnitLimit extracts the SetComputeUnitLimit value from the leading
-// ComputeBudget prefix of the transaction at index.
+// sentComputeUnitLimit extracts the inline v1 compute limit.
 func (h *cleanupHarness) sentComputeUnitLimit(index int) uint32 {
 	h.t.Helper()
 	sent := h.signer.sentTransactions()
 	require.Greater(h.t, len(sent), index)
 
 	message := &sent[index].Message
-	for _, instruction := range message.Instructions {
-		program, err := message.Program(instruction.ProgramIDIndex)
-		require.NoError(h.t, err)
-		if program.Equals(solana.ComputeBudget) && instruction.Data[0] == paymentchannels.ComputeBudgetSetUnitLimit {
-			return binary.LittleEndian.Uint32(instruction.Data[1:5])
-		}
-	}
-	h.t.Fatalf("transaction %d has no SetComputeUnitLimit instruction", index)
-	return 0
+	require.Equal(h.t, solana.MessageVersionV1, message.GetVersion())
+	require.NotNil(h.t, message.TransactionConfig.ComputeUnitLimit)
+	return *message.TransactionConfig.ComputeUnitLimit
 }
 
 // closeAccountOnSend removes the channel account once the close lands, matching
@@ -270,6 +262,94 @@ func TestCleanupDistributesSealedChannels(t *testing.T) {
 	assert.False(t, harness.exists(record.ChannelID))
 }
 
+func TestCleanupPacks62LiveChannelsIntoOneV1ReclaimTransaction(t *testing.T) {
+	harness := newCleanupHarness(t)
+	openSlot := testSlot - paymentchannels.OpenSlotWindow - 1
+	for i := 0; i < 62; i++ {
+		harness.seedRecord(
+			paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+			harness.channel(generated.ChannelStatus_Distributed, openSlot),
+		)
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), harness.options(CleanupOptions{
+		MaxReclaimsPerTx: 62,
+		MaxTxsPerSigner:  1,
+	})))
+
+	require.Empty(t, harness.errors)
+	require.Len(t, harness.reclaims, 1)
+	require.Len(t, harness.reclaims[0].ChannelIDs, 62)
+	require.Len(t, harness.signer.sentTransactions(), 1)
+	require.Len(t, harness.sentInstructionData(0), 62)
+}
+
+func TestRentCleanupHonoursTheConfiguredFacilitatorTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *int
+		wantVersion solana.MessageVersion
+	}{
+		{"unset defaults to v1", nil, solana.MessageVersionV1},
+		{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newCleanupHarness(t)
+			// Built via the scheme to cover Config.FacilitatorTransactionVersion propagation.
+			scheme := newScheme(harness.signer, harness.stub, &Config{
+				ChannelStorage:                harness.storage,
+				FacilitatorTransactionVersion: test.version,
+			})
+			harness.manager = scheme.NewRentCleanupManager(testNetwork)
+
+			harness.seedRecord(
+				paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+				harness.channel(generated.ChannelStatus_Distributed, testSlot-paymentchannels.OpenSlotWindow-1),
+			)
+
+			require.NoError(t, harness.manager.Cleanup(
+				context.Background(), harness.options(CleanupOptions{MaxTxsPerSigner: 1}),
+			))
+
+			require.Empty(t, harness.errors)
+			require.Len(t, harness.reclaims, 1)
+			sent := harness.signer.sentTransactions()
+			require.Len(t, sent, 1)
+			assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+		})
+	}
+}
+
+func TestV0RentCleanupCapsReclaimBatchesAtTheSafeLimit(t *testing.T) {
+	harness := newCleanupHarness(t)
+	harness.manager = NewRentCleanupManager(RentCleanupConfig{
+		Signer:                        harness.signer,
+		Storage:                       harness.storage,
+		Network:                       testNetwork,
+		FacilitatorTransactionVersion: intPtr(paymentchannels.FacilitatorTransactionVersion0),
+	})
+	openSlot := testSlot - paymentchannels.OpenSlotWindow - 1
+	for i := 0; i < paymentchannels.MaxSafeReclaimsPerTx+4; i++ {
+		harness.seedRecord(
+			paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+			harness.channel(generated.ChannelStatus_Distributed, openSlot),
+		)
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), harness.options(CleanupOptions{
+		MaxReclaimsPerTx: paymentchannels.DefaultMaxReclaimsPerTxV1,
+	})))
+
+	require.Empty(t, harness.errors)
+	sent := harness.signer.sentTransactions()
+	require.Len(t, sent, 2, "a v0 batch never exceeds MaxSafeReclaimsPerTx")
+	for _, tx := range sent {
+		assert.Equal(t, solana.MessageVersionV0, tx.Message.GetVersion())
+	}
+}
+
 func TestCleanupDefersClosingChannels(t *testing.T) {
 	harness := newCleanupHarness(t)
 	record := harness.seedRecord(
@@ -345,13 +425,15 @@ func TestCleanupBatchReclaimsDistributedChannels(t *testing.T) {
 func TestCleanupUsesTheConfiguredSettleComputeBudget(t *testing.T) {
 	harness := newCleanupHarness(t)
 	settleLimit := uint32(222_222)
+	loadedLimit := uint32(3_145_728)
 	price := uint64(9)
 	harness.manager = NewRentCleanupManager(RentCleanupConfig{
-		Signer:                        harness.signer,
-		Storage:                       harness.storage,
-		Network:                       testNetwork,
-		SettleComputeUnitLimit:        &settleLimit,
-		ComputeUnitPriceMicroLamports: &price,
+		Signer:                            harness.signer,
+		Storage:                           harness.storage,
+		Network:                           testNetwork,
+		SettleComputeUnitLimit:            &settleLimit,
+		SettleLoadedAccountsDataSizeLimit: &loadedLimit,
+		ComputeUnitPriceMicroLamports:     &price,
 	})
 	record := harness.seedRecord(
 		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() + 3600},
@@ -363,6 +445,9 @@ func TestCleanupUsesTheConfiguredSettleComputeBudget(t *testing.T) {
 
 	require.Len(t, harness.closes, 1)
 	assert.Equal(t, settleLimit, harness.sentComputeUnitLimit(0))
+	sentConfig := harness.signer.sentTransactions()[0].Message.TransactionConfig
+	require.NotNil(t, sentConfig.LoadedAccountsDataSizeLimit)
+	assert.Equal(t, loadedLimit, *sentConfig.LoadedAccountsDataSizeLimit)
 }
 
 func TestCleanupRespectsReclaimBatchCaps(t *testing.T) {
@@ -689,6 +774,137 @@ func TestCleanupContinuesAfterAFailedClose(t *testing.T) {
 
 	assert.Len(t, harness.errors, 1)
 	assert.Len(t, harness.closes, 1, "one channel failing does not abort the pass")
+}
+
+func TestCleanupBeforeCloseOrDistributeReceivesTheChannelParties(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     generated.ChannelStatus
+		wantAction CloseAction
+	}{
+		{name: "abandon-close of an expired Open channel", status: generated.ChannelStatus_Open, wantAction: CloseActionAbandonClose},
+		{name: "distribute of a Sealed channel", status: generated.ChannelStatus_Sealed, wantAction: CloseActionDistribute},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newCleanupHarness(t)
+			record := harness.seedRecord(
+				paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() - 3600},
+				harness.channel(test.status, testSlot),
+			)
+			harness.closeAccountOnSend(record.ChannelID)
+
+			var candidates []CloseCandidate
+			opts := harness.options(CleanupOptions{})
+			opts.BeforeCloseOrDistribute = func(_ context.Context, candidate CloseCandidate) error {
+				assert.Empty(t, harness.signer.sentTransactions(), "the hook runs before anything is signed")
+				candidates = append(candidates, candidate)
+				return nil
+			}
+
+			require.NoError(t, harness.manager.Cleanup(context.Background(), opts))
+
+			assert.Equal(t, []CloseCandidate{{
+				ChannelID: record.ChannelID,
+				Payer:     harness.payer.String(),
+				PayTo:     harness.payTo.String(),
+				Action:    test.wantAction,
+			}}, candidates)
+			assert.Len(t, harness.closes, 1)
+		})
+	}
+}
+
+func TestCleanupSkipsAChannelTheBeforeCloseOrDistributeHookRejects(t *testing.T) {
+	harness := newCleanupHarness(t)
+	rejected := harness.seedRecord(
+		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() - 3600},
+		harness.channel(generated.ChannelStatus_Sealed, testSlot),
+	)
+	allowed := harness.seedRecord(
+		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() - 3600},
+		harness.channel(generated.ChannelStatus_Sealed, testSlot),
+	)
+	// The scan runs in ChannelID order; the rejected channel must come first so
+	// the allowed one is what takes the close slot.
+	if rejected.ChannelID > allowed.ChannelID {
+		rejected, allowed = allowed, rejected
+	}
+	harness.closeAccountOnSend(allowed.ChannelID)
+
+	errRejected := assert.AnError
+	opts := harness.options(CleanupOptions{MaxClosesPerRun: 1})
+	opts.BeforeCloseOrDistribute = func(_ context.Context, candidate CloseCandidate) error {
+		if candidate.ChannelID == rejected.ChannelID {
+			return errRejected
+		}
+		return nil
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), opts))
+
+	require.Len(t, harness.closes, 1, "a rejected channel does not consume the close slot")
+	assert.Equal(t, allowed.ChannelID, harness.closes[0].ChannelID)
+	assert.Len(t, harness.signer.sentTransactions(), 1)
+	require.Len(t, harness.errors, 1)
+	assert.ErrorIs(t, harness.errors[0], errRejected)
+	assert.Equal(t, []string{rejected.ChannelID}, harness.errorChannelIDs)
+	assert.True(t, harness.exists(rejected.ChannelID), "a rejected channel is retried on the next pass")
+}
+
+func TestCleanupDoesNotCallBeforeCloseOrDistributeForReclaimOrDeferredChannels(t *testing.T) {
+	harness := newCleanupHarness(t)
+	harness.seedRecord(
+		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() + 3600},
+		harness.channel(generated.ChannelStatus_Open, testSlot),
+	)
+	distributed := harness.seedRecord(
+		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+		harness.channel(generated.ChannelStatus_Distributed, testSlot-paymentchannels.OpenSlotWindow-1),
+	)
+
+	opts := harness.options(CleanupOptions{})
+	opts.BeforeCloseOrDistribute = func(_ context.Context, candidate CloseCandidate) error {
+		t.Errorf("hook called for %s", candidate.ChannelID)
+		return assert.AnError
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), opts))
+
+	require.Len(t, harness.reclaims, 1)
+	assert.Equal(t, []string{distributed.ChannelID}, harness.reclaims[0].ChannelIDs)
+	assert.Empty(t, harness.errors)
+}
+
+// A channel that cannot close this pass must not be screened: the hook may call
+// an external service, and the reclaim batches run after the scan.
+func TestCleanupDoesNotCallBeforeCloseOrDistributeOnceTheCloseBudgetIsSpent(t *testing.T) {
+	harness := newCleanupHarness(t)
+	for i := 0; i < 3; i++ {
+		harness.seedRecord(
+			paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String(), ExpiresAt: time.Now().Unix() - 3600},
+			harness.channel(generated.ChannelStatus_Sealed, testSlot),
+		)
+	}
+	distributed := harness.seedRecord(
+		paymentchannels.PaymentChannelRecord{PayTo: harness.payTo.String()},
+		harness.channel(generated.ChannelStatus_Distributed, testSlot-paymentchannels.OpenSlotWindow-1),
+	)
+
+	hookCalls := 0
+	opts := harness.options(CleanupOptions{MaxClosesPerRun: 1})
+	opts.BeforeCloseOrDistribute = func(_ context.Context, _ CloseCandidate) error {
+		hookCalls++
+		return nil
+	}
+
+	require.NoError(t, harness.manager.Cleanup(context.Background(), opts))
+
+	assert.Len(t, harness.closes, 1)
+	assert.Equal(t, 1, hookCalls, "only the channel that can close is screened")
+	require.Len(t, harness.reclaims, 1, "reclaim still runs after the budget is spent")
+	assert.Equal(t, []string{distributed.ChannelID}, harness.reclaims[0].ChannelIDs)
 }
 
 func TestCleanupRetriesAReclaimThatFailedToBroadcast(t *testing.T) {

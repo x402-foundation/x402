@@ -65,7 +65,7 @@ go/
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - golangci-lint (installed via `make deps-dev`)
 - goimports (for formatting)
 
@@ -331,7 +331,7 @@ When adding a Go example, include a `go.mod` that references the local SDK:
 ```go
 module github.com/x402-foundation/x402/examples/go/your-example
 
-go 1.24
+go 1.26.10
 
 require github.com/x402-foundation/x402/go/v2 v2.9.0
 

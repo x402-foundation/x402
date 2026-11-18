@@ -75,8 +75,13 @@ import {
   type PaymentChannelRecord,
   type PaymentChannelStorage,
 } from "../../src/payment-channels/storage";
-import { UptoSvmRentCleanupManager } from "../../src/upto/facilitator/rentCleanupManager";
+import {
+  DEFAULT_FACILITATOR_TRANSACTION_VERSION,
+  resolveFacilitatorTransactionVersion,
+  UptoSvmRentCleanupManager,
+} from "../../src/upto/facilitator/rentCleanupManager";
 import type { UptoSvmPayloadV2 } from "../../src/types";
+import { peekWireTransactionVersion } from "../../src/utils";
 import { challengeExpiresAt, MAX_TIMEOUT_SECONDS } from "./upto.testUtils";
 
 const OPEN_SLOT = 123_456_789n;
@@ -93,6 +98,34 @@ function channelStorage(overrides: Partial<PaymentChannelStorage> = {}): Payment
     ...overrides,
   };
 }
+
+describe("facilitatorTransactionVersion", () => {
+  it("defaults an unset version to v1 and passes 0 or 1 through", () => {
+    expect(resolveFacilitatorTransactionVersion(undefined)).toBe(
+      DEFAULT_FACILITATOR_TRANSACTION_VERSION,
+    );
+    expect(resolveFacilitatorTransactionVersion(0)).toBe(0);
+    expect(resolveFacilitatorTransactionVersion(1)).toBe(1);
+  });
+
+  it.each([-1, 2, 3])("throws at construction for invalid version %d", async version => {
+    const feePayer = await generateKeyPairSigner();
+    const signer = toFacilitatorSvmSigner(feePayer);
+
+    expect(
+      () => new UptoSvmScheme(signer, { facilitatorTransactionVersion: version as never }),
+    ).toThrow("facilitatorTransactionVersion must be 0 or 1");
+    expect(
+      () =>
+        new UptoSvmRentCleanupManager({
+          facilitatorTransactionVersion: version as never,
+          network: SOLANA_DEVNET_CAIP2,
+          signer,
+          storage: new InMemoryPaymentChannelStorage(),
+        }),
+    ).toThrow("facilitatorTransactionVersion must be 0 or 1");
+  });
+});
 
 describe("UptoSvmScheme facilitator channel lifecycle", () => {
   beforeEach(() => {
@@ -167,7 +200,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       splits: [{ bps: 10_000, recipient: receiverAuthorizer.address }],
     });
     const facilitator = new UptoSvmScheme(toFacilitatorSvmSigner(feePayer), config);
-    return { facilitator, payload, requirements, receiverAuthorizer, uptoPayload };
+    return { facilitator, feePayer, payload, requirements, receiverAuthorizer, uptoPayload };
   }
 
   it("settles without a prior verify on the same instance when the channel is open", async () => {
@@ -228,6 +261,54 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
     );
   });
 
+  it.each([
+    ["unset defaults to v1", undefined, 1],
+    ["explicit v1", 1, 1],
+    ["explicit v0", 0, 0],
+  ] as const)(
+    "claim settle builds the configured facilitator transaction version: %s",
+    async (_name, facilitatorTransactionVersion, wantVersion) => {
+      const { feePayer, payload, requirements, receiverAuthorizer, uptoPayload } =
+        await buildFixture();
+      const actual = await vi.importActual<typeof import("../../src/payment-channels/facilitator")>(
+        "../../src/payment-channels/facilitator",
+      );
+      channelMocks.submitChannelTransactionWithSigner.mockImplementation(
+        actual.submitChannelTransactionWithSigner,
+      );
+      const sendTransaction = vi.fn().mockResolvedValue(USDC_MAINNET_ADDRESS);
+      const signer = {
+        ...toFacilitatorSvmSigner(feePayer),
+        getLatestBlockhash: async () => ({
+          blockhash: USDC_MAINNET_ADDRESS,
+          lastValidBlockHeight: 1n,
+        }),
+        simulateTransaction: vi.fn().mockResolvedValue(undefined),
+        sendTransaction,
+        confirmTransaction: vi.fn().mockResolvedValue(undefined),
+      };
+      const facilitator = new UptoSvmScheme(signer, { facilitatorTransactionVersion });
+
+      const voucherSignature = await signVoucher(receiverAuthorizer, {
+        channelId: uptoPayload.channelId,
+        cumulativeAmount: 0n,
+        expiresAt: BigInt(uptoPayload.expiresAt),
+      });
+      await expect(
+        facilitator.settle(
+          {
+            ...payload,
+            payload: { ...uptoPayload, voucherSignature },
+          },
+          { ...requirements, amount: "0" },
+        ),
+      ).resolves.toMatchObject({ success: true });
+
+      expect(sendTransaction).toHaveBeenCalledOnce();
+      expect(peekWireTransactionVersion(sendTransaction.mock.calls[0]![0])).toBe(wantVersion);
+    },
+  );
+
   it("passes the configured channel-read policy through to fetchAndVerifyOpenChannel", async () => {
     const { facilitator, payload, requirements, receiverAuthorizer, uptoPayload } =
       await buildFixture({
@@ -282,9 +363,47 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       isValid: true,
     });
     expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
-    expect(channelMocks.channelExists).not.toHaveBeenCalled();
+    // The channel-exists read is the deposit settle's own refusal, run read-only.
+    expect(channelMocks.channelExists).toHaveBeenCalledTimes(2);
     expect(channelMocks.fetchAndVerifyOpenChannel).not.toHaveBeenCalled();
     expect(channelMocks.simulateOpenSettleDistribute).not.toHaveBeenCalled();
+  });
+
+  it("verify accepts openSlot as the JSON number the scheme types it as", async () => {
+    const { facilitator, payload, requirements, uptoPayload } = await buildFixture();
+    channelMocks.channelExists.mockResolvedValue(false);
+    await expect(
+      facilitator.verify(
+        { ...payload, payload: { ...uptoPayload, openSlot: Number(uptoPayload.openSlot) } },
+        requirements,
+      ),
+    ).resolves.toMatchObject({ isValid: true });
+    for (const openSlot of [-1, 1.5, null]) {
+      await expect(
+        facilitator.verify({ ...payload, payload: { ...uptoPayload, openSlot } }, requirements),
+      ).resolves.toMatchObject({ invalidReason: "unsupported_payload_type", isValid: false });
+    }
+  });
+
+  it("advertises its configured accepted set and refuses an invalid one", async () => {
+    const signer = toFacilitatorSvmSigner(await generateKeyPairSigner());
+    const narrowed = new UptoSvmScheme(signer, { transactionVersions: [0] });
+    expect(narrowed.getExtra(SOLANA_DEVNET_CAIP2)).toMatchObject({ transactionVersions: [0] });
+    expect(() => new UptoSvmScheme(signer, { transactionVersions: [2] as never })).toThrow(
+      /non-empty list of 0 and\/or 1/,
+    );
+  });
+
+  it("verify refuses an open whose channel already exists", async () => {
+    const { facilitator, payload, requirements, uptoPayload } = await buildFixture();
+    channelMocks.channelExists.mockResolvedValue(true);
+
+    await expect(facilitator.verify(payload, requirements)).resolves.toEqual({
+      isValid: false,
+      invalidReason: ERR_CHANNEL_ALREADY_OPEN,
+      payer: uptoPayload.from,
+    });
+    expect(channelMocks.broadcastOpen).not.toHaveBeenCalled();
   });
 
   it("rejects maxTimeoutSeconds above maxChannelLifetimeSecs", async () => {
@@ -1369,6 +1488,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       const { facilitator } = await buildFixture();
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
+        transactionVersions: [0, 1],
       });
       expect(facilitator.getExtra(SOLANA_DEVNET_CAIP2)).not.toHaveProperty("receiverAuthorizer");
 
@@ -1381,6 +1501,7 @@ describe("UptoSvmScheme facilitator channel lifecycle", () => {
       expect(delegated.getExtra(SOLANA_DEVNET_CAIP2)).toEqual({
         feePayer: expect.any(String),
         receiverAuthorizer: authorizerSigner.address,
+        transactionVersions: [0, 1],
       });
     });
 
