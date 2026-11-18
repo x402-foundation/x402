@@ -43,6 +43,18 @@ func EnvelopeFailure(accepted, requirements types.PaymentRequirements) string {
 	return ""
 }
 
+// settleEnvelopeFailure binds only scheme and network: a settlement override lowers
+// requirements.Amount below accepted.Amount, and the charge checks bound it by the payer's proof.
+func settleEnvelopeFailure(accepted, requirements types.PaymentRequirements) string {
+	if accepted.Scheme != batchsettlement.Scheme || requirements.Scheme != batchsettlement.Scheme {
+		return "unsupported_scheme"
+	}
+	if accepted.Network != requirements.Network {
+		return InvalidPaymentRequirements
+	}
+	return ""
+}
+
 func comparableRequirements(requirements types.PaymentRequirements) types.PaymentRequirements {
 	extra := make(map[string]interface{}, len(requirements.Extra))
 	for key, value := range requirements.Extra {

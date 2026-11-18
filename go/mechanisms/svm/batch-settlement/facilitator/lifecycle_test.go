@@ -668,7 +668,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		))
 	})
 
-	t.Run("settle rejects an envelope that differs from the requirements before any work", func(t *testing.T) {
+	t.Run("settle rejects a scheme or network that differs from the requirements before any work", func(t *testing.T) {
 		scheme := newScheme(t, newSigner(t), nil)
 		req := requirements()
 		voucher := batchsettlement.BatchVoucher{ChannelID: channelID, ExpiresAt: 0, MaxClaimableAmount: "1", Signature: "x"}
@@ -679,8 +679,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 
 		for name, tamper := range map[string]func(*types.PaymentPayload){
 			"network": func(p *types.PaymentPayload) { p.Accepted.Network = "solana:other" },
-			"amount":  func(p *types.PaymentPayload) { p.Accepted.Amount = "999" },
-			"payTo":   func(p *types.PaymentPayload) { p.Accepted.PayTo = mint },
 			"scheme":  func(p *types.PaymentPayload) { p.Accepted.Scheme = "exact" },
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -1132,8 +1130,9 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			TokenProgram: svm.TokenProgramAddress, VoucherSigner: batchsettlement.VoucherSignerClient, WithdrawDelay: 900,
 		})
 		hookChannelID(scheme, actualChannelID)
-		lowerCharge := requirements(func(r *types.PaymentRequirements) { r.Amount = "500" })
-		clientSettle, err := scheme.Settle(ctx, payment(actualDeposit, lowerCharge), lowerCharge, nil)
+		clientSettle, err := scheme.Settle(ctx, payment(actualDeposit, requirements()), requirements(func(r *types.PaymentRequirements) {
+			r.Amount = "500"
+		}), nil)
 		require.NoError(t, err)
 		require.False(t, clientSettle.Success)
 		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, clientSettle.ErrorReason)

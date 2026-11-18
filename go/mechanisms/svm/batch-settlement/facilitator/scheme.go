@@ -364,7 +364,7 @@ func (f *BatchSvmScheme) Settle(ctx context.Context, payload types.PaymentPayloa
 		return SettleFailure(x402.Network(payload.Accepted.Network), batchsettlement.ErrPayloadType, "", ""), nil
 	}
 	payer := recordPayer(record)
-	if reason := EnvelopeFailure(payload.Accepted, requirements); reason != "" {
+	if reason := settleEnvelopeFailure(payload.Accepted, requirements); reason != "" {
 		return SettleFailure(x402.Network(payload.Accepted.Network), reason, payer, ""), nil
 	}
 	var facilitatorContext any
