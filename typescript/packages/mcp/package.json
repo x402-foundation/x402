@@ -39,7 +39,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "viem": "^2.48.11",
-    "vite": "^6.4.5",
+    "vite": "^6.4.6",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.1.12"
   },
