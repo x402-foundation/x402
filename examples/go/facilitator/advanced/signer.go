@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	DefaultEvmRPC = "https://sepolia.base.org"
-	DefaultSvmRPC = "https://api.devnet.solana.com"
+	DefaultEvmRPC    = "https://sepolia.base.org"
+	DefaultSvmRPC    = "https://api.devnet.solana.com"
+	DefaultCasperRPC = "https://node.testnet.casper.network/rpc"
 )
 
 // ============================================================================

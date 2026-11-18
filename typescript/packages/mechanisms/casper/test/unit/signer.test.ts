@@ -7,8 +7,12 @@ const { HttpHandler, RpcClient, rpcClient } = vi.hoisted(() => {
   };
 
   return {
-    HttpHandler: vi.fn((url: string) => ({ url })),
-    RpcClient: vi.fn(() => rpcClient),
+    HttpHandler: vi.fn(function (url: string) {
+      return { url };
+    }),
+    RpcClient: vi.fn(function () {
+      return rpcClient;
+    }),
     rpcClient,
   };
 });

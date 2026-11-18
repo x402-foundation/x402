@@ -552,6 +552,13 @@ func newPaymentFixture(t *testing.T, signer *mockSigner) *paymentFixture {
 
 func newPaymentFixtureWithAuthorizer(t *testing.T, signer *mockSigner, authorizer solana.PrivateKey) *paymentFixture {
 	t.Helper()
+	return newPaymentFixtureWithVersion(t, signer, authorizer, solana.MessageVersionV0)
+}
+
+// newPaymentFixtureWithVersion builds the fixture's open as the given message
+// version.
+func newPaymentFixtureWithVersion(t *testing.T, signer *mockSigner, authorizer solana.PrivateKey, version solana.MessageVersion) *paymentFixture {
+	t.Helper()
 
 	payerKey, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -571,18 +578,19 @@ func newPaymentFixtureWithAuthorizer(t *testing.T, signer *mockSigner, authorize
 	}
 
 	open, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
-		Payer:            payerKey.PublicKey(),
-		Payee:            fixture.feePayer,
-		Mint:             fixture.mint,
-		AuthorizedSigner: authorizer.PublicKey(),
-		FeePayer:         fixture.feePayer,
-		TokenProgram:     solana.TokenProgramID,
-		Deposit:          fixture.deposit,
-		Blockhash:        solana.Hash(solana.SysVarRentPubkey),
-		OpenSlot:         testSlot,
-		GracePeriod:      fixture.graceSeconds,
-		Recipients:       fixture.splits(),
-		Salt:             &fixture.salt,
+		Payer:              payerKey.PublicKey(),
+		Payee:              fixture.feePayer,
+		Mint:               fixture.mint,
+		AuthorizedSigner:   authorizer.PublicKey(),
+		FeePayer:           fixture.feePayer,
+		TokenProgram:       solana.TokenProgramID,
+		Deposit:            fixture.deposit,
+		Blockhash:          solana.Hash(solana.SysVarRentPubkey),
+		OpenSlot:           testSlot,
+		GracePeriod:        fixture.graceSeconds,
+		Recipients:         fixture.splits(),
+		Salt:               &fixture.salt,
+		TransactionVersion: version,
 	})
 	require.NoError(t, err)
 

@@ -129,8 +129,9 @@ export function resolvePaymentFlowPhases(flow: PaymentFlowName): PaymentFlowPhas
  * Resolve the settlement receipt to surface when a resource handler fails
  * after payment was already verified (and possibly settled before the handler).
  *
- * Prefers cancel/refund settle when present; on failed cancel, attaches deposit
- * recovery facts in `extra`. Otherwise echoes the before-handler deposit receipt.
+ * A cancel settle is included only when a before-handler settlement exists; a failed
+ * cancel attaches deposit recovery facts in `extra`. Otherwise the before-handler
+ * deposit receipt is echoed, or undefined when there is none.
  *
  * @param cancelSettlement - Result from {@link PaymentCancellationDispatcher.cancel}, if any
  * @param beforeHandlerSettlement - Completed before-handler settle, when present
@@ -143,7 +144,7 @@ export function resolveFailurePathSettlement(
   beforeHandlerSettlement?: { result: SettleResponse },
   paymentPayload?: PaymentPayload,
 ): SettleResponse | undefined {
-  if (cancelSettlement) {
+  if (cancelSettlement && beforeHandlerSettlement) {
     return cancelSettlement.success
       ? cancelSettlement
       : buildFailedCancelReceipt(cancelSettlement, beforeHandlerSettlement, paymentPayload);

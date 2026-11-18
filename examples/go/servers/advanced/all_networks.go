@@ -11,6 +11,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 	ginmw "github.com/x402-foundation/x402/go/v2/http/gin"
+	casper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/server"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/server"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/server"
 )
@@ -35,10 +36,11 @@ func main() {
 	// Configuration - optional per network
 	evmAddress := os.Getenv("EVM_PAYEE_ADDRESS")
 	svmAddress := os.Getenv("SVM_PAYEE_ADDRESS")
+	casperAddress := os.Getenv("CASPER_PAYEE_ADDRESS")
 
 	// Validate at least one address is provided
-	if evmAddress == "" && svmAddress == "" {
-		fmt.Println("❌ At least one of EVM_PAYEE_ADDRESS or SVM_PAYEE_ADDRESS is required")
+	if evmAddress == "" && svmAddress == "" && casperAddress == "" {
+		fmt.Println("❌ At least one of EVM_PAYEE_ADDRESS, SVM_PAYEE_ADDRESS, or CASPER_PAYEE_ADDRESS is required")
 		os.Exit(1)
 	}
 
@@ -52,7 +54,7 @@ func main() {
 	// Network configuration
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
-
+	casperNetwork := x402.Network("casper:casper-test")                   // Casper Testnet
 	fmt.Printf("🚀 Starting All Networks Server...\n")
 	if evmAddress != "" {
 		fmt.Printf("   EVM Payee address: %s\n", evmAddress)
@@ -61,6 +63,10 @@ func main() {
 	if svmAddress != "" {
 		fmt.Printf("   SVM Payee address: %s\n", svmAddress)
 		fmt.Printf("   SVM Network: %s\n", svmNetwork)
+	}
+	if casperAddress != "" {
+		fmt.Printf("   Casper Payee address: %s\n", casperAddress)
+		fmt.Printf("   Casper Network: %s\n", casperNetwork)
 	}
 	fmt.Printf("   Facilitator: %s\n", facilitatorURL)
 
@@ -90,6 +96,14 @@ func main() {
 			PayTo:   svmAddress,
 		})
 	}
+	if casperAddress != "" {
+		paymentOptions = append(paymentOptions, x402http.PaymentOption{
+			Scheme:  "exact",
+			Price:   "$0.001",
+			Network: casperNetwork,
+			PayTo:   casperAddress,
+		})
+	}
 
 	// Configure routes
 	routes := x402http.RoutesConfig{
@@ -112,6 +126,12 @@ func main() {
 		schemes = append(schemes, ginmw.SchemeConfig{
 			Network: svmNetwork,
 			Server:  svm.NewExactSvmScheme(),
+		})
+	}
+	if casperAddress != "" {
+		schemes = append(schemes, ginmw.SchemeConfig{
+			Network: casperNetwork,
+			Server:  casper.NewExactCasperScheme(),
 		})
 	}
 

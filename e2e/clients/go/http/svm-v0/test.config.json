@@ -1,0 +1,18 @@
+{
+  "name": "go/http/svm-v0",
+  "type": "client",
+  "enabled": true,
+  "language": "go",
+  "transport": "http",
+  "protocolFamilies": [
+    "svm"
+  ],
+  "x402Versions": [
+    2
+  ],
+  "schemes": [
+    "exact",
+    "upto",
+    "batch-settlement"
+  ]
+}

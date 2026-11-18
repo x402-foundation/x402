@@ -150,6 +150,27 @@ describe("x402 Schemas", () => {
         const result = PaymentRequiredV1Schema.safeParse(invalid);
         expect(result.success).toBe(false);
       });
+
+      it("should accept 1024 payment options", () => {
+        const valid = {
+          ...validPaymentRequiredV1,
+          accepts: Array.from({ length: 1024 }, () => validPaymentRequirementsV1),
+        };
+        expect(PaymentRequiredV1Schema.safeParse(valid).success).toBe(true);
+      });
+
+      it("should reject an accepts list longer than 1024 without an issue per element", () => {
+        const invalid = {
+          ...validPaymentRequiredV1,
+          accepts: Array.from({ length: 5000 }, () => ({})),
+        };
+        const result = PaymentRequiredV1Schema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues).toHaveLength(1);
+          expect(result.error.issues[0]?.code).toBe("too_big");
+        }
+      });
     });
 
     describe("PaymentPayloadV1Schema", () => {
@@ -243,6 +264,27 @@ describe("x402 Schemas", () => {
         };
         const result = PaymentRequiredV2Schema.safeParse(invalid);
         expect(result.success).toBe(false);
+      });
+
+      it("should accept 1024 payment options", () => {
+        const valid = {
+          ...validPaymentRequiredV2,
+          accepts: Array.from({ length: 1024 }, () => validPaymentRequirementsV2),
+        };
+        expect(PaymentRequiredV2Schema.safeParse(valid).success).toBe(true);
+      });
+
+      it("should reject an accepts list longer than 1024 without an issue per element", () => {
+        const invalid = {
+          ...validPaymentRequiredV2,
+          accepts: Array.from({ length: 5000 }, () => ({})),
+        };
+        const result = PaymentRequiredV2Schema.safeParse(invalid);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues).toHaveLength(1);
+          expect(result.error.issues[0]?.code).toBe("too_big");
+        }
       });
     });
 
@@ -653,10 +695,30 @@ describe("x402 Schemas", () => {
       it("should accept minimum valid CAIP-2 for V2", () => {
         const v2Minimal = {
           ...validPaymentRequirementsV2,
-          network: "a:b",
+          network: "abc:d",
         };
         const result = PaymentRequirementsV2Schema.safeParse(v2Minimal);
         expect(result.success).toBe(true);
+      });
+
+      it.each([
+        "a:b",
+        "EIP155:84532",
+        "123456789:1",
+        "eip155:",
+        `eip155:${"a".repeat(33)}`,
+        "eip155:base.mainnet",
+        "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+        "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI",
+        "eip155:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+        ":84532",
+        "eip155:84532:extra",
+      ])("should reject malformed CAIP-2 network %s for V2", network => {
+        const result = PaymentRequirementsV2Schema.safeParse({
+          ...validPaymentRequirementsV2,
+          network,
+        });
+        expect(result.success).toBe(false);
       });
     });
   });

@@ -152,6 +152,7 @@ export class AuthCaptureSettlementHooks {
   async settleOnCancel(
     context: VerifiedPaymentCanceledContext,
   ): Promise<PaymentRequirements | void> {
+    if (!context.settledPhases.includes("before-handler")) return;
     const extraParsed = parseAuthCaptureExtra(context.requirements.extra);
     if ("error" in extraParsed) return;
     const extra = extraParsed.extra;
@@ -202,44 +203,36 @@ export class AuthCaptureSettlementHooks {
       await this.persistCollect(collect, ctx, extra, "charge");
       return;
     }
-    if (
+    const syncCapture =
       ctx.phase === "after-handler" &&
       extra.paymentFlow === "escrow" &&
-      extra.captureMode !== "deferred"
-    ) {
-      const type = (ctx.paymentPayload.payload as Record<string, unknown>).type;
-      if (type === "capture") {
-        const amount = ctx.result.amount ?? ctx.requirements.amount;
-        const voidRemainder =
-          (ctx.paymentPayload.payload as Record<string, unknown>).voidAuthorizerSignature !==
-          undefined;
-        const paymentInfo = (ctx.paymentPayload.payload as Record<string, unknown>).paymentInfo as
-          | PaymentInfoStruct
-          | undefined;
-        if (paymentInfo) {
-          const hash = computePaymentInfoHash(
-            getEvmChainId(ctx.requirements.network),
-            paymentInfo,
-            extra.deployment.escrow,
-          );
-          await applyCaptureBalances(this.config.storage, hash, amount, voidRemainder);
-        }
-      }
+      extra.captureMode !== "deferred";
+    if (!syncCapture && ctx.phase !== "cancel") return;
+
+    // Core passes the original collect envelope to hooks, not the enriched settle payload.
+    const raw = ctx.paymentPayload.payload as Record<string, unknown>;
+    const paymentInfo = collect
+      ? paymentInfoFromCollect(collect, ctx.requirements as PaymentRequirements, extra)
+      : (raw.paymentInfo as PaymentInfoStruct | undefined);
+    if (!paymentInfo) return;
+    const hash = computePaymentInfoHash(
+      getEvmChainId(ctx.requirements.network),
+      paymentInfo,
+      extra.deployment.escrow,
+    );
+
+    if (syncCapture && (collect || raw.type === "capture")) {
+      const amount = ctx.result.amount ?? ctx.requirements.amount;
+      const stored = await this.config.storage.get(hash);
+      const voidRemainder = collect
+        ? BigInt(amount) < BigInt(stored?.capturableAmount ?? paymentInfo.maxAmount)
+        : raw.voidAuthorizerSignature !== undefined || raw.voidRemainder === true;
+      await applyCaptureBalances(this.config.storage, hash, amount, voidRemainder);
     }
     if (ctx.phase === "cancel") {
-      const paymentInfo = (ctx.paymentPayload.payload as Record<string, unknown>).paymentInfo as
-        | PaymentInfoStruct
-        | undefined;
-      if (paymentInfo) {
-        const hash = computePaymentInfoHash(
-          getEvmChainId(ctx.requirements.network),
-          paymentInfo,
-          extra.deployment.escrow,
-        );
-        await this.config.storage.update(hash, current =>
-          current ? { ...current, capturableAmount: "0" } : current,
-        );
-      }
+      await this.config.storage.update(hash, current =>
+        current ? { ...current, capturableAmount: "0" } : current,
+      );
     }
   }
 

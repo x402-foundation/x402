@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
@@ -194,6 +195,22 @@ func CreatePermit2Nonce() (string, error) {
 	// Convert to uint256 string representation
 	nonceInt := new(big.Int).SetBytes(nonce)
 	return nonceInt.String(), nil
+}
+
+var uint256DecimalPattern = regexp.MustCompile(`^[0-9]{1,78}$`)
+
+// ParseUint256String returns the integer in a uint256 decimal string.
+// The string is 1 to 78 digits and the value is at most 2^256-1.
+// A sign, blank, prefix, separator, or decimal point is rejected.
+func ParseUint256String(value string) (*big.Int, bool) {
+	if !uint256DecimalPattern.MatchString(value) {
+		return nil, false
+	}
+	parsed, ok := new(big.Int).SetString(value, 10)
+	if !ok || parsed.BitLen() > 256 {
+		return nil, false
+	}
+	return parsed, true
 }
 
 // MaxUint256 returns the maximum value for uint256 (used for unlimited approval).

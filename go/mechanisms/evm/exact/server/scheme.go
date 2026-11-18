@@ -88,7 +88,8 @@ func (s *ExactEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *ExactEvmS
 }
 
 // ParsePrice parses a price string and converts it to an asset amount (V2)
-// If price is already an AssetAmount, returns it directly.
+// If price is already an AssetAmount, an atomic amount must be a uint256 decimal string.
+// A dotted amount is left unchanged.
 // If price is Money (string | number), parses to decimal and tries custom parsers.
 // Falls back to default conversion if all custom parsers return nil.
 //
@@ -101,7 +102,7 @@ func (s *ExactEvmScheme) RegisterMoneyParser(parser x402.MoneyParser) *ExactEvmS
 //
 //	AssetAmount with amount, asset, and optional extra fields
 func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x402.AssetAmount, error) {
-	// If already an AssetAmount (map with "amount" and "asset"), return it directly
+	// If already an AssetAmount (map with "amount" and "asset"), validate an atomic amount and return it
 	if priceMap, ok := price.(map[string]interface{}); ok {
 		if amountVal, hasAmount := priceMap["amount"]; hasAmount {
 			amountStr, ok := amountVal.(string)
@@ -127,11 +128,15 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 				}
 			}
 
-			return x402.AssetAmount{
+			parsed := x402.AssetAmount{
 				Amount: amountStr,
 				Asset:  asset,
 				Extra:  extra,
-			}, nil
+			}
+			if err := uint256AmountErrorUnlessDecimal(parsed.Amount); err != nil {
+				return x402.AssetAmount{}, err
+			}
+			return parsed, nil
 		}
 	}
 
@@ -149,14 +154,37 @@ func (s *ExactEvmScheme) ParsePrice(price x402.Price, network x402.Network) (x40
 			continue
 		}
 		if result != nil {
-			// Parser handled the conversion
+			if err := uint256AmountErrorUnlessDecimal(result.Amount); err != nil {
+				return x402.AssetAmount{}, err
+			}
 			return *result, nil
 		}
 		// Parser returned nil, try next one
 	}
 
 	// All custom parsers returned nil, use default conversion
-	return s.defaultMoneyConversion(decimalAmount, network, symbol)
+	parsed, err := s.defaultMoneyConversion(decimalAmount, network, symbol)
+	if err != nil {
+		return x402.AssetAmount{}, err
+	}
+	if err := uint256AmountErrorUnlessDecimal(parsed.Amount); err != nil {
+		return x402.AssetAmount{}, err
+	}
+	return parsed, nil
+}
+
+func uint256AmountErrorUnlessDecimal(amount string) error {
+	if strings.Contains(amount, ".") {
+		return nil
+	}
+	return uint256AmountError(amount)
+}
+
+func uint256AmountError(amount string) error {
+	if _, ok := evm.ParseUint256String(amount); ok {
+		return nil
+	}
+	return fmt.Errorf("%s: amount must be a uint256 decimal string, got %q", ErrAmountNotUint256, amount)
 }
 
 // defaultMoneyConversion converts a decimal amount to an AssetAmount using the default token.
@@ -244,5 +272,5 @@ func (s *ExactEvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
-	return requirements, nil
+	return requirements, uint256AmountError(requirements.Amount)
 }

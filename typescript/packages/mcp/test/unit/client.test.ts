@@ -249,6 +249,20 @@ describe("x402MCPClient", () => {
       expect(client.paymentClient).toBe(mockPaymentClient);
     });
 
+    it("should reject non-positive maxRequestTimeoutSeconds", () => {
+      const baseArgs = [
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+      ] as const;
+
+      expect(() => new x402MCPClient(...baseArgs, { maxRequestTimeoutSeconds: 0 })).toThrow(
+        /maxRequestTimeoutSeconds must be a positive finite number/,
+      );
+      expect(() => new x402MCPClient(...baseArgs, { maxRequestTimeoutSeconds: -1 })).toThrow(
+        /maxRequestTimeoutSeconds must be a positive finite number/,
+      );
+    });
+
     it("should default autoPayment to true", async () => {
       // Test by calling a paid tool - should auto-pay
       mockMcpClient.callTool
@@ -580,6 +594,8 @@ describe("x402MCPClient", () => {
     });
 
     it("should retry once with a fresh payload when core hook recovers", async () => {
+      const beforeHook = vi.fn();
+      client.onBeforePayment(beforeHook);
       const correctivePaymentRequired: PaymentRequired = {
         ...mockPaymentRequired,
         accepts: [
@@ -627,6 +643,12 @@ describe("x402MCPClient", () => {
       });
       const retryCall = mockMcpClient.callTool.mock.calls[2][0];
       expect(retryCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(freshPayload);
+      expect(beforeHook).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: "paid_tool",
+          paymentRequired: correctivePaymentRequired,
+        }),
+      );
     });
 
     it("should abort a corrective retry when onPaymentRequired returns abort", async () => {
@@ -666,6 +688,33 @@ describe("x402MCPClient", () => {
           paymentPayload: hookPayment,
           settleResponse: mockSettleResponse,
         }),
+      );
+    });
+
+    it("should throw when a corrective auto-pay retry returns an invalid MCP result", async () => {
+      const correctivePaymentRequired: PaymentRequired = {
+        ...mockPaymentRequired,
+        accepts: [
+          {
+            ...mockPaymentRequired.accepts[0],
+            extra: { channelState: { chargedCumulativeAmount: "2000" } },
+          },
+        ],
+      };
+      mockPaymentClient.createPaymentPayload
+        .mockResolvedValueOnce(mockPaymentPayload)
+        .mockResolvedValueOnce({
+          ...mockPaymentPayload,
+          payload: { ...mockPaymentPayload.payload, signature: "0xfresh" },
+        });
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce(createEmbeddedPaymentError(correctivePaymentRequired))
+        .mockResolvedValueOnce({ ok: true });
+
+      await expect(client.callTool("paid_tool")).rejects.toThrow(
+        "Invalid MCP tool result: missing content array",
       );
     });
 

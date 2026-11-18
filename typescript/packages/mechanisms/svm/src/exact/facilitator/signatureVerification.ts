@@ -6,7 +6,14 @@
  * required signer is checked here over `transaction.messageBytes`.
  */
 
-import { getAddressEncoder, verifySignature, type Address, type Transaction } from "@solana/kit";
+import {
+  getAddressEncoder,
+  verifySignature,
+  type Address,
+  type SignatureBytes,
+  type Transaction,
+  type TransactionMessageBytes,
+} from "@solana/kit";
 import * as Errors from "./errors";
 
 const addressEncoder = getAddressEncoder();
@@ -74,12 +81,12 @@ export async function verifyRequiredSignatures(
  */
 async function verifyEd25519(
   address: string,
-  signature: Uint8Array,
-  messageBytes: Uint8Array,
+  signature: SignatureBytes,
+  messageBytes: TransactionMessageBytes,
 ): Promise<boolean> {
   try {
     const publicKeyBytes = addressEncoder.encode(address as Address);
-    const publicKey = await crypto.subtle.importKey("raw", publicKeyBytes, "Ed25519", false, [
+    const publicKey = await crypto.subtle.importKey("raw", publicKeyBytes, "Ed25519", true, [
       "verify",
     ]);
     return await verifySignature(publicKey, signature, messageBytes);

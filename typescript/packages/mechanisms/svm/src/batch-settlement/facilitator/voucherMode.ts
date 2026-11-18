@@ -3,7 +3,12 @@ import type { PaymentRequirements } from "@x402/core/types";
 import { parseU64 } from "../../payment-channels/open";
 import { verifyBatchAuthorization } from "../authorization";
 import { BatchError } from "../errors";
-import type { BatchChannelConfig, BatchPayload, BatchRefundPayload } from "../types";
+import type {
+  BatchChannelConfig,
+  BatchPayload,
+  BatchRefundPayload,
+  BatchVoucherSigner,
+} from "../types";
 import type { ProofAmountBound, VoucherModeBinding } from "./types";
 
 /**
@@ -150,4 +155,38 @@ export function voucherSignerFor(
  */
 export function advancesSettled(cumulative: bigint, settled: bigint, charge: bigint): boolean {
   return cumulative > settled && cumulative >= settled + charge;
+}
+
+/**
+ * Check a deposit's proof against the escrow it will sit behind (spec 7). A
+ * client voucher the server cannot accept (not the first charge on an open,
+ * not past the settled watermark on a top-up) is `cumulative_amount_mismatch`;
+ * a proof the deposit cannot cover is `cumulative_exceeds_deposit`.
+ *
+ * @param signer - Who signs the channel's vouchers
+ * @param amounts - The amounts to compare
+ * @param amounts.proof - Client voucher cumulative; the charge in server mode
+ * @param amounts.charge - `PaymentRequirements.amount`
+ * @param amounts.deposit - Channel deposit once this deposit lands
+ * @param amounts.settled - Onchain settled watermark for a top-up; undefined for an open
+ */
+export function assertDepositProof(
+  signer: BatchVoucherSigner,
+  amounts: { proof: bigint; charge: bigint; deposit: bigint; settled?: bigint | undefined },
+): void {
+  const { proof, charge, deposit, settled } = amounts;
+  if (signer === "client") {
+    const accepted =
+      settled === undefined ? proof === charge : advancesSettled(proof, settled, charge);
+    if (!accepted) {
+      throw new Error(
+        settled === undefined
+          ? `${BatchError.CUMULATIVE_AMOUNT_MISMATCH}: first voucher must equal the charge`
+          : `${BatchError.CUMULATIVE_AMOUNT_MISMATCH}: voucher must advance the settled watermark`,
+      );
+    }
+  }
+  if ((signer === "client" ? proof : charge) > deposit) {
+    throw new Error(`${BatchError.CUMULATIVE_EXCEEDS_DEPOSIT}: proof exceeds the channel deposit`);
+  }
 }

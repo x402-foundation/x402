@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+import httpx
 from eth_account import Account
 
 from x402 import x402Client, x402ClientSync
@@ -19,7 +22,7 @@ from x402.mechanisms.evm.batch_settlement.client import (
     InMemoryClientChannelStorage,
 )
 from x402.mechanisms.svm import KeypairSigner
-from x402.mechanisms.svm.exact import register_exact_svm_client
+from x402.mechanisms.svm.exact import ExactSvmClientScheme, register_exact_svm_client
 from x402.mechanisms.tvm import (
     TVM_MAINNET,
     TVM_PROVIDER_TONAPI,
@@ -41,17 +44,29 @@ class ClientContext:
     batch_settlement_phase: Optional[str]
 
 
-def create_e2e_client(*, sync: bool = False) -> ClientContext:
+def create_e2e_client(
+    *,
+    sync: bool = False,
+    svm_only: bool = False,
+    svm_transaction_versions: Sequence[int] | None = None,
+) -> ClientContext:
     """Build a configured x402Client (or x402ClientSync) with e2e scheme registrations.
 
     Args:
         sync: If True, build an x402ClientSync for use with sync HTTP clients
             (e.g. requests). Defaults to False, building an async x402Client
             for use with async HTTP clients (e.g. httpx).
+        svm_only: If True, register only SVM schemes even when other
+            families' credentials are set.
+        svm_transaction_versions: Solana transaction message versions the SVM
+            exact scheme may build. None keeps the SDK default (``[0, 1]``);
+            ``[0]`` keeps the client on version 0 even when the facilitator
+            advertises version 1.
     """
-    evm_private_key = os.getenv("CLIENT_EVM_PRIVATE_KEY")
+    cardano_mnemonic = None if svm_only else os.getenv("CLIENT_CARDANO_MNEMONIC")
+    evm_private_key = None if svm_only else os.getenv("CLIENT_EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("CLIENT_SVM_PRIVATE_KEY")
-    tvm_private_key = os.getenv("CLIENT_TVM_PRIVATE_KEY")
+    tvm_private_key = None if svm_only else os.getenv("CLIENT_TVM_PRIVATE_KEY")
     evm_rpc_url = os.getenv("EVM_RPC_URL", "https://sepolia.base.org")
     svm_rpc_url = os.getenv("SVM_RPC_URL")
     tvm_provider = (os.getenv("TVM_PROVIDER") or "").strip().lower()
@@ -69,12 +84,12 @@ def create_e2e_client(*, sync: bool = False) -> ClientContext:
         print(json.dumps({"success": False, "error": "Missing required environment variables"}))
         raise SystemExit(1)
 
-    if not evm_private_key and not svm_private_key and not tvm_private_key:
+    if not evm_private_key and not svm_private_key and not tvm_private_key and not cardano_mnemonic:
         print(
             json.dumps(
                 {
                     "success": False,
-                    "error": "At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, or CLIENT_TVM_PRIVATE_KEY must be set",
+                    "error": "At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, CLIENT_TVM_PRIVATE_KEY, or CLIENT_CARDANO_MNEMONIC must be set",
                 }
             )
         )
@@ -106,9 +121,18 @@ def create_e2e_client(*, sync: bool = False) -> ClientContext:
 
     if svm_private_key:
         svm_signer = KeypairSigner.from_base58(svm_private_key)
-        register_exact_svm_client(
-            client, svm_signer, networks=network_caip2_pattern("svm"), rpc_url=svm_rpc_url
-        )
+        if svm_transaction_versions is None:
+            register_exact_svm_client(
+                client, svm_signer, networks=network_caip2_pattern("svm"), rpc_url=svm_rpc_url
+            )
+        else:
+            # v2 only: the v1 exact scheme has no transaction-version option.
+            client.register(
+                network_caip2_pattern("svm"),
+                ExactSvmClientScheme(
+                    svm_signer, svm_rpc_url, transaction_versions=svm_transaction_versions
+                ),
+            )
 
     if tvm_private_key:
         if tvm_network not in {TVM_TESTNET, TVM_MAINNET}:
@@ -123,6 +147,27 @@ def create_e2e_client(*, sync: bool = False) -> ClientContext:
             network_caip2_pattern("tvm"),
             ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),
         )
+
+    if cardano_mnemonic:
+        from x402.mechanisms.cardano import (
+            BlockfrostConfig,
+            CardanoProviderConfig,
+            ClientCardanoSignerConfig,
+            to_client_cardano_signer,
+        )
+        from x402.mechanisms.cardano.exact import ExactCardanoClientScheme
+
+        network = resolve_network_caip2("cardano")
+        provider = CardanoProviderConfig(
+            blockfrost=BlockfrostConfig(
+                os.getenv("CARDANO_RPC_URL", "https://cardano-preprod.blockfrost.io/api/v0"),
+                os.environ["BLOCKFROST_PROJECT_ID"],
+            )
+        )
+        signer = to_client_cardano_signer(
+            ClientCardanoSignerConfig(cardano_mnemonic, network, provider)
+        )
+        client.register(network_caip2_pattern("cardano"), ExactCardanoClientScheme(signer))
 
     # E2e exercises custom assets and amounts above the default $1 USD cap.
     client.set_spend_controls(False)
@@ -152,7 +197,33 @@ def aggregate_batch_result(phase: str, results: list[dict], details: dict) -> di
     }
 
 
+def _await_cardano_wallet_settled(result: dict[str, Any]) -> None:
+    """Wait for indexed change before the harness releases the shared Cardano wallet."""
+    receipt = result.get("payment_response") or {}
+    if not receipt.get("network", "").startswith("cardano:"):
+        return
+    transaction, payer = receipt.get("transaction"), receipt.get("payer")
+    project_id, base_url = os.getenv("BLOCKFROST_PROJECT_ID"), os.getenv("CARDANO_RPC_URL")
+    if not all((transaction, payer, project_id, base_url)):
+        return
+    deadline = time.monotonic() + 120
+    with httpx.Client(timeout=10) as provider:
+        while time.monotonic() < deadline:
+            try:
+                response = provider.get(
+                    f"{base_url}/addresses/{payer}/utxos", headers={"project_id": project_id}
+                )
+                if response.is_success and any(
+                    row.get("tx_hash") == transaction for row in response.json()
+                ):
+                    return
+            except (httpx.HTTPError, ValueError):
+                pass
+            time.sleep(3)
+
+
 def _emit_and_exit(payload: dict[str, Any]) -> None:
+    _await_cardano_wallet_settled(payload)
     print(json.dumps(payload))
     raise SystemExit(0)
 

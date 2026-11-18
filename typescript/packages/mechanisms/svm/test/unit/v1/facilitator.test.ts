@@ -12,6 +12,7 @@ import type { FacilitatorSvmSigner } from "../../../src/signer";
 import type { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import type { PaymentPayloadV1 } from "@x402/core/types/v1";
 import {
+  ADVERTISED_TRANSACTION_VERSIONS,
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   TOKEN_2022_PROGRAM_ADDRESS,
@@ -94,6 +95,13 @@ describe("ExactSvmSchemeV1", () => {
       const extra = facilitator.getExtra("solana-devnet");
       expect(extra).toBeDefined();
       expect(mockSigner.getAddresses()).toContain(extra!.feePayer);
+    });
+
+    it("advertises the accepted transaction message versions in getExtra", () => {
+      const facilitator = new ExactSvmSchemeV1(mockSigner);
+      expect(facilitator.getExtra("solana-devnet")!.transactionVersions).toEqual([
+        ...ADVERTISED_TRANSACTION_VERSIONS,
+      ]);
     });
   });
 

@@ -516,6 +516,7 @@ func TestSettleOnCancel(t *testing.T) {
 			result, err := scheme.SettleOnCancel(x402.VerifiedPaymentCanceledContext{
 				SettleContext: x402.SettleContext{Requirements: requirements},
 				Reason:        test.reason,
+				SettledPhases: []x402.SettlePhase{x402.SettlePhaseBeforeHandler},
 			})
 			require.NoError(t, err)
 			if !test.wantResult {
@@ -527,6 +528,17 @@ func TestSettleOnCancel(t *testing.T) {
 			assert.Equal(t, requirements.PayTo, result.PayTo)
 		})
 	}
+}
+
+func TestSettleOnCancel_SkipsWithoutBeforeHandlerSettle(t *testing.T) {
+	scheme := newTestScheme(&mockSigner{address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+
+	result, err := scheme.SettleOnCancel(x402.VerifiedPaymentCanceledContext{
+		SettleContext: x402.SettleContext{Requirements: mockRequirements(nil)},
+		Reason:        x402.CancellationReasonAfterVerifyAborted,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, result, "no escrow hold exists before the before-handler settle")
 }
 
 func TestParsePrice(t *testing.T) {

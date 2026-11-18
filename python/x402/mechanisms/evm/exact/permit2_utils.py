@@ -30,6 +30,7 @@ from ..constants import (  # noqa: E402
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_ERC20_APPROVAL_TX_FAILED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_REQUIRED_AMOUNT,
     ERR_NETWORK_MISMATCH,
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
@@ -58,6 +59,7 @@ from ..types import (  # noqa: E402
     ExactPermit2TokenPermissions,
     ExactPermit2Witness,
     TypedDataField,
+    _is_uint256_string,
 )
 from ..utils import (  # noqa: E402
     create_permit2_nonce,
@@ -251,6 +253,12 @@ def verify_permit2(
         return VerifyResponse(is_valid=False, invalid_reason=ERR_PERMIT2_NOT_YET_VALID, payer=payer)
 
     # 7. Amount check
+    if not _is_uint256_string(requirements.amount):
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_INVALID_REQUIRED_AMOUNT,
+            payer=payer,
+        )
     if amount_val != int(requirements.amount):
         return VerifyResponse(
             is_valid=False, invalid_reason=ERR_PERMIT2_AMOUNT_MISMATCH, payer=payer
@@ -647,6 +655,17 @@ def _settle_permit2_direct(
         return _map_settle_error(e, network, payer)
 
 
+def _split_eip2612_signature(signature: str) -> tuple[int, bytes, bytes]:
+    """permit() accepts v of 27 or 28."""
+    sig_raw = hex_to_bytes(signature)
+    if len(sig_raw) != 65:
+        raise ValueError("EIP-2612 signature must be 65 bytes")
+    v = sig_raw[64]
+    if v < 27:
+        v += 27
+    return v, sig_raw[:32], sig_raw[32:64]
+
+
 def _settle_permit2_with_eip2612(
     signer: FacilitatorEvmSigner,
     payload: PaymentPayload,
@@ -664,15 +683,7 @@ def _settle_permit2_with_eip2612(
             permit2_payload
         )
 
-        sig_hex = eip2612_info.signature
-        sig_raw = hex_to_bytes(sig_hex)
-        if len(sig_raw) != 65:
-            return _map_settle_error(
-                ValueError("EIP-2612 signature must be 65 bytes"), network, payer
-            )
-        r = sig_raw[:32]
-        s = sig_raw[32:64]
-        v = sig_raw[64]
+        v, r, s = _split_eip2612_signature(eip2612_info.signature)
 
         permit2612_tuple = (
             int(eip2612_info.amount),

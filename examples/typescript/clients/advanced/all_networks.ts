@@ -5,7 +5,7 @@
  * optional chain configuration via environment variables.
  *
  * New chain support should be added here in alphabetic order by network prefix
- * (e.g., "algorand" before "aptos" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
+ * (e.g., "algorand" before "aptos" before "canton" before "ccd" before "eip155" before "hedera" before "near" before "solana" before "stellar" before "tvm" before "xrpl").
  */
 
 import {
@@ -24,6 +24,8 @@ import { toClientCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme } from "@x402/cardano/exact/client";
 import { createClientCasperSigner } from "@x402/casper";
 import { ExactCasperScheme } from "@x402/casper/exact/client";
+import { toClientCantonSigner } from "@x402/canton";
+import { ExactCantonScheme } from "@x402/canton/exact/client";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { UptoEvmScheme } from "@x402/evm/upto/client";
@@ -63,6 +65,26 @@ const blockfrostBaseUrl = process.env.BLOCKFROST_PREPROD_URL;
 const blockfrostProjectId = process.env.BLOCKFROST_PROJECT_ID;
 const aptosPrivateKey = process.env.APTOS_PRIVATE_KEY as string | undefined;
 const casperPrivateKey = process.env.CASPER_PRIVATE_KEY as string | undefined;
+// Canton: the payer's hosted participant + SV Scan + self-custody key.
+// Network id is the CAIP-2 tier (canton:mainnet | canton:devnet); the
+// synchronizer/domain is carried separately, not encoded in the network id.
+const cantonParticipantUrl = process.env.CANTON_PARTICIPANT_URL as string | undefined;
+const cantonToken = process.env.CANTON_TOKEN as string | undefined;
+const cantonUserId = process.env.CANTON_USER_ID as string | undefined;
+const cantonSynchronizerId = process.env.CANTON_SYNCHRONIZER_ID as string | undefined;
+const cantonScanUrl = process.env.CANTON_SCAN_URL as string | undefined;
+const cantonParty = process.env.CANTON_PARTY as string | undefined;
+const cantonPrivateKeyPem = process.env.CANTON_PRIVATE_KEY as string | undefined;
+const cantonNetwork = (process.env.CANTON_NETWORK || "canton:mainnet") as Network;
+const cantonConfigured = Boolean(
+  cantonParticipantUrl &&
+    cantonToken &&
+    cantonUserId &&
+    cantonSynchronizerId &&
+    cantonScanUrl &&
+    cantonParty &&
+    cantonPrivateKeyPem,
+);
 const ccdPrivateKey = process.env.CCD_PRIVATE_KEY as string | undefined;
 const ccdAddress = process.env.CCD_ADDRESS as string | undefined;
 const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
@@ -186,6 +208,21 @@ async function main(): Promise<void> {
     );
     client.register("casper:*", new ExactCasperScheme(casperSigner));
     console.log(`Initialized Casper account: ${casperSigner.accountAddress()}`);
+  }
+
+  // Register Canton scheme if a participant + Scan + payer key are provided
+  if (cantonConfigured) {
+    const cantonSigner = toClientCantonSigner({
+      participantUrl: cantonParticipantUrl!,
+      token: cantonToken!,
+      userId: cantonUserId!,
+      synchronizerId: cantonSynchronizerId!,
+      scanUrl: cantonScanUrl!,
+      party: cantonParty!,
+      privateKeyPem: cantonPrivateKeyPem!,
+    });
+    client.register(cantonNetwork, new ExactCantonScheme(cantonSigner));
+    console.log(`Initialized Canton party: ${cantonParty} on ${cantonNetwork}`);
   }
 
   // Register Concordium scheme if private key and address are provided
