@@ -1,6 +1,16 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10"
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version < '3.14' and sys_platform != 'win32'",
+]
+
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P3D"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -914,7 +924,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -1194,7 +1204,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.26.0"
+version = "1.30.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1212,9 +1222,9 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/6d/62e76bbb8144d6ed86e202b5edd8a4cb631e7c8130f3f4893c3f90262b10/mcp-1.26.0.tar.gz", hash = "sha256:db6e2ef491eecc1a0d93711a76f28dec2e05999f93afd48795da1c1137142c66", size = 608005, upload-time = "2026-01-24T19:40:32.468Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/d9/eaa1f80170d2b7c5ba23f3b59f766f3a0bb41155fbc32a69adfa1adaaef9/mcp-1.26.0-py3-none-any.whl", hash = "sha256:904a21c33c25aa98ddbeb47273033c435e595bbacfdb177f4bd87f6dceebe1ca", size = 233615, upload-time = "2026-01-24T19:40:30.652Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl", hash = "sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0", size = 234581, upload-time = "2026-09-07T14:34:14.266Z" },
 ]
 
 [[package]]
@@ -2343,7 +2353,7 @@ wheels = [
 
 [[package]]
 name = "web3"
-version = "7.14.1"
+version = "7.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2361,9 +2371,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/26/41/435cb36d36fc5142428292b876d0553d35af95e1582ecb7d8bcb64039d18/web3-7.14.1.tar.gz", hash = "sha256:856dc8517f362aefa75fdc298d975894055565dc866f21279f27fe060b7fb2c3", size = 2208998, upload-time = "2026-02-03T22:56:41.426Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/d9/bdfa9e715804020c3f3676346065c18adbc207c9343a3458246d7430f45c/web3-7.16.0.tar.gz", hash = "sha256:b4a75a3fa94fef4d23d502eb3c2244146ef9a1ee0082cf1cb0a91586ba0510c3", size = 2211469, upload-time = "2026-05-01T21:22:20.666Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/d1/862bbf48867685de1a563de20a9bad2b8c5c5678b3f08adc0e06797783f5/web3-7.14.1-py3-none-any.whl", hash = "sha256:bec367ba44261f874662aed9b5e138aa7bb907700a30a7580b2264534e88ce12", size = 1371268, upload-time = "2026-02-03T22:56:36.577Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/f9/5345c13f8469f3ce344b4d9934c0387b83a49420192482111e9c1fa95ec2/web3-7.16.0-py3-none-any.whl", hash = "sha256:760b2718c473980d70708c3593d9d28395db4b482f45e38a63a36fa028178f51", size = 1372181, upload-time = "2026-05-01T21:22:17.015Z" },
 ]
 
 [[package]]
@@ -2427,7 +2437,7 @@ wheels = [
 
 [[package]]
 name = "x402"
-version = "2.1.0"
+version = "2.26.0"
 source = { editable = "../../../../python/x402" }
 dependencies = [
     { name = "nest-asyncio" },
@@ -2450,52 +2460,63 @@ mcp = [
 [package.metadata]
 requires-dist = [
     { name = "eth-abi", marker = "extra == 'evm'", specifier = ">=5.0.0" },
-    { name = "eth-account", marker = "extra == 'evm'", specifier = ">=0.12.0" },
+    { name = "eth-account", marker = "extra == 'evm'", specifier = ">=0.13.0" },
     { name = "eth-keys", marker = "extra == 'evm'", specifier = ">=0.5.0" },
     { name = "eth-utils", marker = "extra == 'evm'", specifier = ">=4.0.0" },
-    { name = "fastapi", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.115.0" },
-    { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0.0" },
+    { name = "fastapi", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.162.0" },
+    { name = "flask", marker = "extra == 'flask'", specifier = ">=3.1.3" },
     { name = "httpx", marker = "extra == 'httpx'", specifier = ">=0.28.1" },
+    { name = "httpx", marker = "extra == 'svm'", specifier = ">=0.28.1" },
+    { name = "httpx", marker = "extra == 'tvm'", specifier = ">=0.28.1" },
+    { name = "idna", marker = "extra == 'extensions'", specifier = ">=3.15" },
     { name = "jsonschema", marker = "extra == 'extensions'", specifier = ">=4.0.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0,<2" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "requests", marker = "extra == 'requests'", specifier = ">=2.31.0" },
-    { name = "solana", marker = "extra == 'svm'", specifier = ">=0.36.0" },
-    { name = "solders", marker = "extra == 'svm'", specifier = ">=0.27.0" },
-    { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=0.27.0" },
+    { name = "pynacl", marker = "extra == 'extensions'", specifier = ">=1.5.0" },
+    { name = "pynacl", marker = "extra == 'tvm'", specifier = ">=1.5.0" },
+    { name = "pytoniq", marker = "extra == 'tvm'", specifier = ">=0.1.39" },
+    { name = "pytoniq-core", marker = "extra == 'tvm'", specifier = ">=0.1.36" },
+    { name = "requests", marker = "extra == 'requests'", specifier = ">=2.33.0" },
+    { name = "signinwithethereum", marker = "extra == 'extensions'", specifier = ">=5.0.1" },
+    { name = "solders", marker = "extra == 'svm'", specifier = ">=0.29.0" },
+    { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=1.3.1" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
-    { name = "web3", marker = "extra == 'evm'", specifier = ">=7.0.0" },
-    { name = "x402", extras = ["evm", "svm"], marker = "extra == 'mechanisms'" },
+    { name = "web3", marker = "extra == 'evm'", specifier = ">=7.15.0" },
+    { name = "x402", extras = ["evm", "svm", "tvm"], marker = "extra == 'mechanisms'" },
     { name = "x402", extras = ["flask", "fastapi"], marker = "extra == 'servers'" },
     { name = "x402", extras = ["httpx", "requests"], marker = "extra == 'clients'" },
-    { name = "x402", extras = ["httpx", "requests", "flask", "fastapi", "evm", "svm", "mcp", "extensions"], marker = "extra == 'all'" },
+    { name = "x402", extras = ["httpx", "requests", "flask", "fastapi", "evm", "svm", "tvm", "mcp", "extensions"], marker = "extra == 'all'" },
 ]
-provides-extras = ["httpx", "requests", "flask", "fastapi", "evm", "svm", "mcp", "extensions", "clients", "servers", "mechanisms", "all"]
+provides-extras = ["httpx", "requests", "flask", "fastapi", "evm", "svm", "tvm", "mcp", "extensions", "clients", "servers", "mechanisms", "all"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black", specifier = ">=23.0.0" },
+    { name = "black", specifier = ">=26.10.1" },
     { name = "eth-abi", specifier = ">=5.0.0" },
-    { name = "eth-account", specifier = ">=0.12.0" },
+    { name = "eth-account", specifier = ">=0.13.0" },
     { name = "eth-keys", specifier = ">=0.5.0" },
     { name = "eth-utils", specifier = ">=4.0.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
-    { name = "flask", specifier = ">=3.0.0" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.162.0" },
+    { name = "flask", specifier = ">=3.1.3" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "idna", specifier = ">=3.15" },
     { name = "jsonschema", specifier = ">=4.0.0" },
-    { name = "mcp", specifier = ">=1.26.0" },
+    { name = "mcp", specifier = ">=1.30.0,<2" },
     { name = "mypy", specifier = ">=1.0.0" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
-    { name = "pytest", specifier = ">=7.0.0" },
+    { name = "pynacl", specifier = ">=1.5.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
-    { name = "requests", specifier = ">=2.31.0" },
+    { name = "pytoniq", specifier = ">=0.1.39" },
+    { name = "pytoniq-core", specifier = ">=0.1.36" },
+    { name = "requests", specifier = ">=2.33.0" },
     { name = "ruff", specifier = ">=0.1.0" },
-    { name = "solana", specifier = ">=0.36.0" },
-    { name = "solders", specifier = ">=0.27.0" },
-    { name = "starlette", specifier = ">=0.27.0" },
+    { name = "signinwithethereum", specifier = "==5.0.1" },
+    { name = "solders", specifier = ">=0.29.0" },
+    { name = "starlette", specifier = ">=1.3.1" },
     { name = "towncrier", specifier = ">=24.8.0,<25" },
-    { name = "web3", specifier = ">=7.0.0" },
+    { name = "web3", specifier = ">=7.15.0" },
 ]
 
 [[package]]

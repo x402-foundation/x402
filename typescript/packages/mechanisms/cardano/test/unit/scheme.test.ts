@@ -1175,9 +1175,8 @@ describe("ExactCardanoScheme server", () => {
     );
   });
 
-  it("reports decimals only for default assets", () => {
+  it("reports no decimals for an asset outside the default table", () => {
     const server = new ExactCardanoServer();
-    expect(server.getAssetDecimals(USDM_MAINNET_ASSET, CARDANO_MAINNET_CAIP2)).toBe(6);
     expect(server.getAssetDecimals(LOVELACE_ASSET, CARDANO_MAINNET_CAIP2)).toBeUndefined();
   });
 

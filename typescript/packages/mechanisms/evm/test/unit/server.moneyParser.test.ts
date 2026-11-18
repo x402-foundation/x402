@@ -1,12 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { ExactEvmScheme } from "../../src/exact/server/scheme";
+import { DEFAULT_ASSETS } from "../../src/defaultAssets";
 import { MoneyParser } from "@x402/core/types";
 import { convertToTokenAmount } from "@x402/core/utils";
 
-// Base mainnet USDC address
-const BASE_MAINNET_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-// Base Sepolia USDC address
-const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const BASE_MAINNET_USDC = DEFAULT_ASSETS["eip155:8453"]![0]!.asset;
+const BASE_SEPOLIA_USDC = DEFAULT_ASSETS["eip155:84532"]![0]!.asset;
 
 describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
   describe("Single custom parser", () => {
@@ -140,7 +139,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       const result = await server.parsePrice(4.02, "eip155:8453");
 
       // Should use default Base USDC conversion
-      expect(result.asset).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+      expect(result.asset).toBe(BASE_MAINNET_USDC);
       expect(result.amount).toBe("4020000"); // 4.02* 1e6
     });
 
@@ -149,7 +148,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       // MegaETH MegaUSD has 18 decimals: $0.0000001 = 1e-7 * 1e18 = 100000000000 atomic units
       const result = await server.parsePrice("$0.0000001", "eip155:4326");
       expect(result.amount).toBe("100000000000");
-      expect(result.asset).toBe("0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7");
+      expect(result.asset).toBe(DEFAULT_ASSETS["eip155:4326"]![0]!.asset);
     });
 
     it("keeps 18-decimal MegaUSD exact for a high-precision string price", async () => {
@@ -212,10 +211,10 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         .registerMoneyParser(async _amount => {
           executionOrder.push(2);
-          return { amount: "match", asset: "0xParser2", extra: {} }; // This one wins
+          return { amount: "2", asset: "0xParser2", extra: {} };
         })
         .registerMoneyParser(async _amount => {
-          executionOrder.push(3); // Should not execute
+          executionOrder.push(3);
           return { amount: "3", asset: "0xParser3", extra: {} };
         });
 
@@ -240,19 +239,17 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result.amount).toBe("1000000"); // 1 USDC = 1,000,000 smallest units
     });
 
-    it("should handle mix of sync and async parsers", async () => {
+    it("should use the first parser that returns an amount", async () => {
       const server = new ExactEvmScheme();
 
       server
         .registerMoneyParser(async amount => {
-          // Async parser
           await Promise.resolve();
-          if (Number(amount) > 1000) return { amount: "async", asset: "0xAsync", extra: {} };
+          if (Number(amount) > 1000) return { amount: "4", asset: "0xAsync", extra: {} };
           return null;
         })
         .registerMoneyParser(async amount => {
-          // Also async (all parsers are Promise-based)
-          if (Number(amount) > 100) return { amount: "sync", asset: "0xSync", extra: {} };
+          if (Number(amount) > 100) return { amount: "5", asset: "0xSecond", extra: {} };
           return null;
         });
 
@@ -260,7 +257,7 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
       expect(result1.asset).toBe("0xAsync");
 
       const result2 = await server.parsePrice(500, "eip155:8453");
-      expect(result2.asset).toBe("0xSync");
+      expect(result2.asset).toBe("0xSecond");
     });
   });
 
@@ -511,10 +508,10 @@ describe("ExactEvmScheme (Server) - registerMoneyParser", () => {
         })
         .registerMoneyParser(async _amount => {
           executionOrder.push(2);
-          return { amount: "winner", asset: "0xWinner", extra: {} }; // This one wins
+          return { amount: "2", asset: "0xWinner", extra: {} };
         })
         .registerMoneyParser(async _amount => {
-          executionOrder.push(3); // Should not execute
+          executionOrder.push(3);
           return { amount: "3", asset: "0xParser3", extra: {} };
         });
 

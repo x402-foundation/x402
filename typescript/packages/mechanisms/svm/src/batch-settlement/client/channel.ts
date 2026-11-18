@@ -10,6 +10,7 @@ import {
 
 import { buildRequestCloseTransaction } from "../../payment-channels/close";
 import { buildOpenPaymentChannelTransaction } from "../../payment-channels/open";
+import type { BuildableTransactionVersion } from "../../transactionV1";
 import { encodeVoucherMessageBytes } from "../../payment-channels/voucher";
 import { signBatchAuthorization } from "../authorization";
 import { CLIENT_VOUCHER_EXPIRES_AT, FULL_SPLIT_BPS } from "../constants";
@@ -203,6 +204,8 @@ export interface BuildDepositArgs {
   voucherSigner?: "client" | "server" | undefined;
   operator?: string | undefined;
   authorizationExpiresAt?: number | undefined;
+  /** Transaction message version of the open; defaults to `0`. */
+  transactionVersion?: BuildableTransactionVersion | undefined;
 }
 
 export interface BuiltDeposit {
@@ -248,6 +251,7 @@ export async function buildDepositPayload(args: BuildDepositArgs): Promise<Built
     recipients: [{ bps: FULL_SPLIT_BPS, recipient: args.receiver }],
     ...(args.salt !== undefined ? { salt: args.salt } : {}),
     tokenProgram: args.tokenProgram,
+    transactionVersion: args.transactionVersion,
   });
   const channelConfig: BatchChannelConfig = {
     openSlot: Number(open.openSlot),
@@ -289,6 +293,8 @@ export async function buildRefundPayload(args: {
   authorization?: BatchAuthorization | undefined;
   blockhash?: { blockhash: string; lastValidBlockHeight: bigint } | undefined;
   memo?: string | undefined;
+  /** Transaction message version of the `request_close`; defaults to `0`. */
+  transactionVersion?: BuildableTransactionVersion | undefined;
 }): Promise<BatchRefundPayload> {
   const serverMode = args.channelConfig.voucherSigner === "server";
   const credential = serverMode
@@ -305,6 +311,7 @@ export async function buildRefundPayload(args: {
       feePayer: args.feePayer,
       memo: args.memo,
       payer: args.payer,
+      transactionVersion: args.transactionVersion,
     }),
     type: "refund",
     ...credential,

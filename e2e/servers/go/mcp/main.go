@@ -29,9 +29,12 @@ var shutdownRequested bool
 
 func main() {
 	cfg := e2eserver.LoadConfig()
-	facilitatorClient := e2eserver.NewFacilitatorClient(cfg)
 
-	resourceServer := x402.Newx402ResourceServer(x402.WithFacilitatorClient(facilitatorClient))
+	facilitatorOpts := make([]x402.ResourceServerOption, 0)
+	for _, client := range e2eserver.NewFacilitatorClients(cfg) {
+		facilitatorOpts = append(facilitatorOpts, x402.WithFacilitatorClient(client))
+	}
+	resourceServer := x402.Newx402ResourceServer(facilitatorOpts...)
 	for _, binding := range e2eserver.SchemeBindings(cfg) {
 		resourceServer.Register(binding.Network, binding.Server)
 	}

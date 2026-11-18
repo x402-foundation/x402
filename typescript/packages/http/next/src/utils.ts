@@ -8,22 +8,20 @@ import {
   RoutesConfig,
   FacilitatorResponseError,
   getFacilitatorResponseError as getCoreFacilitatorResponseError,
-  attachBackgroundInitHandler,
+  prepareHttpServer,
   PaymentCancellationDispatcher,
   CompletedSettlement,
   SETTLEMENT_OVERRIDES_HEADER,
   withPrivateCacheControl,
 } from "@x402/core/server";
+import type { PreparedHttpServer } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { NextAdapter } from "./adapter";
 
 /**
  * Result of createHttpServer
  */
-export interface HttpServerInstance {
-  httpServer: x402HTTPResourceServer;
-  init: () => Promise<void>;
-}
+export type HttpServerInstance = PreparedHttpServer;
 
 export const getFacilitatorResponseError = getCoreFacilitatorResponseError;
 
@@ -69,59 +67,6 @@ function decodedRoutePath(path: string): string {
 }
 
 /**
- * Prepares an existing x402HTTPResourceServer with initialization logic
- *
- * @param httpServer - Pre-configured x402HTTPResourceServer instance
- * @param paywall - Optional paywall provider for custom payment UI
- * @param syncFacilitatorOnStart - Whether to sync with the facilitator on start (defaults to true)
- * @returns The HTTP server instance with initialization function
- */
-export function prepareHttpServer(
-  httpServer: x402HTTPResourceServer,
-  paywall?: PaywallProvider,
-  syncFacilitatorOnStart: boolean = true,
-): HttpServerInstance {
-  // Register custom paywall provider if provided
-  if (paywall) {
-    httpServer.registerPaywallProvider(paywall);
-  }
-
-  // Store initialization promise (not the result)
-  // httpServer.initialize() fetches facilitator support and validates routes
-  let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
-  // rejections; the original promise is still awaited on the first protected
-  // request. Fatal capability / route mismatches exit the process so a
-  // misconfigured server does not stay up until that request.
-  attachBackgroundInitHandler(initPromise);
-  let isInitialized = false;
-
-  return {
-    httpServer,
-    /**
-     * Ensures facilitator initialization succeeds once, while allowing retries after failures.
-     */
-    async init() {
-      if (!syncFacilitatorOnStart || isInitialized) {
-        return;
-      }
-
-      if (!initPromise) {
-        initPromise = httpServer.initialize();
-      }
-
-      try {
-        await initPromise;
-        isInitialized = true;
-      } catch (error) {
-        initPromise = null;
-        throw error;
-      }
-    },
-  };
-}
-
-/**
  * Creates and configures the x402 HTTP server with initialization logic
  *
  * @param routes - The route configuration for the server
@@ -136,7 +81,6 @@ export function createHttpServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): HttpServerInstance {
-  // Create the x402 HTTP server instance with the resource server
   const httpServer = new x402HTTPResourceServer(server, routes);
 
   return prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
@@ -177,7 +121,17 @@ export function handlePaymentError(response: HTTPResponseInstructions): NextResp
       headers,
     });
   }
-  headers.set("Content-Type", "application/json");
+  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+  if (typeof response.body === "string" && !isJson) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers,
+    });
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return new NextResponse(JSON.stringify(response.body || {}), {
     status: response.status,
     headers,
@@ -257,7 +211,7 @@ export async function handleSettlement(
     }
 
     // Settlement succeeded - add headers and return the buffered response.
-    const settled = new NextResponse(responseBody, {
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
       status: response.status,
       headers: response.headers,
     });

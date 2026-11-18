@@ -14,6 +14,8 @@ import {
   buildHealthResponse,
   buildCloseResponse,
   formatStartupBanner,
+  runAuthCaptureE2eCapture,
+  AUTH_CAPTURE_E2E_CAPTURE_PATH,
 } from "../../index.ts";
 
 async function main(): Promise<void> {
@@ -23,7 +25,7 @@ async function main(): Promise<void> {
   const app = new Hono();
   const facilitatorClients = createFacilitatorClients(facilitatorUrl);
   const x402Server = new x402ResourceServer(facilitatorClients);
-  await configureResourceServer(x402Server, cfg);
+  await configureResourceServer(x402Server, cfg, facilitatorClients[0]);
 
   console.log(
     `Facilitator account: ${facilitatorUrl ? facilitatorUrl.substring(0, 10) + "..." : "not configured"}`,
@@ -40,6 +42,12 @@ async function main(): Promise<void> {
   });
 
   app.use("*", paymentMiddleware(buildPaymentRoutes(cfg), x402Server));
+
+  app.post(AUTH_CAPTURE_E2E_CAPTURE_PATH, async c => {
+    const body = (await c.req.json().catch(() => ({}))) as { path?: string };
+    const result = await runAuthCaptureE2eCapture(body.path);
+    return c.json(result.body, result.status as 200 | 404 | 500 | 501);
+  });
 
   for (const route of E2E_GET_ROUTES) {
     app.get(route.path, c => {

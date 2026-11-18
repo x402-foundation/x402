@@ -39,12 +39,14 @@ func (e *BuilderCodeFacilitatorExtension) Key() string {
 // `s` is read for either version and `w` is the facilitator's own code when
 // configured. The facilitator's own `s` entry (ServiceCode) is appended after
 // the echoed client/server codes, within its own MAX_FACILITATOR_SERVICE_CODES
-// reservation. Returns an error when ServiceCode is set but is not a valid
-// builder code. Returns nil when no attribution is present.
+// reservation. `m` is the settlement metadata supplied by the settling mechanism
+// in ctx.Metadata and is never read from the client payload. Returns an error
+// when ServiceCode is set but is not a valid builder code. Returns nil when no
+// attribution or metadata is present.
 func (e *BuilderCodeFacilitatorExtension) BuildDataSuffix(ctx evm.DataSuffixContext) ([]byte, error) {
 	clientExt := extractClientExtension(ctx.Payload.Extensions)
 
-	data := BuilderCodeExtensionData{}
+	data := BuilderCodeSuffixData{M: ctx.Metadata}
 	if validateCode(e.BuilderCode) {
 		data.W = e.BuilderCode
 	}
@@ -63,7 +65,7 @@ func (e *BuilderCodeFacilitatorExtension) BuildDataSuffix(ctx evm.DataSuffixCont
 		}
 	}
 
-	if data.A == "" && data.W == "" && len(data.S) == 0 {
+	if data.A == "" && data.W == "" && len(data.S) == 0 && len(data.M) == 0 {
 		return nil, nil
 	}
 

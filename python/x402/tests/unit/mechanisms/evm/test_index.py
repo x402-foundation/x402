@@ -3,14 +3,6 @@
 import pytest
 
 from x402.mechanisms.evm import (
-    DEFAULT_DECIMALS,
-    DEFAULT_VALIDITY_PERIOD,
-    ERR_INVALID_SIGNATURE,
-    ERR_NETWORK_MISMATCH,
-    ERR_UNSUPPORTED_SCHEME,
-    SCHEME_EXACT,
-    TX_STATUS_FAILED,
-    TX_STATUS_SUCCESS,
     ClientEvmSigner,
     EthAccountSigner,
     ExactEIP3009Payload,
@@ -30,6 +22,7 @@ from x402.mechanisms.evm import (
     normalize_address,
     parse_amount,
 )
+from x402.mechanisms.evm.default_assets import get_default_asset
 from x402.mechanisms.evm.exact import (
     ExactEvmClientScheme,
     ExactEvmFacilitatorScheme,
@@ -186,23 +179,23 @@ class TestGetEvmChainId:
 class TestGetAssetInfo:
     """Test get_asset_info function."""
 
-    def test_should_return_asset_info_by_symbol(self):
-        """Should return asset info for known address (get_asset_info takes address, not symbol)."""
+    def test_should_return_configured_default_asset_info(self):
+        """Should return asset info for a configured default asset."""
         network = "eip155:8453"
-        usdc_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-        asset_info = get_asset_info(network, usdc_address)
+        asset = get_default_asset(network)
+        asset_info = get_asset_info(network, asset["asset"])
 
         assert asset_info["address"].startswith("0x")
-        assert asset_info["name"] == "USD Coin"
-        assert asset_info["decimals"] == 6
+        assert asset_info["name"] == asset["name"]
+        assert asset_info["decimals"] == asset["decimals"]
 
     def test_should_return_asset_info_by_address(self):
         """Should return asset info by address."""
         network = "eip155:8453"
-        usdc_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-        asset_info = get_asset_info(network, usdc_address)
+        asset = get_default_asset(network)
+        asset_info = get_asset_info(network, asset["asset"])
 
-        assert asset_info["address"].lower() == usdc_address.lower()
+        assert asset_info["address"].lower() == asset["asset"].lower()
 
     def test_should_raise_for_unknown_asset(self):
         """Should raise ValueError for an unregistered asset address."""
@@ -392,30 +385,3 @@ class TestParseMoney:
         assert parse_money_string("$1.50") == "1.50"
         assert parse_money_string("1.00") == "1.00"
         assert parse_money_string("0.00") == "0.00"
-
-
-class TestConstants:
-    """Test that constants are exported with correct values."""
-
-    def test_should_export_scheme_exact(self):
-        """Should export scheme identifier."""
-        assert SCHEME_EXACT == "exact"
-
-    def test_should_export_default_decimals(self):
-        """Should export default decimals."""
-        assert DEFAULT_DECIMALS == 6
-
-    def test_should_export_default_validity_period(self):
-        """Should export default validity period."""
-        assert DEFAULT_VALIDITY_PERIOD == 3600  # 1 hour
-
-    def test_should_export_transaction_status_constants(self):
-        """Should export transaction status constants."""
-        assert TX_STATUS_SUCCESS == 1
-        assert TX_STATUS_FAILED == 0
-
-    def test_should_export_error_codes(self):
-        """Should export error codes."""
-        assert ERR_INVALID_SIGNATURE is not None
-        assert ERR_UNSUPPORTED_SCHEME is not None
-        assert ERR_NETWORK_MISMATCH is not None

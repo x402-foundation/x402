@@ -1,9 +1,17 @@
-import { address, generateKeyPairSigner, type Signature } from "@solana/kit";
+import {
+  address,
+  generateKeyPairSigner,
+  getBase64Codec,
+  getCompiledTransactionMessageDecoder,
+  getTransactionDecoder,
+  type Signature,
+} from "@solana/kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import type { ChannelSplit } from "../../src/payment-channels/open";
+import { buildVersion0WireTransaction } from "./helpers/signedTransaction";
 
 const channelAccountMocks = vi.hoisted(() => ({
   fetchMaybeChannel: vi.fn(),
@@ -36,7 +44,12 @@ import {
   type ChannelRpc,
   type ExpectedOpenChannel,
 } from "../../src/payment-channels/facilitator";
-import { MEMO_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2 } from "../../src/constants";
+import {
+  COMPUTE_BUDGET_PROGRAM_ADDRESS,
+  MEMO_PROGRAM_ADDRESS,
+  SOLANA_DEVNET_CAIP2,
+} from "../../src/constants";
+import { peekWireTransactionVersion } from "../../src/utils";
 
 const CHANNEL_ID = USDC_MAINNET_ADDRESS;
 const rpc = {} as ChannelRpc;
@@ -235,9 +248,15 @@ describe("payment-channel transaction submission", () => {
       confirmTransaction: vi.fn().mockImplementation(async () => events.push("confirmed")),
     };
     await expect(
-      broadcastOpen(facilitator, address(PAYEE), SOLANA_DEVNET_CAIP2, "open", async value => {
-        events.push(`broadcast:${value}`);
-      }),
+      broadcastOpen(
+        facilitator,
+        address(PAYEE),
+        SOLANA_DEVNET_CAIP2,
+        buildVersion0WireTransaction(address(PAYEE)),
+        async value => {
+          events.push(`broadcast:${value}`);
+        },
+      ),
     ).resolves.toBe(signature);
     expect(events).toEqual([`broadcast:${signature}`, "confirmed"]);
   });
@@ -249,7 +268,12 @@ describe("payment-channel transaction submission", () => {
       confirmTransaction: vi.fn().mockRejectedValue(new Error("timeout")),
     };
     await expect(
-      broadcastOpen(facilitator, address(PAYEE), SOLANA_DEVNET_CAIP2, "open"),
+      broadcastOpen(
+        facilitator,
+        address(PAYEE),
+        SOLANA_DEVNET_CAIP2,
+        buildVersion0WireTransaction(address(PAYEE)),
+      ),
     ).rejects.toMatchObject({ name: "ChannelBroadcastConfirmationError", signature });
     expect(new ChannelBroadcastConfirmationError(signature, "timeout").cause).toBe("timeout");
   });
@@ -304,6 +328,66 @@ describe("payment-channel transaction submission", () => {
     expect(signer.sendTransaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["omitted is v0", undefined, 0, true],
+    ["explicit v0", 0, 0, true],
+    ["explicit v1", 1, 1, false],
+  ] as const)(
+    "builds the configured facilitator transaction version: %s",
+    async (_name, facilitatorTransactionVersion, wantVersion, wantBudget) => {
+      const feePayer = await generateKeyPairSigner();
+      const signer = {
+        getLatestBlockhash: vi.fn().mockResolvedValue({
+          blockhash: USDC_MAINNET_ADDRESS,
+          lastValidBlockHeight: 1n,
+        }),
+        simulateTransaction: vi.fn().mockResolvedValue(undefined),
+        sendTransaction: vi.fn().mockResolvedValue(signature),
+        confirmTransaction: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await submitChannelTransactionWithSigner(
+        feePayer,
+        signer,
+        SOLANA_DEVNET_CAIP2,
+        [instruction],
+        { facilitatorTransactionVersion },
+      );
+
+      expect(signer.sendTransaction).toHaveBeenCalledOnce();
+      const wire = signer.sendTransaction.mock.calls[0]![0] as string;
+      expect(peekWireTransactionVersion(wire)).toBe(wantVersion);
+
+      const { staticAccounts } = getCompiledTransactionMessageDecoder().decode(
+        getTransactionDecoder().decode(getBase64Codec().encode(wire)).messageBytes,
+      );
+      expect(
+        staticAccounts.includes(address(COMPUTE_BUDGET_PROGRAM_ADDRESS)),
+        "v0 carries ComputeBudget instructions; v1 carries the budget inline",
+      ).toBe(wantBudget);
+    },
+  );
+
+  it("rejects an unsupported facilitator transaction version", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const signer = {
+      getLatestBlockhash: vi.fn().mockResolvedValue({
+        blockhash: USDC_MAINNET_ADDRESS,
+        lastValidBlockHeight: 1n,
+      }),
+      simulateTransaction: vi.fn().mockResolvedValue(undefined),
+      sendTransaction: vi.fn().mockResolvedValue(signature),
+      confirmTransaction: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(
+      submitChannelTransactionWithSigner(feePayer, signer, SOLANA_DEVNET_CAIP2, [instruction], {
+        facilitatorTransactionVersion: 2 as never,
+      }),
+    ).rejects.toThrow("unsupported facilitator transaction version 2");
+    expect(signer.sendTransaction).not.toHaveBeenCalled();
+  });
+
   it("turns unknown confirmation failures into a durable timeout", async () => {
     const feePayer = await generateKeyPairSigner();
     const signer = {
@@ -322,13 +406,15 @@ describe("payment-channel transaction submission", () => {
 
   it("submits through RPC and polls confirmed status", async () => {
     const feePayer = await generateKeyPairSigner();
+    const send = vi.fn().mockResolvedValue(signature);
+    const sendTransaction = vi.fn(() => ({ send }));
     const rpc = {
       getLatestBlockhash: vi.fn(() => ({
         send: vi.fn().mockResolvedValue({
           value: { blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 1n },
         }),
       })),
-      sendTransaction: vi.fn(() => ({ send: vi.fn().mockResolvedValue(signature) })),
+      sendTransaction,
       getSignatureStatuses: vi.fn(() => ({
         send: vi.fn().mockResolvedValue({
           value: [{ confirmationStatus: "confirmed", err: null }],
@@ -336,6 +422,9 @@ describe("payment-channel transaction submission", () => {
       })),
     } as never;
     await expect(submitSettle(feePayer, rpc, [instruction])).resolves.toBe(signature);
+    const wire = sendTransaction.mock.calls[0]![0] as string;
+    const transaction = getTransactionDecoder().decode(getBase64Codec().encode(wire));
+    expect(getCompiledTransactionMessageDecoder().decode(transaction.messageBytes).version).toBe(0);
   });
 
   it("reports onchain errors and confirmation timeouts", async () => {

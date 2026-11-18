@@ -1515,6 +1515,56 @@ func TestX402MCPClient_CallToolWithPayment_RetriesOnceWhenHookSignalsRecovered(t
 	}
 }
 
+func TestX402MCPClient_CallToolWithPayment_RecoveryTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		acceptSeconds int
+		cap           time.Duration
+		parentTimeout time.Duration
+		want          time.Duration
+	}{
+		{"default cap", 3600, 0, 0, 10 * time.Minute},
+		{"configured cap", 3600, 90 * time.Second, 0, 90 * time.Second},
+		{"missing accept timeout", 0, 90 * time.Second, 0, 90 * time.Second},
+		{"short accept timeout", 30, 90 * time.Second, 0, 30 * time.Second},
+		{"short parent deadline", 3600, 90 * time.Second, 15 * time.Second, 15 * time.Second},
+		{"parent deadline overrides cap", 3600, 90 * time.Second, 120 * time.Second, 120 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := &hookSchemeMCPClient{scheme: "test-scheme", signalRecover: true}
+			paymentClient := x402.Newx402Client().DisableSpendControls()
+			paymentClient.Register("eip155:1", scheme)
+
+			requirement := testPaymentRequirements()
+			requirement.MaxTimeoutSeconds = tc.acceptSeconds
+			caller := &mockMCPCaller{callToolResults: []MCPToolResult{
+				paymentRequiredMCPToolResult(t, types.PaymentRequired{
+					X402Version: 2, Accepts: []types.PaymentRequirements{requirement},
+				}),
+				{Content: []MCPContentItem{{Type: "text", Text: "recovered"}}},
+			}}
+			client := NewX402MCPClient(caller, paymentClient, Options{MaxRequestTimeout: tc.cap})
+			ctx := context.Background()
+			if tc.parentTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.parentTimeout)
+				defer cancel()
+			}
+			_, err := client.CallToolWithPayment(ctx, "paid_tool", nil, types.PaymentPayload{
+				X402Version: 2, Accepted: requirement, Payload: map[string]interface{}{"voucher": 0},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if caller.callCount != 2 {
+				t.Fatalf("expected 2 paid tool calls, got %d", caller.callCount)
+			}
+			assertApproxTimeout(t, caller.timeouts[0], tc.want)
+			assertApproxTimeout(t, caller.timeouts[1], tc.want)
+		})
+	}
+}
+
 func TestX402MCPClient_CallToolWithPayment_NoRecoveryWhenHookDeclines(t *testing.T) {
 	scheme := &hookSchemeMCPClient{scheme: "test-scheme", signalRecover: false}
 	paymentClient := x402.Newx402Client().DisableSpendControls()

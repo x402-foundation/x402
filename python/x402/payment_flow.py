@@ -118,10 +118,11 @@ def resolve_failure_path_settlement(
 ) -> SettleResponse | None:
     """Resolve the settlement receipt to surface when a resource handler fails.
 
-    Prefers cancel/refund settle when present; on failed cancel, attaches deposit
-    recovery facts in ``extra``. Otherwise echoes the before-handler deposit receipt.
+    A cancel settle is included only when a before-handler settlement exists; a
+    failed cancel attaches deposit recovery facts in ``extra``. Otherwise echoes
+    the before-handler deposit receipt, or returns None when there is none.
     """
-    if cancel_settlement is not None:
+    if cancel_settlement is not None and before_handler_settlement is not None:
         if cancel_settlement.success:
             return cancel_settlement
         return _build_failed_cancel_receipt(

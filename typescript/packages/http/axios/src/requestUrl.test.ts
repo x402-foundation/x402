@@ -84,3 +84,105 @@ describe("payment-required request URL", () => {
     expect(hookUrl).toBe(`${origin}${response.data.path}`);
   });
 });
+
+describe("paid retry Cookie serialization", () => {
+  let origin: string;
+  const seen: { cookie?: string; trace?: string }[] = [];
+  const server = createServer((req, res) => {
+    seen.push({
+      cookie: req.headers.cookie,
+      trace: req.headers["x-trace"] as string | undefined,
+    });
+    if (!req.headers["payment-signature"]) {
+      const challenge = {
+        x402Version: 2,
+        resource: { url: `${origin}/paid` },
+        accepts: [
+          {
+            scheme: "fixture",
+            network: "fixture:1",
+            amount: "1",
+            asset: "fixture",
+            payTo: "fixture",
+            maxTimeoutSeconds: 60,
+            extra: {},
+          },
+        ],
+      };
+      res.writeHead(402, {
+        "content-type": "application/json",
+        "payment-required": Buffer.from(JSON.stringify(challenge)).toString("base64"),
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  });
+
+  beforeAll(async () => {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close(error => (error ? reject(error) : resolve())),
+    );
+  });
+
+  /**
+   * Builds a fixture client that accepts the loopback payment without a real scheme.
+   *
+   * @returns Client registered for the fixture network
+   */
+  function client() {
+    return new x402Client().setSpendControls(false).register("fixture:1", {
+      scheme: "fixture",
+      createPaymentPayload: async () => ({ x402Version: 2, payload: { fixture: true } }),
+    });
+  }
+
+  it("joins a Cookie array with semicolons on the paid retry", async () => {
+    const api = wrapAxiosWithPayment(axios.create({ baseURL: origin, proxy: false }), client());
+    const response = await api.get("/paid", {
+      headers: { Cookie: ["session=demo", "locale=zh"] },
+    });
+
+    expect(response.status).toBe(200);
+    expect(seen.map(hit => hit.cookie)).toEqual([
+      "session=demo; locale=zh",
+      "session=demo; locale=zh",
+    ]);
+  });
+
+  it("keeps a string Cookie and X-Trace on both HTTP requests", async () => {
+    seen.length = 0;
+    const api = wrapAxiosWithPayment(axios.create({ baseURL: origin, proxy: false }), client());
+    const response = await api.get("/paid", {
+      headers: { Cookie: "session=string", "X-Trace": "keep-me" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual([
+      { cookie: "session=string", trace: "keep-me" },
+      { cookie: "session=string", trace: "keep-me" },
+    ]);
+  });
+
+  it("keeps Cookie: [] from restoring an instance default on the paid retry", async () => {
+    seen.length = 0;
+    const api = wrapAxiosWithPayment(
+      axios.create({
+        baseURL: origin,
+        proxy: false,
+        headers: { Cookie: "default=demo" },
+      }),
+      client(),
+    );
+    const response = await api.get("/paid", { headers: { Cookie: [] } });
+
+    expect(response.status).toBe(200);
+    expect(seen.map(hit => hit.cookie)).toEqual([undefined, undefined]);
+  });
+});

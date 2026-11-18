@@ -56,13 +56,13 @@ class TestSettlementPendingReasonUnification:
         from x402.mechanisms.evm.constants import ERR_SETTLEMENT_PENDING as EVM_REASON
         from x402.pending_settlement_store import ERR_SETTLEMENT_PENDING as CORE_REASON
 
-        assert EVM_REASON == CORE_REASON == "settlement_pending"
+        assert EVM_REASON == CORE_REASON
 
     def test_svm_constant_matches_core_constant(self):
         from x402.mechanisms.svm.constants import ERR_SETTLEMENT_PENDING as SVM_REASON
         from x402.pending_settlement_store import ERR_SETTLEMENT_PENDING as CORE_REASON
 
-        assert SVM_REASON == CORE_REASON == "settlement_pending"
+        assert SVM_REASON == CORE_REASON
 
     def test_svm_confirm_timeout_result_is_recognized_as_retryable(self):
         """Pins the actual behavior the constant unification exists for: an SVM

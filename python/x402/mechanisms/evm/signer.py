@@ -1,5 +1,6 @@
 """EVM signer protocol definitions."""
 
+import logging
 from typing import Any, Protocol, runtime_checkable
 
 from .types import TransactionReceipt, TypedDataDomain, TypedDataField
@@ -234,3 +235,24 @@ class ClientEvmSignerWithSignTransaction(Protocol):
     def get_transaction_count(self, address: str) -> int:
         """Get the pending nonce for an address."""
         ...
+
+
+_logger = logging.getLogger(__name__)
+_warned_sponsoring_networks: set[str] = set()
+
+
+def warn_cannot_read_for_sponsoring(network: str) -> None:
+    if network in _warned_sponsoring_networks:
+        return
+    _warned_sponsoring_networks.add(network)
+    _logger.warning(
+        "[x402] gas sponsoring is advertised for %s but the client cannot read the chain, "
+        "so the sponsored permit/approval will not be signed and a wallet with no Permit2 "
+        "allowance is rejected with permit2_allowance_required. Use a signer with "
+        "read_contract, for example EthAccountSignerWithRPC(account, rpc_url=...).",
+        network,
+    )
+
+
+def _reset_sponsoring_warnings() -> None:
+    _warned_sponsoring_networks.clear()

@@ -25,7 +25,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
    * Creates a new ExactStellarScheme instance.
    *
    * @param signer - The Stellar signer for client operations
-   * @param rpcConfig - Optional configuration with custom RPC URL
+   * @param rpcConfig - Optional configuration with custom RPC and Horizon URLs
    * @returns ExactStellarScheme instance
    */
   constructor(
@@ -63,7 +63,10 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     const rpcServer = getRpcClient(network, this.rpcConfig);
     const latestLedger = await rpcServer.getLatestLedger();
     const currentLedger = latestLedger.sequence;
-    const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(network);
+    const estimatedLedgerSeconds = await getEstimatedLedgerCloseTimeSeconds(
+      network,
+      this.rpcConfig,
+    );
     const maxLedger = currentLedger + Math.ceil(maxTimeoutSeconds / estimatedLedgerSeconds);
 
     const tx = await contract.AssembledTransaction.build({
@@ -79,7 +82,12 @@ export class ExactStellarScheme implements SchemeNetworkClient {
       rpcUrl,
       parseResultXdr: result => result,
     });
-    handleSimulationResult(tx.simulation);
+    const simulationContext = {
+      payer: sourcePublicKey,
+      payee: payTo,
+      asset,
+    };
+    handleSimulationResult(tx.simulation, simulationContext);
 
     let missingSigners = tx.needsNonInvokerSigningBy();
     if (!missingSigners.includes(sourcePublicKey) || missingSigners.length > 1) {
@@ -94,7 +102,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     });
 
     await tx.simulate();
-    handleSimulationResult(tx.simulation);
+    handleSimulationResult(tx.simulation, simulationContext);
 
     missingSigners = tx.needsNonInvokerSigningBy();
     if (missingSigners.length > 0) {
@@ -104,7 +112,7 @@ export class ExactStellarScheme implements SchemeNetworkClient {
     return {
       x402Version,
       payload: {
-        transaction: tx.built!.toXDR(),
+        transaction: tx.built!.toXdr(),
       },
     };
   }

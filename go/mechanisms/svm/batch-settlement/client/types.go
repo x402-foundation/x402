@@ -33,6 +33,11 @@ type BatchSvmClientConfig struct {
 	// Nil enables the scan.
 	DiscoverChannels           *bool
 	ServerSignedChannelsPolicy *BatchServerSignedChannelsPolicy
+	// TransactionVersions narrows the transaction message versions this client
+	// builds for open, top_up and request_close (entries 0 and/or 1), for a
+	// signer that cannot sign version 1. Nil means
+	// svm.ClientSupportedTransactionVersions.
+	TransactionVersions []int
 }
 
 // PendingPayment is a payload the client built and has not yet heard back about.

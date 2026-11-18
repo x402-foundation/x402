@@ -84,8 +84,10 @@
       "scheme": "exact",
       "assetTransferMethod": "default",
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",
@@ -101,8 +103,10 @@
       "assetTransferMethod": "masumi",
       "maxTimeoutSeconds": 600,
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",
@@ -117,8 +121,10 @@
       "scheme": "exact",
       "assetTransferMethod": "script",
       "sdks": [
-        "typescript"
+        "typescript",
+        "python"
       ],
+      "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
       "price": {
         "amount": "5000000",
         "amountEnv": "SERVER_CARDANO_AMOUNT",

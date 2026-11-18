@@ -20,7 +20,20 @@ type PaymentInfoStruct struct {
 	Salt                string `json:"salt"`
 }
 
-// AuthCaptureExtra is the wire extra after facilitator enhancement (absolute deadlines).
+// AuthorizerMode says who produces authorizerSignature for a published receiverAuthorizer:
+//   - AuthorizerModeSelf: the server's receiver-authorizer signer, which signs locally.
+//   - AuthorizerModeDelegated: a non-zero authorizer the server holds no key for; payloads go
+//     out unsigned and the facilitator signs after authenticating the request out of band.
+//   - AuthorizerModeCollectOnly: the zero address; the facilitator relays no lifecycle.
+type AuthorizerMode string
+
+const (
+	AuthorizerModeSelf        AuthorizerMode = "self"
+	AuthorizerModeDelegated   AuthorizerMode = "delegated"
+	AuthorizerModeCollectOnly AuthorizerMode = "collect-only"
+)
+
+// AuthCaptureExtra is the parsed requirements.Extra (absolute deadlines).
 type AuthCaptureExtra struct {
 	CaptureAuthorizer   string
 	CaptureDeadline     uint64
@@ -32,6 +45,7 @@ type AuthCaptureExtra struct {
 	Version             string
 	PaymentFlow         string
 	CaptureMode         string
+	AutoCapture         bool
 	ReceiverAuthorizer  string
 	Policy              string
 	OperatorType        string
@@ -64,35 +78,8 @@ type Permit2Authorization struct {
 	Deadline  string                  `json:"deadline"`
 }
 
-// IsAuthCaptureExtra reports whether value has every spec-mandated AuthCaptureExtra field.
-func IsAuthCaptureExtra(value interface{}) bool {
-	m, ok := value.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	if !isNonEmptyString(m["captureAuthorizer"]) {
-		return false
-	}
-	if !isJSONNumber(m["captureDeadline"]) {
-		return false
-	}
-	if !isJSONNumber(m["refundDeadline"]) {
-		return false
-	}
-	if !isNonEmptyString(m["feeRecipient"]) {
-		return false
-	}
-	if !isJSONNumber(m["minFeeBps"]) {
-		return false
-	}
-	if !isJSONNumber(m["maxFeeBps"]) {
-		return false
-	}
-	if !isNonEmptyString(m["name"]) {
-		return false
-	}
-	return isNonEmptyString(m["version"])
-}
+// chargeFields are the completion fields a server adds to a collect payload for a charge.
+var chargeFields = []string{"amount", "feeBps", "feeAmount", "feeReceiver", "authorizerSignature"}
 
 func isNonEmptyString(value interface{}) bool {
 	s, ok := value.(string)
@@ -100,12 +87,8 @@ func isNonEmptyString(value interface{}) bool {
 }
 
 func isJSONNumber(value interface{}) bool {
-	switch value.(type) {
-	case float64, int, int64, uint64, uint16, int32, uint32:
-		return true
-	default:
-		return false
-	}
+	_, ok := JSONNumberToUint64(value)
+	return ok
 }
 
 func isHexString(value interface{}) bool {
@@ -128,139 +111,194 @@ func isHexString(value interface{}) bool {
 	return true
 }
 
-func collectSaltFields(v map[string]interface{}) (saltNonce string, ok bool) {
-	if !isHexString(v["salt"]) {
-		return "", false
-	}
-	if v["saltNonce"] == nil {
-		return "", true
-	}
-	if !isHexString(v["saltNonce"]) {
-		return "", false
-	}
-	return v["saltNonce"].(string), true
-}
-
-func readChargeCompletion(v map[string]interface{}) bool {
-	hasAny := false
-	for _, key := range []string{"amount", "feeBps", "feeAmount", "feeReceiver", "authorizerSignature"} {
+func hasChargeFields(v map[string]interface{}) bool {
+	for _, key := range chargeFields {
 		if _, ok := v[key]; ok {
-			hasAny = true
-			break
+			return true
 		}
 	}
-	if !hasAny {
+	return false
+}
+
+// hasFeeField reports which fee field a payload carries: feeBps (v1.0) or feeAmount (v1.1).
+func hasFeeField(v map[string]interface{}) (hasFeeBps, hasFeeAmount bool) {
+	_, hasFeeBps = JSONNumberToUint16(v["feeBps"])
+	_, hasFeeAmount = v["feeAmount"].(string)
+	return hasFeeBps, hasFeeAmount
+}
+
+// isOptionalString reports whether key is absent or a string.
+func isOptionalString(v map[string]interface{}, key string) bool {
+	value, present := v[key]
+	if !present {
 		return true
 	}
+	_, ok := value.(string)
+	return ok
+}
+
+// isCompleteCharge requires the amount, feeReceiver and exactly one fee field. The authorizer
+// signature is optional because a facilitator-delegated authorizer produces it at settle time.
+func isCompleteCharge(v map[string]interface{}) bool {
 	_, hasAmount := v["amount"].(string)
-	_, hasFeeBpsFloat := v["feeBps"].(float64)
-	_, hasFeeBpsInt := v["feeBps"].(int)
-	hasFeeBps := hasFeeBpsFloat || hasFeeBpsInt
-	_, hasFeeAmount := v["feeAmount"].(string)
 	_, hasFeeReceiver := v["feeReceiver"].(string)
-	_, hasAuthorizerSig := v["authorizerSignature"].(string)
-	if !hasAmount || !hasFeeReceiver || !hasAuthorizerSig {
+	hasFeeBps, hasFeeAmount := hasFeeField(v)
+	return hasAmount && hasFeeReceiver && isOptionalString(v, "authorizerSignature") && hasFeeBps != hasFeeAmount
+}
+
+// isCollectEnvelope checks the fields shared by both collect payload shapes.
+func isCollectEnvelope(v map[string]interface{}) bool {
+	if _, ok := v["signature"].(string); !ok {
 		return false
 	}
-	if hasFeeBps && !hasFeeAmount {
+	if !isHexString(v["salt"]) {
+		return false
+	}
+	saltNonce := v["saltNonce"]
+	if saltNonce != nil && !isHexString(saltNonce) {
+		return false
+	}
+	if !hasChargeFields(v) {
 		return true
 	}
-	if hasFeeAmount && !hasFeeBps {
-		return true
-	}
-	return false
+	return saltNonce != nil && isCompleteCharge(v)
 }
 
 // IsEip3009Payload reports whether value is an EIP-3009-shaped auth-capture collect payload.
 func IsEip3009Payload(value interface{}) bool {
 	v, ok := value.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	if v["type"] != nil {
+	if !ok || v["type"] != nil {
 		return false
 	}
 	auth, ok := v["authorization"].(map[string]interface{})
 	if !ok || auth == nil {
 		return false
 	}
-	if _, ok := v["signature"].(string); !ok {
-		return false
-	}
-	saltNonce, ok := collectSaltFields(v)
-	if !ok {
-		return false
-	}
-	hasAnyCharge := false
-	for _, key := range []string{"amount", "feeBps", "feeAmount", "feeReceiver", "authorizerSignature"} {
-		if _, ok := v[key]; ok {
-			hasAnyCharge = true
-			break
-		}
-	}
-	if hasAnyCharge {
-		if saltNonce == "" {
-			return false
-		}
-		return readChargeCompletion(v)
-	}
-	return true
+	return isCollectEnvelope(v)
 }
 
 // IsPermit2Payload reports whether value is a Permit2-shaped auth-capture collect payload.
 func IsPermit2Payload(value interface{}) bool {
 	v, ok := value.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	if v["type"] != nil {
-		return false
-	}
-	if _, ok := v["signature"].(string); !ok {
+	if !ok || v["type"] != nil {
 		return false
 	}
 	auth, ok := v["permit2Authorization"].(map[string]interface{})
 	if !ok || auth == nil {
 		return false
 	}
-	if _, ok := auth["from"].(string); !ok {
-		return false
-	}
-	if _, ok := auth["spender"].(string); !ok {
-		return false
-	}
-	if _, ok := auth["nonce"].(string); !ok {
-		return false
-	}
-	if _, ok := auth["deadline"].(string); !ok {
-		return false
+	for _, key := range []string{"from", "spender", "nonce", "deadline"} {
+		if _, ok := auth[key].(string); !ok {
+			return false
+		}
 	}
 	permitted, ok := auth["permitted"].(map[string]interface{})
 	if !ok || permitted == nil {
 		return false
 	}
-	if _, ok := permitted["token"].(string); !ok {
-		return false
+	for _, key := range []string{"token", "amount"} {
+		if _, ok := permitted[key].(string); !ok {
+			return false
+		}
 	}
-	if _, ok := permitted["amount"].(string); !ok {
-		return false
-	}
-	saltNonce, ok := collectSaltFields(v)
+	return isCollectEnvelope(v)
+}
+
+func isPaymentInfoStructMap(value interface{}) bool {
+	v, ok := value.(map[string]interface{})
 	if !ok {
 		return false
 	}
-	hasAnyCharge := false
-	for _, key := range []string{"amount", "feeBps", "feeAmount", "feeReceiver", "authorizerSignature"} {
-		if _, ok := v[key]; ok {
-			hasAnyCharge = true
-			break
-		}
-	}
-	if hasAnyCharge {
-		if saltNonce == "" {
+	for _, key := range []string{"operator", "payer", "receiver", "token", "feeReceiver", "maxAmount"} {
+		if !isNonEmptyString(v[key]) {
 			return false
 		}
-		return readChargeCompletion(v)
+	}
+	if !isHexString(v["salt"]) {
+		return false
+	}
+	for _, key := range []string{"preApprovalExpiry", "authorizationExpiry", "refundExpiry", "minFeeBps", "maxFeeBps"} {
+		if !isJSONNumber(v[key]) {
+			return false
+		}
 	}
 	return true
+}
+
+// IsLifecyclePayload reports whether value names a supported lifecycle operation
+// ("capture", "void" or "refund"). Field-level validation is in the per-type guards.
+func IsLifecyclePayload(value interface{}) bool {
+	v, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	t, ok := v["type"].(string)
+	return ok && (t == "capture" || t == "void" || t == "refund")
+}
+
+// IsCapturePayload reports whether value is a capture lifecycle payload. The signatures are
+// optional so a facilitator-delegated authorizer can sign them at settle time.
+func IsCapturePayload(value interface{}) bool {
+	v, ok := value.(map[string]interface{})
+	if !ok || !IsLifecyclePayload(value) || v["type"] != "capture" {
+		return false
+	}
+	hasFeeBps, hasFeeAmount := hasFeeField(v)
+	if hasFeeBps == hasFeeAmount {
+		return false
+	}
+	if !isPaymentInfoStructMap(v["paymentInfo"]) || !isHexString(v["saltNonce"]) {
+		return false
+	}
+	for _, key := range []string{"amount", "feeReceiver", "expectedCapturableAmount", "expectedRefundableAmount"} {
+		if !isNonEmptyString(v[key]) {
+			return false
+		}
+	}
+	return isOptionalString(v, "authorizerSignature") &&
+		isOptionalString(v, "voidAuthorizerSignature") &&
+		isDelegatedCaptureShape(v)
+}
+
+// isDelegatedCaptureShape applies the cross-field rules for a capture whose signatures may be
+// delegated: a void signature needs the capture signature, and voidRemainder is the unsigned
+// stand-in for the void signature.
+func isDelegatedCaptureShape(v map[string]interface{}) bool {
+	_, hasAuthorizerSig := v["authorizerSignature"]
+	_, hasVoidSig := v["voidAuthorizerSignature"]
+	if voidRemainder, present := v["voidRemainder"]; present {
+		return voidRemainder == true && !hasAuthorizerSig && !hasVoidSig
+	}
+	return hasAuthorizerSig || !hasVoidSig
+}
+
+// IsVoidPayload reports whether value is a void lifecycle payload.
+func IsVoidPayload(value interface{}) bool {
+	v, ok := value.(map[string]interface{})
+	if !ok || !IsLifecyclePayload(value) || v["type"] != "void" {
+		return false
+	}
+	_, hasVoidRemainder := v["voidRemainder"]
+	return isPaymentInfoStructMap(v["paymentInfo"]) &&
+		isHexString(v["saltNonce"]) &&
+		isOptionalString(v, "authorizerSignature") &&
+		!hasVoidRemainder
+}
+
+// IsRefundPayload reports whether value is a refund lifecycle payload.
+func IsRefundPayload(value interface{}) bool {
+	v, ok := value.(map[string]interface{})
+	if !ok || !IsLifecyclePayload(value) || v["type"] != "refund" {
+		return false
+	}
+	if !isPaymentInfoStructMap(v["paymentInfo"]) || !isHexString(v["saltNonce"]) {
+		return false
+	}
+	for _, key := range []string{"amount", "expectedCapturableAmount", "expectedRefundableAmount"} {
+		if !isNonEmptyString(v[key]) {
+			return false
+		}
+	}
+	_, hasVoidRemainder := v["voidRemainder"]
+	return isOptionalString(v, "authorizerSignature") && !hasVoidRemainder
 }

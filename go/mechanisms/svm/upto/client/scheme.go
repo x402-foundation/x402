@@ -111,19 +111,27 @@ func (c *UptoSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
+	// Build the highest message version shared with extra.transactionVersions;
+	// refuse up front when the facilitator advertises none this client builds.
+	transactionVersion, err := svm.ResolveTransactionVersionFor(requirements.Extra, c.config.ClientTransactionVersions())
+	if err != nil {
+		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildOpen+": %w", err)
+	}
+
 	open, err := paymentchannels.BuildOpenTransaction(paymentchannels.BuildOpenArgs{
-		Payer:            c.signer.Address(),
-		Payee:            feePayer,
-		Mint:             mint,
-		AuthorizedSigner: receiverAuthorizer,
-		FeePayer:         feePayer,
-		TokenProgram:     tokenProgram,
-		Deposit:          maxAmount,
-		Blockhash:        blockhash,
-		OpenSlot:         openSlot,
-		GracePeriod:      channelConfig.WithdrawDelay,
-		Recipients:       channelConfig.Splits,
-		Memo:             paymentchannels.ResolveUptoSvmMemo(requirements.Extra),
+		Payer:              c.signer.Address(),
+		Payee:              feePayer,
+		Mint:               mint,
+		AuthorizedSigner:   receiverAuthorizer,
+		FeePayer:           feePayer,
+		TokenProgram:       tokenProgram,
+		Deposit:            maxAmount,
+		Blockhash:          blockhash,
+		OpenSlot:           openSlot,
+		GracePeriod:        channelConfig.WithdrawDelay,
+		Recipients:         channelConfig.Splits,
+		Memo:               paymentchannels.ResolveUptoSvmMemo(requirements.Extra),
+		TransactionVersion: transactionVersion,
 	})
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildOpen+": %w", err)

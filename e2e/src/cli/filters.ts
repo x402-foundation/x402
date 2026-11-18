@@ -8,7 +8,7 @@ import {
 } from '../types';
 
 /** x402 payment scheme for filtering. */
-export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentSchemeKind = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 
 /** CLI aliases for catalog SDK ids (`typescript` / `python` / `go`). */
 const SDK_ALIASES: Record<string, string> = {
@@ -66,6 +66,7 @@ export function getUniqueAssetTransferMethods(scenarios: TestScenario[]): AssetT
 export interface TestFilters {
   transports?: string[];
   facilitators?: string[];
+  includeExternalFacilitators?: boolean;
   servers?: string[];
   clients?: string[];
   extensions?: string[];       // For test output control (doesn't filter scenarios)
@@ -96,8 +97,18 @@ export function filterScenarios(
     }
 
     // Facilitator filter
+    // External proxies are opt-in: excluded by default unless
+    // --include-external-facilitators is set or the facilitator is
+    // explicitly named in --facilitators.
+    const facilitatorName = scenario.facilitator?.name;
+    if (scenario.facilitator?.isExternal) {
+      const explicitlyNamed =
+        !!facilitatorName && !!filters.facilitators?.includes(facilitatorName);
+      if (!filters.includeExternalFacilitators && !explicitlyNamed) {
+        return false;
+      }
+    }
     if (filters.facilitators && filters.facilitators.length > 0) {
-      const facilitatorName = scenario.facilitator?.name;
       if (!facilitatorName || !filters.facilitators.includes(facilitatorName)) {
         return false;
       }

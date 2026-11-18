@@ -25,9 +25,12 @@ const (
 	delegatedSig          = svm.USDCDevnetAddress
 )
 
-// tokenOwnerSigner returns mint/ATA accounts owned by the SPL token program.
+// tokenOwnerSigner returns mint/ATA accounts owned by the SPL token program:
+// a healthy, funded token account for the devnet-USDC settlement ATAs of
+// payer, the USDC-mainnet-address receiver and the devnet treasury.
 type tokenOwnerSigner struct {
 	*scriptedSigner
+	payer solana.PublicKey
 }
 
 func newTokenOwnerSigner(keys ...solana.PrivateKey) *tokenOwnerSigner {
@@ -44,9 +47,18 @@ func (s *tokenOwnerSigner) GetAccountInfo(
 	opts *rpc.GetAccountInfoOpts,
 ) (*rpc.GetAccountInfoResult, error) {
 	_, _ = s.scriptedSigner.GetAccountInfo(ctx, account, network, opts)
-	return &rpc.GetAccountInfoResult{
-		Value: &rpc.Account{Owner: solana.MustPublicKeyFromBase58(svm.TokenProgramAddress)},
-	}, nil
+	tokenProgram := solana.MustPublicKeyFromBase58(svm.TokenProgramAddress)
+	if ata := healthyTokenAccount(
+		account,
+		solana.MustPublicKeyFromBase58(svm.USDCDevnetAddress),
+		tokenProgram,
+		s.payer,
+		solana.MustPublicKeyFromBase58(svm.USDCMainnetAddress),
+		paymentchannels.ResolveTreasuryOwner(solana.PublicKey{}, network),
+	); ata != nil {
+		return &rpc.GetAccountInfoResult{Value: ata}, nil
+	}
+	return &rpc.GetAccountInfoResult{Value: &rpc.Account{Owner: tokenProgram}}, nil
 }
 
 // SignTransaction co-signs only the fee payer so open simulation can leave the payer slot empty.
@@ -151,6 +163,7 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 	delegatedScheme := func(identity string, delegate bool) *delegatedFixture {
 		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
 		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
 		cfg := &Config{ChannelStorage: storage}
 		if delegate {
 			cfg.DelegatedReceiverAuth = &DelegatedReceiverAuth{

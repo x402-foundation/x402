@@ -22,11 +22,10 @@ Clients that pay for x402-protected endpoints. See [`clients/`](./clients/).
 
 | Directory | Description |
 | --- | --- |
-| [`fetch/`](./clients/fetch/) | `@x402/fetch` wrapper around the native Fetch API |
-| [`axios/`](./clients/axios/) | `@x402/axios` payment interceptor |
+| [`fetch/`](./clients/fetch/) | `@x402/fetch` wrapper around the native Fetch API (exact, upto, auth-capture, and SVM schemes) |
+| [`axios/`](./clients/axios/) | `@x402/axios` payment interceptor (exact, upto, auth-capture, and SVM schemes) |
 | [`advanced/`](./clients/advanced/) | Builder-pattern registration, payment lifecycle hooks, network preferences |
 | [`custom/`](./clients/custom/) | Manual payment handling without `@x402/fetch` or `@x402/axios` |
-| [`auth-capture/`](./clients/auth-capture/) | Pays an auth-capture endpoint by signing an ERC-3009 `ReceiveWithAuthorization` |
 | [`batch-settlement/`](./clients/batch-settlement/) | Pays a sequence of requests over one payment channel using cumulative vouchers |
 | [`builder-code/`](./clients/builder-code/) | Verifies ERC-8021 builder-code attribution on the settlement transaction |
 | [`erc7702/`](./clients/erc7702/) | Paying from an ERC-7702 delegated EOA |
@@ -51,6 +50,7 @@ Servers that put a paywall in front of a resource. See [`servers/`](./servers/).
 | [`upfront/`](./servers/upfront/) | `exact` scheme with `upfront` payment flow (settle before handler) |
 | [`upto/`](./servers/upto/) | `upto` scheme: authorize a ceiling, settle only actual usage |
 | [`batch-settlement/`](./servers/batch-settlement/) | Off-chain vouchers claimed and settled in batches by a `ChannelManager` |
+| [`auth-capture/`](./servers/auth-capture/) | Refundable escrow: delegated sync/deferred and custom-operator collect |
 | [`bazaar/`](./servers/bazaar/) | Makes a paid API discoverable via the Bazaar extension |
 | [`builder-code/`](./servers/builder-code/) | ERC-8021 builder-code attribution on paid endpoints |
 | [`offer-receipt/`](./servers/offer-receipt/) | Signed offers (payment terms) and receipts (proof of delivery) |
@@ -77,6 +77,7 @@ Services that verify and settle payments on-chain.
 | [`advanced/`](./facilitator/advanced/) | All-networks support, Bazaar discovery, gas-sponsoring extensions, hooks |
 | [`upto/`](./facilitator/upto/) | `upto` scheme with SVM rent cleanup manager (EVM + SVM) |
 | [`batch-settlement/`](./facilitator/batch-settlement/) | Submits batch-settlement contract calls |
+| [`auth-capture/`](./facilitator/auth-capture/) | Submits auth-capture collect and lifecycle calls |
 | [`builder-code/`](./facilitator/builder-code/) | Appends ERC-8021 wallet attribution at settlement |
 
 ## Running Examples

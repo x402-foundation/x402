@@ -386,8 +386,9 @@ func TestValidateFacilitatorSupport(t *testing.T) {
 func TestGetAssetDecimals(t *testing.T) {
 	scheme, _ := newTestScheme(t)
 
-	assert.Equal(t, 6, scheme.GetAssetDecimals(svm.USDCDevnetAddress, testNetwork))
-	assert.Equal(t, 6, scheme.GetAssetDecimals("USDC", testNetwork), "symbols resolve like mint addresses")
+	usdc := svm.DefaultAssets[svm.SolanaDevnetCAIP2][0]
+	assert.Equal(t, usdc.Decimals, scheme.GetAssetDecimals(usdc.Asset, testNetwork))
+	assert.Equal(t, usdc.Decimals, scheme.GetAssetDecimals(usdc.Symbol, testNetwork), "symbols resolve like mint addresses")
 	assert.Equal(t, svm.DefaultDecimals, scheme.GetAssetDecimals(solana.SysVarRentPubkey.String(), testNetwork),
 		"unregistered mints fall back to the stablecoin default rather than guessing")
 }
@@ -412,6 +413,7 @@ func TestSettleOnCancelRefundsOnlyFailedHandlers(t *testing.T) {
 			result, err := scheme.SettleOnCancel(x402.VerifiedPaymentCanceledContext{
 				SettleContext: x402.SettleContext{Requirements: requirements},
 				Reason:        test.reason,
+				SettledPhases: []x402.SettlePhase{x402.SettlePhaseBeforeHandler},
 			})
 
 			require.NoError(t, err)
@@ -423,6 +425,33 @@ func TestSettleOnCancelRefundsOnlyFailedHandlers(t *testing.T) {
 			assert.Equal(t, "0", result.Amount, "a canceled request settles at zero so the deposit is refunded")
 			assert.Equal(t, requirements.PayTo, result.PayTo)
 			assert.Equal(t, requirements.Extra, result.Extra)
+		})
+	}
+}
+
+func TestSettleOnCancelSkipsCancelBeforeDeposit(t *testing.T) {
+	scheme, authorizer := newTestScheme(t)
+	requirements := newRequirements(authorizer.Address(), "10000")
+
+	tests := []struct {
+		name   string
+		phases []x402.SettlePhase
+	}{
+		{name: "nil phases", phases: nil},
+		{name: "empty phases", phases: []x402.SettlePhase{}},
+		{name: "after-handler only", phases: []x402.SettlePhase{x402.SettlePhaseAfterHandler}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := scheme.SettleOnCancel(x402.VerifiedPaymentCanceledContext{
+				SettleContext: x402.SettleContext{Requirements: requirements},
+				Reason:        x402.CancellationReasonHandlerFailed,
+				SettledPhases: test.phases,
+			})
+
+			require.NoError(t, err)
+			assert.Nil(t, result, "a cancel before the deposit settled no escrow, so there is nothing to refund")
 		})
 	}
 }

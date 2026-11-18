@@ -21,6 +21,7 @@ This package provides three main components for handling x402 payments on Stella
 - **Ledger-based expiration** (not timestamps) - default ~12 ledgers ≈ 60 seconds
 - **Auth entry signing** - client signs authorization entries only, facilitator rebuilds and submits transaction
 - **Mainnet requires custom RPC URL** (see [Stellar RPC Providers](https://developers.stellar.org/docs/data/apis/rpc/providers))
+- **Ledger close time is estimated from Horizon** - the public SDF Horizon by default; set `rpcConfig.horizonUrl` to use your own
 
 ## Package Exports
 

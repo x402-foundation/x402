@@ -61,7 +61,7 @@ facilitator.register_extension(
 )
 ```
 
-At settlement the extension reads `a` and `s` from the client payment payload, adds its configured `w`, appends its own `service_code` to `s` (deduped), CBOR-encodes the present fields, and returns the hex suffix for the settlement mechanism to append to calldata. It returns `None` when no attribution is present.
+At settlement the extension reads `a` and `s` from the client payment payload, adds its configured `w`, appends its own `service_code` to `s` (deduped), and encodes `m` when the settling mechanism supplies settlement metadata. Any `m` on the payload is ignored. It CBOR-encodes the present fields and returns the hex suffix for the settlement mechanism to append to calldata. It returns `None` when no attribution or metadata is present.
 
 Each side reserves its own slice of `s` (`MAX_CLIENT_SERVICE_CODES`, `MAX_SERVER_SERVICE_CODES`, `MAX_FACILITATOR_SERVICE_CODES`) so none can crowd out another; facilitators additionally truncate the echoed client+server codes to that combined budget as a defensive backstop against a malformed payload.
 
@@ -74,7 +74,7 @@ from x402.extensions.builder_code import parse_builder_code_suffix_from_calldata
 
 data = parse_builder_code_suffix_from_calldata(calldata)
 if data:
-    # BuilderCodeExtensionData(a="bc_my_service", w="bc_my_facilitator", s=["bc_my_client"])
+    # BuilderCodeSuffixData(a="bc_my_service", w="bc_my_facilitator", s=["bc_my_client"], m={"x402Example": 7})
     ...
 ```
 
@@ -94,7 +94,7 @@ Client extension that attaches the client's service code(s) as `s`. Constructor 
 
 ### `encode_builder_code_suffix(data)` / `parse_builder_code_suffix_from_calldata(calldata)`
 
-Low-level CBOR helpers to encode a `BuilderCodeExtensionData` into an ERC-8021 suffix and to parse the suffix back out of settlement calldata.
+Low-level CBOR helpers to encode a `BuilderCodeSuffixData` (or `BuilderCodeExtensionData`) into an ERC-8021 suffix and to parse the suffix back out of settlement calldata. Encoding fails when the CBOR exceeds 65,535 bytes.
 
 ### Constants and types
 
@@ -105,7 +105,7 @@ Low-level CBOR helpers to encode a `BuilderCodeExtensionData` into an ERC-8021 s
 - `MAX_FACILITATOR_SERVICE_CODES` — `1` (facilitator's dedicated `s` reservation)
 - `MAX_SERVICE_CODES` — `11` (on-chain cap for `s`; the sum of each side's reservation)
 - `ERC_8021_MARKER`, `SCHEMA_2_ID`, `BUILDER_CODE_SCHEMA`
-- Types: `BuilderCodeExtensionData`, `BuilderCodeFacilitatorConfig`
+- Types: `BuilderCodeExtensionData`, `BuilderCodeSuffixData`, `BuilderCodeFacilitatorConfig`, `DataSuffixContext`, `SettlementMetadata`
 
 ## Related resources
 

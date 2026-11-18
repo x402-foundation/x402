@@ -4,7 +4,7 @@ Example client demonstrating how to implement x402 payment handling manually usi
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - Valid EVM private key for making payments
 - A running x402 server (see [server examples](../../servers/))
 

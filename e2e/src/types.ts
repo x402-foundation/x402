@@ -2,7 +2,7 @@ import type { NetworkSet, ProtocolFamily } from './networks/networks';
 
 export type { ProtocolFamily } from './networks/networks';
 export type Transport = 'http' | 'mcp';
-export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement';
+export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
 export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
 /** Payment ordering on the accept. Omitted on an endpoint means `authorization`. */
 export type PaymentFlow = 'authorization' | 'upfront' | 'escrow';
@@ -48,12 +48,106 @@ export interface Permit2SchemeOptions {
 }
 
 /** Harness knobs for batch-settlement endpoints. */
-export type BatchSettlementSchemeOptions = Permit2SchemeOptions;
+export interface BatchSettlementSchemeOptions extends Permit2SchemeOptions {
+  /** True when the route uses facilitator-managed voucher custody. */
+  facilitatorManaged?: boolean;
+}
 
 export type SchemeOptions = Permit2SchemeOptions | BatchSettlementSchemeOptions;
 
 export function endpointUsesBatchSettlement(endpoint: TestEndpoint): boolean {
   return endpoint.scheme === 'batch-settlement';
+}
+
+function authCaptureExtra(endpoint: TestEndpoint): Record<string, string | number | boolean> | undefined {
+  return endpoint.schemeExtra;
+}
+
+export function endpointAuthCaptureCaptureMode(endpoint: TestEndpoint): string | undefined {
+  const mode = authCaptureExtra(endpoint)?.captureMode;
+  return mode != null ? String(mode) : undefined;
+}
+
+export function endpointAuthCaptureOperatorType(endpoint: TestEndpoint): string | undefined {
+  const operatorType = authCaptureExtra(endpoint)?.operatorType;
+  return operatorType != null ? String(operatorType) : undefined;
+}
+
+/** Deferred delegated escrow: harness must POST capture after the client authorize GET. */
+export function endpointAuthCaptureNeedsDeferredCapture(endpoint: TestEndpoint): boolean {
+  return (
+    endpointPaymentScheme(endpoint) === 'auth-capture' &&
+    endpointAuthCaptureCaptureMode(endpoint) === 'deferred' &&
+    endpointAuthCaptureOperatorType(endpoint) === 'delegated'
+  );
+}
+
+/**
+ * Auth-capture branch id for coverage / minimization (not the HTTP path).
+ * Used by `--min` to require every catalog branch at least once; EIP-3009 paths
+ * also share one endpoint slot per server (`auth-capture~eip3009`).
+ */
+export function endpointAuthCaptureCoverageBranch(endpoint: TestEndpoint): string | undefined {
+  if (endpointPaymentScheme(endpoint) !== 'auth-capture') {
+    return undefined;
+  }
+  const method = endpointAssetTransferMethod(endpoint) ?? 'eip3009';
+  if (method === 'permit2') {
+    return 'self-sync-permit2';
+  }
+  const path = endpoint.path;
+  if (path.startsWith('/auth-capture-custom-forwarding/')) {
+    return 'custom-forwarding';
+  }
+  if (path.startsWith('/auth-capture-deferred/')) {
+    return 'deferred-delegated';
+  }
+  if (path.startsWith('/auth-capture-facilitator-authorizer/')) {
+    return 'facilitator-sync';
+  }
+  if (path.startsWith('/auth-capture/')) {
+    return 'self-sync-eip3009';
+  }
+  return 'other';
+}
+
+/**
+ * Endpoint path used for coverage-based minimization. Auth-capture collapses to
+ * one slot per server per asset method; branch coverage is tracked separately
+ * ({@link endpointAuthCaptureCoverageBranch}).
+ */
+export function endpointPathForCoverageMinimization(endpoint: TestEndpoint): string {
+  if (endpointPaymentScheme(endpoint) === 'auth-capture') {
+    const method = endpointAssetTransferMethod(endpoint) ?? 'eip3009';
+    return `auth-capture~${method}`;
+  }
+  return endpoint.path;
+}
+
+/** Server-side custody role for batch-settlement routes. */
+export type BatchServerRole = 'standard' | 'managed-batch';
+
+/**
+ * True when an endpoint is a facilitator-managed batch-settlement route
+ * (`schemeOptions.facilitatorManaged === true`).
+ */
+export function endpointUsesFacilitatorManagedBatch(endpoint: TestEndpoint): boolean {
+  return (
+    endpoint.scheme === 'batch-settlement' &&
+    (endpoint.schemeOptions as BatchSettlementSchemeOptions | undefined)?.facilitatorManaged === true
+  );
+}
+
+/** Map a batch custody role to the voucher-store mode server processes use. */
+export function voucherStoreModeForBatchRole(role: BatchServerRole): 'self' | 'facilitator' {
+  switch (role) {
+    case 'managed-batch':
+      return 'facilitator';
+    case 'standard':
+      return 'self';
+    default:
+      throw new Error(`Unknown batch server role: ${(role as never) satisfies never}`);
+  }
 }
 
 export interface ClientResult {
@@ -93,6 +187,8 @@ export interface ServerConfig {
   runRouteFilter?: { excludeSchemes?: string[]; excludeNetworks?: string[] };
   facilitatorUrl?: string;
   mockFacilitatorUrl?: string;
+  /** Batch custody role for this server process (dual-server harness). */
+  batchServerRole?: BatchServerRole;
 }
 
 export interface ServerProxy {
@@ -117,6 +213,14 @@ export interface TestEndpoint {
   paymentFlow?: PaymentFlow;
   schemeOptions?: SchemeOptions;
   extensions?: string[];
+  /** Merged catalog `schemeExtra` for harness branching (auth-capture modes, etc.). */
+  schemeExtra?: Record<string, string | number | boolean>;
+  /** Catalog SDKs that implement this route for every role. Absent on legacy endpoints. */
+  sdks?: string[];
+  /** Catalog SDKs that implement only the client role. */
+  clientSdks?: string[];
+  /** Catalog SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: string[];
   /** For MCP tools: the tool name used in tools/call. Defaults to path if not specified. */
   toolName?: string;
   /** For MCP tools: expected MCP wire transport for discovery metadata. */

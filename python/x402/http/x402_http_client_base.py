@@ -146,7 +146,7 @@ class x402HTTPClientBase:
                 return PaymentRequiredV1.model_validate(body)
             if isinstance(body, bytes):
                 data = json.loads(body.decode("utf-8"))
-                if data.get("x402Version") == 1:
+                if isinstance(data, dict) and data.get("x402Version") == 1:
                     return PaymentRequiredV1.model_validate(data)
 
         raise ValueError("Invalid payment required response")

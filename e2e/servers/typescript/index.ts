@@ -18,3 +18,8 @@ export {
   type E2eRouteDef,
 } from "./routes";
 export type { ProtocolFamily } from "../../src/networks/networks";
+export {
+  registerAuthCaptureE2eRoutes,
+  runAuthCaptureE2eCapture,
+  AUTH_CAPTURE_E2E_CAPTURE_PATH,
+} from "./auth-capture-e2e";

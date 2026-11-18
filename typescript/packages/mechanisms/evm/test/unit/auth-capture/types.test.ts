@@ -304,6 +304,19 @@ describe("type guards", () => {
       ).toBe(true);
     });
 
+    it("accepts v1.1 charge completion fields on a bound Permit2 payload", () => {
+      expect(
+        isPermit2Payload({
+          ...validPermit2,
+          saltNonce: "0x0000000000000000000000000000000000000000000000000000000000000abc",
+          amount: "100",
+          feeAmount: "1",
+          feeReceiver: validExtra.feeRecipient,
+          authorizerSignature: "0xab",
+        }),
+      ).toBe(true);
+    });
+
     it("rejects a malformed charge group even with saltNonce", () => {
       expect(
         isPermit2Payload({
@@ -390,6 +403,56 @@ describe("type guards", () => {
       expect(isRefundPayload({ type: "refund", amount: "1" })).toBe(false);
       expect(isAuthCapturePayload({ type: "capture" })).toBe(false);
       expect(isAuthCapturePayload({ type: "authorize" })).toBe(false);
+    });
+
+    it("accepts unsigned lifecycle payloads for a delegated authorizer", () => {
+      const base = {
+        paymentInfo: {
+          operator: "0x1111111111111111111111111111111111111111",
+          payer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          receiver: "0x2222222222222222222222222222222222222222",
+          token: "0x3333333333333333333333333333333333333333",
+          maxAmount: "1000000",
+          preApprovalExpiry: 1,
+          authorizationExpiry: 2,
+          refundExpiry: 3,
+          minFeeBps: 0,
+          maxFeeBps: 100,
+          feeReceiver: "0x4444444444444444444444444444444444444444",
+          salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
+        },
+        saltNonce: "0x0000000000000000000000000000000000000000000000000000000000000abc",
+      };
+      const capture = {
+        ...base,
+        type: "capture",
+        amount: "100",
+        feeAmount: "1",
+        feeReceiver: base.paymentInfo.feeReceiver,
+        expectedCapturableAmount: "100",
+        expectedRefundableAmount: "0",
+      };
+
+      expect(isCapturePayload(capture)).toBe(true);
+      expect(isCapturePayload({ ...capture, voidRemainder: true })).toBe(true);
+      expect(isVoidPayload({ ...base, type: "void" })).toBe(true);
+      expect(
+        isRefundPayload({
+          ...base,
+          type: "refund",
+          amount: "50",
+          expectedCapturableAmount: "0",
+          expectedRefundableAmount: "50",
+        }),
+      ).toBe(true);
+
+      // voidRemainder only stands in for a void signature the facilitator will produce.
+      expect(isCapturePayload({ ...capture, voidRemainder: false })).toBe(false);
+      expect(
+        isCapturePayload({ ...capture, voidRemainder: true, authorizerSignature: "0xab" }),
+      ).toBe(false);
+      expect(isCapturePayload({ ...capture, voidAuthorizerSignature: "0xab" })).toBe(false);
+      expect(isVoidPayload({ ...base, type: "void", voidRemainder: true })).toBe(false);
     });
   });
 });

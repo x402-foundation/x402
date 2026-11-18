@@ -29,8 +29,8 @@ export const DEFAULT_ASSETS: DefaultAssetTable<AvmDefaultAsset> = {
 /**
  * Map Algorand network id to a {@link DEFAULT_ASSETS} key.
  *
- * @param network - CAIP-2 or legacy Algorand network id
- * @returns Normalized CAIP-2 network key
+ * @param network - Algorand CAIP-2 network id
+ * @returns Validated CAIP-2 network key
  */
 function resolveNetworkKey(network: Network): string {
   return normalizeAlgorandNetwork(network);

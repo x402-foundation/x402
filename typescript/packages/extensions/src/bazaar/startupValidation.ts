@@ -14,6 +14,20 @@ export { checkIfBazaarNeeded } from "@x402/core/server";
 const HTTP_VERB_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD)\b/i;
 
 /**
+ * Checks whether this runtime permits the dynamic code generation Ajv uses to compile schemas.
+ *
+ * @returns True if a Function can be constructed, false otherwise
+ */
+function supportsDynamicCodeGeneration(): boolean {
+  try {
+    new Function("");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Inject a synthetic method into a pre-enrichment extension so the schema's
  * required:["method"] check doesn't produce a false-positive warning at startup.
  * Priority: (1) route pattern verb (e.g. "GET /api"), (2) body vs query inference.
@@ -42,7 +56,8 @@ function withSyntheticMethod(
 }
 
 /**
- * Validate bazaar extensions on all routes using JSON-schema validation.
+ * Validate bazaar extensions on all routes. The schema consistency check is skipped in
+ * runtimes that disallow dynamic code generation, which Ajv requires to compile route schemas.
  * Emits console warnings for invalid extensions but does not throw.
  *
  * @param routes - Route configuration to scan for bazaar extensions
@@ -50,6 +65,7 @@ function withSyntheticMethod(
 export function validateBazaarRouteExtensions(routes: RoutesConfig): void {
   const entries: [string, { extensions?: Record<string, unknown> }][] =
     "accepts" in routes ? [["*", routes]] : Object.entries(routes);
+  let canCompileSchemas: boolean | undefined;
 
   for (const [pattern, config] of entries) {
     const bazaarExt = config.extensions?.["bazaar"];
@@ -67,6 +83,9 @@ export function validateBazaarRouteExtensions(routes: RoutesConfig): void {
         );
         continue;
       }
+      canCompileSchemas ??= supportsDynamicCodeGeneration();
+      if (!canCompileSchemas) continue;
+
       const extForSchema = withSyntheticMethod(bazaarExt as Record<string, unknown>, pattern);
       const schemaResult = validateDiscoveryExtension(
         extForSchema as unknown as DiscoveryExtension,

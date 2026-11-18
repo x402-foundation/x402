@@ -22,7 +22,7 @@ Under `upfront`, the payer commits funds before your handler runs. If the handle
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - Valid EVM and/or SVM addresses for receiving payments
 - URL of a facilitator supporting the desired payment network — see the [facilitator list](https://www.x402.org/ecosystem?category=facilitators)
 
