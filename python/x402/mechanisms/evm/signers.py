@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 logger = logging.getLogger("x402.signers")
@@ -320,6 +322,8 @@ class FacilitatorWeb3Signer:
         self._chain_id: int | None = None
         self._nonce_lock = threading.Lock()
         self._next_nonce: int | None = None
+        self._nonce_inflight = 0
+        self._nonce_stale = False
 
     @property
     def address(self) -> str:
@@ -350,7 +354,11 @@ class FacilitatorWeb3Signer:
         return self._chain_id
 
     def _reserve_nonce(self) -> int:
-        """Reserve the next pending nonce for this process."""
+        """Reserve the next pending nonce for this process.
+
+        Every call must be paired with `_release_nonce`, which `_reserved_nonce`
+        does.
+        """
         with self._nonce_lock:
             pending = self._w3.eth.get_transaction_count(
                 self._account.address,
@@ -360,7 +368,37 @@ class FacilitatorWeb3Signer:
                 self._next_nonce = pending
             nonce = self._next_nonce
             self._next_nonce = nonce + 1
+            self._nonce_inflight += 1
             return nonce
+
+    def _release_nonce(self, *, failed: bool) -> None:
+        """Finish a nonce reservation.
+
+        A transaction that never reached the node leaves the local counter one
+        ahead of the chain, which would queue every later transaction behind the
+        missing nonce. After a failure the counter is dropped so the next
+        reservation starts again from the node's pending count. That happens
+        only once no other reservation is in flight: dropping it earlier would
+        let the next transaction reuse a nonce that is reserved but not yet sent.
+        """
+        with self._nonce_lock:
+            self._nonce_inflight -= 1
+            if failed:
+                self._nonce_stale = True
+            if self._nonce_inflight == 0 and self._nonce_stale:
+                self._next_nonce = None
+                self._nonce_stale = False
+
+    @contextmanager
+    def _reserved_nonce(self) -> Iterator[int]:
+        """Reserve a nonce, releasing it if the transaction is not accepted."""
+        nonce = self._reserve_nonce()
+        try:
+            yield nonce
+        except BaseException:
+            self._release_nonce(failed=True)
+            raise
+        self._release_nonce(failed=False)
 
     def read_contract(
         self,
@@ -529,25 +567,26 @@ class FacilitatorWeb3Signer:
         )
         func = getattr(contract.functions, function_name)
 
-        # Build transaction
-        tx = func(*args).build_transaction(
-            {
-                "from": self._account.address,
-                "nonce": self._reserve_nonce(),
-                "gas": self._gas_limit,
-                "gasPrice": self._w3.eth.gas_price,
-            }
-        )
+        with self._reserved_nonce() as nonce:
+            # Build transaction
+            tx = func(*args).build_transaction(
+                {
+                    "from": self._account.address,
+                    "nonce": nonce,
+                    "gas": self._gas_limit,
+                    "gasPrice": self._w3.eth.gas_price,
+                }
+            )
 
-        if data_suffix:
-            calldata = tx["data"]
-            if isinstance(calldata, (bytes, bytearray)):
-                calldata = "0x" + bytes(calldata).hex()
-            tx["data"] = append_data_suffix(calldata, data_suffix)
+            if data_suffix:
+                calldata = tx["data"]
+                if isinstance(calldata, (bytes, bytearray)):
+                    calldata = "0x" + bytes(calldata).hex()
+                tx["data"] = append_data_suffix(calldata, data_suffix)
 
-        # Sign and send
-        signed_tx = self._account.sign_transaction(tx)
-        tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            # Sign and send
+            signed_tx = self._account.sign_transaction(tx)
+            tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
         return _hex_with_0x_prefix(tx_hash)
 
@@ -561,17 +600,18 @@ class FacilitatorWeb3Signer:
         Returns:
             Transaction hash.
         """
-        tx = {
-            "from": self._account.address,
-            "to": Web3.to_checksum_address(to),
-            "data": data,
-            "nonce": self._reserve_nonce(),
-            "gas": self._gas_limit,
-            "gasPrice": self._w3.eth.gas_price,
-        }
+        with self._reserved_nonce() as nonce:
+            tx = {
+                "from": self._account.address,
+                "to": Web3.to_checksum_address(to),
+                "data": data,
+                "nonce": nonce,
+                "gas": self._gas_limit,
+                "gasPrice": self._w3.eth.gas_price,
+            }
 
-        signed_tx = self._account.sign_transaction(tx)
-        tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            signed_tx = self._account.sign_transaction(tx)
+            tx_hash = self._w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
         return _hex_with_0x_prefix(tx_hash)
 

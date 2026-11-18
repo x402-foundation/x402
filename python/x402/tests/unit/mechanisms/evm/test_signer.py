@@ -173,6 +173,100 @@ class TestFacilitatorWeb3Signer:
             expected_gas_limit,
         ]
 
+    @staticmethod
+    def _signer_with_fake_node():
+        """Build a signer whose node tracks accepted nonces like a mempool.
+
+        `get_transaction_count("pending")` is the length of the contiguous run
+        of accepted nonces from zero, so a transaction signed with a nonce past
+        a gap is accepted but queued, as on a real node.
+        """
+        signer = FacilitatorWeb3Signer(
+            private_key=Account.create().key.hex(),
+            rpc_url="https://sepolia.base.org",
+        )
+        node = SimpleNamespace(accepted=set(), refuse=False)
+
+        def pending_count(_address, _block):
+            count = 0
+            while count in node.accepted:
+                count += 1
+            return count
+
+        def sign(tx):
+            return SimpleNamespace(raw_transaction=tx["nonce"].to_bytes(8, "big"))
+
+        def send(raw):
+            if node.refuse:
+                raise ValueError("insufficient funds for gas * price + value")
+            node.accepted.add(int.from_bytes(raw, "big"))
+            return bytes.fromhex("12" * 32)
+
+        signer._w3 = Mock()
+        signer._w3.eth.get_transaction_count.side_effect = pending_count
+        signer._w3.eth.gas_price = 1
+        signer._w3.eth.send_raw_transaction.side_effect = send
+        signer._account.sign_transaction = Mock(side_effect=sign)
+        return signer, node
+
+    def test_send_transaction_reuses_nonce_after_node_refuses_send(self):
+        """A refused send must not leave later transactions queued behind a gap."""
+        signer, node = self._signer_with_fake_node()
+        target = "0x2222222222222222222222222222222222222222"
+
+        signer.send_transaction(target, b"")
+        node.refuse = True
+        with pytest.raises(ValueError, match="insufficient funds"):
+            signer.send_transaction(target, b"")
+        node.refuse = False
+        signer.send_transaction(target, b"")
+
+        # Nonces 0 and 1 are contiguous: the refused nonce was given back.
+        assert node.accepted == {0, 1}
+
+    def test_write_contract_reuses_nonce_after_build_fails(self):
+        """A failure before the node sees the transaction must also give the nonce back."""
+        signer, node = self._signer_with_fake_node()
+        nonces_built = []
+
+        def build(tx):
+            nonces_built.append(tx["nonce"])
+            if len(nonces_built) == 1:
+                raise ValueError("estimate failed")
+            return tx
+
+        builder = Mock()
+        builder.build_transaction.side_effect = build
+        signer._w3.eth.contract.return_value.functions.transfer = Mock(return_value=builder)
+        address = "0x1111111111111111111111111111111111111111"
+
+        with pytest.raises(ValueError, match="estimate failed"):
+            signer.write_contract(address, [], "transfer")
+        signer.write_contract(address, [], "transfer")
+
+        assert nonces_built == [0, 0]
+        assert node.accepted == {0}
+
+    def test_failed_send_does_not_hand_out_a_nonce_reserved_by_an_inflight_send(self):
+        """Resync after a failure only when no other reserved nonce is still unsent."""
+        signer, node = self._signer_with_fake_node()
+
+        with signer._reserved_nonce() as first:  # reserved, not yet sent
+            with pytest.raises(ValueError, match="boom"):
+                with signer._reserved_nonce():
+                    raise ValueError("boom")
+            # The node still reports 0 pending, but nonce 0 is spoken for.
+            with signer._reserved_nonce() as third:
+                pass
+            assert (first, third) == (0, 2)
+            node.accepted.update({first, third})
+
+        # Everything has settled: the next nonce comes from the node again and
+        # fills the gap left by the failed nonce.
+        with signer._reserved_nonce() as fourth:
+            pass
+        assert fourth == 1
+
     def test_should_have_required_methods(self):
         """Should have all required facilitator signer methods."""
         account = Account.create()
