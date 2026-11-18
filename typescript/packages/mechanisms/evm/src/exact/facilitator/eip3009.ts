@@ -11,7 +11,7 @@ import { authorizationTypes } from "../../constants";
 import { FacilitatorEvmSigner } from "../../signer";
 import { startAssetContractCheck } from "../../assetCache";
 import { getEvmChainId } from "../../utils";
-import { ExactEIP3009Payload } from "../../types";
+import { ExactEIP3009Payload, isUint256DecimalString } from "../../types";
 import * as Errors from "./errors";
 import { resolveDataSuffix } from "../../shared/extensions";
 import { isContractRevert } from "../../shared/revert";
@@ -281,7 +281,16 @@ export async function verifyEIP3009(
     };
   }
 
-  // Verify amount exactly matches requirements
+  if (!isUint256DecimalString(requirements.amount)) {
+    return {
+      response: {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidRequiredAmount,
+        payer,
+      },
+      classification,
+    };
+  }
   if (BigInt(eip3009Payload.authorization.value) !== BigInt(requirements.amount)) {
     return {
       response: {

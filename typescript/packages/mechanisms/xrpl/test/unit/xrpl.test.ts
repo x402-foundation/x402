@@ -18,6 +18,7 @@ import {
   simulateSignedTransaction,
 } from "../../src";
 import { RLUSD_CURRENCY, RLUSD_TESTNET_ISSUER } from "../../src/defaultAssets";
+import { x402Client, type SpendControls } from "@x402/core/client";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { Client, Payment, Transaction } from "xrpl";
 
@@ -614,6 +615,81 @@ describe("ExactXrplScheme server", () => {
 });
 
 describe("ExactXrplScheme client", () => {
+  describe("spend controls", () => {
+    async function createPayment(price: string, controls?: SpendControls | false) {
+      const signer = createXrplWalletSigner(payerWallet);
+      const sign = vi.fn(signer.sign);
+      const client = new x402Client().register(
+        XRPL_TESTNET,
+        new ExactXrplClientScheme(
+          { ...signer, sign },
+          { preparePaymentTransaction: preparePaymentForTest },
+        ),
+      );
+      if (controls !== undefined) client.setSpendControls(controls);
+      const parsed = await new ExactXrplServerScheme().parsePrice(price, XRPL_TESTNET);
+      const requirements: PaymentRequirements = {
+        ...baseIouRequirements,
+        ...parsed,
+        extra: { ...parsed.extra, areFeesSponsored: false },
+      };
+      return {
+        client,
+        sign,
+        paymentRequired: { x402Version: 2, accepts: [requirements] },
+      };
+    }
+
+    it.each(["$2", "$100", "$100.0"])(
+      "rejects %s above the default cap before signing",
+      async price => {
+        const { client, sign, paymentRequired } = await createPayment(price);
+
+        await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+          /maxAmountPerPayment/,
+        );
+        expect(sign).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ["$6", "$5"],
+      ["$1", "$0.50"],
+    ])("rejects %s above a configured %s cap", async (price, cap) => {
+      const { client, sign, paymentRequired } = await createPayment(price, {
+        maxAmountPerPayment: cap,
+      });
+
+      await expect(client.createPaymentPayload(paymentRequired)).rejects.toThrow(
+        /maxAmountPerPayment/,
+      );
+      expect(sign).not.toHaveBeenCalled();
+    });
+
+    it.each(["1", "0.5"])("signs %s RLUSD at the configured cap", async amount => {
+      const { client, sign, paymentRequired } = await createPayment(amount, {
+        maxAmountPerPayment: amount,
+      });
+
+      const payload = await client.createPaymentPayload(paymentRequired);
+
+      expect(sign).toHaveBeenCalledOnce();
+      expect(decode(String(payload.payload.signedTxBlob)).Amount).toEqual({
+        currency: RLUSD_CURRENCY,
+        issuer: RLUSD_TESTNET_ISSUER,
+        value: amount,
+      });
+    });
+
+    it("allows an over-cap payment when spend controls are disabled", async () => {
+      const { client, sign, paymentRequired } = await createPayment("$100", false);
+
+      await client.createPaymentPayload(paymentRequired);
+
+      expect(sign).toHaveBeenCalledOnce();
+    });
+  });
+
   it("creates a signed XRP payment payload", async () => {
     const client = new ExactXrplClientScheme(createXrplWalletSigner(payerWallet), {
       getCurrentLedgerIndex: async () => 980,

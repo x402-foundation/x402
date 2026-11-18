@@ -940,7 +940,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         // across signer backends that will not sign the same bytes twice.
         await this.signer.simulateTransaction(payload.deposit.transaction, requirements.network);
       } else {
-        // Simulates the open/settle/distribute chain through the signer's own RPC.
         await simulateOpenSettleDistribute(
           terms.feePayerSigner,
           this.signer,

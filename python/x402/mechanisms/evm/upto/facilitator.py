@@ -12,9 +12,13 @@ from ....schemas import (
     SettleResponse,
     VerifyResponse,
 )
-from ..constants import SCHEME_UPTO
+from ..constants import ERR_UPTO_INVALID_PAYLOAD, SCHEME_UPTO
 from ..signer import FacilitatorEvmSigner
-from ..types import is_upto_permit2_payload
+from ..types import (
+    get_upto_payload_payer,
+    is_upto_permit2_payload,
+    validate_upto_permit2_payload,
+)
 from .permit2_utils import settle_upto_permit2, verify_upto_permit2
 
 
@@ -66,7 +70,18 @@ class UptoEvmScheme:
     ) -> VerifyResponse:
         if not is_upto_permit2_payload(payload.payload):
             return VerifyResponse(
-                is_valid=False, invalid_reason="unsupported_payload_type", payer=""
+                is_valid=False,
+                invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+                invalid_message="unsupported payload type: expected upto permit2 payload",
+                payer="",
+            )
+        payload_error = validate_upto_permit2_payload(payload.payload)
+        if payload_error:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_UPTO_INVALID_PAYLOAD,
+                invalid_message=payload_error,
+                payer=get_upto_payload_payer(payload.payload) or "",
             )
         return verify_upto_permit2(self._signer, payload, requirements, context, simulate=True)
 
@@ -79,9 +94,20 @@ class UptoEvmScheme:
         if not is_upto_permit2_payload(payload.payload):
             return SettleResponse(
                 success=False,
-                error_reason="unsupported_payload_type",
+                error_reason=ERR_UPTO_INVALID_PAYLOAD,
+                error_message="unsupported payload type: expected upto permit2 payload",
                 network=str(payload.accepted.network),
                 payer="",
+                transaction="",
+            )
+        payload_error = validate_upto_permit2_payload(payload.payload)
+        if payload_error:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_UPTO_INVALID_PAYLOAD,
+                error_message=payload_error,
+                network=str(payload.accepted.network),
+                payer=get_upto_payload_payer(payload.payload) or "",
                 transaction="",
             )
         return settle_upto_permit2(

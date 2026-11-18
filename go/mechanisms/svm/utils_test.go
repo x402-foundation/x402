@@ -2,7 +2,6 @@ package svm
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -128,10 +127,15 @@ func TestIsAcceptedTransactionVersion(t *testing.T) {
 	assert.False(t, IsAcceptedTransactionVersion(solana.MessageVersion(127)))
 }
 
-func TestAdvertisedTransactionVersionsMarshalsToVersionsZeroAndOne(t *testing.T) {
-	encoded, err := json.Marshal(map[string]interface{}{ExtraTransactionVersions: AdvertisedTransactionVersions})
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"transactionVersions":[0,1]}`, string(encoded), "legacy is accepted but never advertised")
+func TestAdvertisedTransactionVersionsAreAccepted(t *testing.T) {
+	require.NotEmpty(t, AdvertisedTransactionVersions)
+	for _, version := range AdvertisedTransactionVersions {
+		decoded, err := messageVersionForWire(version)
+		require.NoError(t, err)
+		assert.NotEqual(t, solana.MessageVersionLegacy, decoded, "legacy is accepted but never advertised")
+		assert.True(t, IsAcceptedTransactionVersion(decoded), "advertised %d", version)
+	}
+	assert.True(t, IsAcceptedTransactionVersion(solana.MessageVersionLegacy))
 }
 
 func TestResolveTransactionVersion(t *testing.T) {

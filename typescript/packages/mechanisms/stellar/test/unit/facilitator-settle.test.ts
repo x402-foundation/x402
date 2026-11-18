@@ -227,9 +227,9 @@ describe("ExactStellarScheme - Settle (randomly using 1-2 facilitator signers)",
 
     it("should surface a terminal errorReason and the RPC error result when submission returns ERROR", async () => {
       const errorResult = new xdr.TransactionResult({
-        feeCharged: new xdr.Int64(32755),
+        feeCharged: 32755n,
         result: xdr.TransactionResultResult.txBadSeq(),
-        ext: new xdr.TransactionResultExt(0),
+        ext: xdr.TransactionResultExt.v0(),
       });
       vi.mocked(mockServer.sendTransaction).mockResolvedValue({
         status: "ERROR",
@@ -555,7 +555,7 @@ describe("ExactStellarScheme - Settle with feeBumpSigner", () => {
       .spyOn(feeBumpSigner, "signTransaction")
       .mockImplementation(async (txXdr, opts) => {
         // Verify the input is a fee bump transaction
-        const parsed = TransactionBuilder.fromXDR(
+        const parsed = TransactionBuilder.fromXdr(
           txXdr,
           opts?.networkPassphrase ?? StellarNetworks.TESTNET,
         );

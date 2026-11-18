@@ -9,7 +9,19 @@ import {
 } from "@x402/core/types";
 import { convertToTokenAmount, parseMoney } from "@x402/core/utils";
 import { findDefaultAsset, getDefaultAsset, type ExactDefaultAssetInfo } from "../../defaultAssets";
-import type { AssetTransferMethod } from "../../types";
+import { isUint256DecimalString, type AssetTransferMethod } from "../../types";
+
+/**
+ * Reject an amount that is not a uint256 decimal string.
+ *
+ * @param amount - Candidate atomic amount
+ */
+function requireUint256Amount(amount: string): void {
+  if (isUint256DecimalString(amount)) {
+    return;
+  }
+  throw new Error(`amount must be a uint256 decimal string, got ${JSON.stringify(amount)}`);
+}
 
 /**
  * EVM server implementation for the Exact payment scheme.
@@ -61,7 +73,7 @@ export class ExactEvmScheme implements SchemeNetworkServer {
 
   /**
    * Parses a price into an asset amount.
-   * If price is already an AssetAmount, returns it directly.
+   * A dotted AssetAmount is returned unchanged. Any other amount must be a uint256 decimal string.
    * If price is Money (string | number), parses to decimal and tries custom parsers.
    * Falls back to default conversion if all custom parsers return null.
    *
@@ -70,10 +82,12 @@ export class ExactEvmScheme implements SchemeNetworkServer {
    * @returns Promise that resolves to the parsed asset amount
    */
   async parsePrice(price: Price, network: Network): Promise<AssetAmount> {
-    // If already an AssetAmount, return it directly
     if (typeof price === "object" && price !== null && "amount" in price) {
       if (!price.asset) {
         throw new Error(`Asset address must be specified for AssetAmount on network ${network}`);
+      }
+      if (!price.amount.includes(".")) {
+        requireUint256Amount(price.amount);
       }
       return {
         amount: price.amount,
@@ -88,12 +102,18 @@ export class ExactEvmScheme implements SchemeNetworkServer {
     for (const parser of this.moneyParsers) {
       const result = await parser(amount, network);
       if (result !== null) {
+        if (!result.amount.includes(".")) {
+          requireUint256Amount(result.amount);
+        }
         return result;
       }
     }
 
-    // All custom parsers returned null, use default conversion
-    return this.defaultMoneyConversion(amount, network, symbol);
+    const parsed = this.defaultMoneyConversion(amount, network, symbol);
+    if (!parsed.amount.includes(".")) {
+      requireUint256Amount(parsed.amount);
+    }
+    return parsed;
   }
 
   /**
@@ -108,7 +128,7 @@ export class ExactEvmScheme implements SchemeNetworkServer {
    * @param extensionKeys - Extension keys supported by the facilitator (unused)
    * @returns Payment requirements ready to be sent to clients
    */
-  enhancePaymentRequirements(
+  async enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
     supportedKind: {
       x402Version: number;
@@ -118,10 +138,22 @@ export class ExactEvmScheme implements SchemeNetworkServer {
     },
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
-    // Mark unused parameters to satisfy linter
     void supportedKind;
     void extensionKeys;
-    return Promise.resolve(paymentRequirements);
+    const rawAmount = paymentRequirements.amount;
+    if (!rawAmount.includes(".")) {
+      requireUint256Amount(rawAmount);
+      return paymentRequirements;
+    }
+    const asset = findDefaultAsset(paymentRequirements.asset, paymentRequirements.network);
+    if (!asset) {
+      throw new Error(
+        `Token ${paymentRequirements.asset} is not a registered asset for network ${paymentRequirements.network}; provide amount in atomic units`,
+      );
+    }
+    const amount = convertToTokenAmount(rawAmount, asset.decimals);
+    requireUint256Amount(amount);
+    return { ...paymentRequirements, amount };
   }
 
   /**

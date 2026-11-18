@@ -37,10 +37,11 @@ class TestParsePrice:
             network = "eip155:8453"
 
             result = server.parse_price("$0.10", network)
+            asset = get_default_asset(network)
 
             assert result.amount == "100000"  # 0.10 USDC = 100000 smallest units
-            assert result.asset == get_default_asset(network)["asset"]
-            assert result.extra == {"name": "USD Coin", "version": "2"}
+            assert result.asset == asset["asset"]
+            assert result.extra == {"name": asset["name"], "version": asset["version"]}
 
         def test_should_parse_simple_number_string_prices(self):
             """Should parse simple number string prices."""
@@ -185,6 +186,39 @@ class TestParsePrice:
             with pytest.raises(ValueError):
                 server.parse_price("abc", network)
 
+        @pytest.mark.parametrize("amount", ["1e4", "0x2710", "1_000", "+1000", " 1000 "])
+        def test_rejects_non_canonical_atomic_amount(self, amount: str):
+            server = ExactEvmServerScheme()
+            network = "eip155:8453"
+            asset = "0x1234567890123456789012345678901234567890"
+            price = {"amount": amount, "asset": asset}
+
+            with pytest.raises(ValueError) as caught:
+                server.parse_price(price, network)
+
+            message = str(caught.value)
+            assert "amount" in message
+            assert amount in message
+
+            with pytest.raises(ValueError) as caught_object:
+                server.parse_price(AssetAmount(amount=amount, asset=asset, extra={}), network)
+
+            object_message = str(caught_object.value)
+            assert "amount" in object_message
+            assert amount in object_message
+
+        def test_leaves_dotted_amount_for_enhance(self):
+            server = ExactEvmServerScheme()
+            result = server.parse_price(
+                {
+                    "amount": "0.01",
+                    "asset": "0x1234567890123456789012345678901234567890",
+                },
+                "eip155:8453",
+            )
+
+            assert result.amount == "0.01"
+
 
 class TestEnhancePaymentRequirements:
     """Test enhancePaymentRequirements method."""
@@ -213,11 +247,10 @@ class TestEnhancePaymentRequirements:
 
         result = server.enhance_payment_requirements(requirements, supported_kind, [])
 
+        default_asset = get_default_asset(network)
         assert result.extra is not None
-        assert "name" in result.extra
-        assert "version" in result.extra
-        assert result.extra["name"] == "USD Coin"
-        assert result.extra["version"] == "2"
+        assert result.extra["name"] == default_asset["name"]
+        assert result.extra["version"] == default_asset["version"]
 
     def test_should_preserve_existing_extra_fields(self):
         """Should preserve existing extra fields."""
@@ -245,7 +278,7 @@ class TestEnhancePaymentRequirements:
 
         assert result.extra is not None
         assert result.extra.get("custom") == "value"
-        assert result.extra.get("name") == "USD Coin"
+        assert result.extra.get("name") == get_default_asset(network)["name"]
 
     def test_should_convert_decimal_amounts_to_smallest_unit(self):
         """Should convert decimal amounts to smallest unit."""
@@ -298,6 +331,56 @@ class TestEnhancePaymentRequirements:
         result = server.enhance_payment_requirements(requirements, supported_kind, [])
 
         assert result.asset == get_default_asset(network)["asset"]
+
+    def test_converts_dotted_base_usdc_amount_before_checking_canonical_form(self):
+        server = ExactEvmServerScheme()
+        network = "eip155:8453"
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=get_default_asset(network)["asset"],
+            amount="0.01",
+            pay_to="0x1234567890123456789012345678901234567890",
+            max_timeout_seconds=3600,
+            extra={},
+        )
+        supported_kind = SupportedKind(
+            x402_version=2,
+            scheme="exact",
+            network=network,
+            extra={},
+        )
+
+        result = server.enhance_payment_requirements(requirements, supported_kind, [])
+
+        assert result.amount == "10000"
+
+    @pytest.mark.parametrize("amount", ["1e4", "0x2710", "1_000", "+1000", " 1000 "])
+    def test_rejects_non_canonical_atomic_amount(self, amount: str):
+        server = ExactEvmServerScheme()
+        network = "eip155:8453"
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=network,
+            asset=get_default_asset(network)["asset"],
+            amount=amount,
+            pay_to="0x1234567890123456789012345678901234567890",
+            max_timeout_seconds=3600,
+            extra={},
+        )
+        supported_kind = SupportedKind(
+            x402_version=2,
+            scheme="exact",
+            network=network,
+            extra={},
+        )
+
+        with pytest.raises(ValueError) as caught:
+            server.enhance_payment_requirements(requirements, supported_kind, [])
+
+        message = str(caught.value)
+        assert "amount" in message
+        assert amount in message
 
 
 class TestRegisterMoneyParser:
@@ -444,7 +527,7 @@ class TestRegisterMoneyParser:
 
             def parser2(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(2)
-                return AssetAmount(amount="winner", asset="0xWinnerToken", extra={})
+                return AssetAmount(amount="2", asset="0xWinnerToken", extra={})
 
             def parser3(amount: str | int | float, network: str) -> AssetAmount | None:
                 execution_order.append(3)  # Should not execute

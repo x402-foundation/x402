@@ -18,7 +18,7 @@ import { PaymentRequirementsV1 } from "@x402/core/types/v1";
 import { getAddress, hashTypedData, Hex, isAddressEqual, parseErc6492Signature } from "viem";
 import { authorizationTypes } from "../../../constants";
 import { FacilitatorEvmSigner } from "../../../signer";
-import { ExactEvmPayloadV1 } from "../../../types";
+import { ExactEvmPayloadV1, getExactEvmPayloadPayer, validateEip3009Payload } from "../../../types";
 import { EvmNetworkV1, getEvmChainIdV1 } from "../../../v1";
 import * as Errors from "../../facilitator/errors";
 import {
@@ -111,6 +111,15 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<VerifyResponse> {
+    const payloadError = validateEip3009Payload(payload.payload);
+    if (payloadError) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidPayload,
+        invalidMessage: payloadError,
+        payer: getExactEvmPayloadPayer(payload.payload),
+      };
+    }
     return this._verify(payload, requirements);
   }
 
@@ -129,6 +138,17 @@ export class ExactEvmSchemeV1 implements SchemeNetworkFacilitator {
   ): Promise<SettleResponse> {
     const payloadV1 = payload as unknown as PaymentPayloadV1;
     const exactEvmPayload = payload.payload as ExactEvmPayloadV1;
+    const payloadError = validateEip3009Payload(payload.payload);
+    if (payloadError) {
+      return {
+        success: false,
+        errorReason: Errors.ErrInvalidPayload,
+        errorMessage: payloadError,
+        transaction: "",
+        network: payloadV1.network,
+        payer: getExactEvmPayloadPayer(payload.payload),
+      };
+    }
 
     // Re-verify before settling
     const valid = await this._verify(payload, requirements, {

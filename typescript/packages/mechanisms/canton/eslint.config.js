@@ -106,7 +106,6 @@ export default [
       "src/inline-payload.ts",
       "src/inline-codec.ts",
       "src/amount.ts",
-      "src/encoding.ts",
       "src/exact/facilitator/verify-inline.ts",
       // Ported thin ledger client + verify/settle primitives (faithful port of
       // the production `@ftptech/x402-canton-ledger` + facilitator canton logic).

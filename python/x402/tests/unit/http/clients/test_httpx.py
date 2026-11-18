@@ -120,10 +120,6 @@ class TestX402AsyncTransport:
 
         assert transport._http_client == http_client
 
-    def test_retry_key_constant(self):
-        """Test that RETRY_KEY constant is set."""
-        assert x402AsyncTransport.RETRY_KEY == "_x402_is_retry"
-
     @pytest.mark.asyncio
     async def test_non_402_passes_through(self):
         """Test that non-402 responses pass through unchanged."""

@@ -383,6 +383,10 @@ def payment_middleware(
 
             # Don't settle on error responses
             if response.status_code >= 400:
+                # Overrides only apply when a settlement runs; never send the
+                # internal header to the client.
+                if SETTLEMENT_OVERRIDES_HEADER in response.headers:
+                    del response.headers[SETTLEMENT_OVERRIDES_HEADER]
                 cancel_settlement = None
                 if dispatcher is not None:
                     cancel_settlement = await dispatcher.cancel(

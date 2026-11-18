@@ -57,7 +57,7 @@ func (f *ExactEvmScheme) verifyEIP3009(
 		return nil, nil, x402.NewVerifyError(ErrInvalidPayload, evmPayload.Authorization.From, err.Error())
 	}
 
-	requiredValue, ok := new(big.Int).SetString(requirements.Amount, 10)
+	requiredValue, ok := evm.ParseUint256String(requirements.Amount)
 	if !ok {
 		return nil, nil, x402.NewVerifyError(ErrInvalidRequiredAmount, "", fmt.Sprintf("invalid required amount: %s", requirements.Amount))
 	}

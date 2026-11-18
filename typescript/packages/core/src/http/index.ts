@@ -35,11 +35,10 @@ export function decodePaymentSignatureHeader(paymentSignatureHeader: string): Pa
   if (!Base64EncodedRegex.test(paymentSignatureHeader)) {
     throw new Error("Invalid payment signature header");
   }
-  const paymentPayload = requireDecodedJsonObject(
+  return requireDecodedJsonObject(
     JSON.parse(safeBase64Decode(paymentSignatureHeader)),
     "Payment signature header",
-  );
-  return paymentPayload as PaymentPayload;
+  ) as PaymentPayload;
 }
 
 /**
@@ -62,11 +61,10 @@ export function decodePaymentRequiredHeader(paymentRequiredHeader: string): Paym
   if (!Base64EncodedRegex.test(paymentRequiredHeader)) {
     throw new Error("Invalid payment required header");
   }
-  const paymentRequired = requireDecodedJsonObject(
+  return requireDecodedJsonObject(
     JSON.parse(safeBase64Decode(paymentRequiredHeader)),
     "Payment required header",
-  );
-  return paymentRequired as PaymentRequired;
+  ) as PaymentRequired;
 }
 
 /**
@@ -92,11 +90,10 @@ export function decodePaymentResponseHeader(paymentResponseHeader: string): Sett
   if (!Base64EncodedRegex.test(paymentResponseHeader)) {
     throw new Error("Invalid payment response header");
   }
-  const paymentResponse = requireDecodedJsonObject(
+  return requireDecodedJsonObject(
     JSON.parse(safeBase64Decode(paymentResponseHeader)),
     "Payment response header",
-  );
-  return paymentResponse as SettleResponse;
+  ) as SettleResponse;
 }
 
 export {
@@ -141,6 +138,8 @@ export {
   getFacilitatorResponseError,
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
+export { prepareHttpServer } from "./prepareHttpServer";
+export type { PreparedHttpServer } from "./prepareHttpServer";
 export {
   MAX_CONTROL_PLANE_RESPONSE_BYTES,
   ResponseBodyTooLargeError,

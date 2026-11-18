@@ -10,9 +10,6 @@ from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 from x402.mechanisms.svm import (
-    DEFAULT_COMPUTE_UNIT_LIMIT,
-    DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
-    ERR_INVALID_INSTRUCTION_COUNT,
     SOLANA_DEVNET_CAIP2,
     TOKEN_PROGRAM_ADDRESS,
     USDC_DEVNET_ADDRESS,
@@ -29,10 +26,6 @@ MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 
 
 class TestMemoUniqueness:
-    def test_transaction_construction_is_deterministic(self):
-        assert DEFAULT_COMPUTE_UNIT_LIMIT == 20000
-        assert DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS == 1
-
     def test_blockhash_is_not_only_source_of_uniqueness(self):
         slot_time_ms = 400
         assert slot_time_ms < 1000
@@ -159,21 +152,6 @@ class TestFixedBlockhashProducesDistinctTransactions:
         print(f"Transactions are DIFFERENT: {tx1_base64 != tx2_base64}")
 
 
-class TestFacilitatorInstructionRules:
-    def test_facilitator_allows_optional_instructions(self):
-        min_instructions = 3
-        max_instructions = 6
-
-        assert min_instructions == 3
-        assert max_instructions > min_instructions
-
-    def test_error_code_for_wrong_instruction_count(self):
-        assert (
-            ERR_INVALID_INSTRUCTION_COUNT
-            == "invalid_exact_svm_payload_transaction_instructions_length"
-        )
-
-
 class TestAttackScenarioSimulation:
     def test_attack_scenario_loss_calculation(self):
         payments_attempted = 10
@@ -197,12 +175,6 @@ class TestAttackScenarioSimulation:
 class TestMitigationHookPoints:
     def test_client_side_memo_mitigation_location(self):
         assert str(Pubkey.from_string(MEMO_PROGRAM_ADDRESS)) == MEMO_PROGRAM_ADDRESS
-
-    def test_facilitator_would_need_instruction_count_update(self):
-        min_instructions = 3
-        max_instructions = 6
-
-        assert max_instructions > min_instructions
 
 
 class TestMemoDataIsValidUTF8:

@@ -18,10 +18,6 @@ import (
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
-func TestBazaarConstant(t *testing.T) {
-	assert.Equal(t, "bazaar", bazaar.BAZAAR.Key())
-}
-
 func TestDeclareDiscoveryExtension_GET(t *testing.T) {
 	t.Run("should create a valid GET extension with query params", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(

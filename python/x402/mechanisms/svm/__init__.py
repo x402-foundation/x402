@@ -20,6 +20,7 @@ from .constants import (
     ERR_INVALID_COMPUTE_LIMIT,
     ERR_INVALID_COMPUTE_PRICE,
     ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
     ERR_INVALID_PAYLOAD,
     ERR_LOADED_ACCOUNTS_DATA_SIZE_LIMIT_MISSING,
     ERR_MEMO_COUNT,
@@ -27,6 +28,9 @@ from .constants import (
     ERR_MINT_MISMATCH,
     ERR_NETWORK_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+    ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED,
+    ERR_PROTOCOL_INSTRUCTION_ORDER,
     ERR_RECIPIENT_ATA_MISSING,
     ERR_RECIPIENT_ATA_WRONG_PROGRAM_OWNER,
     ERR_RECIPIENT_MISMATCH,
@@ -37,6 +41,7 @@ from .constants import (
     ERR_TRANSACTION_SIZE_EXCEEDED,
     ERR_UNKNOWN_FIFTH_INSTRUCTION,
     ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_INSTRUCTION,
     ERR_UNKNOWN_SEVENTH_INSTRUCTION,
     ERR_UNKNOWN_SIXTH_INSTRUCTION,
     ERR_UNSUPPORTED_SCHEME,
@@ -70,6 +75,7 @@ from .constants import (
 
 # Default assets
 from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
+from .errors import TransactionOnchainFailureError
 
 # Settlement cache (shared across V1/V2 facilitator instances)
 from .settlement_cache import SettlementCache
@@ -154,6 +160,11 @@ __all__ = [
     "ERR_UNKNOWN_FIFTH_INSTRUCTION",
     "ERR_UNKNOWN_SIXTH_INSTRUCTION",
     "ERR_UNKNOWN_SEVENTH_INSTRUCTION",
+    "ERR_UNKNOWN_INSTRUCTION",
+    "ERR_PROTOCOL_INSTRUCTION_ORDER",
+    "ERR_INVALID_LIGHTHOUSE_INSTRUCTION",
+    "ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED",
+    "ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED",
     "ERR_INVALID_COMPUTE_LIMIT",
     "ERR_INVALID_COMPUTE_PRICE",
     "ERR_COMPUTE_PRICE_TOO_HIGH",
@@ -190,6 +201,7 @@ __all__ = [
     # Signer implementations
     "KeypairSigner",
     "FacilitatorKeypairSigner",
+    "TransactionOnchainFailureError",
     # Utilities
     "normalize_network",
     "get_network_config",
