@@ -1,4 +1,5 @@
-# Extension: `resolution-lineage`
+
+# Application-layer composition profile: `resolution-lineage`
 
 ## Summary
 
@@ -38,7 +39,7 @@ A foreign artifact that proves only transport presence, settlement, artifact int
 
 This profile does not define:
 
-- `PASS`, `FAIL`, `INDETERMINATE`, or another native verifier verdict vocabulary;
+- native verifier verdict vocabularies (for example SAR `PASS`, `FAIL`, and `INDETERMINATE`); RLP-1 defines separate resolution-layer check outcomes `PASS`, `FAIL`, and `UNRESOLVED`, not native verifier verdicts;
 - delivery success or failure semantics;
 - settlement verification;
 - request or response hashing;
@@ -94,6 +95,28 @@ A resolution record is a signed object of kind `resolution-state` whose payload 
 
 The signed envelope identifies the resolver that made the resolution claim. This profile does not infer that the resolver had institutional, legal, or economic authority; consumers decide which resolver identities or external authorities they trust.
 
+### Signed envelope and deterministic bytes
+
+The pinned RLP-1 reference uses a domain-separated **Ed25519 signed JSON object**. It does not use JWS, COSE, or EIP-712. The envelope MUST contain exactly `kind`, `payload`, `protocol`, `signature`, and `signer`:
+
+- `kind` MUST equal `resolution-state`.
+- `protocol` MUST equal `resolution-receipt/0.1`.
+- `signer` MUST be an Ed25519 `did:key` whose public key verifies the signature.
+- `signature` MUST be the unpadded base64url representation of the 64-byte Ed25519 signature.
+- `payload` MUST satisfy the RLP-1 payload requirements in this document.
+
+The signed message is exactly:
+
+```python
+b"resolution-receipt/signed-object/v1\n" + b"resolution-state\n" + canonical_json_bytes(payload)
+```
+
+`canonical_json_bytes(value)` is UTF-8 encoding of JSON with lexicographically sorted object keys, compact separators (`,` and `:`), `ensure_ascii=False`, and no whitespace outside strings. It MUST reject duplicate JSON keys, floating-point or nonfinite numbers, integers outside the interoperable range `[-9007199254740991, 9007199254740991]`, invalid Unicode surrogates, and non-JSON values. No Unicode normalization is performed. Strings are compared exactly and case-sensitively.
+
+`sha256:<64 lowercase hex>` denotes SHA-256 of the specified bytes. The `previous` field binds `canonical_json_bytes(prior_signed_envelope)`, including its `kind`, `payload`, `protocol`, `signature`, and `signer` fields. It does NOT hash raw transport bytes or a reserialized foreign artifact.
+
+A verifier MUST validate the envelope, the evidence descriptors, and every check before deriving `state`; unknown check outcomes or checks that cite undefined evidence identifiers MUST invalidate the record. Declared evidence objects not referenced by any check MAY remain present, but do not contribute to the resolution state.
+
 ## Evidence objects
 
 Evidence is protocol-neutral:
@@ -106,7 +129,7 @@ Evidence is protocol-neutral:
 }
 ```
 
-The digest identifies the exact bytes or canonical foreign object selected by the evidence producer.
+The digest identifies the exact bytes or canonical foreign object selected by the evidence producer. The producer MUST identify the chosen representation according to the foreign artifact's native format. A digest match alone does not prove that the underlying artifact is valid or that the selected representation is authoritative.
 
 Implementations MUST NOT silently reserialize another protocol and then treat the new bytes as the original artifact.
 
@@ -116,14 +139,14 @@ An `UNRESOLVED` check MAY cite no evidence when missing evidence is the reason r
 
 ## State is derived, not freely chosen
 
-Only required checks determine the resolution state.
+Only required checks determine the resolution state. Every valid record MUST contain at least one check with `required: true`. A record with no required checks (including one containing only optional checks) MUST be rejected; it MUST NOT derive `SURVIVED`.
 
 | Required-check condition | Derived state |
 | --- | --- |
 | at least one required `FAIL` | `FAILED` |
 | otherwise, at least one required `UNRESOLVED` | `UNRESOLVED` |
-| all required checks `PASS`, and `effective_target` differs from `original_target` | `NARROWED` |
-| all required checks `PASS`, and target is unchanged | `SURVIVED` |
+| all required checks `PASS`, and `effective_target` differs by exact string equality from `original_target` | `NARROWED` |
+| all required checks `PASS`, and `effective_target` exactly equals `original_target` | `SURVIVED` |
 
 A verifier MUST recompute the state from the required checks.
 
@@ -131,7 +154,7 @@ A signed object declaring `SURVIVED` while a required check is `FAIL` or `UNRESO
 
 ### `SURVIVED`
 
-All required checks pass and the original target remains operative at its original scope.
+All required checks MUST have outcome `PASS`, and `effective_target` MUST exactly equal `original_target` using case-sensitive string equality without normalization. These conditions derive `SURVIVED`.
 
 `SURVIVED` is not equivalent to a native verifier `PASS`. It describes the resolution state after the accepted evidence and required checks are evaluated.
 
@@ -145,7 +168,7 @@ The underlying artifacts MUST remain separately addressable. The resolution laye
 
 ### `NARROWED`
 
-All required checks pass, but the evidence supports only a stricter `effective_target` than the original target.
+All required checks MUST have outcome `PASS`, and `effective_target` MUST differ from `original_target` by exact, case-sensitive string equality. These structural conditions derive `NARROWED`. Mere string inequality does not prove semantic narrowing; the applicable required checks and their evidence must substantiate any assertion that the effective target is narrower.
 
 The original target remains in the record so the narrower successor does not rewrite what was previously claimed.
 
@@ -170,11 +193,11 @@ A disagreement does not automatically imply `UNRESOLVED`; the required-check pol
 
 ## Append-only correction
 
-The first record has `previous: null`.
+The first record MUST contain both `previous: null` and `revision_reason: null`; neither field may be omitted.
 
 Every later record MUST contain:
 
-- `previous`: the SHA-256 of the exact prior signed resolution record; and
+- `previous`: the SHA-256 of the canonical JSON bytes of the complete prior signed resolution envelope, as defined above; and
 - a non-empty `revision_reason`.
 
 A lineage verifier MUST reject a supplied history if:
@@ -232,13 +255,10 @@ Its only concern is the bounded resolution claim drawn above those evidence arti
 
 ## Reference implementations
 
-Original x402-focused proof:
+Pinned public RLP-1 semantics, schema, signing helpers, and lineage tests:
 
-https://github.com/chugarchugarr/-x402-resolution-receipt
+https://github.com/chugarchugarr/x402/tree/befa52c7e3f18c8e5c5a3b7df4ad6f6a293adbc6/rlp1-reference
 
-Executable RLP-1 semantics and tests:
-
-https://github.com/chugarchugarr/resolution-receipt-technocore/tree/2a2b11f905acd7a1d3dd430ff81ed279c350e6a4
 The RLP-1 implementation provides deterministic state derivation, signed `resolution-state` objects, hash-linked lineage verification, evidence-reference enforcement, and tests covering all four states plus history-rewrite rejection.
 
 The reference fixtures use independent test keys. They are not production x402 verifier or resolver identities.
