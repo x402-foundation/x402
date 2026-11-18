@@ -6,6 +6,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from .....schemas import AfterSettleAbortError
 from ..authorizer_signer import sign_claim_batch, sign_refund
 from ..errors import (
     ERR_CHANNEL_BUSY,
@@ -15,6 +16,7 @@ from ..errors import (
     ERR_MISSING_CHANNEL,
     ERR_REFUND_AMOUNT_INVALID,
     ERR_REFUND_NO_BALANCE,
+    ERR_VOUCHER_STORE_UNAVAILABLE,
 )
 from ..types import (
     VoucherClaim,
@@ -107,6 +109,7 @@ def handle_before_settle(scheme: BatchSettlementEvmScheme, ctx: SettleContext):
             return next_ch
 
         next_ch = current.copy()
+        next_ch.network = requirements.network or current.network
         next_ch.charged_cumulative_amount = str(new_charged)
         next_ch.signed_max_claimable = str(voucher["maxClaimableAmount"])
         next_ch.signature = voucher.get("signature", current.signature)
@@ -270,6 +273,7 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
                 # Channel fully drained — delete the record.
                 return None
             next_ch = current.copy()
+            next_ch.network = requirements.network or current.network
             next_ch.balance = snapshot.balance
             next_ch.total_claimed = snapshot.total_claimed
             next_ch.withdraw_requested_at = snapshot.withdraw_requested_at
@@ -298,9 +302,12 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
         signed_max_claimable = str(voucher["maxClaimableAmount"])
         signature = voucher.get("signature", "0x")
         now = _now_ms()
+        missing_row = False
 
         def update_deposit(current: Channel | None) -> Channel | None:
+            nonlocal missing_row
             if current is None:
+                missing_row = True
                 return current
             if not pending_id or (
                 current.pending_request is None or current.pending_request.pending_id != pending_id
@@ -309,6 +316,7 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
             charged_actual = str(int(current.charged_cumulative_amount) + int(requirements.amount))
             next_ch = current.copy()
             next_ch.channel_config = channel_config
+            next_ch.network = requirements.network or current.network
             next_ch.charged_cumulative_amount = charged_actual
             next_ch.signed_max_claimable = signed_max_claimable
             next_ch.signature = signature
@@ -327,12 +335,17 @@ def handle_after_settle(scheme: BatchSettlementEvmScheme, ctx: SettleResultConte
             next_ch.pending_request = None
             return next_ch
 
-        update_result = storage.update_channel(channel_id, update_deposit)
+        try:
+            update_result = storage.update_channel(channel_id, update_deposit)
+        except Exception as e:
+            raise AfterSettleAbortError(ERR_VOUCHER_STORE_UNAVAILABLE, str(e)) from e
         if update_result.status == "updated" and update_result.channel is not None:
             scheme.remember_channel_snapshot(payment_payload, update_result.channel)
             return
         scheme.take_request_context(payment_payload)
-        raise ValueError(ERR_CHANNEL_BUSY)
+        if missing_row:
+            raise AfterSettleAbortError(ERR_MISSING_CHANNEL)
+        raise AfterSettleAbortError(ERR_CHANNEL_BUSY)
 
 
 def handle_settle_failure(scheme: BatchSettlementEvmScheme, ctx: SettleFailureContext) -> None:

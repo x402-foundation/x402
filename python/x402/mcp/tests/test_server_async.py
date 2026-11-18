@@ -18,7 +18,7 @@ class MockAsyncResourceServer:
 
     def __init__(self):
         """Initialize mock async server."""
-        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True, skip_handler=None))
+        self.verify_payment = AsyncMock(return_value=Mock(is_valid=True))
         self.settle_payment = AsyncMock(
             return_value=SettleResponse(
                 success=True,
@@ -462,6 +462,64 @@ async def test_create_payment_wrapper_async_settlement_returns_failure():
 
 
 @pytest.mark.asyncio
+async def test_create_payment_wrapper_async_after_settle_abort_attaches_receipt():
+    """An after-settle abort fails the call closed but keeps the onchain receipt in _meta."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockAsyncResourceServer()
+    server.settle_payment = AsyncMock(
+        return_value=SettleResponse(
+            success=False,
+            error_reason="voucher_store_unavailable",
+            error_message="store down",
+            transaction="0xdeposit",
+            amount="1000",
+            network="eip155:84532",
+            payer="p",
+            after_settle_aborted=True,
+        )
+    )
+    config = PaymentWrapperConfig(
+        accepts=[
+            PaymentRequirements(
+                scheme="exact",
+                network="eip155:84532",
+                amount="1000",
+                asset="USDC",
+                pay_to="0xrecipient",
+                max_timeout_seconds=300,
+            )
+        ],
+    )
+    paid = create_payment_wrapper(server, config)
+
+    async def handler(args, context):
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    wrapped = paid(handler)
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+    result = await wrapped({"test": "value"}, {"_meta": {"x402/payment": payload.model_dump()}})
+
+    assert result.is_error is True
+    receipt = result.meta[MCP_PAYMENT_RESPONSE_META_KEY]
+    assert receipt["success"] is False
+    assert receipt["errorReason"] == "voucher_store_unavailable"
+    assert receipt["transaction"] == "0xdeposit"
+    assert receipt["amount"] == "1000"
+
+
+@pytest.mark.asyncio
 async def test_create_payment_wrapper_async_handler_error_no_settlement():
     """Test that settlement is NOT called when async handler returns an error."""
     server = MockAsyncResourceServer()
@@ -574,6 +632,51 @@ async def test_create_payment_wrapper_async_find_matching_requirement():
     call_args = server.verify_payment.call_args
     matched_req = call_args[0][1] if call_args[0] else call_args[1].get("requirements")
     assert matched_req.network == "eip155:1"
+
+
+@pytest.mark.asyncio
+async def test_create_payment_wrapper_async_settlement_failure_uses_matched_network():
+    """Test that settlement failure on a non-first accept reports the matched network."""
+    from x402.mcp.types import MCP_PAYMENT_RESPONSE_META_KEY
+
+    server = MockAsyncResourceServer()
+    server.settle_payment.side_effect = Exception("boom")
+
+    accepts = [
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:84532",
+            amount="1000",
+            asset="USDC",
+            pay_to="0xA",
+            max_timeout_seconds=300,
+        ),
+        PaymentRequirements(
+            scheme="exact",
+            network="eip155:1",
+            amount="2000",
+            asset="USDC",
+            pay_to="0xB",
+            max_timeout_seconds=300,
+        ),
+    ]
+
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=accepts))
+
+    async def handler(args, context):
+        return {"content": [{"type": "text", "text": "success"}]}
+
+    payload = PaymentPayload(
+        x402_version=2,
+        accepted=accepts[1].model_dump(),
+        payload={"signature": "0x123"},
+    )
+    result = await paid(handler)({}, {"_meta": {"x402/payment": payload.model_dump()}})
+
+    assert result.is_error is True
+    settled_req = server.settle_payment.call_args[0][1]
+    assert settled_req.network == "eip155:1"
+    assert result.structured_content[MCP_PAYMENT_RESPONSE_META_KEY]["network"] == "eip155:1"
 
 
 @pytest.mark.asyncio
@@ -704,8 +807,8 @@ async def test_create_payment_wrapper_async_async_hooks():
 
 
 @pytest.mark.asyncio
-async def test_create_payment_wrapper_async_hook_error_swallowed():
-    """Test that on_after_execution errors don't propagate."""
+async def test_create_payment_wrapper_async_metering_error_prevents_settlement():
+    """A failed metering hook cancels the verified payment instead of charging."""
     server = MockAsyncResourceServer()
 
     def error_hook(ctx):
@@ -757,8 +860,8 @@ async def test_create_payment_wrapper_async_hook_error_swallowed():
         },
     )
 
-    assert result.is_error is False
-    assert server.settle_payment.called
+    assert result.is_error is True
+    server.settle_payment.assert_not_called()
 
 
 def _mcp_accepts_async():
@@ -838,6 +941,26 @@ async def test_prefers_cancel_refund_receipt_when_handler_throws_under_escrow():
     assert result.content == [{"type": "text", "text": "Internal Server Error"}]
     assert result.meta[MCP_PAYMENT_RESPONSE_META_KEY]["transaction"] == "0xrefund"
     dispatcher.cancel.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_before_handler_omits_payment_meta_and_reraises():
+    server = MockAsyncResourceServer()
+    cancel_receipt = SettleResponse(
+        success=True, amount="0", transaction="0xcancel", network="eip155:84532"
+    )
+    dispatcher = Mock()
+    dispatcher.cancel = AsyncMock(return_value=cancel_receipt)
+    server.create_payment_cancellation_dispatcher = Mock(return_value=dispatcher)
+    paid = create_payment_wrapper(server, PaymentWrapperConfig(accepts=_mcp_accepts_async()))
+
+    async def handler(_args, _context):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await paid(handler)({"test": "arg"}, _mcp_extra_async(_mcp_payload_async()))
+    dispatcher.cancel.assert_awaited_once()
+    assert server.settle_payment.await_count == 0
 
 
 @pytest.mark.asyncio

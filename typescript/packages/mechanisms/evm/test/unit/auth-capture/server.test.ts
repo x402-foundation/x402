@@ -11,10 +11,13 @@ import {
 } from "../../../src/auth-capture/constants";
 import * as Errors from "../../../src/auth-capture/errors";
 import type { FacilitatorClient } from "@x402/core/server";
+import { DEFAULT_ASSETS } from "../../../src/defaultAssets";
 import { zeroAddress } from "viem";
 import type { AuthorizedPayment } from "../../../src/auth-capture/server/storage";
 
-const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const BASE_SEPOLIA = DEFAULT_ASSETS["eip155:84532"]![0]!;
+const BASE_SEPOLIA_USDC = BASE_SEPOLIA.asset;
+const BASE_MAINNET = DEFAULT_ASSETS["eip155:8453"]![0]!;
 
 describe("AuthCaptureEvmScheme", () => {
   describe("parsePrice", () => {
@@ -24,7 +27,7 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.amount).toBe("1000000");
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should parse amounts without dollar sign", async () => {
@@ -32,7 +35,7 @@ describe("AuthCaptureEvmScheme", () => {
       const result = await scheme.parsePrice("0.50", "eip155:84532");
 
       expect(result.amount).toBe("500000");
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should parse small amounts correctly", async () => {
@@ -85,14 +88,14 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.amount).toBe("10000");
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should return extra with name and version for Base mainnet", async () => {
       const scheme = new AuthCaptureEvmScheme();
       const result = await scheme.parsePrice("$1.00", "eip155:8453");
 
-      expect(result.extra).toEqual({ name: "USD Coin", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_MAINNET.name, version: BASE_MAINNET.version });
     });
 
     it("should pass through AssetAmount objects with extra", async () => {
@@ -137,13 +140,14 @@ describe("AuthCaptureEvmScheme", () => {
       // Mezo testnet defaults to mUSD which uses permit2 and supports EIP-2612,
       // so name/version remain (for the EIP-2612 sig) and assetTransferMethod is propagated.
       const scheme = new AuthCaptureEvmScheme();
+      const mezo = DEFAULT_ASSETS["eip155:31611"]![0]!;
       const result = await scheme.parsePrice("$1.00", "eip155:31611");
 
-      expect(result.asset).toBe("0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503");
+      expect(result.asset).toBe(mezo.asset);
       expect(result.extra).toMatchObject({
-        assetTransferMethod: "permit2",
-        name: "Mezo USD",
-        version: "1",
+        assetTransferMethod: mezo.assetTransferMethod,
+        name: mezo.name,
+        version: mezo.version,
       });
     });
   });
@@ -172,7 +176,7 @@ describe("AuthCaptureEvmScheme", () => {
 
       expect(result.asset).toBe(BASE_SEPOLIA_USDC);
       expect(result.amount).toBe("1000000");
-      expect(result.extra).toEqual({ name: "USDC", version: "2" });
+      expect(result.extra).toEqual({ name: BASE_SEPOLIA.name, version: BASE_SEPOLIA.version });
     });
 
     it("should try parsers in registration order", async () => {
@@ -393,18 +397,23 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      const captureDeadline = result.extra?.captureDeadline as number;
-      const refundDeadline = result.extra?.refundDeadline as number;
+        const captureDeadline = result.extra?.captureDeadline as number;
+        const refundDeadline = result.extra?.refundDeadline as number;
 
-      expect(captureDeadline).toBe(bucketStart + 600);
-      expect(refundDeadline).toBe(bucketStart + 1200);
+        expect(captureDeadline).toBe(bucketStart + 600);
+        expect(refundDeadline).toBe(bucketStart + 1200);
 
-      expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
-      expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+        expect(result.extra).not.toHaveProperty("captureDeadlineSeconds");
+        expect(result.extra).not.toHaveProperty("refundDeadlineSeconds");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should throw when mixing an absolute deadline with a relative offset", async () => {
@@ -490,12 +499,23 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const first = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
-      await new Promise(resolve => setTimeout(resolve, 1100));
-      const second = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      // Last two seconds of a 60s bucket. A wall-clock sleep here used to cross
+      // the boundary and shift both deadlines by exactly one bucket.
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime((bucketStart + 58) * 1000);
+      try {
+        const first = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+        vi.setSystemTime((bucketStart + 59) * 1000);
+        const second = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      expect(second.extra?.captureDeadline).toBe(first.extra?.captureDeadline);
-      expect(second.extra?.refundDeadline).toBe(first.extra?.refundDeadline);
+        expect(first.extra?.captureDeadline).toBe(bucketStart + 1);
+        expect(first.extra?.refundDeadline).toBe(bucketStart + 2);
+        expect(second.extra?.captureDeadline).toBe(first.extra?.captureDeadline);
+        expect(second.extra?.refundDeadline).toBe(first.extra?.refundDeadline);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should align relative deadlines to the offset bucket start", async () => {
@@ -513,12 +533,17 @@ describe("AuthCaptureEvmScheme", () => {
         network: "eip155:84532" as const,
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      expect(result.extra?.captureDeadline).toBe(bucketStart + 600);
-      expect(result.extra?.refundDeadline).toBe(bucketStart + 1_200);
+        expect(result.extra?.captureDeadline).toBe(bucketStart + 600);
+        expect(result.extra?.refundDeadline).toBe(bucketStart + 1_200);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should throw on non-positive captureDeadlineSeconds", async () => {
@@ -609,15 +634,20 @@ describe("AuthCaptureEvmScheme", () => {
         },
       };
 
-      const now = Math.floor(Date.now() / 1000);
-      const bucketStart = Math.floor(now / 60) * 60;
-      const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
+      const bucketStart = 1_700_000_040;
+      vi.useFakeTimers();
+      vi.setSystemTime(bucketStart * 1000);
+      try {
+        const result = await scheme.enhancePaymentRequirements(requirements, supportedKind, []);
 
-      const captureDeadline = result.extra?.captureDeadline as number;
-      const refundDeadline = result.extra?.refundDeadline as number;
+        const captureDeadline = result.extra?.captureDeadline as number;
+        const refundDeadline = result.extra?.refundDeadline as number;
 
-      expect(captureDeadline).toBe(bucketStart + 600);
-      expect(refundDeadline).toBe(bucketStart + 1200);
+        expect(captureDeadline).toBe(bucketStart + 600);
+        expect(refundDeadline).toBe(bucketStart + 1200);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -1149,7 +1179,9 @@ describe("AuthCaptureEvmScheme", () => {
     it("should return decimals for a known default asset", () => {
       const scheme = new AuthCaptureEvmScheme();
 
-      expect(scheme.getAssetDecimals(BASE_SEPOLIA_USDC, "eip155:84532")).toBe(6);
+      expect(scheme.getAssetDecimals(BASE_SEPOLIA_USDC, "eip155:84532")).toBe(
+        BASE_SEPOLIA.decimals,
+      );
     });
 
     it("should return undefined for an unknown asset", () => {

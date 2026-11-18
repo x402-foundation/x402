@@ -5,6 +5,7 @@ Contains shared logic for facilitator implementations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar
@@ -26,12 +27,14 @@ from .schemas import (
     RecoveredVerifyResult,
     SchemeNotFoundError,
     SettleContext,
+    SettleError,
     SettleFailureContext,
     SettleResponse,
     SettleResultContext,
     SupportedKind,
     SupportedResponse,
     VerifyContext,
+    VerifyError,
     VerifyFailureContext,
     VerifyResponse,
     VerifyResultContext,
@@ -39,11 +42,18 @@ from .schemas import (
     matches_network_pattern,
 )
 
+logger = logging.getLogger(__name__)
+
 # ============================================================================
 # Type Aliases - Support both sync and async hooks
 # ============================================================================
 
 T = TypeVar("T")
+FacilitatorT = TypeVar(
+    "FacilitatorT",
+    SchemeNetworkFacilitator,
+    SchemeNetworkFacilitatorV1,
+)
 
 BeforeVerifyHook = Callable[[VerifyContext], Awaitable[AbortResult | None] | AbortResult | None]
 AfterVerifyHook = Callable[[VerifyResultContext], Awaitable[None] | None]
@@ -132,14 +142,7 @@ class x402FacilitatorBase:
         Returns:
             Self for chaining.
         """
-        pattern = derive_network_pattern(networks)
-        self._schemes.append(
-            SchemeData(
-                facilitator=facilitator,
-                networks=set(networks),
-                pattern=pattern,
-            )
-        )
+        self._append_scheme_per_namespace(self._schemes, networks, facilitator)
         return self
 
     def register_v1(
@@ -156,15 +159,31 @@ class x402FacilitatorBase:
         Returns:
             Self for chaining.
         """
-        pattern = derive_network_pattern(networks)
-        self._schemes_v1.append(
-            SchemeData(
-                facilitator=facilitator,
-                networks=set(networks),
-                pattern=pattern,
-            )
-        )
+        self._append_scheme_per_namespace(self._schemes_v1, networks, facilitator)
         return self
+
+    def _append_scheme_per_namespace(
+        self,
+        schemes: list[SchemeData[FacilitatorT]],
+        networks: list[Network],
+        facilitator: FacilitatorT,
+    ) -> None:
+        if not networks:
+            raise ValueError("At least one network required")
+
+        networks_by_namespace: dict[str, list[Network]] = {}
+        for network in networks:
+            namespace = network.split(":")[0]
+            networks_by_namespace.setdefault(namespace, []).append(network)
+
+        for namespace_networks in networks_by_namespace.values():
+            schemes.append(
+                SchemeData(
+                    facilitator=facilitator,
+                    networks=set(namespace_networks),
+                    pattern=derive_network_pattern(namespace_networks),
+                )
+            )
 
     def register_extension(self, extension: FacilitatorExtension) -> x402FacilitatorBase:
         """Register a facilitator extension.
@@ -266,63 +285,57 @@ class x402FacilitatorBase:
     # Internal Helpers
     # ========================================================================
 
+    def _find_registered(
+        self,
+        schemes: list[SchemeData[FacilitatorT]],
+        scheme: str,
+        network: Network,
+    ) -> FacilitatorT | None:
+        for scheme_data in schemes:
+            if scheme_data.facilitator.scheme != scheme:
+                continue
+            if network in scheme_data.networks or matches_network_pattern(
+                network, scheme_data.pattern
+            ):
+                return scheme_data.facilitator
+        return None
+
     def _find_facilitator(
         self,
         scheme: str,
         network: Network,
     ) -> SchemeNetworkFacilitator | None:
-        """Find V2 facilitator for scheme/network."""
-        for scheme_data in self._schemes:
-            if scheme_data.facilitator.scheme != scheme:
-                continue
-
-            # Check if network matches
-            if network in scheme_data.networks:
-                return scheme_data.facilitator
-
-            # Check wildcard pattern
-            if matches_network_pattern(network, scheme_data.pattern):
-                return scheme_data.facilitator
-
-        return None
+        return self._find_registered(self._schemes, scheme, network)
 
     def _find_facilitator_v1(
         self,
         scheme: str,
         network: Network,
     ) -> SchemeNetworkFacilitatorV1 | None:
-        """Find V1 facilitator for scheme/network."""
-        for scheme_data in self._schemes_v1:
-            if scheme_data.facilitator.scheme != scheme:
-                continue
-
-            # Check if network matches
-            if network in scheme_data.networks:
-                return scheme_data.facilitator
-
-            # Check wildcard pattern
-            if matches_network_pattern(network, scheme_data.pattern):
-                return scheme_data.facilitator
-
-        return None
+        return self._find_registered(self._schemes_v1, scheme, network)
 
     def _build_facilitator_context(self) -> FacilitatorContext:
         """Build a FacilitatorContext from the registered extensions."""
         return FacilitatorContext(self._extensions)
+
+    def _require_facilitator(
+        self,
+        finder: Callable[[str, Network], FacilitatorT | None],
+        payload: PaymentPayload | PaymentPayloadV1,
+    ) -> FacilitatorT:
+        scheme = payload.get_scheme()
+        network = payload.get_network()
+        facilitator = finder(scheme, network)
+        if facilitator is None:
+            raise SchemeNotFoundError(scheme, network)
+        return facilitator
 
     def _verify_v2(
         self,
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> VerifyResponse:
-        """Verify V2 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator, payload)
         return facilitator.verify(payload, requirements, self._build_facilitator_context())
 
     def _verify_v1(
@@ -330,14 +343,7 @@ class x402FacilitatorBase:
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
     ) -> VerifyResponse:
-        """Verify V1 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator_v1(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator_v1, payload)
         return facilitator.verify(payload, requirements, self._build_facilitator_context())
 
     def _settle_v2(
@@ -345,14 +351,7 @@ class x402FacilitatorBase:
         payload: PaymentPayload,
         requirements: PaymentRequirements,
     ) -> SettleResponse:
-        """Settle V2 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator, payload)
         return facilitator.settle(payload, requirements, self._build_facilitator_context())
 
     def _settle_v1(
@@ -360,19 +359,15 @@ class x402FacilitatorBase:
         payload: PaymentPayloadV1,
         requirements: PaymentRequirementsV1,
     ) -> SettleResponse:
-        """Settle V1 payment."""
-        scheme = payload.get_scheme()
-        network = payload.get_network()
-
-        facilitator = self._find_facilitator_v1(scheme, network)
-        if facilitator is None:
-            raise SchemeNotFoundError(scheme, network)
-
+        facilitator = self._require_facilitator(self._find_facilitator_v1, payload)
         return facilitator.settle(payload, requirements, self._build_facilitator_context())
 
     # ========================================================================
     # Core Logic Generators (shared between async/sync)
     # ========================================================================
+
+    def _warn_hook_failure(self, operation: str, phase: HookPhase, error: Exception) -> None:
+        logger.warning("[x402] Facilitator %s %s hook threw: %s", operation, phase, error)
 
     def _verify_core(
         self,
@@ -409,9 +404,7 @@ class x402FacilitatorBase:
         for hook in self._before_verify_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise VerifyError(result.reason, result.message)
 
         try:
             # Route by version
@@ -516,9 +509,7 @@ class x402FacilitatorBase:
         for hook in self._before_settle_hooks:
             result = yield ("before", hook, context)
             if isinstance(result, AbortResult):
-                from .schemas import PaymentAbortedError
-
-                raise PaymentAbortedError(result.reason)
+                raise SettleError(result.reason, result.message)
 
         try:
             # Route by version

@@ -6,11 +6,15 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from x402.extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING_KEY
 from x402.mechanisms.evm.asset_cache import reset_asset_contract_cache
 from x402.mechanisms.evm.constants import (
     ERR_ASSET_NOT_DEPLOYED_CONTRACT,
     ERR_ERC20_APPROVAL_BROADCAST_FAILED,
     ERR_INSUFFICIENT_BALANCE,
+    ERR_INVALID_PAYLOAD,
     ERR_NETWORK_MISMATCH,
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
@@ -23,6 +27,7 @@ from x402.mechanisms.evm.constants import (
     ERR_SETTLEMENT_PENDING,
     ERR_TRANSACTION_FAILED,
     ERR_UNSUPPORTED_SCHEME,
+    PERMIT2_ADDRESS,
     X402_EXACT_PERMIT2_PROXY_ADDRESS,
 )
 from x402.mechanisms.evm.exact import ExactEvmClientScheme, ExactEvmFacilitatorScheme
@@ -125,6 +130,40 @@ def make_requirements(
         max_timeout_seconds=3600,
         extra={"assetTransferMethod": "permit2"},
     )
+
+
+_MISSING = object()
+
+# (path, value): set the field at `path` in the payload dict; _MISSING deletes it.
+MALFORMED_PERMIT2_PAYLOADS = [
+    pytest.param(("permit2Authorization",), "oops", id="authorization_not_object"),
+    pytest.param(("permit2Authorization", "permitted"), None, id="permitted_not_object"),
+    pytest.param(("permit2Authorization", "witness"), [], id="witness_not_object"),
+    pytest.param(("permit2Authorization", "from"), 123, id="from_not_string"),
+    pytest.param(("permit2Authorization", "spender"), _MISSING, id="spender_missing"),
+    pytest.param(("permit2Authorization", "permitted", "token"), None, id="token_not_string"),
+    pytest.param(("permit2Authorization", "witness", "to"), 123, id="witness_to_not_string"),
+    pytest.param(("permit2Authorization", "nonce"), "abc", id="nonce_not_numeric"),
+    pytest.param(("permit2Authorization", "nonce"), str(2**256), id="nonce_above_uint256"),
+    pytest.param(("permit2Authorization", "deadline"), _MISSING, id="deadline_missing"),
+    pytest.param(("permit2Authorization", "deadline"), "1" * 5000, id="deadline_over_digit_limit"),
+    pytest.param(("permit2Authorization", "permitted", "amount"), "-1", id="amount_negative"),
+    pytest.param(("permit2Authorization", "permitted", "amount"), 1000, id="amount_json_number"),
+    pytest.param(("permit2Authorization", "witness", "validAfter"), [], id="valid_after_list"),
+    pytest.param(("signature",), 123, id="signature_not_string"),
+]
+
+
+def make_malformed_payload(path: tuple[str, ...], value: Any) -> PaymentPayload:
+    payload_dict = make_permit2_payload_dict()
+    target = payload_dict
+    for key in path[:-1]:
+        target = target[key]
+    if value is _MISSING:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    return make_payment_payload(payload_dict=payload_dict)
 
 
 class MockFacilitatorSigner:
@@ -355,6 +394,18 @@ class TestVerifyPermit2:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_PERMIT2_NOT_YET_VALID
 
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.verify(make_payment_payload(), make_requirements(amount=amount))
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_evm_required_amount"
+
     def test_verify_rejects_amount_mismatch(self):
         facilitator = self._make_facilitator()
         auth = make_permit2_authorization(amount="999")  # wrong amount
@@ -434,6 +485,25 @@ class TestVerifyPermit2:
         assert result.is_valid is False
         assert result.invalid_reason == ERR_ASSET_NOT_DEPLOYED_CONTRACT
 
+    @pytest.mark.parametrize(("path", "value"), MALFORMED_PERMIT2_PAYLOADS)
+    def test_verify_rejects_malformed_payload(self, path, value):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.verify(make_malformed_payload(path, value), make_requirements())
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.invalid_message.startswith(f"{'.'.join(path)} must be ")
+
+    def test_verify_malformed_payload_reports_payer(self):
+        facilitator = self._make_facilitator()
+        payload = make_malformed_payload(("permit2Authorization", "deadline"), "abc")
+
+        result = facilitator.verify(payload, make_requirements())
+
+        assert result.invalid_reason == ERR_INVALID_PAYLOAD
+        assert result.payer == PAYER
+
 
 # ============================================================================
 # Facilitator settle_permit2 tests
@@ -478,6 +548,18 @@ class TestSettlePermit2:
         assert result.success is True
         assert result.transaction is not None
         assert len(result.transaction) > 0
+
+    @pytest.mark.parametrize(
+        "amount",
+        ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "],
+    )
+    def test_settle_rejects_non_canonical_required_amount(self, amount: str):
+        facilitator = self._make_facilitator()
+
+        result = facilitator.settle(make_payment_payload(), make_requirements(amount=amount))
+
+        assert result.success is False
+        assert result.error_reason == "invalid_exact_evm_required_amount"
 
     def test_settle_fails_if_verify_fails(self):
         facilitator = self._make_facilitator(allowance=0)
@@ -752,6 +834,19 @@ class TestSettlePermit2:
         assert result.error_reason == ERR_SETTLEMENT_PENDING
         assert result.transaction == settle_hash
 
+    @pytest.mark.parametrize(("path", "value"), MALFORMED_PERMIT2_PAYLOADS)
+    def test_settle_rejects_malformed_payload(self, path, value):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+
+        result = facilitator.settle(make_malformed_payload(path, value), make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_INVALID_PAYLOAD
+        assert result.error_message.startswith(f"{'.'.join(path)} must be ")
+        assert result.network == NETWORK
+        assert signer.write_calls == []
+
 
 # ============================================================================
 # Client routing tests
@@ -812,7 +907,7 @@ class TestClientPermit2Routing:
         assert "nonce" in p2
         assert "deadline" in p2
         assert "permitted" in p2
-        assert p2["permitted"]["token"] == "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        assert p2["permitted"]["token"] == TOKEN_ADDRESS
         assert p2["permitted"]["amount"] == AMOUNT
 
 
@@ -925,3 +1020,80 @@ class TestVerifyPermit2WithExtensions:
 
         assert result.is_valid is False
         assert "spender_not_permit2" in result.invalid_reason
+
+
+def _eip2612_extension(signature: str) -> dict[str, Any]:
+    now = int(time.time())
+    return {
+        EIP2612_GAS_SPONSORING_KEY: {
+            "info": {
+                "from": PAYER,
+                "asset": TOKEN_ADDRESS,
+                "spender": PERMIT2_ADDRESS,
+                "amount": str(2**256 - 1),
+                "nonce": "0",
+                "deadline": str(now + 3600),
+                "signature": signature,
+                "version": "1",
+            }
+        }
+    }
+
+
+def _permit2612_components(call_args: tuple[Any, ...]) -> tuple[bytes, bytes, int]:
+    permit = call_args[0]
+    return permit[2], permit[3], permit[4]
+
+
+class TestEip2612RecoveryByte:
+    @pytest.mark.parametrize(
+        ("signature", "expected_v"),
+        [
+            pytest.param("aa" * 64 + "00", 27, id="raw-0"),
+            pytest.param("aa" * 64 + "01", 28, id="raw-1"),
+            pytest.param("0x" + "aa" * 64 + "00", 27, id="prefixed-raw-0"),
+            pytest.param("aa" * 64 + "1b", 27, id="v-27"),
+            pytest.param("aa" * 64 + "1c", 28, id="v-28"),
+            pytest.param("0x" + "aa" * 64 + "1b", 27, id="prefixed-v-27"),
+        ],
+    )
+    def test_exact_settle_normalizes_recovery_byte(self, signature: str, expected_v: int):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+        payload = make_payment_payload().model_copy(
+            update={"extensions": _eip2612_extension(signature)}
+        )
+
+        with patch(
+            "x402.mechanisms.evm.exact.permit2_utils._verify_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(payload, make_requirements())
+
+        assert result.success is True
+        assert len(signer.write_calls) == 1
+        _address, function_name, args = signer.write_calls[0]
+        assert function_name == "settleWithPermit"
+        r, s, v = _permit2612_components(args)
+        assert r == bytes.fromhex("aa" * 32)
+        assert s == bytes.fromhex("aa" * 32)
+        assert v == expected_v
+
+    def test_exact_settle_rejects_short_eip2612_signature(self):
+        signer = MockFacilitatorSigner()
+        facilitator = ExactEvmFacilitatorScheme(signer)
+        payload = make_payment_payload().model_copy(
+            update={"extensions": _eip2612_extension("0xab")}
+        )
+
+        with patch(
+            "x402.mechanisms.evm.exact.permit2_utils._verify_permit2_signature",
+            return_value=True,
+        ):
+            result = facilitator.settle(payload, make_requirements())
+
+        assert result.success is False
+        assert result.error_reason == ERR_TRANSACTION_FAILED
+        assert result.error_message is not None
+        assert "65 bytes" in result.error_message
+        assert signer.write_calls == []

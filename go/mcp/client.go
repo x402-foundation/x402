@@ -253,10 +253,7 @@ func (c *X402MCPClient) callToolWithPayload(ctx context.Context, name string, ar
 			Meta:      mcp.Meta{MCP_PAYMENT_META_KEY: freshPayload},
 		}
 		retryTimeout := freshPayload.Accepted.MaxTimeoutSeconds
-		if retryTimeout == 0 {
-			retryTimeout = 300
-		}
-		retryCtx, retryCancel := withTimeoutIfNone(ctx, time.Duration(retryTimeout)*time.Second)
+		retryCtx, retryCancel := withTimeoutIfNone(ctx, c.paidTimeout(retryTimeout))
 		defer retryCancel()
 
 		retryResult, err := c.caller.CallTool(retryCtx, retryParams)

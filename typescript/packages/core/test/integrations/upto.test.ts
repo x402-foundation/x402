@@ -151,7 +151,7 @@ describe("Upto Integration Tests", () => {
         accepts: {
           scheme: "cash",
           payTo: "merchant@example.com",
-          price: "$10.00",
+          price: "$10",
           network: "x402:cash" as Network,
         },
         description: "AI generation with upto billing",

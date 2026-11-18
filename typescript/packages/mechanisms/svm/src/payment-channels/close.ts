@@ -28,11 +28,25 @@ import {
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../constants";
+import { ErrUnsupportedTransactionVersion } from "../exact/facilitator/errors";
+import {
+  applyTransactionV1Config,
+  type BuildableTransactionVersion,
+  checkTransactionV1Budget,
+  getCompiledInstructions,
+  readTransactionV1Config,
+  transactionSizeExceeded,
+} from "../transactionV1";
+import { isAcceptedTransactionVersion } from "../utils";
 import {
   getRequestCloseInstruction,
   REQUEST_CLOSE_DISCRIMINATOR,
 } from "./generated/instructions/requestClose";
-import { OPEN_MAX_COMPUTE_UNIT_LIMIT } from "./open";
+import {
+  assertWithinSizeLimit,
+  OPEN_DEFAULT_COMPUTE_UNIT_LIMIT,
+  OPEN_MAX_COMPUTE_UNIT_LIMIT,
+} from "./open";
 import { PAYMENT_CHANNELS_PROGRAM_ID } from "./onchain";
 import { verifyEd25519Signature } from "./voucher";
 
@@ -60,6 +74,13 @@ export interface BuildRequestCloseArgs {
   blockhash: { blockhash: string; lastValidBlockHeight: bigint };
   memo?: string | undefined;
   programId?: string | undefined;
+  /**
+   * Transaction message version to build; defaults to `0`. A version-0 close
+   * carries no Compute Budget instructions. A version-1 close must set its
+   * budget, so it requests {@link OPEN_DEFAULT_COMPUTE_UNIT_LIMIT} with no
+   * priority fee.
+   */
+  transactionVersion?: BuildableTransactionVersion | undefined;
 }
 
 /** Build a payer-signed `request_close` transaction with an empty sponsor signature slot. */
@@ -75,8 +96,15 @@ export async function buildRequestCloseTransaction(args: BuildRequestCloseArgs):
     accounts: [] as const,
     data: memoData,
   };
+  const version = args.transactionVersion ?? 0;
   const message = pipe(
-    createTransactionMessage({ version: 0 }),
+    createTransactionMessage({ version }),
+    value =>
+      applyTransactionV1Config(
+        version,
+        { computeUnitLimit: OPEN_DEFAULT_COMPUTE_UNIT_LIMIT, computeUnitPriceMicroLamports: 0 },
+        value,
+      ),
     value => setTransactionMessageFeePayer(address(args.feePayer), value),
     value =>
       setTransactionMessageLifetimeUsingBlockhash(
@@ -89,7 +117,9 @@ export async function buildRequestCloseTransaction(args: BuildRequestCloseArgs):
     value => appendTransactionMessageInstructions([requestClose, memo], value),
   );
   const signed = await partiallySignTransactionMessageWithSigners(message);
-  return getBase64EncodedWireTransaction(signed);
+  const transaction = getBase64EncodedWireTransaction(signed);
+  assertWithinSizeLimit("request_close", transaction, version);
+  return transaction;
 }
 
 export interface VerifyRequestCloseExpected {
@@ -100,6 +130,11 @@ export interface VerifyRequestCloseExpected {
   programId?: string | undefined;
   maxComputeUnits?: number | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
+  /**
+   * Transaction message versions the facilitator accepts; legacy is accepted
+   * exactly when version 0 is. Unset accepts `[0, 1]`.
+   */
+  acceptedTransactionVersions?: readonly number[] | undefined;
 }
 
 /**
@@ -117,9 +152,24 @@ export async function verifyRequestCloseTransaction(
     throw new Error("verifyRequestCloseTransaction: payer must differ from feePayer");
   }
   const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transactionBase64));
-  const message = getCompiledTransactionMessageDecoder().decode(
-    decoded.messageBytes,
-  ) as unknown as CompiledMessage;
+  const compiledMessage = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+  if (
+    !isAcceptedTransactionVersion(compiledMessage.version, expected.acceptedTransactionVersions)
+  ) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: verifyRequestCloseTransaction: transaction message version ${String(compiledMessage.version)} is not accepted`,
+    );
+  }
+  const oversized = transactionSizeExceeded(transactionBase64, compiledMessage.version);
+  if (oversized) {
+    throw new Error(
+      `verifyRequestCloseTransaction: transaction is ${oversized.size} bytes, above the ${oversized.limit}-byte limit for version ${String(compiledMessage.version)}`,
+    );
+  }
+  const message = {
+    ...(compiledMessage as unknown as CompiledMessage),
+    instructions: getCompiledInstructions(compiledMessage),
+  };
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error("verifyRequestCloseTransaction: address lookup tables are not permitted");
   }
@@ -158,6 +208,20 @@ export async function verifyRequestCloseTransaction(
     expected.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
     MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   );
+  // Version 1 carries its budget in the message config: check it there, and
+  // reject any Compute Budget instruction, so the prefix below stays empty.
+  if (compiledMessage.version === 1) {
+    const violation = checkTransactionV1Budget(
+      readTransactionV1Config(compiledMessage),
+      message.instructions.map(ix => message.staticAccounts[ix.programAddressIndex] ?? ""),
+      { maxComputeUnits, maxPriceMicroLamports: maxPriorityFee },
+    );
+    if (violation) {
+      throw new Error(
+        `verifyRequestCloseTransaction: transaction v1 config rejected (${violation})`,
+      );
+    }
+  }
   let phase: "prefix" | "close" | "suffix" = "prefix";
   let computeLimitSeen = false;
   let computePriceSeen = false;

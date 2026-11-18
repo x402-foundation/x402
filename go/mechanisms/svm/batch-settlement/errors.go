@@ -1,5 +1,13 @@
 package batchsettlement
 
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+)
+
 const errorPrefix = "invalid_batch_settlement_svm_"
 
 // Machine-readable batch-settlement failure reasons.
@@ -28,6 +36,7 @@ const (
 	ErrChannelState               = errorPrefix + "channel_state"
 	ErrRefundTransaction          = errorPrefix + "refund_transaction"
 	ErrPayoutAttributionAmbiguous = errorPrefix + "payout_attribution_ambiguous"
+	ErrOperationCeilingChanged    = errorPrefix + "operation_ceiling_changed"
 )
 
 // ErrorReasons is every batch-settlement machine reason, in declaration order.
@@ -57,5 +66,29 @@ func ErrorReasons() []string {
 		ErrChannelState,
 		ErrRefundTransaction,
 		ErrPayoutAttributionAmbiguous,
+		ErrOperationCeilingChanged,
 	}
+}
+
+var gracePeriodPattern = regexp.MustCompile(`gracePeriod \d+ != expected withdrawDelay`)
+
+// SetupTransactionError gives a failed open or top_up verification its spec
+// code (spec 7): the binding Memo naming another receiver authorizer is
+// receiver_authorizer_mismatch, a grace period other than extra.withdrawDelay
+// is withdraw_delay_mismatch, an unaccepted message version keeps
+// unsupported_transaction_version, and every other sponsor safety check
+// (layout, signers, budget, size) is setup_transaction.
+func SetupTransactionError(err error) error {
+	message := err.Error()
+	if strings.HasPrefix(message, svm.ErrUnsupportedTransactionVersion) {
+		return err
+	}
+	reason := ErrSetupTransaction
+	switch {
+	case strings.Contains(message, "names another receiver authorizer"):
+		reason = ErrReceiverAuthorizerMismatch
+	case gracePeriodPattern.MatchString(message):
+		reason = ErrWithdrawDelayMismatch
+	}
+	return fmt.Errorf("%s: %w", reason, err)
 }

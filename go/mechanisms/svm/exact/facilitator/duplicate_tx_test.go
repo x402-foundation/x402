@@ -12,15 +12,7 @@ import (
 )
 
 func TestFacilitatorInstructionConstraints(t *testing.T) {
-	t.Run("allows 3-7 instructions", func(t *testing.T) {
-		minInstructions := 3
-		maxInstructions := 7
-
-		assert.Equal(t, 3, minInstructions)
-		assert.Equal(t, 7, maxInstructions)
-	})
-
-	t.Run("optional instructions may be Lighthouse or Memo", func(t *testing.T) {
+	t.Run("guard instructions may be Lighthouse anywhere; Memo only after transfer", func(t *testing.T) {
 		lighthouseProgram := svm.LighthouseProgramAddress
 		memoProgram := svm.MemoProgramAddress
 
@@ -31,9 +23,9 @@ func TestFacilitatorInstructionConstraints(t *testing.T) {
 }
 
 func TestErrorCodesForMitigationPlanning(t *testing.T) {
-	t.Run("instruction count error", func(t *testing.T) {
-		err := ErrTransactionInstructionsLength
-		assert.Equal(t, ErrTransactionInstructionsLength, err)
+	t.Run("unknown instruction error", func(t *testing.T) {
+		err := ErrUnknownInstruction
+		assert.Equal(t, ErrUnknownInstruction, err)
 	})
 }
 

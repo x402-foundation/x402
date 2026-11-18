@@ -1,6 +1,6 @@
 """SVM signer protocol definitions."""
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 try:
     from solders.keypair import Keypair
@@ -123,6 +123,20 @@ class FacilitatorSvmSigner(Protocol):
             network: CAIP-2 network identifier.
 
         Raises:
-            RuntimeError: If confirmation fails or times out.
+            TransactionOnchainFailureError: If confirmed or finalized execution failed.
+                Import from x402.mechanisms.svm. V2 treats this as terminal.
+            Exception: If confirmation is uncertain (including timeout or RPC failure).
+                V2 keeps the original signature pending for reconciliation.
+        """
+        ...
+
+
+@runtime_checkable
+class FacilitatorSvmSignerWithGetAccountInfo(Protocol):
+    def get_account_info(self, address: str, network: str) -> str | None:
+        """Return the account owner at confirmed commitment.
+
+        None when the account does not exist. Owner base58 text when it does.
+        Raise when the read fails.
         """
         ...

@@ -15,7 +15,7 @@ registers the EVM upto scheme alongside `exact`.
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - A Solana Devnet key with SOL. The facilitator fronts channel rent and pays
   every transaction fee; it holds the channel payee seat with a **zero**
   distribution share, so it needs no token balance.

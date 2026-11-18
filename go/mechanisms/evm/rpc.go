@@ -19,8 +19,10 @@ type RPCChainConfig struct {
 	RPCURL string
 }
 
-// RPCConfig configures RPC behavior for EVM clients that need on-chain reads or fee estimation.
-// Chain-specific entries in RPCByChainID take precedence over the top-level RPCURL.
+// RPCConfig configures RPC behavior for EVM clients that need onchain reads or fee estimation.
+// Sponsored Permit2 approvals require this RPC access unless the signer already provides the
+// corresponding read, nonce, and fee-estimation capabilities. Chain-specific entries in
+// RPCByChainID take precedence over the top-level RPCURL.
 type RPCConfig struct {
 	RPCURL       string
 	RPCByChainID map[int64]RPCChainConfig

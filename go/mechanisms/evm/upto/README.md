@@ -151,7 +151,15 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** No additional setup. `UptoEvmScheme` automatically checks for the extension and signs the permit when applicable.
+**Client:** The scheme must be able to read token contracts. Configure an RPC endpoint, or provide a functional RPC-backed signer such as one created with `evmsigners.NewClientSignerFromPrivateKeyWithClient`:
+
+```go
+scheme := uptoevm.NewUptoEvmScheme(signer, &uptoevm.UptoEvmSchemeConfig{
+    RPCURL: "https://your-rpc.example",
+})
+```
+
+For multiple networks, use `RPCByChainID` instead of a single `RPCURL`. If an advertised extension cannot obtain the required capability, the client keeps the existing payment behavior and logs an actionable warning.
 
 **Facilitator:** Register the extension:
 
@@ -182,7 +190,7 @@ routes := x402http.RoutesConfig{
 }
 ```
 
-**Client:** The signer must support transaction signing (nonce resolution, fee estimation). `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
+**Client:** The signer must support transaction signing. An RPC-configured scheme can supply nonce resolution and fee estimation, but the signer must still implement `evm.ClientEvmSignerWithSignTransaction`; alternatively, provide a functional RPC-backed signer implementing `evm.ClientEvmSignerWithTxSigning`. `UptoEvmScheme` falls back to this when EIP-2612 is unavailable.
 
 **Facilitator:** Register with a signer that can broadcast transactions:
 

@@ -78,6 +78,10 @@ and fill required environment variables:
 - `CASPER_TOKEN_NAME` - CEP-3009 EIP-712 token name (optional for `all-networks`)
 - `CASPER_TOKEN_VERSION` - CEP-3009 EIP-712 token version (optional for `all-networks`)
 - `CASPER_AMOUNT` - Casper CEP-18 amount (optional; defaults to `1500000000`)
+- `CANTON_ADDRESS` - Canton merchant party to receive payments (optional for `all-networks`)
+- `CANTON_INSTRUMENT_ADMIN` - Instrument admin party; the DSO party for Canton Coin (optional for `all-networks`)
+- `CANTON_SYNCHRONIZER_ID` - Global Synchronizer id (optional for `all-networks`)
+- `CANTON_NETWORK` - Canton network CAIP-2 (optional; defaults to `canton:mainnet`)
 - `CCD_ADDRESS` - Concordium account address to receive payments (optional for `all-networks`)
 - `EVM_ADDRESS` - Ethereum address to receive payments
 - `SVM_ADDRESS` - Solana address to receive payments (optional for `all-networks`)
@@ -88,6 +92,8 @@ and fill required environment variables:
 - `XRPL_NETWORK` - XRPL network CAIP-2 (optional, defaults to `xrpl:1` XRPL Testnet)
 - `XRPL_AMOUNT` - XRPL price in drops (optional, defaults to `1000` = 0.001 XRP)
 
+> **Canton:** the merchant must hold a live Canton Coin `TransferPreapproval` to be paid. Create it once (and renew it before it expires) with `pnpm setup:canton-preapproval`, which also needs `CANTON_PRIVATE_KEY` (the merchant's Ed25519 PKCS8 PEM), `CANTON_PARTICIPANT_URL`, `CANTON_TOKEN`, `CANTON_USER_ID` and `CANTON_SCAN_URL`. The merchant pays the small preapproval fee from its own Canton Coin; on DevNet, get some from a [CC tap](https://docs.canton.network/sdks-tools/sdks/wallet-sdk/guides/performing-a-cc-tap).
+>
 > **Hedera Testnet:** Get testnet HBAR from the [Hedera Faucet](https://portal.hedera.com/faucet).
 >
 > **Cardano Testnet:** Get test ADA (tADA) for preprod/preview from the [Cardano testnets faucet](https://docs.cardano.org/cardano-testnets/tools/faucet/).

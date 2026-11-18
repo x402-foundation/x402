@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const rpcMocks = vi.hoisted(() => ({
   getSignaturesForAddressSend: vi.fn(),
   getTransactionSend: vi.fn(),
+  getTransactionConfig: vi.fn(),
 }));
 
 vi.mock("../../src/utils", async () => {
@@ -11,7 +12,10 @@ vi.mock("../../src/utils", async () => {
     ...actual,
     createRpcClient: vi.fn(() => ({
       getSignaturesForAddress: () => ({ send: rpcMocks.getSignaturesForAddressSend }),
-      getTransaction: () => ({ send: rpcMocks.getTransactionSend }),
+      getTransaction: (_signature: unknown, config: unknown) => {
+        rpcMocks.getTransactionConfig(config);
+        return { send: rpcMocks.getTransactionSend };
+      },
     })),
   };
 });
@@ -47,6 +51,14 @@ describe("channelHistoryReads", () => {
     expect(page).toEqual([{ err: null, signature: "sig-1" }]);
 
     await expect(reads.getTransaction(SIGNATURE, SOLANA_DEVNET_CAIP2)).resolves.toBe("dGVzdA==");
+  });
+
+  it("reads transactions up to version 1", async () => {
+    rpcMocks.getTransactionSend.mockResolvedValue(null);
+    await channelHistoryReads().getTransaction(SIGNATURE, SOLANA_DEVNET_CAIP2);
+    expect(rpcMocks.getTransactionConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({ encoding: "base64", maxSupportedTransactionVersion: 1 }),
+    );
   });
 
   it("returns null when the transaction is missing or not base64 wire", async () => {

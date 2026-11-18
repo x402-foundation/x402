@@ -12,10 +12,40 @@ import {
   DiscoveredClient,
   DiscoveredFacilitator,
   TestScenario,
+  TestEndpoint,
   ProtocolFamily,
   endpointAssetTransferMethod,
   endpointPaymentScheme,
 } from './types';
+
+/**
+ * Catalog `sdks` lists languages that implement the route for every role.
+ * `clientSdks` lists client-only languages, and `facilitatorSdks` narrows
+ * facilitator support when a route is not implemented by every SDK.
+ * Legacy endpoints omit all three and stay unrestricted.
+ */
+function roleImplementsEndpoint(
+  language: string,
+  endpoint: TestEndpoint,
+  role: 'client' | 'facilitator',
+): boolean {
+  if (
+    role === 'facilitator' &&
+    endpoint.facilitatorSdks &&
+    !endpoint.facilitatorSdks.includes(language)
+  ) {
+    return false;
+  }
+  const listed = endpoint.sdks;
+  const clientOnly = endpoint.clientSdks;
+  if ((!listed || listed.length === 0) && (!clientOnly || clientOnly.length === 0)) {
+    return true;
+  }
+  if (listed?.includes(language)) {
+    return true;
+  }
+  return role === 'client' && (clientOnly?.includes(language) ?? false);
+}
 
 export class TestDiscovery {
   private baseDir: string;
@@ -238,6 +268,10 @@ export class TestDiscovery {
             verboseLog(`  ⚠️  Skipping ${client.name}: No language specified`);
             continue;
           }
+          if (!roleImplementsEndpoint(clientLanguage, endpoint, 'client')) {
+            verboseLog(`  ⚠️  Skipping ${client.name} ↔ ${server.name} ${endpoint.path}: ${clientLanguage} is not a client SDK for this route`);
+            continue;
+          }
           const clientSchemesForFamily = schemesForComponent(
             clientLanguage,
             endpointProtocolFamily,
@@ -267,6 +301,7 @@ export class TestDiscovery {
             const supportsVersion = f.config.x402Versions?.includes(serverVersion);
             const facilLanguage = f.config.language;
             if (!facilLanguage) return false;
+            if (!roleImplementsEndpoint(facilLanguage, endpoint, 'facilitator')) return false;
             const clientFacilitators = client.config.facilitators;
             if (clientFacilitators && !clientFacilitators.includes(f.name)) {
               return false;

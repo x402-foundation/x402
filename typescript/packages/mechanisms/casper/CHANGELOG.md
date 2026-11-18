@@ -1,5 +1,48 @@
 # @x402/casper
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [da08c70](https://github.com/x402-foundation/x402/commit/da08c70): The exact Casper facilitator now returns `invalid_exact_casper_facilitator_malformed_payload` when a payload cannot be parsed, and `invalid_exact_casper_facilitator_preflight_failed` when a targeted preflight read fails or a dictionary value is malformed. A missing balance, a used nonce, and an asset that cannot run `transfer_with_authorization` keep their existing reasons. Settle reports the same reason and payer. ([#4233](https://github.com/x402-foundation/x402/pull/4233)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [96d6440](https://github.com/x402-foundation/x402/commit/96d6440): The `exact` Casper facilitator now returns the transaction hash in `transaction` when settlement fails after the transaction was submitted, for example when it reverts on chain or the wait for its result times out. `transaction` stays empty when no transaction was submitted. ([#4155](https://github.com/x402-foundation/x402/pull/4155)) - Thanks [@davidatwhiletrue](https://github.com/davidatwhiletrue) and [@claude](https://github.com/claude)!
+
+## 2.30.0
+
+### Minor Changes
+
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+
+## 2.29.0
+
+### Minor Changes
+
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
 ## 2.28.0
 
 ### Minor Changes

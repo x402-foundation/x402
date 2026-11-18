@@ -6,7 +6,7 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther, 
 import { privateKeyToAccount } from 'viem/accounts';
 import { base, baseSepolia } from 'viem/chains';
 import { TestDiscovery } from './src/discovery';
-import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointAuthCaptureCoverageBranch, endpointAuthCaptureNeedsDeferredCapture, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement } from './src/types';
+import { ClientConfig, ScenarioResult, ServerConfig, TestScenario, endpointAssetTransferMethod, endpointAuthCaptureCoverageBranch, endpointAuthCaptureNeedsDeferredCapture, endpointPaymentFlow, endpointPaymentScheme, endpointUsesBatchSettlement, endpointUsesFacilitatorManagedBatch, type BatchServerRole } from './src/types';
 import { AUTH_CAPTURE_E2E_CAPTURE_PATH } from './src/mechanisms';
 import { config as loggerConfig, log, verboseLog, errorLog, close as closeLogger, createComboLogger } from './src/logger';
 import { handleDiscoveryValidation, shouldRunDiscoveryValidation, type TestedDiscoveryScenario } from './extensions/bazaar';
@@ -16,7 +16,11 @@ import { filterScenarios, TestFilters, shouldShowExtensionOutput, getUniquePayme
 import { minimizeScenarios } from './src/sampling';
 import { getNetworkSet, NetworkMode, NetworkConfig, getNetworkModeDescription, resolveEvmPermit2Asset, PROTOCOL_FAMILIES, requiredEnvForFamily, requiredRpcEnvForFamily, protocolFamilyForCredentialKey } from './src/networks/networks';
 import { injectNetworkEnv } from './src/env';
-import { FACILITATOR_ENV_PREFLIGHT_ALLOWLIST, runRouteFilterForHarness } from './src/mechanisms';
+import {
+  FACILITATOR_ENV_PREFLIGHT_ALLOWLIST,
+  batchVoucherStoreOverrideFromEnv,
+  runRouteFilterForHarness,
+} from './src/mechanisms';
 import { GenericServerProxy } from './src/servers/generic-server';
 import { Semaphore, ResourceLock } from './src/concurrency';
 import { FacilitatorManager } from './src/facilitators/facilitator-manager';
@@ -85,6 +89,7 @@ function isTransientPaymentFailure(error?: string): boolean {
     e.includes('replacement transaction') ||
     e.includes('underpriced') ||
     e.includes('insufficient allowance') ||
+    e.includes('allowance_required') ||
     e.includes('timeout') ||
     e.includes('timed out') ||
     e.includes('econnreset') ||
@@ -539,6 +544,7 @@ async function startServer(
       const { ok, problems } = await server.verifyPaidRoutes(
         serverConfig.enabledFamilies,
         serverConfig.runRouteFilter,
+        serverConfig.batchServerRole ?? 'standard',
       );
       if (!ok) {
         errorLog(
@@ -714,7 +720,11 @@ function validateBatchPaymentStep(
   }
 
   if (!stepResult.success) {
-    const reason = stepResult.payment_response?.errorReason || stepResult.error || 'unknown error';
+    const reason =
+      stepResult.payment_response?.errorReason ||
+      stepResult.error ||
+      (stepResult.data as { error?: unknown })?.error ||
+      `unknown error (status_code=${stepResult.status_code ?? "n/a"}, data=${JSON.stringify(stepResult.data ?? null)})`;
     return `Batch-settlement ${label} failed: ${reason}`;
   }
 
@@ -915,6 +925,27 @@ async function runTest() {
   // Apply filters to scenarios
   let filteredScenarios = filterScenarios(allScenarios, filters);
 
+  // Facilitator-managed batch custody override (debug/CI-only): run only one custody side.
+  // CLI `--batchVoucherStore=self|facilitator` wins; otherwise honor
+  // `EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=self|facilitator` from env.
+  const batchCustodyOverride =
+    parsedArgs.batchVoucherStore ?? batchVoucherStoreOverrideFromEnv(key => process.env[key]);
+  if (batchCustodyOverride) {
+    const before = filteredScenarios.length;
+    if (batchCustodyOverride === 'self') {
+      filteredScenarios = filteredScenarios.filter(
+        scenario => !endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    } else {
+      filteredScenarios = filteredScenarios.filter(scenario =>
+        endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+      );
+    }
+    log(
+      `\n🔀 Batch custody override: ${batchCustodyOverride} (${before} → ${filteredScenarios.length} scenarios)`,
+    );
+  }
+
   if (filteredScenarios.length === 0) {
     log('❌ No scenarios match the selections');
     log('💡 Try selecting more options or run without filters\n');
@@ -956,6 +987,21 @@ async function runTest() {
     errorLog('❌ Missing required environment variables for selected protocol families:');
     Array.from(missingRequiredEnv).forEach(name => errorLog(` ${name}`));
     process.exit(1);
+  }
+
+  // Facilitator-managed batch preflight: every managed scenario settles through a
+  // facilitator voucher store. Refund consent is either the server-owned refund key
+  // (SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY: `extra.refundAuthorizer` →
+  // client salt packing) or, when unset, the facilitator's `delegatedRefund: true`
+  // (402 omits `extra.refundAuthorizer`, raw salt).
+  const hasManagedBatchScenarios = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (hasManagedBatchScenarios) {
+    log('🗄️ Facilitator-managed batch scenarios detected — facilitator voucher store + dual servers enabled');
+    if (!process.env.SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY?.trim()) {
+      log('ℹ️ No refund authorizer key set — managed refunds use the facilitator delegatedRefund path');
+    }
   }
 
   if (selectedExtensions && selectedExtensions.length > 0) {
@@ -1038,6 +1084,12 @@ async function runTest() {
         endpointAssetTransferMethod(s.endpoint) === 'permit2' &&
         s.endpoint.extensions?.includes('erc20ApprovalGasSponsoring'),
     );
+    const hasManagedBatch = evmScenarios.some(s => endpointUsesFacilitatorManagedBatch(s.endpoint));
+    const hasSelfBatch = evmScenarios.some(
+      s =>
+        endpointPaymentScheme(s.endpoint) === 'batch-settlement' &&
+        !endpointUsesFacilitatorManagedBatch(s.endpoint),
+    );
 
     log('🔍 EVM Branch Coverage Check:');
     log(`   Exact EIP-3009 route:          ${hasExactEip3009 ? '✅' : '⚠️  not found'}`);
@@ -1054,6 +1106,8 @@ async function runTest() {
     log(`   Batch-settlement+direct:       ${hasBatchSettlementPermit2Direct ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+EIP2612:      ${hasBatchSettlementPermit2Eip2612 ? '✅' : '⚠️  not found'}`);
     log(`   Batch-settlement+ERC20:        ${hasBatchSettlementPermit2Erc20 ? '✅' : '⚠️  not found'}`);
+    log(`   Batch self-managed custody:    ${hasSelfBatch ? '✅' : '⚠️  not found'}`);
+    log(`   Batch facilitator-managed:     ${hasManagedBatch ? '✅' : '⚠️  not found'}`);
     log('');
   }
 
@@ -1256,24 +1310,34 @@ async function runTest() {
   // Assign ports and start all facilitators
   const facilitatorManagers = new Map<string, FacilitatorManager>();
 
-  // Group scenarios by server + facilitator combination
-  // This ensures we restart servers when switching facilitators
+  // Group scenarios by server + facilitator + batch custody combination.
+  // `voucherStoreMode` is constructor-wide on the server scheme, so one process
+  // cannot mix self-managed and facilitator-managed batch routes. Spawn two
+  // servers per (server, facilitator) pair when both sides are in scope; a single
+  // facilitator with a voucher store serves both (discriminant is
+  // `extra.voucherManager` on each 402).
   interface ServerFacilitatorCombo {
     serverName: string;
     facilitatorName: string | undefined;
+    batchServerRole: BatchServerRole;
     scenarios: typeof filteredScenarios;
     comboIndex: number;
     port: number;
   }
 
   const serverFacilitatorCombos: ServerFacilitatorCombo[] = [];
-  const groupKey = (serverName: string, facilitatorName: string | undefined) =>
-    `${serverName}::${facilitatorName || 'none'}`;
+  const batchRoleForScenario = (scenario: TestScenario): BatchServerRole =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 'managed-batch' : 'standard';
+  const groupKey = (
+    serverName: string,
+    facilitatorName: string | undefined,
+    batchServerRole: BatchServerRole,
+  ) => `${serverName}::${facilitatorName || 'none'}::${batchServerRole}`;
 
   const comboMap = new Map<string, typeof filteredScenarios>();
 
   for (const scenario of filteredScenarios) {
-    const key = groupKey(scenario.server.name, scenario.facilitator?.name);
+    const key = groupKey(scenario.server.name, scenario.facilitator?.name, batchRoleForScenario(scenario));
     if (!comboMap.has(key)) {
       comboMap.set(key, []);
     }
@@ -1300,6 +1364,7 @@ async function runTest() {
     serverFacilitatorCombos.push({
       serverName: firstScenario.server.name,
       facilitatorName: firstScenario.facilitator?.name,
+      batchServerRole: batchRoleForScenario(firstScenario),
       scenarios: sorted,
       comboIndex,
       port: allocatePort(),
@@ -1307,16 +1372,23 @@ async function runTest() {
     comboIndex++;
   }
 
+  // One facilitator serves both custody sides; enable its voucher store + channel
+  // manager whenever any managed-batch scenario is in the run.
+  const facilitatorVoucherStore = filteredScenarios.some(scenario =>
+    endpointUsesFacilitatorManagedBatch(scenario.endpoint),
+  );
+  if (facilitatorVoucherStore) {
+    log('\n🗄️ Facilitator voucher store enabled (managed-batch scenarios in scope)');
+  }
+
   // Start all facilitators with unique ports
   for (const [facilitatorName, facilitator] of uniqueFacilitators) {
     const port = allocatePort();
     log(`\n🏛️ Starting facilitator: ${facilitatorName} on port ${port}`);
 
-    const manager = new FacilitatorManager(
-      facilitator.proxy,
-      port,
-      networks
-    );
+    const manager = new FacilitatorManager(facilitator.proxy, port, networks, {
+      voucherStore: facilitatorVoucherStore,
+    });
     facilitatorManagers.set(facilitatorName, manager);
   }
 
@@ -1380,7 +1452,9 @@ async function runTest() {
 
   log(`🔧 Server/Facilitator combinations: ${serverFacilitatorCombos.length}`);
   serverFacilitatorCombos.forEach(combo => {
-    log(`   • ${combo.serverName} + ${combo.facilitatorName || 'none'}: ${combo.scenarios.length} test(s)`);
+    log(
+      `   • ${combo.serverName} + ${combo.facilitatorName || 'none'} [${combo.batchServerRole}]: ${combo.scenarios.length} test(s)`,
+    );
   });
   if (parsedArgs.parallel) {
     log(`\n⚡ Parallel mode enabled (concurrency: ${parsedArgs.concurrency})`);
@@ -1501,6 +1575,18 @@ async function runTest() {
           cLog.verboseLog(`  🔍 Error details: ${JSON.stringify(initialResult, null, 2)}`);
           return detailedResult;
         }
+
+        // Let the initial deposit propagate across load-balanced RPCs before
+        // the fresh recovery process reads onchain state for cold-start
+        // recovery. Without this, the recovery voucher can rebuild against a
+        // stale balance/totalClaimed and fail as a cumulative mismatch that
+        // corrective recovery cannot resync (notably on facilitator-managed
+        // channels where the watermark lives offchain). Managed channels get
+        // a longer settle so the facilitator voucher-store write + RPC
+        // propagation both land before the recovery probe.
+        // See: go/http/nethttp+go managed-batch recovery 402s with a 2s gap.
+        const recoverySettleMs = endpointUsesFacilitatorManagedBatch(scenario.endpoint) ? 5000 : 2000;
+        await new Promise(resolve => setTimeout(resolve, recoverySettleMs));
 
         const recoveryResult = await runClientTest(scenario.client.proxy, {
           ...baseClientConfig,
@@ -1654,9 +1740,10 @@ async function runTest() {
     evmResourceKeyContext: EvmResourceKeyContext,
     nextTestNumber: () => number,
   ): Promise<DetailedTestResult[]> {
-    const { serverName, facilitatorName, scenarios, port } = combo;
+    const { serverName, facilitatorName, batchServerRole, scenarios, port } = combo;
     const server = uniqueServers.get(serverName)!;
-    const cLog = createComboLogger(combo.comboIndex, serverName, facilitatorName);
+    const comboLabel = `${serverName}+${facilitatorName || 'none'} [${batchServerRole}]`;
+    const cLog = createComboLogger(combo.comboIndex, serverName, `${facilitatorName || 'none'} [${batchServerRole}]`);
 
     // Track facilitator→server mapping
     if (facilitatorName) {
@@ -1673,13 +1760,16 @@ async function runTest() {
       ? facilitatorUrls.get(facilitatorName)
       : undefined;
 
-    cLog.log(`🚀 Starting server: ${serverName} (port ${port}) with facilitator: ${facilitatorName || 'none'}`);
+    cLog.log(`🚀 Starting server: ${serverName} (port ${port}, role ${batchServerRole}) with facilitator: ${facilitatorName || 'none'}`);
 
     const enabledFamilies = Array.from(selectedProtocolFamilies) as import('./src/types').ProtocolFamily[];
 
     // Optional SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY (server role only) opts
     // into self-managed batch-settlement claim/refund signing; omit to delegate
-    // to the facilitator's /supported receiverAuthorizer.
+    // to the facilitator's /supported receiverAuthorizer. Managed-batch servers
+    // must not set it (GenericServerProxy strips it from the child env); they may set
+    // SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY instead, or rely on the
+    // facilitator's delegatedRefund.
     const serverConfig: ServerConfig = {
       port,
       networks,
@@ -1687,10 +1777,11 @@ async function runTest() {
       runRouteFilter,
       facilitatorUrl,
       mockFacilitatorUrl,
+      batchServerRole,
     };
 
     const serverStartFailures = (error: string) => {
-      cLog.log(`❌ Failed to start server ${serverName}${error ? `: ${error}` : ''}`);
+      cLog.log(`❌ Failed to start server ${comboLabel}${error ? `: ${error}` : ''}`);
       return scenarios.map(scenario => ({
         testNumber: nextTestNumber(),
         client: scenario.client.name,
@@ -1713,7 +1804,7 @@ async function runTest() {
     if (!started) {
       return serverStartFailures('');
     }
-    cLog.log(`  ✅ Server ${serverName} ready`);
+    cLog.log(`  ✅ Server ${comboLabel} ready`);
 
     const results: DetailedTestResult[] = [];
     // Track which endpoint paths have already been "cold started" in this combo.
@@ -1833,7 +1924,7 @@ async function runTest() {
         }
       }
     } finally {
-      cLog.verboseLog(`  🛑 Stopping ${serverName} (finished combo)`);
+      cLog.verboseLog(`  🛑 Stopping ${comboLabel} (finished combo)`);
       await serverProxy.stop();
     }
 
