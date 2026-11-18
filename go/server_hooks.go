@@ -91,17 +91,15 @@ type CompletedSettlement struct {
 
 // BuildFailurePathSettlementResponse picks the settlement receipt to return when
 // the resource handler fails after a verified (and possibly before-handler settled)
-// payment. Preference order matches HTTP PAYMENT-RESPONSE headers:
-//  1. successful cancel settle
-//  2. failed cancel settle with deposit-recovery extras
-//  3. before-handler settle echo
-//  4. nil when nothing is available
+// payment. A cancel settle is included only when a before-handler settlement
+// exists; a failed cancel attaches deposit recovery facts in extra. Otherwise
+// the before-handler deposit receipt is echoed, or nil when there is none.
 func BuildFailurePathSettlementResponse(
 	cancelSettlement *SettleResponse,
 	beforeHandlerSettlement *CompletedSettlement,
 	paymentPayload *types.PaymentPayload,
 ) *SettleResponse {
-	if cancelSettlement != nil {
+	if cancelSettlement != nil && beforeHandlerSettlement != nil {
 		if cancelSettlement.Success {
 			return cancelSettlement
 		}
@@ -192,6 +190,10 @@ const (
 	// CancellationReasonAfterVerifyAborted indicates an AfterVerifyHook aborted verification
 	// after a successful (or recovered) verify, so schemes can clear committed reservations.
 	CancellationReasonAfterVerifyAborted VerifiedPaymentCancellationReason = "after_verify_aborted"
+	// CancellationReasonSettlementPreflightFailed indicates settlement failed before reaching
+	// the facilitator (beforeSettle abort or error, settlement-payload enrichment failure).
+	// It fires only when no earlier settle phase completed, so SettledPhases is empty.
+	CancellationReasonSettlementPreflightFailed VerifiedPaymentCancellationReason = "settlement_preflight_failed"
 )
 
 // VerifiedPaymentCanceledContext is delivered to OnVerifiedPaymentCanceled hooks when a
@@ -202,6 +204,19 @@ type VerifiedPaymentCanceledContext struct {
 	Err            error
 	ResponseStatus int
 	SettledPhases  []SettlePhase
+	// VerifyResult is the trusted verify response. Set only for after_verify_aborted.
+	VerifyResult *VerifyResponse
+}
+
+// SettledPhasesContain reports whether phases includes want. Schemes use it in
+// SettleOnCancel to settle only when the matching phase already completed.
+func SettledPhasesContain(phases []SettlePhase, want SettlePhase) bool {
+	for _, p := range phases {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifiedPaymentCancelOptions describes a single cancellation event.
@@ -209,18 +224,32 @@ type VerifiedPaymentCancelOptions struct {
 	Reason         VerifiedPaymentCancellationReason
 	Err            error
 	ResponseStatus int
+	VerifyResult   *VerifyResponse
 }
+
+type cancellationOutcomeUnknownError struct{}
+
+func (cancellationOutcomeUnknownError) Error() string {
+	return "Payment cancellation outcome unknown"
+}
+
+// ErrCancellationOutcomeUnknown means cancel did not produce a receipt and the
+// authorization may still be open. Return it from SettleOnCancel, or when the
+// cancel facilitator call fails, instead of a failed receipt.
+var ErrCancellationOutcomeUnknown error = cancellationOutcomeUnknownError{}
 
 // PaymentCancellationDispatcher fires onVerifiedPaymentCanceled hooks at most once,
 // then optionally settles via SchemeNetworkServer SettleOnCancelProvider.
 type PaymentCancellationDispatcher struct {
-	once sync.Once
-	fire func(VerifiedPaymentCancelOptions) *SettleResponse
+	once    sync.Once
+	fire    func(VerifiedPaymentCancelOptions) *SettleResponse
+	unknown error
 }
 
 // Cancel fires the underlying hooks (and optional cancel settle) at most once.
 // Returns the cancel settle response when the scheme provides settleOnCancel
-// requirements and settle runs; nil when cancel settle is skipped.
+// requirements and settle runs; nil when cancel settle is skipped or the
+// outcome is unknown. After Cancel returns, Err reports an unknown outcome.
 func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions) *SettleResponse {
 	if d == nil || d.fire == nil {
 		return nil
@@ -228,6 +257,15 @@ func (d *PaymentCancellationDispatcher) Cancel(opts VerifiedPaymentCancelOptions
 	var result *SettleResponse
 	d.once.Do(func() { result = d.fire(opts) })
 	return result
+}
+
+// Err reports an unknown cancellation outcome. The value stays set for the
+// dispatcher, including when a later Cancel is a no-op.
+func (d *PaymentCancellationDispatcher) Err() error {
+	if d == nil {
+		return nil
+	}
+	return d.unknown
 }
 
 // ============================================================================
@@ -272,8 +310,9 @@ type SettleFailureHookResult struct {
 // and an invalid VerifyResponse will be returned with the provided reason
 type BeforeVerifyHook func(VerifyContext) (*BeforeHookResult, error)
 
-// AfterVerifyHook is called after successful payment verification (including
-// BeforeVerify skip and onVerifyFailure recovery).
+// AfterVerifyHook is called after payment verification returns a result
+// (including BeforeVerify skip, onVerifyFailure recovery, and a facilitator
+// response with IsValid=false).
 // Any error returned will be logged but will not affect the verification result.
 // Returning an AfterVerifyResult with Abort=true fails verification closed and
 // dispatches after_verify_aborted cancellation.
@@ -282,7 +321,9 @@ type BeforeVerifyHook func(VerifyContext) (*BeforeHookResult, error)
 // The last hook to return a SkipHandler directive wins (unless a later hook aborts).
 type AfterVerifyHook func(VerifyResultContext) (*AfterVerifyResult, error)
 
-// OnVerifyFailureHook is called when payment verification fails
+// OnVerifyFailureHook is called when payment verification returns an error.
+// It does not run for a facilitator response with IsValid=false; use
+// AfterVerifyHook to react to that rejection.
 // If it returns a result with Recovered=true, the provided VerifyResponse
 // will be returned instead of the error
 type OnVerifyFailureHook func(VerifyFailureContext) (*VerifyFailureHookResult, error)
@@ -293,8 +334,30 @@ type OnVerifyFailureHook func(VerifyFailureContext) (*VerifyFailureHookResult, e
 type BeforeSettleHook func(SettleContext) (*BeforeHookResult, error)
 
 // AfterSettleHook is called after successful payment settlement
-// Any error returned will be logged but will not affect the settlement result
+// Any error returned will be logged but will not affect the settlement result,
+// except *AfterSettleAbortError which fails the settle closed (success:false)
+// while keeping transaction/amount/payer/onchain extra.
 type AfterSettleHook func(SettleResultContext) error
+
+// AfterSettleAbortError fails a successful settle closed after onchain funds
+// moved but the voucher was not persisted.
+type AfterSettleAbortError struct {
+	Reason  string
+	Message string
+}
+
+func (e *AfterSettleAbortError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Reason
+}
+
+// NewAfterSettleAbort returns an abort error for AfterSettleHook deposit persist
+// failures.
+func NewAfterSettleAbort(reason, message string) *AfterSettleAbortError {
+	return &AfterSettleAbortError{Reason: reason, Message: message}
+}
 
 // OnSettleFailureHook is called when payment settlement fails
 // If it returns a result with Recovered=true, the provided SettleResponse

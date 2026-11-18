@@ -1,10 +1,14 @@
 """Tests for Bazaar server extension."""
 
+import pytest
+
 from x402.extensions.bazaar import (
     BAZAAR,
+    ValidationResult,
     bazaar_resource_server_extension,
     declare_discovery_extension,
     validate_discovery_extension,
+    validate_discovery_extension_spec,
 )
 from x402.http.types import HTTPRequestContext
 
@@ -182,6 +186,44 @@ class TestBazaarResourceServerExtension:
         query_params = enriched["info"]["input"].get("queryParams")
         if query_params:
             assert "city" in query_params or "city" in str(query_params)
+
+    @pytest.mark.parametrize(
+        ("declare_kwargs", "probe", "expected"),
+        [
+            pytest.param(
+                {"input": {"prompt": "hi"}, "body_type": "json"},
+                "GET",
+                "POST",
+                id="body declaration probed with GET",
+            ),
+            pytest.param(
+                {"input": {"q": "hi"}},
+                "POST",
+                "GET",
+                id="query declaration probed with POST",
+            ),
+        ],
+    )
+    def test_does_not_advertise_probe_method_for_mismatched_shape(
+        self,
+        declare_kwargs: dict,
+        probe: str,
+        expected: str,
+    ) -> None:
+        ext = declare_discovery_extension(**declare_kwargs)
+        declaration = ext[BAZAAR.key]
+        if hasattr(declaration, "model_dump"):
+            declaration = declaration.model_dump(by_alias=True)
+
+        enriched = bazaar_resource_server_extension.enrich_declaration(
+            declaration, MockHTTPRequest(method=probe)
+        )
+
+        assert enriched["info"]["input"]["method"] == expected
+        method_schema = enriched["schema"]["properties"]["input"]["properties"]["method"]
+        assert method_schema["enum"] == [expected]
+        assert validate_discovery_extension_spec(enriched) == ValidationResult(valid=True)
+        assert validate_discovery_extension(enriched) == ValidationResult(valid=True)
 
 
 class MockAdapter:

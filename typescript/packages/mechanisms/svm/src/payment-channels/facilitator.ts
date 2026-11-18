@@ -13,12 +13,15 @@ import {
   getSetComputeUnitPriceInstruction,
   parseSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
+import { V1_MAX_TRANSACTION_SIZE, priorityFeeLamports } from "../transactionV1";
 import {
   address,
   type Address,
   addSignersToInstruction,
   appendTransactionMessageInstructions,
   type Blockhash,
+  compileTransaction,
+  compileTransactionMessage,
   createNoopSigner,
   createTransactionMessage,
   decompileTransactionMessage,
@@ -27,12 +30,14 @@ import {
   getBase64Codec,
   getBase64EncodedWireTransaction,
   getCompiledTransactionMessageDecoder,
+  getTransactionEncoder,
   getTransactionDecoder,
   type Instruction,
   type MessagePartialSigner,
   partiallySignTransactionMessageWithSigners,
   pipe,
   setTransactionMessageFeePayerSigner,
+  setTransactionMessageConfig,
   setTransactionMessageLifetimeUsingBlockhash,
   type Signature,
   signTransactionMessageWithSigners,
@@ -54,7 +59,12 @@ import {
 import type { ChannelSplit } from "./open";
 import type { FacilitatorSvmSigner } from "../signer";
 import { BLOCKHASH_COMMITMENT, STATE_COMMITMENT } from "./commitments";
-import { createRpcClient, TransactionOnchainFailureError } from "../utils";
+import { ErrUnsupportedTransactionVersion } from "../exact/facilitator/errors";
+import {
+  createRpcClient,
+  isAcceptedTransactionVersion,
+  TransactionOnchainFailureError,
+} from "../utils";
 
 /** Solana per-transaction compute-unit maximum. */
 const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
@@ -88,6 +98,23 @@ export const DEFAULT_CHANNEL_READ_BACKOFF_STEP_MS = 200;
  */
 export const DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT = 100_000;
 
+/**
+ * Default inline loaded-account-data budget for facilitator settlements.
+ * Four MiB covers the mainnet Token-2022 program-data account (about 1.4 MiB)
+ * with room for the remaining programs and accounts loaded by a settlement.
+ */
+export const DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT = 4_194_304;
+
+/** Loaded-account-data budget shared by every reclaim batch. */
+export const RECLAIM_LOADED_ACCOUNTS_DATA_SIZE_BASE = 262_144;
+/** Extra loaded-account-data budget for each channel PDA in a reclaim batch. */
+export const RECLAIM_LOADED_ACCOUNTS_DATA_SIZE_PER_CHANNEL = 1_024;
+
+/** Transaction-v1 structural limits mandated by SIMD-0385. */
+export { V1_MAX_TRANSACTION_SIZE, priorityFeeLamports };
+export const V1_MAX_STATIC_ACCOUNTS = 64;
+export const V1_MAX_INSTRUCTIONS = 64;
+
 /** Base `SetComputeUnitLimit` for a reclaim batch transaction. */
 export const RECLAIM_COMPUTE_UNIT_BASE = 25_000;
 /**
@@ -109,6 +136,14 @@ export function reclaimComputeUnitLimit(channelCount: number): number {
   return Math.min(
     RECLAIM_COMPUTE_UNIT_BASE + RECLAIM_COMPUTE_UNIT_PER_CHANNEL * channelCount,
     MAX_TRANSACTION_COMPUTE_UNITS,
+  );
+}
+
+/** Loaded-account-data budget for a reclaim batch. */
+export function reclaimLoadedAccountsDataSizeLimit(channelCount: number): number {
+  return (
+    RECLAIM_LOADED_ACCOUNTS_DATA_SIZE_BASE +
+    RECLAIM_LOADED_ACCOUNTS_DATA_SIZE_PER_CHANNEL * channelCount
   );
 }
 
@@ -314,6 +349,15 @@ export async function broadcastOpen(
   onBroadcast?: (signature: string) => Promise<void>,
   onPrepared?: (signature: string, wire: string) => Promise<void>,
 ): Promise<string> {
+  const transaction = getTransactionDecoder().decode(
+    getBase64Codec().encode(openTransactionBase64),
+  );
+  const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
+  if (!isAcceptedTransactionVersion(compiled.version)) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: broadcastOpen: transaction message version ${String(compiled.version)} is not accepted`,
+    );
+  }
   const wire = await facilitator.signTransaction(openTransactionBase64, feePayer, network);
   let signature = onPrepared
     ? getSignatureFromTransaction(getTransactionDecoder().decode(getBase64Codec().encode(wire)))
@@ -378,6 +422,19 @@ export interface SettlementSimChannel {
   rentPayer: string;
   splits: readonly ChannelSplit[];
   tokenProgram: string;
+  /** Treasury owner override, as `DistributeBuildArgs.treasuryOwner`. */
+  treasuryOwner?: string | undefined;
+}
+
+/** Arguments of {@link simulateOpenSettleDistribute}. */
+export interface OpenSettleDistributeSimulationArgs {
+  openTransactionBase64: string;
+  channel: SettlementSimChannel;
+  /**
+   * The facilitator's accepted message versions (its `transactionVersions`
+   * option). Defaults to `[0, 1]`.
+   */
+  acceptedTransactionVersions?: readonly number[];
 }
 
 /**
@@ -388,68 +445,66 @@ export interface SettlementSimChannel {
 export async function simulateOpenSettleDistribute(
   feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
-  args: {
-    openTransactionBase64: string;
-    channel: SettlementSimChannel;
-  },
+  args: OpenSettleDistributeSimulationArgs,
 ): Promise<void>;
 export async function simulateOpenSettleDistribute(
   feePayer: PaymentChannelSvmSigner,
   signer: Pick<FacilitatorSvmSigner, "simulateTransaction">,
   network: string,
-  args: {
-    openTransactionBase64: string;
-    channel: SettlementSimChannel;
-  },
+  args: OpenSettleDistributeSimulationArgs,
 ): Promise<void>;
 export async function simulateOpenSettleDistribute(
   feePayer: PaymentChannelSvmSigner,
   rpcOrSigner: ChannelRpc | Pick<FacilitatorSvmSigner, "simulateTransaction">,
-  argsOrNetwork:
-    | {
-        openTransactionBase64: string;
-        channel: SettlementSimChannel;
-      }
-    | string,
-  maybeArgs?: {
-    openTransactionBase64: string;
-    channel: SettlementSimChannel;
-  },
+  argsOrNetwork: OpenSettleDistributeSimulationArgs | string,
+  maybeArgs?: OpenSettleDistributeSimulationArgs,
 ): Promise<void> {
   if (typeof argsOrNetwork === "string") {
     const args = maybeArgs;
     if (!args) {
       throw new Error("simulateOpenSettleDistribute: missing simulation args");
     }
-    const instructions = await buildOpenSettleDistributeSimulationInstructions(
-      feePayer,
-      args.openTransactionBase64,
-      args.channel,
-    );
+    const simulation = await buildOpenSettleDistributeSimulation(feePayer, args);
     await simulateInstructionsViaSigner(
       feePayer,
       rpcOrSigner as Pick<FacilitatorSvmSigner, "simulateTransaction">,
       argsOrNetwork,
-      instructions,
+      simulation.instructions,
+      simulation.version,
     );
     return;
   }
-  const instructions = await buildOpenSettleDistributeSimulationInstructions(
+  const simulation = await buildOpenSettleDistributeSimulation(feePayer, argsOrNetwork);
+  await simulateInstructions(
     feePayer,
-    argsOrNetwork.openTransactionBase64,
-    argsOrNetwork.channel,
+    rpcOrSigner as ChannelRpc,
+    simulation.instructions,
+    simulation.version,
   );
-  await simulateInstructions(feePayer, rpcOrSigner as ChannelRpc, instructions);
 }
 
-/** Instruction list for an open + settle + distribute readiness simulation. */
-async function buildOpenSettleDistributeSimulationInstructions(
+/**
+ * Instruction list and message version for an open + settle + distribute
+ * readiness simulation. The simulation follows the open's version: a version-1
+ * open (whose budget lives in its message config, and which may exceed the
+ * 1232-byte version-0 limit) is simulated as version 1 without ComputeBudget
+ * instructions; legacy and version-0 opens keep the version-0 composite.
+ */
+async function buildOpenSettleDistributeSimulation(
   feePayer: PaymentChannelSvmSigner,
-  openTransactionBase64: string,
-  channel: SettlementSimChannel,
-): Promise<Instruction[]> {
+  {
+    openTransactionBase64,
+    channel,
+    acceptedTransactionVersions,
+  }: OpenSettleDistributeSimulationArgs,
+): Promise<{ instructions: Instruction[]; version: 0 | 1 }> {
   const tx = getTransactionDecoder().decode(getBase64Codec().encode(openTransactionBase64));
   const compiled = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+  if (!isAcceptedTransactionVersion(compiled.version, acceptedTransactionVersions)) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: simulateOpenSettleDistribute: transaction message version ${String(compiled.version)} is not accepted`,
+    );
+  }
   const decompiled = decompileTransactionMessage(compiled);
   const openInstructions = (decompiled.instructions ?? []) as Instruction[];
 
@@ -486,26 +541,68 @@ async function buildOpenSettleDistributeSimulationInstructions(
     rentPayer: channel.rentPayer,
     splits: channel.splits,
     tokenProgram: channel.tokenProgram,
+    treasuryOwner: channel.treasuryOwner,
   });
 
-  return [
-    getSetComputeUnitLimitInstruction({ units: SIM_COMPUTE_UNIT_LIMIT }),
-    ...(computeUnitPrice ? [computeUnitPrice] : []),
-    ...openWithPayer,
-    ...settle,
-    distribute,
-  ];
+  if (compiled.version === 1) {
+    return { instructions: [...openWithPayer, ...settle, distribute], version: 1 };
+  }
+  return {
+    instructions: [
+      getSetComputeUnitLimitInstruction({ units: SIM_COMPUTE_UNIT_LIMIT }),
+      ...(computeUnitPrice ? [computeUnitPrice] : []),
+      ...openWithPayer,
+      ...settle,
+      distribute,
+    ],
+    version: 0,
+  };
+}
+
+/**
+ * Message version of a transaction the facilitator builds itself, in the
+ * `extra.transactionVersions` wire vocabulary.
+ */
+export type FacilitatorTransactionVersion = 0 | 1;
+
+/**
+ * Used by the upto and batch-settlement facilitators when
+ * `facilitatorTransactionVersion` is unset.
+ */
+export const DEFAULT_FACILITATOR_TRANSACTION_VERSION: FacilitatorTransactionVersion = 1;
+
+/**
+ * Apply the default to an unset version and throw on anything but 0 or 1.
+ *
+ * @param version - Configured facilitator transaction version, if any
+ * @returns The version the facilitator builds its own transactions with
+ */
+export function resolveFacilitatorTransactionVersion(
+  version: FacilitatorTransactionVersion | undefined,
+): FacilitatorTransactionVersion {
+  if (version === undefined) return DEFAULT_FACILITATOR_TRANSACTION_VERSION;
+  if (version !== 0 && version !== 1) {
+    throw new Error(`facilitatorTransactionVersion must be 0 or 1, received ${String(version)}`);
+  }
+  return version;
 }
 
 /** Options for {@link submitSettle}. */
 export interface SubmitSettleOptions {
   /**
-   * `SetComputeUnitLimit` for the settlement transaction. Defaults to
+   * Message version (0 or 1) of the transaction the facilitator builds;
+   * omitted preserves the existing v0 settlement wire format.
+   */
+  facilitatorTransactionVersion?: FacilitatorTransactionVersion | undefined;
+  /**
+   * Inline v1 compute-unit limit for the settlement transaction. Defaults to
    * {@link DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT} (100k), sized for standard SPL
    * Token settlement; raise it for compute-heavy Token-2022 extension mints
    * or unusually large distributions.
    */
   computeUnitLimit?: number | undefined;
+  /** Inline v1 loaded-account-data budget. */
+  loadedAccountsDataSizeLimit?: number | undefined;
   /**
    * Called with the signature once the transaction is on the network and
    * before its confirmation is awaited, so a caller can persist it and
@@ -520,11 +617,78 @@ export interface SubmitSettleOptions {
    */
   latestBlockhash?: { blockhash: string; lastValidBlockHeight: bigint } | undefined;
   /**
-   * `SetComputeUnitPrice` in microlamports per compute unit attached to the
-   * settlement transaction; `0` omits the instruction. Defaults to
+   * Priority price in microlamports per compute unit, converted to v1's total
+   * lamport fee; `0` omits the config field. Defaults to
    * `DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS` (1).
    */
   computeUnitPriceMicroLamports?: number | undefined;
+}
+
+/** Build the facilitator-owned v1 message used for sizing and signing. */
+function buildSettleMessage(
+  feePayer: PaymentChannelSvmSigner,
+  instructions: readonly ServerInstruction[],
+  latestBlockhash: { blockhash: string; lastValidBlockHeight: bigint },
+  options: SubmitSettleOptions,
+) {
+  const computeUnitLimit = options.computeUnitLimit ?? DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT;
+  const loadedAccountsDataSizeLimit =
+    options.loadedAccountsDataSizeLimit ?? DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT;
+  const computeUnitPrice =
+    options.computeUnitPriceMicroLamports ?? DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
+  const fee = priorityFeeLamports(computeUnitLimit, computeUnitPrice);
+
+  return pipe(
+    createTransactionMessage({ version: 1 }),
+    message =>
+      setTransactionMessageConfig(
+        {
+          computeUnitLimit,
+          loadedAccountsDataSizeLimit,
+          ...(fee > 0n ? { priorityFeeLamports: fee } : {}),
+        },
+        message,
+      ),
+    message => setTransactionMessageFeePayerSigner(feePayer, message),
+    message =>
+      setTransactionMessageLifetimeUsingBlockhash(
+        {
+          blockhash: latestBlockhash.blockhash as Blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        },
+        message,
+      ),
+    message => appendTransactionMessageInstructions(instructions, message),
+  );
+}
+
+/** Return whether a facilitator v1 transaction fits every protocol limit. */
+export function facilitatorV1TransactionFits(
+  feePayer: PaymentChannelSvmSigner,
+  instructions: readonly ServerInstruction[],
+  options: SubmitSettleOptions = {},
+): boolean {
+  try {
+    const message = buildSettleMessage(
+      feePayer,
+      instructions,
+      { blockhash: SIM_PLACEHOLDER_BLOCKHASH, lastValidBlockHeight: 0n },
+      options,
+    );
+    const compiled = compileTransactionMessage(message);
+    if (
+      compiled.numStaticAccounts > V1_MAX_STATIC_ACCOUNTS ||
+      compiled.numInstructions > V1_MAX_INSTRUCTIONS
+    ) {
+      return false;
+    }
+    // Measure the fully serialized transaction, as Go does, rather than
+    // summing message and signature sizes by hand.
+    const wireSize = getTransactionEncoder().encode(compileTransaction(message)).length;
+    return wireSize <= V1_MAX_TRANSACTION_SIZE;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -532,10 +696,12 @@ export interface SubmitSettleOptions {
  * fee payer, broadcast it, and confirm. Other signers, such as the channel
  * payee on `settle_and_seal`, are carried by the instruction list.
  *
- * The transaction is prefixed with a statically sized `SetComputeUnitLimit`
- * and an optional `SetComputeUnitPrice`. Static sizing keeps the time-critical
- * claim free of extra RPC round-trips and failure modes; the limit is
- * operator-overridable for deployments outside the documented assumptions.
+ * Version 0 remains the default for backward compatibility. Callers that own
+ * the complete transaction may explicitly opt into v1, whose message carries
+ * a statically sized inline transaction config. Static sizing keeps the
+ * time-critical claim free of extra RPC round-trips and failure modes; the
+ * limit is operator-overridable for deployments outside the documented
+ * assumptions.
  *
  * @param feePayer - The fee-payer signer
  * @param rpc - The RPC client
@@ -654,28 +820,45 @@ async function buildChannelTransaction(
   instructions: readonly ServerInstruction[],
   options: SubmitSettleOptions,
 ): Promise<ReturnType<typeof getBase64EncodedWireTransaction>> {
-  const computeUnitLimit = options.computeUnitLimit ?? DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT;
-  const computeUnitPrice =
-    options.computeUnitPriceMicroLamports ?? DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS;
-  const computeBudgetIxs: Instruction[] = [
-    getSetComputeUnitLimitInstruction({ units: computeUnitLimit }),
-    ...(computeUnitPrice > 0
-      ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
-      : []),
-  ];
-  const message = pipe(
-    createTransactionMessage({ version: 0 }),
-    m => setTransactionMessageFeePayerSigner(feePayer, m),
-    m =>
-      setTransactionMessageLifetimeUsingBlockhash(
-        {
-          blockhash: latestBlockhash.blockhash as Blockhash,
-          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-        },
-        m,
-      ),
-    m => appendTransactionMessageInstructions([...computeBudgetIxs, ...instructions], m),
-  );
+  const version = options.facilitatorTransactionVersion ?? 0;
+  if (version !== 0 && version !== 1) {
+    throw new Error(`unsupported facilitator transaction version ${String(version)}`);
+  }
+  const isV1 = version === 1;
+  const message = isV1
+    ? buildSettleMessage(feePayer, instructions, latestBlockhash, options)
+    : pipe(
+        createTransactionMessage({ version: 0 }),
+        m => setTransactionMessageFeePayerSigner(feePayer, m),
+        m =>
+          setTransactionMessageLifetimeUsingBlockhash(
+            {
+              blockhash: latestBlockhash.blockhash as Blockhash,
+              lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+            },
+            m,
+          ),
+        m =>
+          appendTransactionMessageInstructions(
+            [
+              getSetComputeUnitLimitInstruction({
+                units: options.computeUnitLimit ?? DEFAULT_SETTLE_COMPUTE_UNIT_LIMIT,
+              }),
+              ...((options.computeUnitPriceMicroLamports ??
+                DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS) > 0
+                ? [
+                    getSetComputeUnitPriceInstruction({
+                      microLamports:
+                        options.computeUnitPriceMicroLamports ??
+                        DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+                    }),
+                  ]
+                : []),
+              ...instructions,
+            ],
+            m,
+          ),
+      );
   const signed = await signTransactionMessageWithSigners(message);
   return getBase64EncodedWireTransaction(signed);
 }
@@ -781,24 +964,61 @@ export function getChannelDistributionHash(splits: readonly ChannelSplit[]): Uin
  * @param instructions - Instructions to simulate
  */
 /** Simulate through the facilitator signer's transport (upto / batch deposit path). */
+/**
+ * The message a readiness simulation runs: version 0 with the instructions as
+ * given (they carry their own ComputeBudget prefix), or version 1 with the
+ * simulation's compute and loaded-account-data budget in the message config.
+ *
+ * @param feePayer - Fee-payer signer
+ * @param lifetime - Blockhash lifetime for the message
+ * @param lifetime.blockhash - Recent blockhash
+ * @param lifetime.lastValidBlockHeight - Last block height the blockhash is valid for
+ * @param instructions - Instructions to simulate
+ * @param version - Message version
+ * @returns The transaction message to sign and simulate
+ */
+function simulationMessage(
+  feePayer: PaymentChannelSvmSigner,
+  lifetime: { blockhash: Blockhash; lastValidBlockHeight: bigint },
+  instructions: readonly Instruction[],
+  version: 0 | 1,
+) {
+  if (version === 1) {
+    return pipe(
+      createTransactionMessage({ version: 1 }),
+      m =>
+        setTransactionMessageConfig(
+          {
+            computeUnitLimit: SIM_COMPUTE_UNIT_LIMIT,
+            loadedAccountsDataSizeLimit: DEFAULT_SETTLE_LOADED_ACCOUNTS_DATA_SIZE_LIMIT,
+          },
+          m,
+        ),
+      m => setTransactionMessageFeePayerSigner(feePayer, m),
+      m => setTransactionMessageLifetimeUsingBlockhash(lifetime, m),
+      m => appendTransactionMessageInstructions(instructions, m),
+    );
+  }
+  return pipe(
+    createTransactionMessage({ version: 0 }),
+    m => setTransactionMessageFeePayerSigner(feePayer, m),
+    m => setTransactionMessageLifetimeUsingBlockhash(lifetime, m),
+    m => appendTransactionMessageInstructions(instructions, m),
+  );
+}
+
 async function simulateInstructionsViaSigner(
   feePayer: PaymentChannelSvmSigner,
   signer: Pick<FacilitatorSvmSigner, "simulateTransaction">,
   network: string,
   instructions: readonly Instruction[],
+  version: 0 | 1 = 0,
 ): Promise<void> {
-  const message = pipe(
-    createTransactionMessage({ version: 0 }),
-    m => setTransactionMessageFeePayerSigner(feePayer, m),
-    m =>
-      setTransactionMessageLifetimeUsingBlockhash(
-        {
-          blockhash: SIM_PLACEHOLDER_BLOCKHASH,
-          lastValidBlockHeight: 0n,
-        },
-        m,
-      ),
-    m => appendTransactionMessageInstructions(instructions, m),
+  const message = simulationMessage(
+    feePayer,
+    { blockhash: SIM_PLACEHOLDER_BLOCKHASH, lastValidBlockHeight: 0n },
+    instructions,
+    version,
   );
   const signed = await partiallySignTransactionMessageWithSigners(message);
   const wire = getBase64EncodedWireTransaction(signed);
@@ -815,22 +1035,19 @@ async function simulateInstructions(
   feePayer: PaymentChannelSvmSigner,
   rpc: ChannelRpc,
   instructions: readonly Instruction[],
+  version: 0 | 1 = 0,
 ): Promise<void> {
   const { value: latestBlockhash } = await rpc
     .getLatestBlockhash({ commitment: BLOCKHASH_COMMITMENT })
     .send();
-  const message = pipe(
-    createTransactionMessage({ version: 0 }),
-    m => setTransactionMessageFeePayerSigner(feePayer, m),
-    m =>
-      setTransactionMessageLifetimeUsingBlockhash(
-        {
-          blockhash: latestBlockhash.blockhash as Blockhash,
-          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-        },
-        m,
-      ),
-    m => appendTransactionMessageInstructions(instructions, m),
+  const message = simulationMessage(
+    feePayer,
+    {
+      blockhash: latestBlockhash.blockhash as Blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    },
+    instructions,
+    version,
   );
   const signed = await partiallySignTransactionMessageWithSigners(message);
   const wire = getBase64EncodedWireTransaction(signed);

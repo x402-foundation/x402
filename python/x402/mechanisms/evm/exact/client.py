@@ -13,6 +13,7 @@ from ..signer import (
     ClientEvmSigner,
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
+    warn_cannot_read_for_sponsoring,
 )
 from ..types import ExactEIP3009Authorization, ExactEIP3009Payload, TypedDataField
 from ..utils import (
@@ -148,6 +149,7 @@ class ExactEvmScheme:
             return None
 
         if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         extra = requirements.extra or {}
@@ -205,6 +207,10 @@ class ExactEvmScheme:
         )
 
         if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
+            return None
+
+        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         if not isinstance(self._signer, ClientEvmSignerWithSignTransaction):

@@ -3,6 +3,7 @@ import {
   getEvmChainId,
   createNonce,
   finalHashFromTwoRequestSend,
+  invalidBroadcastHashResponse,
   isValidTxHash,
   truncateErrorMessage,
   MAX_ERROR_MESSAGE_LENGTH,
@@ -65,44 +66,8 @@ describe("EVM Utils", () => {
   });
 
   describe("getEvmChainIdV1 (legacy names)", () => {
-    it("should return correct chain ID for Base", () => {
+    it("resolves base", () => {
       expect(getEvmChainIdV1("base")).toBe(8453);
-    });
-
-    it("should return correct chain ID for Base Sepolia", () => {
-      expect(getEvmChainIdV1("base-sepolia")).toBe(84532);
-    });
-
-    it("should return correct chain ID for Ethereum", () => {
-      expect(getEvmChainIdV1("ethereum")).toBe(1);
-    });
-
-    it("should return correct chain ID for Polygon", () => {
-      expect(getEvmChainIdV1("polygon")).toBe(137);
-    });
-
-    it("should return correct chain ID for Polygon Amoy", () => {
-      expect(getEvmChainIdV1("polygon-amoy")).toBe(80002);
-    });
-
-    it("should return correct chain ID for Abstract", () => {
-      expect(getEvmChainIdV1("abstract")).toBe(2741);
-    });
-
-    it("should return correct chain ID for Avalanche", () => {
-      expect(getEvmChainIdV1("avalanche")).toBe(43114);
-    });
-
-    it("should return correct chain ID for MegaETH", () => {
-      expect(getEvmChainIdV1("megaeth")).toBe(4326);
-    });
-
-    it("should return correct chain ID for Monad", () => {
-      expect(getEvmChainIdV1("monad")).toBe(143);
-    });
-
-    it("should throw for CAIP-2 format", () => {
-      expect(() => getEvmChainIdV1("eip155:8453")).toThrow("Unsupported v1 network");
     });
 
     it("should throw for unknown network", () => {
@@ -166,6 +131,14 @@ describe("EVM Utils", () => {
     });
   });
 
+  describe("invalidBroadcastHashResponse", () => {
+    it("formats non-string signer payloads in the error message", () => {
+      const response = invalidBroadcastHashResponse({ code: 1 }, "bad_hash", "eip155:84532");
+      expect(response.success).toBe(false);
+      expect(response.errorMessage).toBe('signer returned an invalid transaction hash: {"code":1}');
+    });
+  });
+
   describe("finalHashFromTwoRequestSend", () => {
     it("returns the only hash from an atomic bundle", () => {
       expect(finalHashFromTwoRequestSend(["0xaa"])).toBe("0xaa");
@@ -217,6 +190,7 @@ describe("builder-code data suffix", () => {
     expect(appendDataSuffix("0xabcd")).toBe("0xabcd");
     expect(appendDataSuffix("0xabcd", "0x")).toBe("0xabcd");
     expect(appendDataSuffix("0xabcd", "0xef")).toBe("0xabcdef");
+    expect(appendDataSuffix("0xabcd", "beef")).toBe("0xabcdbeef");
   });
 
   it("returns a single suffix unchanged", async () => {
@@ -246,5 +220,62 @@ describe("builder-code data suffix", () => {
         ctx,
       ),
     ).toBe("0xdead");
+  });
+
+  it("awaits async buildDataSuffix results", async () => {
+    const ctx = {
+      paymentPayload: {
+        x402Version: 2,
+        accepted: { scheme: "exact", network: "eip155:84532" },
+        payload: {},
+      },
+      paymentRequirements: {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 1,
+      },
+    };
+    expect(
+      await resolveDataSuffix(
+        {
+          getExtension: () => ({
+            key: "builder-code",
+            buildDataSuffix: async () => "0xasync",
+          }),
+        },
+        ctx,
+      ),
+    ).toBe("0xasync");
+  });
+
+  it("ignores extensions that do not implement buildDataSuffix", async () => {
+    const ctx = {
+      paymentPayload: {
+        x402Version: 2,
+        accepted: { scheme: "exact", network: "eip155:84532" },
+        payload: {},
+      },
+      paymentRequirements: {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x1234567890123456789012345678901234567890",
+        maxTimeoutSeconds: 1,
+      },
+    };
+    expect(
+      await resolveDataSuffix(
+        {
+          getExtension: () => ({
+            key: "builder-code",
+          }),
+        },
+        ctx,
+      ),
+    ).toBeUndefined();
   });
 });

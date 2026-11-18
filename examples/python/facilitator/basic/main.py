@@ -15,7 +15,7 @@ import sys
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from solders.keypair import Keypair
 
 from x402 import x402Facilitator
@@ -23,6 +23,7 @@ from x402.mechanisms.evm import FacilitatorWeb3Signer
 from x402.mechanisms.evm.exact import register_exact_evm_facilitator
 from x402.mechanisms.svm import FacilitatorKeypairSigner
 from x402.mechanisms.svm.exact import register_exact_svm_facilitator
+from x402.schemas import SchemeNotFoundError, SettleResponse, VerifyResponse
 
 # Load environment variables
 load_dotenv()
@@ -138,16 +139,26 @@ async def verify(request: VerifyRequest):
         VerifyResponse with isValid and payer (if valid) or invalidReason.
     """
     try:
-        from x402.schemas import PaymentRequirements, parse_payment_payload
+        from x402.schemas import parse_payment_payload, parse_payment_requirements
 
-        # Parse payload (auto-detects V1/V2) and requirements
+        # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = PaymentRequirements.model_validate(request.paymentRequirements)
+        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+    except (ValidationError, ValueError) as e:
+        print(f"Verify error: {e}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
+    try:
         # Verify payment (await async method)
         response = await facilitator.verify(payload, requirements)
 
         return response.model_dump(by_alias=True, exclude_none=True)
+    except SchemeNotFoundError as e:
+        print(f"Verify error: {e}")
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason="unsupported_scheme",
+        ).model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Verify error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -164,23 +175,34 @@ async def settle(request: SettleRequest):
         SettleResponse with success, transaction, network, and payer.
     """
     try:
-        from x402.schemas import PaymentRequirements, parse_payment_payload
+        from x402.schemas import parse_payment_payload, parse_payment_requirements
 
-        # Parse payload (auto-detects V1/V2) and requirements
+        # Parse payload (auto-detects V1/V2) and requirements (based on payload version)
         payload = parse_payment_payload(request.paymentPayload)
-        requirements = PaymentRequirements.model_validate(request.paymentRequirements)
+        requirements = parse_payment_requirements(payload.x402_version, request.paymentRequirements)
+    except (ValidationError, ValueError) as e:
+        print(f"Settle error: {e}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
+    try:
         # Settle payment (await async method)
         response = await facilitator.settle(payload, requirements)
 
         return response.model_dump(by_alias=True, exclude_none=True)
+    except SchemeNotFoundError as e:
+        print(f"Settle error: {e}")
+        refusal = SettleResponse(
+            success=False,
+            error_reason="unsupported_scheme",
+            network=e.network,
+            transaction="",
+        )
+        return refusal.model_dump(by_alias=True, exclude_none=True)
     except Exception as e:
         print(f"Settle error: {e}")
 
         # Check if this was an abort from hook
         if "aborted" in str(e).lower():
-            from x402.schemas import SettleResponse
-
             abort = SettleResponse(
                 success=False,
                 error_reason=str(e),

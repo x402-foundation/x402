@@ -9,6 +9,7 @@ except ImportError:
     pytest.skip("EVM client requires eth_account", allow_module_level=True)
 
 from x402.mechanisms.evm.constants import X402_UPTO_PERMIT2_PROXY_ADDRESS
+from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
 from x402.mechanisms.evm.signers import EthAccountSigner
 from x402.mechanisms.evm.upto import UptoEvmClientScheme
 from x402.schemas import PaymentRequirements
@@ -113,6 +114,25 @@ class TestCreatePaymentPayload:
 
         with pytest.raises(ValueError, match="Invalid time window"):
             client.create_payment_payload(requirements)
+
+    def test_warns_once_and_skips_sponsored_permit_when_signer_cannot_read(self, caplog):
+        _reset_sponsoring_warnings()
+        client = UptoEvmClientScheme(EthAccountSigner(Account.create()))
+        requirements = make_upto_requirements()
+        advertised = {
+            "eip2612GasSponsoring": {"info": {"description": "test", "version": "1"}, "schema": {}},
+        }
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            first = client.create_payment_payload(requirements, advertised)
+            second = client.create_payment_payload(requirements, advertised)
+
+        assert "__extensions" not in first
+        assert "__extensions" not in second
+        warnings = [
+            record for record in caplog.records if "cannot read the chain" in record.getMessage()
+        ]
+        assert len(warnings) == 1
 
 
 class TestLocalAccountAutoWrap:

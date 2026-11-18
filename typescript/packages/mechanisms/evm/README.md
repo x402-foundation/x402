@@ -23,25 +23,25 @@ This package provides three main components for handling x402 payments on EVM-co
 **V2 Protocol Support** - Modern x402 protocol with CAIP-2 network identifiers
 
 **Client:**
-- `ExactEvmClient` - V2 client implementation using EIP-3009
+- `ExactEvmScheme` - V2 client implementation using EIP-3009
 - `toClientEvmSigner(account)` - Converts viem accounts to x402 signers
 - `ClientEvmSigner` - TypeScript type for client signers
 
 **Facilitator:**
-- `ExactEvmFacilitator` - V2 facilitator for payment verification and settlement
+- `ExactEvmScheme` - V2 facilitator for payment verification and settlement
 - `toFacilitatorEvmSigner(wallet, options?)` - Converts viem wallets to facilitator signers. Pass `{ confirmationTimeoutMs }` to bound receipt waits below a platform request deadline.
 - `FacilitatorEvmSigner` - TypeScript type for facilitator signers
 
 **Service:**
-- `ExactEvmServer` - V2 service for building payment requirements
+- `ExactEvmScheme` - V2 service for building payment requirements
 
 ### V1 Package (`@x402/evm/v1`)
 
 **V1 Protocol Support** - Legacy x402 protocol with simple network names
 
 **Exports:**
-- `ExactEvmClientV1` - V1 client implementation
-- `ExactEvmFacilitatorV1` - V1 facilitator implementation  
+- `ExactEvmSchemeV1` - V1 client implementation
+- `ExactEvmSchemeV1` (from `@x402/evm/exact/v1/facilitator`) - V1 facilitator implementation
 - `NETWORKS` - Array of all supported V1 network names
 
 **Supported V1 Networks:**
@@ -79,18 +79,18 @@ This package provides three main components for handling x402 payments on EVM-co
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactEvmClient } from "@x402/evm";
-import { ExactEvmClientV1 } from "@x402/evm/v1";
+import { ExactEvmScheme } from "@x402/evm";
+import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 
 const client = new x402Client()
-  .register("eip155:*", new ExactEvmClient(signer))
-  .registerSchemeV1("base-sepolia", new ExactEvmClientV1(signer))
-  .registerSchemeV1("base", new ExactEvmClientV1(signer));
+  .register("eip155:*", new ExactEvmScheme(signer))
+  .registerV1("base-sepolia", new ExactEvmSchemeV1(signer))
+  .registerV1("base", new ExactEvmSchemeV1(signer));
 ```
 
 ### Extension RPC Configuration (Optional)
 
-`ExactEvmClient` only requires signer support for `address` + `signTypedData`.
+`ExactEvmScheme` only requires signer support for `address` + `signTypedData`.
 Permit2 extension enrichment (EIP-2612 / ERC-20 approval gas sponsoring) can
 optionally use explicit RPC config when signer read/fee helpers are unavailable.
 
@@ -99,13 +99,13 @@ No chain-default RPC fallback is applied by the SDK.
 ```typescript
 // Per-network explicit registration
 const client = new x402Client()
-  .register("eip155:137", new ExactEvmClient(signer, { rpcUrl: polygonRpcUrl }))
-  .register("eip155:8453", new ExactEvmClient(signer, { rpcUrl: baseRpcUrl }));
+  .register("eip155:137", new ExactEvmScheme(signer, { rpcUrl: polygonRpcUrl }))
+  .register("eip155:8453", new ExactEvmScheme(signer, { rpcUrl: baseRpcUrl }));
 
 // Wildcard registration with chain-id keyed config map
 const wildcardClient = new x402Client().register(
   "eip155:*",
-  new ExactEvmClient(signer, {
+  new ExactEvmScheme(signer, {
     137: { rpcUrl: polygonRpcUrl },
     8453: { rpcUrl: baseRpcUrl },
   }),
@@ -116,12 +116,13 @@ const wildcardClient = new x402Client().register(
 
 ```typescript
 import { x402Client } from "@x402/core/client";
-import { ExactEvmClient } from "@x402/evm";
+import { ExactEvmScheme } from "@x402/evm";
+import { ExactEvmSchemeV1 } from "@x402/evm/v1";
 
 const client = x402Client.fromConfig({
   schemes: [
-    { network: "eip155:*", client: new ExactEvmClient(signer) },
-    { network: "base-sepolia", client: new ExactEvmClientV1(signer), x402Version: 1 }
+    { network: "eip155:*", client: new ExactEvmScheme(signer) },
+    { network: "base-sepolia", client: new ExactEvmSchemeV1(signer), x402Version: 1 }
   ],
   policies: [myCustomPolicy]
 });

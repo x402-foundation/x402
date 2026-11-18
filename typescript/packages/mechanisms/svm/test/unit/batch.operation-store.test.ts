@@ -10,7 +10,10 @@ describe("MemoryBatchOperationStore", () => {
       store.reserve("channel", "request", 1_000n),
     ]);
     expect([first.created, second.created].sort()).toEqual([false, true]);
-    await expect(store.reserve("channel", "request", 999n)).rejects.toThrow("ceiling changed");
+    await expect(store.reserve("channel", "request", 999n)).resolves.toMatchObject({
+      created: false,
+      operation: { ceiling: 1_000n },
+    });
   });
 
   it("permanently rejects failed and completed request ids", async () => {

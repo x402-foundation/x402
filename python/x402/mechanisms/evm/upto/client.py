@@ -17,6 +17,7 @@ from ..signer import (
     ClientEvmSigner,
     ClientEvmSignerWithReadContract,
     ClientEvmSignerWithSignTransaction,
+    warn_cannot_read_for_sponsoring,
 )
 from ..types import (
     ExactPermit2TokenPermissions,
@@ -108,6 +109,7 @@ class UptoEvmScheme:
             return None
 
         if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         extra = requirements.extra or {}
@@ -164,6 +166,10 @@ class UptoEvmScheme:
         )
 
         if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
+            return None
+
+        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
+            warn_cannot_read_for_sponsoring(str(requirements.network))
             return None
 
         if not isinstance(self._signer, ClientEvmSignerWithSignTransaction):

@@ -51,6 +51,10 @@ from .builder_code import (  # noqa: E402
     BuilderCodeFacilitatorConfig,
     BuilderCodeFacilitatorExtension,
     BuilderCodeResourceServerExtension,
+    BuilderCodeSuffixData,
+    DataSuffixContext,
+    SettlementMetadata,
+    SettlementMetadataValue,
     builder_code_resource_server_extension,
     declare_builder_code_extension,
     encode_builder_code_suffix,
@@ -191,6 +195,10 @@ __all__ = [
     # Builder Code types
     "BuilderCodeExtensionData",
     "BuilderCodeFacilitatorConfig",
+    "BuilderCodeSuffixData",
+    "DataSuffixContext",
+    "SettlementMetadata",
+    "SettlementMetadataValue",
     # Builder Code CBOR encoding
     "encode_builder_code_suffix",
     "parse_builder_code_suffix_from_calldata",

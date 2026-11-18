@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	solana "github.com/gagliardetto/solana-go"
+
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 )
 
@@ -16,8 +18,13 @@ const (
 	// one cleanup transaction.
 	DefaultMaxReclaimsPerTx = paymentchannels.DefaultMaxReclaimsPerTx
 
+	// DefaultMaxReclaimsPerTxV1 is the reclaim ceiling for v1 cleanup
+	// transactions.
+	DefaultMaxReclaimsPerTxV1 = paymentchannels.DefaultMaxReclaimsPerTxV1
+
 	// MaxSafeReclaimsPerTx is the largest reclaim batch that serializes under
-	// Solana's packet data size. MaxReclaimsPerTx is clamped to this.
+	// Solana's v0 packet data size. V1 cleanup uses the actual transaction
+	// packer instead of this fixed cap.
 	MaxSafeReclaimsPerTx = paymentchannels.MaxSafeReclaimsPerTx
 
 	// DefaultMaxTxsPerRun caps the close/distribute transactions the storage
@@ -50,6 +57,14 @@ type CloseResult struct {
 	Action      CloseAction
 }
 
+// CloseCandidate is a channel about to be closed or distributed.
+type CloseCandidate struct {
+	ChannelID string
+	Payer     string
+	PayTo     string
+	Action    CloseAction
+}
+
 // ReclaimResult reports a successful batched reclaim transaction.
 type ReclaimResult struct {
 	ChannelIDs  []string
@@ -72,6 +87,10 @@ type CleanupOptions struct {
 	MaxTxsPerSigner int
 	MaxClosesPerRun int
 
+	// BeforeCloseOrDistribute runs before each close or distribute within MaxClosesPerRun;
+	// an error skips the channel and reports to OnError. Reclaim never calls it.
+	BeforeCloseOrDistribute func(ctx context.Context, candidate CloseCandidate) error
+
 	OnClose   func(result CloseResult)
 	OnReclaim func(result ReclaimResult)
 	OnError   func(err error, channelID string)
@@ -83,8 +102,6 @@ func (o CleanupOptions) withDefaults() CleanupOptions {
 	}
 	if o.MaxReclaimsPerTx <= 0 {
 		o.MaxReclaimsPerTx = DefaultMaxReclaimsPerTx
-	} else if o.MaxReclaimsPerTx > MaxSafeReclaimsPerTx {
-		o.MaxReclaimsPerTx = MaxSafeReclaimsPerTx
 	}
 	if o.MaxTxsPerRun <= 0 {
 		o.MaxTxsPerRun = DefaultMaxTxsPerRun
@@ -106,6 +123,17 @@ func (o CleanupOptions) toShared() paymentchannels.RentCleanupOptions {
 		MaxTxsPerSigner:  o.MaxTxsPerSigner,
 		MaxClosesPerRun:  o.MaxClosesPerRun,
 		OnError:          o.OnError,
+	}
+	if o.BeforeCloseOrDistribute != nil {
+		before := o.BeforeCloseOrDistribute
+		shared.BeforeCloseOrDistribute = func(ctx context.Context, candidate paymentchannels.RentCleanupCloseCandidate) error {
+			return before(ctx, CloseCandidate{
+				ChannelID: candidate.ChannelID,
+				Payer:     candidate.Payer,
+				PayTo:     candidate.PayTo,
+				Action:    CloseAction(candidate.Action),
+			})
+		}
 	}
 	if o.OnClose != nil {
 		onClose := o.OnClose
@@ -171,6 +199,9 @@ type RentCleanupConfig struct {
 	Signer  paymentchannels.PaymentChannelFacilitatorSigner
 	Storage paymentchannels.PaymentChannelStorage
 	Network string
+	// TreasuryOwner overrides the program's treasury owner for close/distribute
+	// cleanup; the zero key uses the network's.
+	TreasuryOwner solana.PublicKey
 
 	// ComputeUnitPriceMicroLamports is the SetComputeUnitPrice (microlamports
 	// per compute unit) attached to cleanup transactions; 0 omits the
@@ -183,6 +214,19 @@ type RentCleanupConfig struct {
 	// Token-2022 extension mints. Reclaim batches instead derive their limit
 	// per channel (paymentchannels.ReclaimComputeUnitLimit) and are mint-independent.
 	SettleComputeUnitLimit *uint32
+
+	// SettleLoadedAccountsDataSizeLimit is the inline v1 loaded-account-data
+	// budget for close/distribute cleanup transactions. Unset defaults to
+	// paymentchannels.DefaultSettleLoadedAccountsDataSizeLimit (4 MiB, sized
+	// for a mainnet Token-2022 settlement). Reclaim batches derive their own
+	// account-data limit per channel.
+	SettleLoadedAccountsDataSizeLimit *uint32
+
+	// FacilitatorTransactionVersion is the message version (0 or 1) of the
+	// cleanup transactions the facilitator builds itself; see
+	// Config.FacilitatorTransactionVersion. v0 caps reclaim batches at
+	// paymentchannels.MaxSafeReclaimsPerTx.
+	FacilitatorTransactionVersion *int
 }
 
 // RentCleanupManager recovers the rent a facilitator fronts for payment
@@ -201,14 +245,17 @@ func NewRentCleanupManager(config RentCleanupConfig) *RentCleanupManager {
 	sealClosingChannels := false
 	return &RentCleanupManager{
 		inner: paymentchannels.NewPaymentChannelRentCleanupManager(paymentchannels.PaymentChannelRentCleanupConfig{
-			Signer:                        config.Signer,
-			Storage:                       config.Storage,
-			Network:                       config.Network,
-			ComputeUnitPriceMicroLamports: config.ComputeUnitPriceMicroLamports,
-			SettleComputeUnitLimit:        config.SettleComputeUnitLimit,
-			AbandonPolicy:                 paymentchannels.OpenAbandonPolicyExpiry,
-			SealClosingChannels:           &sealClosingChannels,
-			Label:                         "RentCleanupManager",
+			Signer:                            config.Signer,
+			Storage:                           config.Storage,
+			Network:                           config.Network,
+			TreasuryOwner:                     config.TreasuryOwner,
+			ComputeUnitPriceMicroLamports:     config.ComputeUnitPriceMicroLamports,
+			SettleComputeUnitLimit:            config.SettleComputeUnitLimit,
+			SettleLoadedAccountsDataSizeLimit: config.SettleLoadedAccountsDataSizeLimit,
+			FacilitatorTransactionVersion:     resolveFacilitatorTransactionVersion(config.FacilitatorTransactionVersion),
+			AbandonPolicy:                     paymentchannels.OpenAbandonPolicyExpiry,
+			SealClosingChannels:               &sealClosingChannels,
+			Label:                             "RentCleanupManager",
 		}),
 	}
 }

@@ -134,6 +134,7 @@ export class AssetContractCheck {
     this.network = network;
     this.asset = asset;
     this.results = validateAssetIsContract(signer, network, asset);
+    this.results.catch(() => {});
   }
 
   /**

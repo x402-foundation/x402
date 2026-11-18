@@ -65,6 +65,15 @@ type BuilderCodeExtensionData struct {
 	S []string `json:"s,omitempty"`
 }
 
+// BuilderCodeSuffixData holds the fields present in a settlement calldata
+// suffix: the extension fields plus the facilitator-authored metadata map `m`.
+// Metadata values may be unsigned integers, strings, []any, and map[string]any
+// (parsed unsigned integers are uint64).
+type BuilderCodeSuffixData struct {
+	BuilderCodeExtensionData
+	M map[string]any `json:"m,omitempty"`
+}
+
 // validateCode reports whether code matches BUILDER_CODE_PATTERN.
 func validateCode(code string) bool {
 	return BUILDER_CODE_PATTERN.MatchString(code)

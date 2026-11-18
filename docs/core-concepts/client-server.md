@@ -72,6 +72,25 @@ The typical flow between a client and a server in the x402 protocol is as follow
 5. **Server settles the payment** and confirms transaction completion.
 6. **Server responds with the requested resource** (on success) or an error response (on failure), including a `PAYMENT-RESPONSE` header (Base64-encoded) with settlement details in both cases.
 
+### Timeouts and Safe Retries
+
+An HTTP timeout or lost response does not prove that a payment failed or cancel work already accepted by the server. Choose a retry strategy based on what has been submitted:
+
+* **Before submitting payment:** If neither this nor an earlier attempt has submitted a payment authorization or broadcast a transaction, retry only when the HTTP operation itself is safe to repeat. Preparing a signed payload locally is not the same as sending it in `PAYMENT-SIGNATURE`; check whether your payment mechanism broadcasts during preparation.
+* **After sending `PAYMENT-SIGNATURE`:** Treat the payment outcome as unknown. Do not automatically create or authorize a second payment, because the server may have received and settled the first one.
+* **When settlement details are available:** Decode `PAYMENT-RESPONSE` and use its `transaction` and `network` to [reconcile the transaction onchain](/core-concepts/facilitator#settlement-pending-and-auto-recovery). `success: false` with `errorReason: "settlement_pending"` is non-terminal, not permission to pay again.
+* **When no transaction hash is available:** Use the resource server's or facilitator provider's lookup or support process, if available. A missing response or lookup result is not proof that settlement did not occur.
+
+Reconciliation closes the unknown state only when it produces terminal evidence. If the expected payment is confirmed, recover the original operation's result through the server rather than paying again. If settlement is conclusively unsuccessful, a new payment may be considered after checking whether the application operation is safe to repeat. A receipt-wait timeout, retry limit, cache expiry, or payment authorization expiry is not evidence that a previously broadcast transaction failed.
+
+The [x402 HTTP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md) does not define a universal settlement-status endpoint or application decision deadline. Facilitators and payment mechanisms handle bounded receipt waiting and transaction reconciliation; applications choose reconciliation backoff, attempt limits, and business deadlines. If the outcome is still unknown at that deadline, stop automatic payment attempts and move the operation to manual review or an unresolved state.
+
+For retries of the same logical request, preserve its [`payment-identifier`](/extensions/payment-identifier) when the server supports the extension. Deduplication depends on the server's request binding, storage, and cache lifetime; the identifier alone does not make a retry safe. Replaying the same signed payload also requires the mechanism's replay protections and the application's idempotency guarantees.
+
+Once another payment attempt is safe, construct it from the latest `PaymentRequired` response, including updated extension challenges. Re-run payment policy checks or request user approval when terms such as `scheme`, `network`, `amount`, `asset`, or `payTo` change. A corrective `402` alone does not resolve an earlier unknown settlement outcome.
+
+To resume reconciliation after a restart, applications should persist the logical request/payment identifier, request and payment-terms fingerprint, observed settlement state, known transaction hash and network, last reconciliation time, evidence references, and application deadline/policy version and action. Keep settlement state separate from application action: a deadline can trigger manual review while settlement remains unknown. This is application-owned bookkeeping, not a new protocol record.
+
 ### Summary
 
 In the x402 protocol:

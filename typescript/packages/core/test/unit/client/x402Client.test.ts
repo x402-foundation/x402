@@ -1185,6 +1185,48 @@ describe("x402Client", () => {
       ]);
     });
 
+    it("aborts payment creation when a before hook requests it", async () => {
+      const client = new x402Client();
+      const mockClient = new MockSchemeNetworkClient("exact");
+      client.register("eip155:*" as Network, mockClient);
+      client.onBeforePaymentCreation(async () => ({ abort: true, reason: "policy" }));
+
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [
+              buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+            ],
+          }),
+        ),
+      ).rejects.toThrow("Payment creation aborted: policy");
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(0);
+    });
+
+    it("continues when a before hook returns a result that does not abort", async () => {
+      const client = new x402Client();
+      const mockClient = new MockSchemeNetworkClient("exact");
+      client.register("eip155:*" as Network, mockClient);
+      // The hook type only returns `{ abort: true }`. These results exercise the
+      // runtime checks for a missing abort flag and an explicit false.
+      client.onBeforePaymentCreation(async () => {
+        return {} as { abort: true; reason: string };
+      });
+      client.onBeforePaymentCreation(async () => {
+        return { abort: false } as unknown as { abort: true; reason: string };
+      });
+
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        }),
+      );
+
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+    });
+
     it("should skip lifecycle hooks for undeclared extensions", async () => {
       const client = new x402Client();
       let extensionCalled = false;
@@ -2040,6 +2082,64 @@ describe("x402Client", () => {
         }),
       );
       expect(mockClient.createPaymentPayloadCalls[0].context?.maxAmountPerPayment).toBe("500000");
+    });
+
+    function withAsset(asset: unknown): PaymentRequirements {
+      return {
+        ...buildPaymentRequirements({
+          scheme: "exact",
+          network,
+          amount: "1000",
+        }),
+        asset,
+      } as unknown as PaymentRequirements;
+    }
+
+    it("rejects a requirement that is missing asset", async () => {
+      const { client } = clientWithDefaultAsset();
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [withAsset(undefined)],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        name: "Error",
+        message: expect.stringMatching(/missing asset/),
+      });
+    });
+
+    it("rejects a non-string asset when spend controls are off", async () => {
+      const { client } = clientWithDefaultAsset(usdc, false);
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [withAsset(84532)],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        name: "Error",
+        message: expect.stringMatching(/missing asset/),
+      });
+    });
+
+    it("pays the option that has an asset when another option does not", async () => {
+      const { client, mockClient } = clientWithDefaultAsset();
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            withAsset(undefined),
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "1000",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+      expect(mockClient.createPaymentPayloadCalls[0].requirements.asset).toBe(usdc.asset);
     });
   });
 });

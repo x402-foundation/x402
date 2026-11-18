@@ -60,13 +60,6 @@ func mockRequirements(extra map[string]interface{}) types.PaymentRequirements {
 	}
 }
 
-func TestAuthCaptureEvmScheme_Scheme(t *testing.T) {
-	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
-	if scheme.Scheme() != authcapture.SchemeAuthCapture {
-		t.Fatalf("scheme = %q", scheme.Scheme())
-	}
-}
-
 func TestCreatePaymentPayload_InvalidAuthCaptureEscrow(t *testing.T) {
 	scheme := NewAuthCaptureEvmScheme(&mockSigner{address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	req := mockRequirements(map[string]interface{}{

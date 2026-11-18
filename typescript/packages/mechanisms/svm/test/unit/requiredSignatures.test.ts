@@ -4,8 +4,11 @@ import {
   compileTransactionMessage,
   createTransactionMessage,
   generateKeyPairSigner,
+  getBase64Codec,
   getBase64EncodedWireTransaction,
+  getCompiledTransactionMessageDecoder,
   getCompiledTransactionMessageEncoder,
+  getTransactionDecoder,
   pipe,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -17,7 +20,11 @@ import { ExactSvmScheme } from "../../src/exact/facilitator/scheme";
 import { SOLANA_DEVNET_CAIP2 } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import { encodeSignedTransaction, placeholderFeePayerSignature } from "./helpers/signedTransaction";
+import {
+  buildExactPaymentTransaction,
+  encodeSignedTransaction,
+  placeholderFeePayerSignature,
+} from "./helpers/signedTransaction";
 import * as Errors from "../../src/exact/facilitator/errors";
 
 const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111" as Address;
@@ -157,12 +164,36 @@ describe("ExactSvmScheme maxRequiredSignatures", () => {
     expect(result.invalidReason).toBe("invalid_exact_svm_payload_excessive_signers");
   });
 
-  it("does not apply a signature limit when the option is unset", async () => {
+  it("refuses a third required signer when the option is unset", async () => {
     const feePayer = await generateKeyPairSigner();
     const [a, b] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
     const transaction = await buildSignedTransactionWithSigners(feePayer.address, [a, b]);
 
     const scheme = new ExactSvmScheme(mockSigner(feePayer.address) as never);
+
+    const requirements = requirementsFor(feePayer.address);
+    const result = await scheme.verify(
+      {
+        x402Version: 2,
+        accepted: requirements,
+        payload: { transaction },
+      } as unknown as PaymentPayload,
+      requirements,
+    );
+
+    // scheme_exact_svm.md §2.1.4: only the client and the fee payer may sign.
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_svm_payload_excessive_signers");
+  });
+
+  it("applies an operator-raised signature limit", async () => {
+    const feePayer = await generateKeyPairSigner();
+    const [a, b] = await Promise.all([generateKeyPairSigner(), generateKeyPairSigner()]);
+    const transaction = await buildSignedTransactionWithSigners(feePayer.address, [a, b]);
+
+    const scheme = new ExactSvmScheme(mockSigner(feePayer.address) as never, undefined, {
+      maxRequiredSignatures: 3,
+    });
 
     const requirements = requirementsFor(feePayer.address);
     const result = await scheme.verify(
@@ -276,6 +307,29 @@ describe("verifyRequiredSignatures", () => {
       feePayer,
     );
     expect(result).toEqual({ ok: false, invalidReason: Errors.ErrSignatureInvalid });
+  });
+
+  it("accepts a valid version 0 client signature with Kit 8.5", async () => {
+    const { verifyRequiredSignatures } = await import(
+      "../../src/exact/facilitator/signatureVerification"
+    );
+    const feePayer = await generateKeyPairSigner();
+    const payer = await generateKeyPairSigner();
+    const payTo = await generateKeyPairSigner();
+    const transaction = await buildExactPaymentTransaction({
+      amount: 1000n,
+      feePayer: feePayer.address,
+      mint: USDC_DEVNET_ADDRESS as Address,
+      payTo: payTo.address,
+      payer,
+      version: 0,
+    });
+    const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transaction));
+    const compiled = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+
+    await expect(verifyRequiredSignatures(decoded, compiled, feePayer.address)).resolves.toEqual({
+      ok: true,
+    });
   });
 
   it("treats an unimportable signer public key as an invalid signature", async () => {

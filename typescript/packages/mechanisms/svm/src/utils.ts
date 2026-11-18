@@ -1,5 +1,8 @@
 import { sha256 } from "@noble/hashes/sha256";
-import { ErrInvalidPayloadTransaction } from "./exact/facilitator/errors";
+import {
+  ErrInvalidPayloadTransaction,
+  ErrUnsupportedTransactionVersion,
+} from "./exact/facilitator/errors";
 import {
   isAddress,
   getBase58Encoder,
@@ -7,6 +10,7 @@ import {
   getBase64Encoder,
   getTransactionDecoder,
   getCompiledTransactionMessageDecoder,
+  getInstructionsFromCompiledTransactionMessage,
   type Blockhash,
   type Transaction,
   createSolanaRpc,
@@ -25,6 +29,9 @@ import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import type { PendingSettlementStore } from "@x402/core/facilitator";
 import type { Network, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import {
+  ACCEPTED_TRANSACTION_VERSIONS,
+  ADVERTISED_TRANSACTION_VERSIONS,
+  CLIENT_SUPPORTED_TRANSACTION_VERSIONS,
   SVM_ADDRESS_REGEX,
   DEVNET_RPC_URL,
   TESTNET_RPC_URL,
@@ -37,6 +44,7 @@ import {
 import { DEFAULT_ASSETS, findDefaultAsset, getDefaultAsset } from "./defaultAssets";
 import type { ExactSvmPayloadV1 } from "./types";
 import { SLOT_COMMITMENT } from "./payment-channels/commitments";
+import type { BuildableTransactionVersion } from "./transactionV1";
 
 export { normalizeNetwork } from "./constants";
 
@@ -87,6 +95,155 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
 }
 
 /**
+ * Read a wire transaction's message version from its raw bytes, without
+ * trusting an SDK decoder. Legacy and version 0 transactions start with the
+ * compact-u16 signature count (always below 0x80 within the size limit), then
+ * the signatures, then the message, whose first byte carries the version
+ * prefix when its high bit is set. Version 1 (SIMD-0385) puts the message
+ * first, so its first byte is the version byte itself (`0x81`).
+ *
+ * Verifiers call this before decoding so a newer format is reported as
+ * `unsupported_transaction_version` whether the installed decoder rejects it,
+ * misreads it, or decodes it.
+ *
+ * @param transactionBase64 - The base64-encoded wire transaction
+ * @returns The message version, or undefined when the bytes are too short to tell
+ */
+export function peekWireTransactionVersion(
+  transactionBase64: string,
+): number | "legacy" | undefined {
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(getBase64Encoder().encode(transactionBase64));
+  } catch {
+    return undefined;
+  }
+  if (bytes.length === 0) return undefined;
+  if (bytes[0] & 0x80) return bytes[0] & 0x7f;
+  const prefixOffset = 1 + 64 * bytes[0];
+  if (prefixOffset >= bytes.length) return undefined;
+  const prefix = bytes[prefixOffset];
+  return prefix & 0x80 ? prefix & 0x7f : "legacy";
+}
+
+/**
+ * Whether a decoded transaction message's version is in a facilitator's
+ * accepted set. Verifiers call this before any signature or instruction check
+ * so a version whose compute budget lives somewhere they do not read cannot
+ * pass the compute-budget checks vacuously, and so a version the operator
+ * does not accept is refused before any instruction is inspected.
+ *
+ * A legacy message is policed as version 0: it is accepted exactly when
+ * version 0 is (the deprecated legacy tolerance of the SVM schemes).
+ *
+ * @param version - The `version` field of a compiled or decompiled transaction message
+ * @param accepted - The facilitator's accepted versions; defaults to {@link ADVERTISED_TRANSACTION_VERSIONS}
+ * @returns Whether the version is accepted
+ */
+export function isAcceptedTransactionVersion(
+  version: number | string,
+  accepted: readonly number[] = ADVERTISED_TRANSACTION_VERSIONS,
+): boolean {
+  if (version === "legacy") return accepted.includes(0);
+  return ACCEPTED_TRANSACTION_VERSIONS.includes(version) && accepted.includes(version as number);
+}
+
+/**
+ * Validate a facilitator's `transactionVersions` option: the message versions
+ * it accepts and advertises as `extra.transactionVersions`.
+ *
+ * @param versions - The configured versions, or undefined for the default
+ * @returns The accepted versions, deduplicated and ascending
+ * @throws Error when the list is empty or holds anything but 0 and 1
+ */
+export function normalizeAcceptedTransactionVersions(
+  versions: readonly number[] | undefined,
+): readonly BuildableTransactionVersion[] {
+  if (versions === undefined)
+    return ADVERTISED_TRANSACTION_VERSIONS as BuildableTransactionVersion[];
+  if (versions.length === 0 || versions.some(version => version !== 0 && version !== 1)) {
+    throw new Error(
+      `transactionVersions must be a non-empty list of 0 and/or 1 (got ${JSON.stringify(versions)})`,
+    );
+  }
+  return [...new Set(versions)].sort((a, b) => a - b) as BuildableTransactionVersion[];
+}
+
+/**
+ * Pick the transaction message version a client builds from the versions the
+ * facilitator advertised in `extra.transactionVersions`: the highest version
+ * shared by that advertisement and the versions the client (and its signer)
+ * can build.
+ *
+ * @param extra - The `extra` field of the payment requirements
+ * @param supported - Versions the client can build; defaults to {@link CLIENT_SUPPORTED_TRANSACTION_VERSIONS}
+ * @returns The highest mutually supported transaction message version
+ * @throws Error prefixed with `unsupported_transaction_version` when the sets do not intersect
+ */
+export function resolveTransactionVersion(
+  extra: Record<string, unknown> | undefined,
+  supported: readonly number[] = CLIENT_SUPPORTED_TRANSACTION_VERSIONS,
+): BuildableTransactionVersion {
+  const advertised = extra && "transactionVersions" in extra ? extra.transactionVersions : [0];
+  if (!Array.isArray(advertised)) {
+    throw new Error(`${ErrUnsupportedTransactionVersion}: transactionVersions must be an array`);
+  }
+  // The field holds only the integers 0 and 1. Any other entry, including
+  // Wallet Standard's "legacy" or a stringified version, invalidates the
+  // whole field rather than being skipped.
+  const invalidIndex = advertised.findIndex(version => version !== 0 && version !== 1);
+  if (invalidIndex !== -1) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: transactionVersions entries must be the integers 0 or 1 (got ${JSON.stringify(advertised[invalidIndex]) ?? "undefined"})`,
+    );
+  }
+  const selected = selectHighestMutuallySupportedTransactionVersion(
+    advertised,
+    normalizeClientTransactionVersions(supported),
+  );
+  if (selected !== undefined) {
+    return selected as BuildableTransactionVersion;
+  }
+  throw new Error(
+    `${ErrUnsupportedTransactionVersion}: facilitator accepts none of the transaction versions this client can build (advertised ${JSON.stringify(advertised)})`,
+  );
+}
+
+/**
+ * Validate a client's `transactionVersions` option.
+ *
+ * @param versions - The versions the client may build, or undefined for the default
+ * @returns The validated versions
+ * @throws Error when the list is empty or holds anything but 0 and 1
+ */
+export function normalizeClientTransactionVersions(
+  versions: readonly number[] | undefined,
+): readonly BuildableTransactionVersion[] {
+  if (versions === undefined) return CLIENT_SUPPORTED_TRANSACTION_VERSIONS;
+  if (versions.length === 0 || versions.some(version => version !== 0 && version !== 1)) {
+    throw new Error(
+      `transactionVersions must be a non-empty list of 0 and/or 1 (got ${JSON.stringify(versions)})`,
+    );
+  }
+  return versions as readonly BuildableTransactionVersion[];
+}
+
+/**
+ * Select the maximum numeric version present in both version sets.
+ *
+ * @param advertised - Versions accepted by the facilitator
+ * @param supported - Versions the client can construct
+ * @returns Highest mutual version, or undefined when the sets do not intersect
+ */
+export function selectHighestMutuallySupportedTransactionVersion(
+  advertised: readonly unknown[],
+  supported: readonly number[],
+): number | undefined {
+  const mutual = supported.filter(version => advertised.includes(version));
+  return mutual.length > 0 ? Math.max(...mutual) : undefined;
+}
+
+/**
  * Extract the token sender (owner of the source token account) from a TransferChecked instruction
  *
  * @param transaction - The decoded transaction
@@ -94,23 +251,20 @@ export function decodeTransactionFromPayload(svmPayload: ExactSvmPayloadV1): Tra
  */
 export function getTokenPayerFromTransaction(transaction: Transaction): string {
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
-  const staticAccounts = compiled.staticAccounts ?? [];
-  const instructions = compiled.instructions ?? [];
+  const instructions = getInstructionsFromCompiledTransactionMessage(compiled);
 
   for (const ix of instructions) {
-    const programIndex = ix.programAddressIndex;
-    const programAddress = staticAccounts[programIndex].toString();
+    const programAddress = ix.programAddress.toString();
 
     // Check if this is a token program instruction
     if (
       programAddress === TOKEN_PROGRAM_ADDRESS.toString() ||
       programAddress === TOKEN_2022_PROGRAM_ADDRESS.toString()
     ) {
-      const accountIndices: number[] = ix.accountIndices ?? [];
+      const accounts = ix.accounts ?? [];
       // TransferChecked account order: [source, mint, destination, owner, ...]
-      if (accountIndices.length >= 4) {
-        const ownerIndex = accountIndices[3];
-        const ownerAddress = staticAccounts[ownerIndex].toString();
+      if (accounts.length >= 4) {
+        const ownerAddress = accounts[3].address.toString();
         if (ownerAddress) return ownerAddress;
       }
     }

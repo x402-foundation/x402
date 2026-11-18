@@ -145,6 +145,8 @@ type SettleResponse struct {
 	// ExtensionResponses is a facilitator sidechannel for resource-server hooks.
 	ExtensionResponses map[string]interface{} `json:"-"`
 	Extra              map[string]interface{} `json:"extra,omitempty"`
+	// AfterSettleAborted marks an onchain settle failed closed by an afterSettle abort; never serialized.
+	AfterSettleAborted bool `json:"-"`
 }
 
 // SettlementOverrides allows overriding settlement parameters.

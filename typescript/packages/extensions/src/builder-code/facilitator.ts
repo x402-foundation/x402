@@ -14,8 +14,8 @@ import {
   BUILDER_CODE_PATTERN,
   MAX_CLIENT_SERVICE_CODES,
   MAX_SERVER_SERVICE_CODES,
-  type BuilderCodeExtensionData,
   type BuilderCodeFacilitatorConfig,
+  type BuilderCodeSuffixData,
   type DataSuffixContext,
 } from "./types";
 
@@ -105,8 +105,11 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
    *   echoed client/server codes, within its own {@link MAX_FACILITATOR_SERVICE_CODES}
    *   reservation.
    *
-   * @param ctx - Settlement context with payment-payload extensions
-   * @returns Hex-encoded ERC-8021 builder-code calldata suffix, or undefined when no attribution is present
+   * - `m` is the settlement metadata supplied by the settling mechanism in `ctx.metadata`.
+   *   It is never read from the client payload.
+   *
+   * @param ctx - Settlement context with payment-payload extensions and optional metadata
+   * @returns Hex-encoded ERC-8021 builder-code calldata suffix, or undefined when no attribution or metadata is present
    */
   buildDataSuffix(ctx: DataSuffixContext): Hex | undefined {
     const clientExt = extractClientExtension(ctx.paymentPayload.extensions);
@@ -123,13 +126,20 @@ export class BuilderCodeFacilitatorExtension implements FacilitatorExtension {
         ? [...echoedServiceCodes, this.config.serviceCode]
         : echoedServiceCodes;
 
-    const data: BuilderCodeExtensionData = {
+    const hasMetadata = ctx.metadata !== undefined && Object.keys(ctx.metadata).length > 0;
+    const data: BuilderCodeSuffixData = {
       ...(this.config.builderCode && { w: this.config.builderCode }),
       ...(a && { a }),
       ...(s.length > 0 && { s }),
+      ...(hasMetadata && { m: ctx.metadata }),
     };
 
-    if (!data.a && !data.w && (!data.s || (Array.isArray(data.s) && data.s.length === 0))) {
+    if (
+      !data.a &&
+      !data.w &&
+      !data.m &&
+      (!data.s || (Array.isArray(data.s) && data.s.length === 0))
+    ) {
       return undefined;
     }
 

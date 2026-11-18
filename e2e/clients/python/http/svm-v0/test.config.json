@@ -1,0 +1,16 @@
+{
+  "name": "python/http/svm-v0",
+  "type": "client",
+  "enabled": true,
+  "language": "python",
+  "transport": "http",
+  "protocolFamilies": [
+    "svm"
+  ],
+  "x402Versions": [
+    2
+  ],
+  "schemes": [
+    "exact"
+  ]
+}

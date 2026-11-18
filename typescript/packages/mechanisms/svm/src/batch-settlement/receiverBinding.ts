@@ -15,6 +15,7 @@ import {
 import { MEMO_PROGRAM_ADDRESS } from "../constants";
 import { PAYMENT_CHANNELS_PROGRAM_ID } from "../payment-channels/onchain";
 import { OPEN_DISCRIMINATOR } from "../payment-channels/generated/instructions/open";
+import { getCompiledInstructions } from "../transactionV1";
 
 export const RECEIVER_BINDING_MEMO_PREFIX = "x402:batch-settlement:svm:rcvauth:v1:";
 
@@ -58,9 +59,12 @@ export function readReceiverBindingFromOpen(wireTx: string, channelId: string): 
   let message: CompiledMessage;
   try {
     const decoded = getTransactionDecoder().decode(getBase64Codec().encode(wireTx));
-    message = getCompiledTransactionMessageDecoder().decode(
-      decoded.messageBytes,
-    ) as unknown as CompiledMessage;
+    const compiled = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+    // A version-1 open carries its instructions as headers and payloads.
+    message = {
+      ...(compiled as unknown as CompiledMessage),
+      instructions: getCompiledInstructions(compiled),
+    };
   } catch {
     return undefined;
   }

@@ -42,7 +42,7 @@ export interface FacilitatorSettleFailureContext extends FacilitatorSettleContex
 
 export type FacilitatorBeforeVerifyHook = (
   context: FacilitatorVerifyContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterVerifyHook = (context: FacilitatorVerifyResultContext) => Promise<void>;
 
@@ -52,7 +52,7 @@ export type FacilitatorOnVerifyFailureHook = (
 
 export type FacilitatorBeforeSettleHook = (
   context: FacilitatorSettleContext,
-) => Promise<void | { abort: true; reason: string }>;
+) => Promise<void | { abort: true; reason: string; message?: string }>;
 
 export type FacilitatorAfterSettleHook = (context: FacilitatorSettleResultContext) => Promise<void>;
 
@@ -139,7 +139,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment verification.
-   * Can abort verification by returning { abort: true, reason: string }
+   * Can abort verification by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -150,8 +150,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute after successful facilitator payment verification (isValid: true).
-   * This hook is NOT called when verification fails (isValid: false) - use onVerifyFailure for that.
+   * Register a hook to execute after verification returns a result, including
+   * `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -162,8 +162,8 @@ export class x402Facilitator {
   }
 
   /**
-   * Register a hook to execute when facilitator payment verification fails.
-   * Called when: verification returns isValid: false, or an exception is thrown during verification.
+   * Register a hook to execute when verification throws.
+   * It does not run for a result with `isValid: false`. Use `onAfterVerify` for that rejection.
    * Can recover from failure by returning { recovered: true, result: VerifyResponse }
    *
    * @param hook - The hook function to register
@@ -176,7 +176,7 @@ export class x402Facilitator {
 
   /**
    * Register a hook to execute before facilitator payment settlement.
-   * Can abort settlement by returning { abort: true, reason: string }
+   * Can abort settlement by returning { abort: true, reason: string, message?: string }
    *
    * @param hook - The hook function to register
    * @returns The x402Facilitator instance for chaining
@@ -234,13 +234,11 @@ export class x402Facilitator {
     }> = [];
     const signersByFamily: Record<string, Set<string>> = {};
 
-    // Iterate over registered scheme data (array supports multiple facilitators per version)
     for (const [version, schemeDataArray] of this.registeredFacilitatorSchemes) {
       for (const schemeData of schemeDataArray) {
         const { facilitator, networks } = schemeData;
         const scheme = facilitator.scheme;
 
-        // Iterate over stored concrete networks
         for (const network of networks) {
           const extra = facilitator.getExtra(network);
           kinds.push({
@@ -250,7 +248,6 @@ export class x402Facilitator {
             ...(extra && { extra }),
           });
 
-          // Collect signers by CAIP family for this network
           const family = facilitator.caipFamily;
           if (!signersByFamily[family]) {
             signersByFamily[family] = new Set();
@@ -260,7 +257,6 @@ export class x402Facilitator {
       }
     }
 
-    // Convert signer sets to arrays
     const signers: Record<string, string[]> = {};
     for (const [family, signerSet] of Object.entries(signersByFamily)) {
       signers[family] = Array.from(signerSet);
@@ -289,48 +285,24 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeVerify hooks
+    // This is a gate phase, so a throwing hook is deliberately not isolated:
+    // verification fails closed instead of skipping the check.
     for (const hook of this.beforeVerifyHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
         return {
           isValid: false,
           invalidReason: result.reason,
+          invalidMessage: result.message,
         };
       }
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      // Find matching facilitator from array
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          // Try pattern matching
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const verifyResult = await schemeNetworkFacilitator.verify(
         paymentPayload,
@@ -338,42 +310,17 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Check if verification failed (isValid: false)
-      if (!verifyResult.isValid) {
-        const reason = verifyResult.invalidReason || "Verification failed";
-        const detail = verifyResult.invalidMessage;
-        const failureContext: FacilitatorVerifyFailureContext = {
-          ...context,
-          error: new Error(detail ? `${reason}: ${detail}` : reason),
-        };
-
-        // Execute onVerifyFailure hooks
-        for (const hook of this.onVerifyFailureHooks) {
-          const result = await hook(failureContext);
-          if (result && "recovered" in result && result.recovered) {
-            // If recovered, execute afterVerify hooks with recovered result
-            const recoveredContext: FacilitatorVerifyResultContext = {
-              ...context,
-              result: result.result,
-            };
-            for (const hook of this.afterVerifyHooks) {
-              await hook(recoveredContext);
-            }
-            return result.result;
-          }
-        }
-
-        return verifyResult;
-      }
-
-      // Execute afterVerify hooks only for successful verification
       const resultContext: FacilitatorVerifyResultContext = {
         ...context,
         result: verifyResult,
       };
 
       for (const hook of this.afterVerifyHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterVerify", error);
+        }
       }
 
       return verifyResult;
@@ -383,11 +330,14 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onVerifyFailure hooks
       for (const hook of this.onVerifyFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onVerifyFailure", hookError);
         }
       }
 
@@ -400,7 +350,8 @@ export class x402Facilitator {
    *
    * @param paymentPayload - The payment payload to settle
    * @param paymentRequirements - The payment requirements for settlement
-   * @returns Promise resolving to the settlement response
+   * @returns Promise resolving to the settlement response. A before-hook abort resolves with
+   * `success: false`.
    */
   async settle(
     paymentPayload: PaymentPayload,
@@ -411,45 +362,24 @@ export class x402Facilitator {
       requirements: paymentRequirements,
     };
 
-    // Execute beforeSettle hooks
     for (const hook of this.beforeSettleHooks) {
       const result = await hook(context);
       if (result && "abort" in result && result.abort) {
-        throw new Error(`Settlement aborted: ${result.reason}`);
+        return {
+          success: false,
+          errorReason: result.reason,
+          errorMessage: result.message,
+          transaction: "",
+          network: paymentRequirements.network,
+        };
       }
     }
 
     try {
-      const schemeDataArray = this.registeredFacilitatorSchemes.get(paymentPayload.x402Version);
-      if (!schemeDataArray) {
-        throw new Error(
-          `No facilitator registered for x402 version: ${paymentPayload.x402Version}`,
-        );
-      }
-
-      // Find matching facilitator from array
-      let schemeNetworkFacilitator: SchemeNetworkFacilitator | undefined;
-      for (const schemeData of schemeDataArray) {
-        if (schemeData.facilitator.scheme === paymentRequirements.scheme) {
-          // Check if network matches
-          if (schemeData.networks.has(paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-          // Try pattern matching
-          if (networkMatchesPattern(schemeData.pattern, paymentRequirements.network)) {
-            schemeNetworkFacilitator = schemeData.facilitator;
-            break;
-          }
-        }
-      }
-
-      if (!schemeNetworkFacilitator) {
-        throw new Error(
-          `No facilitator registered for scheme: ${paymentRequirements.scheme} and network: ${paymentRequirements.network}`,
-        );
-      }
-
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
       const facilitatorContext = this.buildFacilitatorContext();
       const settleResult = await schemeNetworkFacilitator.settle(
         paymentPayload,
@@ -457,14 +387,20 @@ export class x402Facilitator {
         facilitatorContext,
       );
 
-      // Execute afterSettle hooks
       const resultContext: FacilitatorSettleResultContext = {
         ...context,
         result: settleResult,
       };
 
+      // Isolate afterSettle hook failures: settlement has already executed
+      // onchain, so a throwing observer must not convert a successful settle
+      // into an error response (or trigger onSettleFailure hooks).
       for (const hook of this.afterSettleHooks) {
-        await hook(resultContext);
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterSettle", error);
+        }
       }
 
       return settleResult;
@@ -474,16 +410,64 @@ export class x402Facilitator {
         error: error as Error,
       };
 
-      // Execute onSettleFailure hooks
       for (const hook of this.onSettleFailureHooks) {
-        const result = await hook(failureContext);
-        if (result && "recovered" in result && result.recovered) {
-          return result.result;
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onSettleFailure", hookError);
         }
       }
 
       throw error;
     }
+  }
+
+  /**
+   * Returns the first facilitator for this version whose scheme matches and whose
+   * network is listed or matches that registration's pattern.
+   *
+   * @param x402Version - Payment payload version
+   * @param requirements - Scheme and network to match
+   * @returns The registered facilitator
+   */
+  private resolveSchemeNetworkFacilitator(
+    x402Version: PaymentPayload["x402Version"],
+    requirements: PaymentRequirements,
+  ): SchemeNetworkFacilitator {
+    const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version);
+    if (!schemeDataArray) {
+      throw new Error(`No facilitator registered for x402 version: ${x402Version}`);
+    }
+
+    for (const schemeData of schemeDataArray) {
+      if (schemeData.facilitator.scheme !== requirements.scheme) {
+        continue;
+      }
+      if (
+        schemeData.networks.has(requirements.network) ||
+        networkMatchesPattern(schemeData.pattern, requirements.network)
+      ) {
+        return schemeData.facilitator;
+      }
+    }
+
+    throw new Error(
+      `No facilitator registered for scheme: ${requirements.scheme} and network: ${requirements.network}`,
+    );
+  }
+
+  /**
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure) throws.
+   *
+   * @param phase - Lifecycle phase whose hook threw
+   * @param error - Thrown value or rejection reason
+   */
+  private warnFacilitatorHookFailure(phase: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Facilitator ${phase} hook threw: ${detail}`);
   }
 
   /**
@@ -521,12 +505,39 @@ export class x402Facilitator {
     }
     const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version)!;
 
-    // Add new scheme data (supports multiple facilitators with same scheme name)
-    schemeDataArray.push({
-      facilitator,
-      networks: new Set(networks),
-      pattern: this.derivePattern(networks),
-    });
+    // One SchemeData entry per CAIP-2 namespace present in `networks`, not
+    // one entry for the whole (possibly mixed-namespace) list: a single
+    // `pattern` can only ever be a wildcard for ONE namespace at a time
+    // (derivePattern's own contract), so a mixed-namespace registration
+    // (e.g. ["stellar:testnet", "eip155:8453"]) needs one wildcard per
+    // namespace it actually covers, not a single pattern collapsed onto
+    // the first network's namespace, which previously provided no
+    // wildcard coverage in ANY namespace involved: it just duplicated the
+    // exact-match Set's own coverage of that one network. Each entry's
+    // `networks` is scoped to its OWN namespace's networks (not the full,
+    // possibly mixed-namespace set): every network is still found in its
+    // own namespace's entry, so exact matching (checked first in
+    // resolveSchemeNetworkFacilitator, before pattern matching) stays
+    // correct, and getSupported() no longer walks the same network once
+    // per namespace entry and advertises duplicate kinds for it.
+    const networksByNamespace = new Map<string, Network[]>();
+    for (const network of networks) {
+      const namespace = network.split(":")[0];
+      const existing = networksByNamespace.get(namespace);
+      if (existing) {
+        existing.push(network);
+      } else {
+        networksByNamespace.set(namespace, [network]);
+      }
+    }
+
+    for (const namespaceNetworks of networksByNamespace.values()) {
+      schemeDataArray.push({
+        facilitator,
+        networks: new Set(namespaceNetworks),
+        pattern: this.derivePattern(namespaceNetworks),
+      });
+    }
 
     return this;
   }
@@ -543,16 +554,13 @@ export class x402Facilitator {
     if (networks.length === 0) return "" as Network;
     if (networks.length === 1) return networks[0];
 
-    // Extract namespaces (e.g., "eip155" from "eip155:84532")
     const namespaces = networks.map(n => n.split(":")[0]);
     const uniqueNamespaces = new Set(namespaces);
 
-    // If all same namespace, use wildcard
     if (uniqueNamespaces.size === 1) {
       return `${namespaces[0]}:*` as Network;
     }
 
-    // Mixed namespaces - use first network for exact matching
     return networks[0];
   }
 }

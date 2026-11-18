@@ -239,7 +239,7 @@ const client = createx402MCPClient({
 
 #### Capping tool-call timeouts
 
-By default, the x402 MCP client caps derived tool-call timeouts at **10 minutes** (600 seconds). The cap applies to both the initial probe call and the paid retry. You can lower or raise this limit using `maxRequestTimeoutSeconds` (TypeScript/Python) or `MaxRequestTimeout` (Go):
+By default, the x402 MCP client caps derived tool-call timeouts at **10 minutes** (600 seconds). The cap applies to the initial probe call, the paid retry, and any corrective recovery retries. You can lower or raise this limit using `maxRequestTimeoutSeconds` (TypeScript/Python) or `MaxRequestTimeout` (Go):
 
 <Tabs>
   <Tab title="TypeScript">

@@ -51,6 +51,8 @@ func main() {
 		})
 	}
 
+	e2eserver.RegisterAuthCaptureE2eCapture(mux, facilitatorClient)
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, e2eserver.HealthBody())
 	})
@@ -71,7 +73,7 @@ func main() {
 
 	paymentHandler := nethttpmw.X402Payment(nethttpmw.Config{
 		Routes:                 routes,
-		Facilitator:            facilitatorClient,
+		Facilitators:           e2eserver.NewFacilitatorClients(cfg),
 		Schemes:                schemes,
 		SyncFacilitatorOnStart: true,
 		Timeout:                30 * time.Second,

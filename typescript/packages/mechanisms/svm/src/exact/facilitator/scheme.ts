@@ -15,6 +15,7 @@ import {
 import {
   decompileTransactionMessage,
   getCompiledTransactionMessageDecoder,
+  isAddress,
   type Address,
   type Transaction,
 } from "@solana/kit";
@@ -30,6 +31,8 @@ import {
   type PendingSettlementStore,
 } from "@x402/core/facilitator";
 import {
+  DEFAULT_MAX_COMPUTE_UNITS,
+  DEFAULT_MAX_REQUIRED_SIGNATURES,
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MEMO_PROGRAM_ADDRESS,
@@ -40,13 +43,22 @@ import type { ExactSvmPayloadV2 } from "../../types";
 import {
   decodeTransactionFromPayload,
   getTokenPayerFromTransaction,
+  isAcceptedTransactionVersion,
+  normalizeAcceptedTransactionVersions,
+  peekWireTransactionVersion,
   recordPendingOrTerminal,
   transactionMessageHash,
   TransactionOnchainFailureError,
 } from "../../utils";
 import {
+  checkTransactionV1Budget,
+  readTransactionV1Config,
+  transactionSizeExceeded,
+} from "../../transactionV1";
+import {
   assertSmartWalletLimits,
   assertSmartWalletVerifySigner,
+  IX_SET_COMPUTE_UNIT_LIMIT,
   resolveAccountKeys,
   verifySmartWalletTransaction,
   verifyPostSettlement,
@@ -55,6 +67,7 @@ import {
   type TransferCheckedInfo,
 } from "./smartWalletVerification";
 import { verifyRequiredSignatures } from "./signatureVerification";
+import { resolveProtocolLayout, type InstructionTuple } from "./instructionLayout";
 import * as Errors from "./errors";
 
 const compiledMessageDecoder = getCompiledTransactionMessageDecoder();
@@ -73,8 +86,6 @@ const DEFAULT_SMART_WALLET_ALLOWED_PROGRAMS = [
   "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d", // Metaplex Core
   LIGHTHOUSE_PROGRAM_ADDRESS, // Phantom's wallet-protection assertions (see #2097)
 ];
-
-const IX_TOKEN_TRANSFER_CHECKED = 12;
 
 /**
  * Which verification path produced a successful result.
@@ -95,8 +106,9 @@ type VerifyResult = {
 
 /**
  * Path 1 failure reasons that indicate a transaction layout a standard-wallet
- * parser could not handle — extra/unknown instructions, unexpected counts, or
- * a missing positional transfer. These are the only cases where falling through
+ * parser could not handle — unknown programs, out-of-order protocol
+ * instructions, malformed compute budget instructions, or a missing
+ * transfer. These are the only cases where falling through
  * to Path 2 (simulation) can legitimately recover the payment, because the
  * transfer may simply be wrapped in a smart-wallet CPI.
  *
@@ -106,15 +118,24 @@ type VerifyResult = {
  * mask the real reason behind a misleading smart_wallet_* error code.
  */
 const LAYOUT_RECOVERABLE_REASONS = new Set<string>([
-  Errors.ErrTransactionInstructionsLength,
   Errors.ErrNoTransferInstruction,
-  Errors.ErrUnknownFourthInstruction,
-  Errors.ErrUnknownFifthInstruction,
-  Errors.ErrUnknownSixthInstruction,
-  Errors.ErrUnknownOptionalInstruction,
+  Errors.ErrUnknownInstruction,
+  Errors.ErrProtocolInstructionOrder,
   Errors.ErrComputeLimitInstruction,
   Errors.ErrComputePriceInstruction,
 ]);
+
+/**
+ * Index of the exact scheme's static-path TransferChecked instruction: after
+ * the ComputeLimit + ComputePrice prefix on legacy and version 0, first on
+ * version 1, which carries its budget in the message config instead.
+ *
+ * @param version - The compiled message version
+ * @returns The transfer's instruction index
+ */
+export function staticTransferIndex(version: number | string): number {
+  return version === 1 ? 0 : 2;
+}
 
 /**
  * Configuration options for ExactSvmScheme.
@@ -123,7 +144,7 @@ export type ExactSvmSchemeOptions = {
   /**
    * Enable simulation-based smart wallet verification.
    * When enabled, transactions rejected by the static validation path
-   * (unknown programs, wrong instruction count) are re-verified using
+   * (unknown programs, out-of-order protocol instructions) are re-verified using
    * simulation inner instruction analysis. Works for any smart wallet
    * program (Squads, Swig, SPL Governance, etc.) without per-wallet parsers.
    *
@@ -161,6 +182,23 @@ export type ExactSvmSchemeOptions = {
   smartWalletAllowedPrograms?: string[];
 
   /**
+   * Instruction tuples that may appear as a contiguous block (guards aside)
+   * immediately BEFORE the protocol instructions on Path 1, e.g. to prefix the
+   * payment with out-of-band setup. A matched block is fee-payer-isolation-checked.
+   *
+   * Default: [] (no preflight instructions accepted)
+   */
+  preflightInstructionAllowlist?: InstructionTuple[];
+
+  /**
+   * Like {@link preflightInstructionAllowlist}, but immediately AFTER the
+   * protocol instructions.
+   *
+   * Default: [] (no postflight instructions accepted)
+   */
+  postflightInstructionAllowlist?: InstructionTuple[];
+
+  /**
    * Maximum compute unit price in microlamports accepted on the static path.
    * The facilitator is the fee payer, so the payer chooses a priority fee the
    * facilitator pays. Operators serving low-value payments will want this far
@@ -171,22 +209,42 @@ export type ExactSvmSchemeOptions = {
   maxPriorityFeeMicroLamports?: number;
 
   /**
-   * Maximum compute unit limit accepted on the static path. An SPL transfer
-   * with a memo uses ~20k CU, so a low ceiling still leaves ample headroom for
-   * wallet-injected instructions.
+   * Maximum compute unit limit accepted on the static path, for a version-0
+   * `SetComputeUnitLimit` and a version-1 header `computeUnitLimit` alike
+   * (scheme_exact_svm.md §2.2.1). An SPL transfer with a memo uses ~20k CU, so
+   * a low ceiling still leaves ample headroom for wallet-injected instructions.
    *
-   * Default: unset (no limit, preserving existing behavior)
+   * Default: {@link DEFAULT_MAX_COMPUTE_UNITS} (400,000, the spec's reference default).
+   * While it is unset, a smart-wallet transaction above the default is judged
+   * by Path 2 against `smartWalletMaxComputeUnits` instead; setting it
+   * explicitly makes it a hard ceiling for both paths.
    */
   maxComputeUnits?: number;
 
   /**
    * Maximum number of required signatures. Every signature adds 5,000 lamports
-   * of base fee, paid by the facilitator. A typical x402 payment needs two
-   * (payer + fee payer).
+   * of base fee, paid by the facilitator. An x402 payment needs exactly two
+   * (payer + fee payer): the transaction MUST NOT require any other signer
+   * (scheme_exact_svm.md §2.1.4). Raise it only for a wallet whose authority
+   * is itself several signers. It is checked before path dispatch, so it also
+   * bounds smart-wallet (Path 2) transactions: a threshold multisig whose
+   * members co-sign the payment transaction needs it raised.
    *
-   * Default: unset (no limit, preserving existing behavior)
+   * Default: {@link DEFAULT_MAX_REQUIRED_SIGNATURES} (2)
    */
   maxRequiredSignatures?: number;
+
+  /**
+   * Transaction message versions this facilitator accepts, advertised as
+   * `extra.transactionVersions` in `/supported`. A message of any other
+   * version is rejected with `unsupported_transaction_version` before any
+   * instruction is inspected (scheme_exact_svm.md §1.5); a legacy message is
+   * accepted exactly when version 0 is. Narrow it to `[0]` for a sponsor
+   * whose signer or RPC does not yet handle version 1.
+   *
+   * Default: `[0, 1]`
+   */
+  transactionVersions?: readonly (0 | 1)[];
 
   /**
    * Lets a retried settle for the same transaction reconcile against an
@@ -225,8 +283,8 @@ function assertLimit(name: string, value: number | undefined, min: number): void
  *
  * Dual-path verification:
  *
- * Path 1 (Static): Strict positional instruction validation for standard wallets.
- *   Fast, preserves existing behavior.
+ * Path 1 (Static): Strict identity-based instruction validation (program ID +
+ *   discriminator) for standard wallets. Fast.
  *
  * Path 2 (Simulation): Outcome-based verification for smart wallets.
  *   When Path 1 rejects a transaction and smart wallet verification is enabled,
@@ -239,6 +297,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
   private readonly settlementCache: SettlementCache;
   private readonly pendingStore: PendingSettlementStore;
+  private readonly transactionVersions: readonly (0 | 1)[];
+  private readonly maxComputeUnits: number;
+  private readonly maxRequiredSignatures: number;
 
   /**
    * Creates a new ExactSvmScheme instance.
@@ -263,6 +324,12 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // A ceiling below 1 would reject every transaction: the fee payer alone
     // always requires one signature.
     assertLimit("maxRequiredSignatures", this.options?.maxRequiredSignatures, 1);
+    this.transactionVersions = normalizeAcceptedTransactionVersions(
+      this.options?.transactionVersions,
+    );
+    this.maxComputeUnits = this.options?.maxComputeUnits ?? DEFAULT_MAX_COMPUTE_UNITS;
+    this.maxRequiredSignatures =
+      this.options?.maxRequiredSignatures ?? DEFAULT_MAX_REQUIRED_SIGNATURES;
 
     if (this.options?.enableSmartWalletVerification) {
       assertSmartWalletLimits({
@@ -286,7 +353,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     const addresses = this.signer.getAddresses();
     const randomIndex = Math.floor(Math.random() * addresses.length);
 
-    const extra: Record<string, unknown> = { feePayer: addresses[randomIndex] };
+    const extra: Record<string, unknown> = {
+      feePayer: addresses[randomIndex],
+      transactionVersions: [...this.transactionVersions],
+    };
     if (this.options?.enableSmartWalletVerification) {
       extra.features = { smartWalletSupported: true };
     }
@@ -346,6 +416,24 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     } catch {
       txKey = undefined;
     }
+    if (decodedTransaction) {
+      try {
+        const compiled = compiledMessageDecoder.decode(decodedTransaction.messageBytes);
+        if (!isAcceptedTransactionVersion(compiled.version, this.transactionVersions)) {
+          return {
+            success: false,
+            network: payload.accepted.network,
+            transaction: "",
+            errorReason: Errors.ErrUnsupportedTransactionVersion,
+            payer: "",
+          };
+        }
+      } catch {
+        // Verification below owns the canonical malformed-message error. Keep
+        // the cache key so decode stubs and future decoder failures do not
+        // accidentally disable deduplication.
+      }
+    }
 
     // Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot
     // 0). Must remain synchronous (before any await) so concurrent settle calls for
@@ -378,7 +466,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
           // verificationPath itself isn't available here.
           isSmartWalletSettlement =
             !!this.options?.enableSmartWalletVerification &&
-            !this.hasStaticTransferLayout(decodedTransaction!);
+            !this.hasStaticTransferLayout(
+              decodedTransaction!,
+              requirements.extra?.feePayer as string,
+            );
         } catch {
           // Ignore; payer stays "" and isSmartWalletSettlement stays false.
         }
@@ -423,6 +514,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
         network: payload.accepted.network,
         transaction: "",
         errorReason: valid.invalidReason ?? Errors.ErrVerificationFailed,
+        errorMessage: valid.invalidMessage,
         payer: valid.payer || "",
       };
     }
@@ -655,30 +747,21 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Cheap, local structural check for whether a decoded transaction matches
-   * Path 1's static positional layout (compute budget instructions followed
-   * by a TransferChecked at index 2). Used to re-derive which verification
-   * path a pending settlement originally used, without re-simulating.
+   * Cheap, local check for whether a transaction matches Path 1's static layout
+   * (allowlists included). Used to re-derive which verification path a pending
+   * settlement originally used, without re-simulating.
    *
    * @param transaction - Decoded transaction to inspect
+   * @param feePayerAddress - Facilitator fee payer (for allowlisted block isolation)
    * @returns Whether the transaction has Path 1's static transfer shape
    */
-  private hasStaticTransferLayout(transaction: Transaction): boolean {
+  private hasStaticTransferLayout(transaction: Transaction, feePayerAddress: string): boolean {
     const compiled = compiledMessageDecoder.decode(transaction.messageBytes);
     const instructions = decompileTransactionMessage(compiled).instructions ?? [];
-    if (instructions.length < 3 || instructions.length > 7) {
-      return false;
-    }
-    const transferIx = instructions[2];
-    const programAddress = transferIx.programAddress.toString();
-    if (
-      programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
-      programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
-      return false;
-    }
-    const ixData = transferIx.data;
-    return !!ixData && ixData.length >= 10 && ixData[0] === IX_TOKEN_TRANSFER_CHECKED;
+    return !(
+      "errorReason" in
+      resolveProtocolLayout(instructions, this.options, feePayerAddress, compiled.version)
+    );
   }
 
   /**
@@ -738,6 +821,23 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 2: Parse and Validate Transaction Structure
+    // Read the version from the raw bytes first so a newer wire format is
+    // reported as unsupported however the installed decoder handles it.
+    const wireVersion = peekWireTransactionVersion(exactSvmPayload.transaction);
+    if (
+      wireVersion !== undefined &&
+      !isAcceptedTransactionVersion(wireVersion, this.transactionVersions)
+    ) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrUnsupportedTransactionVersion,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
     let transaction;
     try {
       transaction = decodeTransactionFromPayload(exactSvmPayload);
@@ -766,23 +866,48 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
+    // Transaction message version is checked before any signature or
+    // instruction check: every check below reads its sponsorship policy from
+    // version-specific structure (the ComputeBudget instruction pair), so a
+    // version this code does not model must be rejected outright rather than
+    // handed to checks that would find nothing to scan and pass vacuously.
+    if (!isAcceptedTransactionVersion(compiled.version, this.transactionVersions)) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrUnsupportedTransactionVersion,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
+    // Size limit of the message version (§1.5): 1232 bytes for legacy and
+    // version 0, 4096 for version 1. The decoder accepts larger payloads.
+    if (transactionSizeExceeded(exactSvmPayload.transaction, compiled.version)) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrTransactionSizeExceeded,
+          payer: "",
+        },
+        verificationPath: null,
+      };
+    }
+
     // Signature count is a transaction-level property, so it is checked before
     // path dispatch: it bounds the base fee the facilitator pays regardless of
     // which verification strategy accepts the transaction, and it must not be
     // recoverable via the Path 2 fallthrough.
-    const maxRequiredSignatures = this.options?.maxRequiredSignatures;
-    if (maxRequiredSignatures !== undefined) {
-      const numRequiredSignatures = compiled.header.numSignerAccounts;
-      if (numRequiredSignatures > maxRequiredSignatures) {
-        return {
-          response: {
-            isValid: false,
-            invalidReason: Errors.ErrExcessiveSigners,
-            payer: "",
-          },
-          verificationPath: null,
-        };
-      }
+    if (compiled.header.numSignerAccounts > this.maxRequiredSignatures) {
+      return {
+        response: {
+          isValid: false,
+          invalidReason: Errors.ErrExcessiveSigners,
+          payer: "",
+        },
+        verificationPath: null,
+      };
     }
 
     const signatureCheck = await verifyRequiredSignatures(
@@ -868,6 +993,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // ─── Path 1: Static validation (standard wallets) ───────────────────
     const staticResult = await this.verifyStaticPath(
       transaction,
+      compiled,
       decompiled,
       exactSvmPayload,
       requirements,
@@ -885,9 +1011,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // self-spend, or a genuinely failing simulation — describes a transaction
     // that is invalid for this payment regardless of wallet type, so Path 2 must
     // not run; doing so would mask the real reason behind a smart_wallet_* code.
+    //
+    // Under the default static compute-unit cap (maxComputeUnits not set), a
+    // smart wallet's compute units are the business of smartWalletMaxComputeUnits:
+    // a cap failure falls through to Path 2 too, but only for a transaction
+    // that invokes allowlisted wallet programs; otherwise the static reason stands.
+    const defaultCapExceeded =
+      staticResult.invalidReason === Errors.ErrComputeLimitInstructionTooHigh &&
+      this.options?.maxComputeUnits === undefined;
     const staticReasonRecoverable =
-      typeof staticResult.invalidReason === "string" &&
-      LAYOUT_RECOVERABLE_REASONS.has(staticResult.invalidReason);
+      defaultCapExceeded ||
+      (typeof staticResult.invalidReason === "string" &&
+        LAYOUT_RECOVERABLE_REASONS.has(staticResult.invalidReason));
 
     if (this.options?.enableSmartWalletVerification && staticReasonRecoverable) {
       // Program allowlist: only known, audited smart wallet programs can reach Path 2.
@@ -915,6 +1050,9 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       }
 
       const disallowedProgram = topLevelPrograms.find(addr => !allowedPrograms.has(addr));
+      if (defaultCapExceeded && (disallowedProgram || topLevelPrograms.length === 0)) {
+        return { response: staticResult, verificationPath: null };
+      }
       if (disallowedProgram) {
         return {
           response: {
@@ -953,10 +1091,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
 
   /**
    * Path 1: Static instruction-layout verification for standard wallets.
-   * Validates positional instruction structure, program allowlist, and
-   * transfer details. Unchanged from the original implementation.
+   * Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, Memo)
+   * are found by program-ID/discriminator identity and must appear in that
+   * fixed relative order; guard instructions (Lighthouse) may appear
+   * anywhere in the instruction list.
    *
    * @param transaction - Decoded transaction to verify
+   * @param compiled - Compiled message, whose version selects the layout and budget checks
    * @param decompiled - Pre-decompiled message (lookups already resolved)
    * @param exactSvmPayload - The raw SVM payload containing the base64 transaction
    * @param requirements - Payment requirements to verify against
@@ -965,40 +1106,92 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    */
   private async verifyStaticPath(
     transaction: ReturnType<typeof decodeTransactionFromPayload>,
+    compiled: ReturnType<typeof compiledMessageDecoder.decode>,
     decompiled: ReturnType<typeof decompileTransactionMessage>,
     exactSvmPayload: ExactSvmPayloadV2,
     requirements: PaymentRequirements,
     signerAddresses: string[],
   ): Promise<VerifyResponse> {
     const instructions = decompiled.instructions ?? [];
-
-    // Allow 3-7 instructions:
-    // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
-    // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
-    // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
-    // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-    // - 7 instructions: + a third wallet-injected Lighthouse (Phantom, see #2097)
+    // Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
+    // optional Memo) are identified by program ID + instruction discriminator
+    // and MUST appear in that fixed relative order. Guard instructions
+    // (currently only permitted Lighthouse assertion variants — Phantom/Solflare's
+    // wallet-protection assertions) may appear anywhere. A configured preflight/postflight
+    // allowlist block is stripped (and fee-payer-isolation-checked) first.
     // See: https://github.com/x402-foundation/x402/issues/828
     //  and: https://github.com/x402-foundation/x402/issues/2097
-    if (instructions.length < 3 || instructions.length > 7) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrTransactionInstructionsLength,
-        payer: "",
-      };
+    const layout = resolveProtocolLayout(
+      decompiled.instructions ?? [],
+      this.options,
+      requirements.extra?.feePayer as string,
+      compiled.version,
+    );
+    if ("errorReason" in layout && !LAYOUT_RECOVERABLE_REASONS.has(layout.errorReason)) {
+      return { isValid: false, invalidReason: layout.errorReason, payer: "" };
     }
 
+    // Version 1 carries its compute budget in the message config, so it is
+    // checked there, and a ComputeBudget instruction anywhere is rejected.
+    if (compiled.version === 1) {
+      const violation = checkTransactionV1Budget(
+        readTransactionV1Config(compiled),
+        (instructions as ReadonlyArray<{ programAddress: Address }>).map(ix =>
+          ix.programAddress.toString(),
+        ),
+        {
+          maxComputeUnits: this.maxComputeUnits,
+          maxPriceMicroLamports:
+            this.options?.maxPriorityFeeMicroLamports ?? MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+        },
+      );
+      if (violation) {
+        return {
+          isValid: false,
+          invalidReason: Errors.TRANSACTION_V1_BUDGET_REASONS[violation],
+          payer: "",
+        };
+      }
+    }
+
+    if ("errorReason" in layout) {
+      // A wrapper still obeys an explicit static cap. Preserve its static
+      // budget reason without masking non-recoverable guard/extension failures.
+      if (compiled.version !== 1) {
+        try {
+          for (const ix of instructions) {
+            if (
+              ix.programAddress.toString() === COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() &&
+              ix.data?.[0] === IX_SET_COMPUTE_UNIT_LIMIT
+            ) {
+              this.verifyComputeLimitInstruction(ix as never);
+            }
+          }
+        } catch (error) {
+          return {
+            isValid: false,
+            invalidReason: error instanceof Error ? error.message : String(error),
+            payer: "",
+          };
+        }
+      }
+      return { isValid: false, invalidReason: layout.errorReason, payer: "" };
+    }
+    const { computeLimitIx, computePriceIx, transferIx, memoIx, memoCount } = layout;
+
     // Step 3: Verify Compute Budget Instructions
-    try {
-      this.verifyComputeLimitInstruction(instructions[0] as never);
-      this.verifyComputePriceInstruction(instructions[1] as never);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        isValid: false,
-        invalidReason: errorMessage,
-        payer: "",
-      };
+    if (compiled.version !== 1) {
+      try {
+        this.verifyComputeLimitInstruction(computeLimitIx as never);
+        this.verifyComputePriceInstruction(computePriceIx as never);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          isValid: false,
+          invalidReason: errorMessage,
+          payer: "",
+        };
+      }
     }
 
     const payer = getTokenPayerFromTransaction(transaction);
@@ -1011,29 +1204,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
 
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
     const programAddress = transferIx.programAddress.toString();
-
-    if (
-      programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
-      programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrNoTransferInstruction,
-        payer,
-      };
-    }
-
-    // parseTransferCheckedInstruction does not assert discriminator 12.
-    const ixData = transferIx.data;
-    if (!ixData || ixData.length < 10 || ixData[0] !== IX_TOKEN_TRANSFER_CHECKED) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrNoTransferInstruction,
-        payer,
-      };
-    }
 
     // Parse the transfer instruction using the appropriate library helper
     let parsedTransfer;
@@ -1109,46 +1280,18 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       };
     }
 
-    // Step 5: Verify optional instructions (if present)
-    // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-    const optionalInstructions = instructions.slice(3);
-    const invalidReasonByIndex = [
-      Errors.ErrUnknownFourthInstruction,
-      Errors.ErrUnknownFifthInstruction,
-      Errors.ErrUnknownSixthInstruction,
-      Errors.ErrUnknownSeventhInstruction,
-    ];
-
-    for (let i = 0; i < optionalInstructions.length; i += 1) {
-      const programAddress = optionalInstructions[i].programAddress.toString();
-      if (
-        programAddress === LIGHTHOUSE_PROGRAM_ADDRESS ||
-        programAddress === MEMO_PROGRAM_ADDRESS
-      ) {
-        continue;
-      }
-
-      return {
-        isValid: false,
-        invalidReason: invalidReasonByIndex[i] ?? Errors.ErrUnknownOptionalInstruction,
-        payer,
-      };
-    }
-
-    // Step 5b: Verify memo content matches extra.memo when present
+    // Step 5: Verify memo content matches extra.memo when present (exactly
+    // one Memo instruction is required in that case).
     const expectedMemo = requirements.extra?.memo as string | undefined;
     if (expectedMemo) {
-      const memoInstructions = optionalInstructions.filter(
-        ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
-      );
-      if (memoInstructions.length !== 1) {
+      if (!memoIx || memoCount !== 1) {
         return {
           isValid: false,
           invalidReason: Errors.ErrMemoCount,
           payer,
         };
       }
-      const memoData = memoInstructions[0].data;
+      const memoData = memoIx.data;
       const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
       if (actualMemo !== expectedMemo) {
         return {
@@ -1166,10 +1309,28 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       await this.signer.simulateTransaction(exactSvmPayload.transaction, requirements.network);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      let invalidReason = Errors.ErrTransactionSimulationFailed;
+      let invalidMessage = errorMessage;
+      if (this.signer.getAccountInfo) {
+        try {
+          const account = await this.signer.getAccountInfo(destATA, requirements.network, {
+            commitment: "confirmed",
+          });
+          if (account === null) {
+            invalidReason = Errors.ErrRecipientATAMissing;
+            invalidMessage = `${errorMessage}; recipient ATA ${destATA} was not found during diagnostic lookup`;
+          } else if (isAddress(account.owner) && account.owner !== programAddress) {
+            invalidReason = Errors.ErrRecipientATAWrongProgramOwner;
+            invalidMessage = `${errorMessage}; recipient ATA ${destATA} has program owner ${account.owner}, expected ${programAddress}`;
+          }
+        } catch {
+          // Account diagnosis is optional; keep the original simulation failure.
+        }
+      }
       return {
         isValid: false,
-        invalidReason: Errors.ErrTransactionSimulationFailed,
-        invalidMessage: errorMessage,
+        invalidReason,
+        invalidMessage,
         payer,
       };
     }
@@ -1182,7 +1343,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Verify that the compute limit instruction is valid.
+   * Verify that the compute limit instruction's payload is valid (the
+   * instruction's role was already established by classification).
    *
    * @param instruction - The compute limit instruction
    * @param instruction.programAddress - Program address
@@ -1192,21 +1354,10 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     programAddress: Address;
     data?: Readonly<Uint8Array>;
   }): void {
-    const programAddress = instruction.programAddress.toString();
-
-    if (
-      programAddress !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() ||
-      !instruction.data ||
-      instruction.data[0] !== 2 // discriminator for SetComputeUnitLimit
-    ) {
-      throw new Error(Errors.ErrComputeLimitInstruction);
-    }
-
     try {
       const parsedInstruction = parseSetComputeUnitLimitInstruction(instruction as never);
 
-      const maxComputeUnits = this.options?.maxComputeUnits;
-      if (maxComputeUnits !== undefined && parsedInstruction.data.units > maxComputeUnits) {
+      if (parsedInstruction.data.units > this.maxComputeUnits) {
         throw new Error(Errors.ErrComputeLimitInstructionTooHigh);
       }
     } catch (error) {
@@ -1218,7 +1369,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Verify that the compute price instruction is valid.
+   * Verify that the compute price instruction's payload is valid (the
+   * instruction's role was already established by classification).
    *
    * @param instruction - The compute price instruction
    * @param instruction.programAddress - Program address
@@ -1228,16 +1380,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     programAddress: Address;
     data?: Readonly<Uint8Array>;
   }): void {
-    const programAddress = instruction.programAddress.toString();
-
-    if (
-      programAddress !== COMPUTE_BUDGET_PROGRAM_ADDRESS.toString() ||
-      !instruction.data ||
-      instruction.data[0] !== 3 // discriminator for SetComputeUnitPrice
-    ) {
-      throw new Error(Errors.ErrComputePriceInstruction);
-    }
-
     try {
       const parsedInstruction = parseSetComputeUnitPriceInstruction(instruction as never);
 

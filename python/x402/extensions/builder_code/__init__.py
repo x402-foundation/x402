@@ -61,6 +61,10 @@ from .types import (
     SCHEMA_2_ID,
     BuilderCodeExtensionData,
     BuilderCodeFacilitatorConfig,
+    BuilderCodeSuffixData,
+    DataSuffixContext,
+    SettlementMetadata,
+    SettlementMetadataValue,
 )
 
 __all__ = [
@@ -77,6 +81,10 @@ __all__ = [
     # Types
     "BuilderCodeExtensionData",
     "BuilderCodeFacilitatorConfig",
+    "BuilderCodeSuffixData",
+    "DataSuffixContext",
+    "SettlementMetadata",
+    "SettlementMetadataValue",
     # CBOR encoding
     "encode_builder_code_suffix",
     "parse_builder_code_suffix_from_calldata",

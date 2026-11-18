@@ -10,6 +10,7 @@ import {
 } from "../types/facilitator";
 import { z } from "../schemas";
 import { safeBase64Decode } from "../utils";
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "./responseBody";
 
 const DEFAULT_FACILITATOR_URL = "https://x402.org/facilitator";
 /** Default per-request timeout for facilitator HTTP calls, in milliseconds */
@@ -138,7 +139,7 @@ export function computeRetryDelay(retryAfter: string | null, attempt: number): n
   return Math.min(delay, MAX_RETRY_DELAY_MS);
 }
 
-const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z.object({
+const verifyResponseSchema: z.ZodType<VerifyResponse, unknown> = z.object({
   isValid: z.boolean(),
   invalidReason: z
     .string()
@@ -162,7 +163,7 @@ const verifyResponseSchema: z.ZodType<VerifyResponse, z.ZodTypeDef, unknown> = z
     .transform(v => v ?? undefined),
 });
 
-const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z.object({
+const settleResponseSchema: z.ZodType<SettleResponse, unknown> = z.object({
   success: z.boolean(),
   errorReason: z
     .string()
@@ -192,20 +193,19 @@ const settleResponseSchema: z.ZodType<SettleResponse, z.ZodTypeDef, unknown> = z
     .transform(v => v ?? undefined),
 });
 
-const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], z.ZodTypeDef, unknown> =
-  z.object({
-    x402Version: z.number(),
-    scheme: z.string(),
-    network: z.custom<SupportedResponse["kinds"][number]["network"]>(
-      value => typeof value === "string",
-    ),
-    extra: z
-      .record(z.string(), z.unknown())
-      .nullish()
-      .transform(v => v ?? undefined),
-  });
+const supportedKindSchema: z.ZodType<SupportedResponse["kinds"][number], unknown> = z.object({
+  x402Version: z.number(),
+  scheme: z.string(),
+  network: z.custom<SupportedResponse["kinds"][number]["network"]>(
+    value => typeof value === "string",
+  ),
+  extra: z
+    .record(z.string(), z.unknown())
+    .nullish()
+    .transform(v => v ?? undefined),
+});
 
-const supportedResponseSchema: z.ZodType<SupportedResponse, z.ZodTypeDef, unknown> = z.object({
+const supportedResponseSchema: z.ZodType<SupportedResponse, unknown> = z.object({
   kinds: z.array(supportedKindSchema),
   extensions: z.array(z.string()).default([]),
   signers: z.record(z.string(), z.array(z.string())).default({}),
@@ -334,10 +334,10 @@ function attachExtensionResponsesFromHeader<
  */
 async function parseSuccessResponse<T>(
   response: Response,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   operation: string,
 ): Promise<T> {
-  const text = await response.text();
+  const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
 
   let data: unknown;
   try {
@@ -421,7 +421,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -479,7 +479,7 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
       });
 
       if (!response.ok) {
-        const text = await response.text();
+        const text = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES);
         let data: unknown;
         try {
           data = JSON.parse(text);
@@ -536,15 +536,17 @@ export class HTTPFacilitatorClient implements FacilitatorClient {
           };
         }
 
-        const errorText = await response.text().catch((cause: unknown) => {
-          // A deadline abort during the error-body read must surface as a
-          // timeout, not be masked as a generic HTTP failure (which would be
-          // retried for 429). statusText covers other body-read failures.
-          if (isAbortOrTimeoutError(cause)) {
-            throw cause;
-          }
-          return response.statusText;
-        });
+        const errorText = await readLimitedText(response, MAX_CONTROL_PLANE_RESPONSE_BYTES).catch(
+          (cause: unknown) => {
+            // A deadline abort during the error-body read must surface as a
+            // timeout, not be masked as a generic HTTP failure (which would be
+            // retried for 429). statusText covers other body-read failures.
+            if (isAbortOrTimeoutError(cause)) {
+              throw cause;
+            }
+            return response.statusText;
+          },
+        );
         return {
           kind: "http-error" as const,
           status: response.status,
