@@ -81,6 +81,17 @@ describe("ExactSuiScheme facilitator", () => {
     mock.core.waitForTransaction.mockResolvedValue(result);
   }
 
+  /**
+   * Mock a transaction that settle's pre-submit check doesn't find, but later
+   * lookups do.
+   *
+   * @param result - What later lookups return
+   */
+  function foundAfterSubmit(result: unknown) {
+    const notFound = mock.core.getTransaction.getMockImplementation();
+    mock.core.getTransaction.mockImplementationOnce(notFound!).mockResolvedValue(result);
+  }
+
   describe("verify", () => {
     it("accepts a self-paid address-balance payment", async () => {
       const result = await scheme.verify(await payment(), testRequirements());
@@ -570,7 +581,7 @@ describe("ExactSuiScheme facilitator", () => {
       const bare = { ...successRecord([], digest), balanceChanges: undefined };
       mock.core.executeTransaction.mockResolvedValue({ $kind: "Transaction", Transaction: bare });
       mock.core.waitForTransaction.mockResolvedValue({ $kind: "Transaction", Transaction: bare });
-      mock.core.getTransaction.mockResolvedValue({
+      foundAfterSubmit({
         $kind: "Transaction",
         Transaction: successRecord(exactBalanceChanges(), digest),
       });
@@ -730,6 +741,7 @@ describe("ExactSuiScheme facilitator", () => {
         const guard: SettlementGuard = {
           claim: vi.fn().mockResolvedValue(true),
           release: vi.fn(),
+          markPending: vi.fn(),
         };
         const s = new ExactSuiScheme({
           clients: { [SUI_TESTNET_CAIP2]: mock.client },
@@ -743,7 +755,10 @@ describe("ExactSuiScheme facilitator", () => {
         await s.settle(forged, testRequirements());
         expect(guard.claim).not.toHaveBeenCalled();
 
-        mock.core.executeTransaction.mockRejectedValue(new Error("boom"));
+        mock.core.executeTransaction.mockResolvedValue({
+          $kind: "FailedTransaction",
+          FailedTransaction: failureRecord("boom"),
+        });
         await s.settle(testPayload(await signPayload(transaction)), testRequirements());
         const key = {
           network: SUI_TESTNET_CAIP2,
@@ -752,12 +767,67 @@ describe("ExactSuiScheme facilitator", () => {
         };
         expect(guard.claim).toHaveBeenCalledWith(key);
         expect(guard.release).toHaveBeenCalledWith(key);
+        expect(guard.markPending).not.toHaveBeenCalled();
+      });
+
+      it("marks the claim pending instead of releasing it on settlement_pending", async () => {
+        const guard: SettlementGuard = {
+          claim: vi.fn().mockResolvedValue(true),
+          release: vi.fn(),
+          markPending: vi.fn(),
+        };
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          settlementGuard: guard,
+        });
+        const transaction = await buildTestTransaction();
+        mock.core.executeTransaction.mockRejectedValue(new Error("boom"));
+        expect(
+          (await s.settle(testPayload(await signPayload(transaction)), testRequirements()))
+            .errorReason,
+        ).toBe("settlement_pending");
+        expect(guard.markPending).toHaveBeenCalledWith({
+          network: SUI_TESTNET_CAIP2,
+          digest: await digestOf(transaction),
+          maxEpoch: String(EPOCH + 1),
+        });
+        expect(guard.release).not.toHaveBeenCalled();
+      });
+
+      it("rejects a payment that already executed elsewhere on its first settle", async () => {
+        const payload = await payment();
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        mock.core.getTransaction.mockResolvedValue({
+          $kind: "Transaction",
+          Transaction: successRecord(exactBalanceChanges(), digest),
+        });
+        expect(await scheme.settle(payload, testRequirements())).toMatchObject({
+          success: false,
+          errorReason: "invalid_exact_sui_payload_already_executed",
+          payer,
+        });
+        expect(mock.core.executeTransaction).not.toHaveBeenCalled();
+        // The claim is kept, so a repeat is a duplicate.
+        expect((await scheme.settle(payload, testRequirements())).errorReason).toBe(
+          "duplicate_settlement",
+        );
+      });
+
+      it("releases the claim when the pre-submit lookup errors", async () => {
+        const payload = await payment();
+        mock.core.getTransaction.mockRejectedValueOnce(new Error("lookup unavailable"));
+        expect((await scheme.settle(payload, testRequirements())).errorReason).toBe(
+          "transaction_failed",
+        );
+        expect(mock.core.executeTransaction).not.toHaveBeenCalled();
+        settled(successRecord(exactBalanceChanges(), "retried"));
+        expect((await scheme.settle(payload, testRequirements())).success).toBe(true);
       });
 
       it("reports a duplicate when a shared guard refuses the claim", async () => {
         const s = new ExactSuiScheme({
           clients: { [SUI_TESTNET_CAIP2]: mock.client },
-          settlementGuard: { claim: async () => false, release: vi.fn() },
+          settlementGuard: { claim: async () => false, release: vi.fn(), markPending: vi.fn() },
         });
         expect((await s.settle(await payment(), testRequirements())).errorReason).toBe(
           "duplicate_settlement",
@@ -778,6 +848,7 @@ describe("ExactSuiScheme facilitator", () => {
           settlementGuard: {
             claim: () => Promise.reject(new Error("store down")),
             release: vi.fn(),
+            markPending: vi.fn(),
           },
         });
         const payload = await payment();
@@ -793,6 +864,7 @@ describe("ExactSuiScheme facilitator", () => {
         const guard: SettlementGuard = {
           claim: vi.fn().mockResolvedValue(true),
           release: vi.fn(),
+          markPending: vi.fn(),
           observeEpoch: vi.fn(),
         };
         const s = new ExactSuiScheme({
@@ -844,9 +916,6 @@ describe("ExactSuiScheme facilitator", () => {
             : scheme;
           mock.core.executeTransaction.mockResolvedValue(submitted);
           mock.core.waitForTransaction.mockRejectedValueOnce(new Error("confirmation timeout"));
-          if (sponsored) {
-            mock.core.getTransaction.mockRejectedValueOnce(new Error("lookup unavailable"));
-          }
 
           expect(await facilitator.settle(payload, requirements)).toMatchObject({
             success: false,
@@ -875,7 +944,7 @@ describe("ExactSuiScheme facilitator", () => {
         const payload = await payment();
         const digest = await digestOf((payload.payload as { transaction: string }).transaction);
         mock.core.executeTransaction.mockRejectedValue(new Error("deadline exceeded"));
-        mock.core.getTransaction.mockResolvedValue({
+        foundAfterSubmit({
           $kind: "Transaction",
           Transaction: successRecord(exactBalanceChanges(), digest),
         });
@@ -893,7 +962,7 @@ describe("ExactSuiScheme facilitator", () => {
           Transaction: successRecord([], "submitted"),
         });
         mock.core.waitForTransaction.mockRejectedValue(new Error("timeout"));
-        mock.core.getTransaction.mockResolvedValue({
+        foundAfterSubmit({
           $kind: "FailedTransaction",
           FailedTransaction: failureRecord("abort", "landed-failed"),
         });
@@ -1225,10 +1294,30 @@ describe("ExactSuiScheme facilitator", () => {
       },
     );
 
-    it("reports an already-executed sponsored payment without co-signing it again", async () => {
+    it("rejects an already-executed sponsored payment on its first settle", async () => {
       const { s, executeTransaction, requirements } = withExecutor(null);
       const payload = await payment({ sponsored: true }, requirements);
       const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+      mock.core.getTransaction.mockResolvedValue({
+        $kind: "Transaction",
+        Transaction: successRecord(exactBalanceChanges(), digest),
+      });
+      expect((await s.settle(payload, requirements)).errorReason).toBe(
+        "invalid_exact_sui_payload_already_executed",
+      );
+      expect(executeTransaction).not.toHaveBeenCalled();
+      expect(mock.core.simulateTransaction).not.toHaveBeenCalled();
+    });
+
+    it("reports a pending sponsored payment that has since executed without co-signing again", async () => {
+      const { s, executeTransaction, requirements } = withExecutor(null);
+      executeTransaction.mockImplementation(executed);
+      const payload = await payment({ sponsored: true }, requirements);
+      const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+      mock.core.waitForTransaction.mockRejectedValueOnce(new Error("confirmation timeout"));
+      expect((await s.settle(payload, requirements)).errorReason).toBe("settlement_pending");
+      expect(executeTransaction).toHaveBeenCalledOnce();
+
       mock.core.getTransaction.mockResolvedValue({
         $kind: "Transaction",
         Transaction: successRecord(exactBalanceChanges(), digest),
@@ -1237,8 +1326,7 @@ describe("ExactSuiScheme facilitator", () => {
         success: true,
         transaction: digest,
       });
-      expect(executeTransaction).not.toHaveBeenCalled();
-      expect(mock.core.simulateTransaction).not.toHaveBeenCalled();
+      expect(executeTransaction).toHaveBeenCalledOnce();
     });
 
     it("does not simulate a payment the payer pays gas for", async () => {
@@ -1362,6 +1450,20 @@ describe("SettlementCache", () => {
     expect(cache.claim(key)).toBe(true);
     expect(cache.claim(key)).toBe(false);
     cache.release(key);
+    expect(cache.claim(key)).toBe(true);
+  });
+
+  it("lets one claim through after markPending", () => {
+    const cache = new SettlementCache();
+    expect(cache.claim(key)).toBe(true);
+    cache.markPending(key);
+    expect(cache.claim(key)).toBe("pending");
+    expect(cache.claim(key)).toBe(false);
+  });
+
+  it("ignores markPending for a key it does not hold", () => {
+    const cache = new SettlementCache();
+    cache.markPending(key);
     expect(cache.claim(key)).toBe(true);
   });
 
