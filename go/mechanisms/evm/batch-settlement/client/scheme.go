@@ -832,24 +832,24 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 		expectedAddr = c.config.PayerAuthorizer
 	}
 
-	// Use the facilitator-style verification if the signer supports it
-	verifiable, isVerifiable := readSigner.(evm.FacilitatorEvmSigner)
-	if isVerifiable {
-		valid, verifyErr := verifiable.VerifyTypedData(
-			ctx,
-			expectedAddr,
-			domain,
-			batchsettlement.VoucherTypes,
-			"Voucher",
-			map[string]interface{}{
-				"channelId":          channelIdRawBytes,
-				"maxClaimableAmount": signed,
-			},
-			sigBytes,
-		)
-		if verifyErr != nil || !valid {
-			return false, nil //nolint:nilerr // signature mismatch = not recoverable
-		}
+	// Client signers do not implement verification. Recover here, and only store a
+	// signature x402BatchSettlement's ECDSA recovery accepts.
+	if !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+		return false, nil
+	}
+	valid, verifyErr := evm.VerifyEOATypedData(
+		expectedAddr,
+		domain,
+		batchsettlement.VoucherTypes,
+		"Voucher",
+		map[string]interface{}{
+			"channelId":          channelIdRawBytes,
+			"maxClaimableAmount": signed,
+		},
+		sigBytes,
+	)
+	if verifyErr != nil || !valid {
+		return false, nil //nolint:nilerr // signature mismatch = not recoverable
 	}
 
 	session := &BatchSettlementClientContext{

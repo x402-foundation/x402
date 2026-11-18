@@ -8,7 +8,6 @@ from typing import Any
 try:
     from eth_account import Account
     from eth_account.messages import encode_typed_data
-    from eth_keys.constants import SECPK1_N
     from eth_utils import to_checksum_address
 except ImportError as e:
     raise ImportError(
@@ -38,7 +37,12 @@ from ..errors import (
     ERR_WITHDRAW_DELAY_OUT_OF_RANGE,
 )
 from ..types import ChannelConfig, ChannelState
-from ..utils import coerce_bytes32, compute_channel_id, get_batch_settlement_eip712_domain
+from ..utils import (
+    coerce_bytes32,
+    compute_channel_id,
+    get_batch_settlement_eip712_domain,
+    is_contract_recoverable_signature,
+)
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
@@ -80,18 +84,6 @@ def erc3009_authorization_time_invalid_reason(valid_after: int, valid_before: in
     if valid_after > now:
         return ERR_VALID_AFTER_IN_FUTURE
     return None
-
-
-def is_contract_recoverable_signature(signature: bytes) -> bool:
-    """Return whether x402BatchSettlement's OpenZeppelin ECDSA recovery accepts signature.
-
-    It requires 65 bytes, a low s value and v of 27 or 28.
-    """
-    return (
-        len(signature) == 65
-        and int.from_bytes(signature[32:64], "big") <= SECPK1_N // 2
-        and signature[64] in (27, 28)
-    )
 
 
 def _signature_to_bytes(signature: str | bytes) -> bytes:
