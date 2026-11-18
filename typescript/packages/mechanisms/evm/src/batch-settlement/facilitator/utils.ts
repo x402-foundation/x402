@@ -1,11 +1,11 @@
 import { getAddress, hashTypedData, recoverAddress, isAddressEqual } from "viem";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
+import { verifyHashSignatureWithCode } from "../../shared/verifySignature";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
 import { BATCH_SETTLEMENT_ADDRESS, voucherTypes } from "../constants";
 import { batchSettlementABI } from "../abi";
 import type { ChannelConfig, ChannelState } from "../types";
-import { getBatchSettlementEip712Domain } from "../utils";
+import { getBatchSettlementEip712Domain, isContractRecoverableSignature } from "../utils";
 import * as Errors from "../errors";
 
 export { validateChannelConfig } from "../utils";
@@ -104,6 +104,7 @@ export async function verifyBatchSettlementVoucherTypedData(
     // on-chain x402BatchSettlement uses ECDSA.recoverCalldata — pure ecrecover,
     // no code check, no EIP-1271. Use recoverAddress directly so there is no
     // ambiguity: this path never issues an RPC call regardless of address state.
+    if (!isContractRecoverableSignature(params.signature)) return false;
     try {
       const digest = hashTypedData({
         domain,
@@ -126,14 +127,24 @@ export async function verifyBatchSettlementVoucherTypedData(
   // routes by signer.code.length (ECDSA for EOAs, strict EIP-1271 for contracts
   // including 7702-delegated EOAs). Mirror that exactly — no ECDSA fallback
   // for addresses with code.
-  return verifyTypedDataSignature(signer, {
-    address: getAddress(params.payer),
-    domain,
-    types: voucherTypes,
-    primaryType: "Voucher",
-    message,
-    signature: params.signature,
-  });
+  let digest: `0x${string}`;
+  let code: `0x${string}` | undefined;
+  try {
+    digest = hashTypedData({ domain, types: voucherTypes, primaryType: "Voucher", message });
+    code = await signer.getCode({ address: getAddress(params.payer) });
+  } catch {
+    return false;
+  }
+  if ((!code || code === "0x") && !isContractRecoverableSignature(params.signature)) {
+    return false;
+  }
+  return verifyHashSignatureWithCode(
+    signer,
+    getAddress(params.payer),
+    code,
+    digest,
+    params.signature,
+  );
 }
 
 /**
