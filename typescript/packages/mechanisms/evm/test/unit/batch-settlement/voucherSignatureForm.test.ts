@@ -170,6 +170,34 @@ describe("batch-settlement voucher signature form vs x402BatchSettlement (OZ ECD
     },
   );
 
+  it("forwards a non-ECDSA signature unchanged to isValidSignature when the payer has code", async () => {
+    const readContract = vi.fn().mockResolvedValue("0x1626ba7e");
+    const contractSigner = {
+      getCode: vi.fn().mockResolvedValue("0x6080"),
+      readContract,
+    } as unknown as FacilitatorEvmSigner;
+
+    const ok = await verifyBatchSettlementVoucherTypedData(
+      contractSigner,
+      {
+        channelId,
+        maxClaimableAmount: "2000",
+        payerAuthorizer: "0x0000000000000000000000000000000000000000",
+        payer: config.payer,
+        signature: "0xabcd",
+      },
+      84532,
+    );
+
+    expect(ok).toBe(true);
+    expect(contractSigner.getCode).toHaveBeenCalledTimes(1);
+    expect(readContract).toHaveBeenCalledTimes(1);
+    expect(readContract.mock.calls[0][0]).toMatchObject({
+      functionName: "isValidSignature",
+      args: [expect.any(String), "0xabcd"],
+    });
+  });
+
   it("still accepts the canonical signature", async () => {
     const ok = await verifyBatchSettlementVoucherTypedData(
       signer,

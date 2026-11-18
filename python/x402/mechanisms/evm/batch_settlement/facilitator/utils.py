@@ -122,7 +122,10 @@ def verify_batch_settlement_voucher_typed_data(
         "maxClaimableAmount": int(max_claimable_amount),
     }
 
-    sig_bytes = _signature_to_bytes(signature)
+    try:
+        sig_bytes = _signature_to_bytes(signature)
+    except ValueError:
+        return False
     is_zero = int(payer_authorizer, 16) == 0
 
     if not is_zero:

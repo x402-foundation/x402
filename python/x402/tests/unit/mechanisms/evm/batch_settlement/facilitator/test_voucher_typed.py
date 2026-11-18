@@ -196,3 +196,22 @@ class TestVoucherSignatureForm:
         assert not verify_batch_settlement_voucher_typed_data(
             _EoaSigner(), signature=rewrite(sig), **args
         )
+
+    @pytest.mark.parametrize(
+        "signature",
+        ["0x" + "zz" * 65, "0x" + "ab" * 64 + "1", "0X" + "ab" * 65],
+        ids=["non-hex", "odd-length", "0X-prefix"],
+    )
+    @pytest.mark.parametrize("authorizer_path", [True, False])
+    def test_malformed_signature_is_invalid(self, signature, authorizer_path):
+        channel_id = "0x" + "ab" * 32
+        addr, _ = _sign_voucher(channel_id, 1000)
+        assert not verify_batch_settlement_voucher_typed_data(
+            _EoaSigner(),
+            channel_id=channel_id,
+            max_claimable_amount="1000",
+            payer_authorizer=addr if authorizer_path else "0x" + "00" * 20,
+            payer=addr,
+            signature=signature,
+            chain_id=CHAIN_ID,
+        )
