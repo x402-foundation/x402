@@ -195,3 +195,7 @@ const api = wrapAxiosWithPaymentFromConfig(axios.create(), {
 });
 ```
 
+### Response header limits
+
+In Node.js, response-header overflow errors include a diagnostic suggesting that an oversized `PAYMENT-REQUIRED` header may be responsible. The error remains an `AxiosError` with its code, config, and request details, and the original error is retained as `error.cause`. Ask the server operator to reduce response headers, such as large Bazaar examples. Overflow failures are not retried automatically.
+

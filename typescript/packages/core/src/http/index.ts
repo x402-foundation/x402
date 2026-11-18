@@ -138,6 +138,7 @@ export {
   getFacilitatorResponseError,
 } from "../types";
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
+export { getResponseHeadersOverflowError } from "./headerErrors";
 export { prepareHttpServer } from "./prepareHttpServer";
 export type { PreparedHttpServer } from "./prepareHttpServer";
 export {
