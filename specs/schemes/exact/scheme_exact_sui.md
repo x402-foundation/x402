@@ -306,8 +306,8 @@ If submitting or waiting for finality fails, the facilitator SHOULD look the tra
 digest and report what actually happened. If the outcome still can't be established, the transaction
 may yet execute, so the facilitator MAY return `settlement_pending` (core spec
 [§9](../../x402-specification-v2.md#9-error-handling)) with the digest in `transaction`, so the
-caller can reconcile on chain before retrying. It then keeps the claim, marked as its own
-submission, so a retry can proceed.
+caller can reconcile on chain before retrying. It then records the transaction as its own pending
+submission, so a retry is recognized as its own.
 
 On success the facilitator returns a `SettlementResponse` (core spec
 [§5.3](../../x402-specification-v2.md)) with the digest as `transaction`, the `network`, and the
