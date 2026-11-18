@@ -271,7 +271,7 @@ The `VerifyResponse` schema contains the following fields:
 Facilitators MAY expose extension outcomes separately from `extensions` as `extensionResponses` (populated from the transport sidechannel; never serialized to buyers). See section 7.2.1.
 ### 5.5 Settlement and Refusal Identity Invariant
 
-Any artifact used to correlate a request across its settlement, refusal, replay-lookup, and challenge-quote paths — regardless of its name (`attempt_id`, `Idempotency-Key`, idempotency scope, or any scheme-specific field) — MUST be derived **once, at ingress**, from a single immutable snapshot of the request as received by the facilitator, and MUST NOT be re-derived or partially re-derived downstream.
+Any artifact used to correlate a request across its settlement, refusal, replay-lookup, and challenge-quote paths — regardless of its name (`attempt_id`, `Idempotency-Key`, idempotency scope, or any scheme-specific field) — MUST be derived **once, at ingress**, from a single immutable snapshot of the request as received by the resource server or the payer, and MUST NOT be re-derived or partially re-derived downstream.
 
 - The **ingress snapshot** is defined here rather than by the implementation. It MUST contain at least the decoded `method`, `path`, the canonical `query`, the decoded `body` (or a digest of it computed after decoding), and the resolved `payTo`, `asset`, `network`, `amount`, and `scheme`. A snapshot that omits any of these is not the snapshot this section requires, whatever the implementation calls it: the word "complete" cannot be satisfied by defining it as what was captured.
 
