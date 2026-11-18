@@ -75,14 +75,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/extensions:
     dependencies:
@@ -157,14 +157,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/axios:
     dependencies:
@@ -218,14 +218,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/express:
     dependencies:
@@ -288,14 +288,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/fastify:
     dependencies:
@@ -355,14 +355,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/fetch:
     dependencies:
@@ -413,14 +413,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/hono:
     dependencies:
@@ -480,14 +480,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/next:
     dependencies:
@@ -547,14 +547,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/http/paywall:
     dependencies:
@@ -698,14 +698,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mcp:
     dependencies:
@@ -771,14 +771,14 @@ importers:
         specifier: ^2.48.11
         version: 2.48.11(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@4.6.7)
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/aptos:
     dependencies:
@@ -832,14 +832,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/avm:
     dependencies:
@@ -893,14 +893,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/canton:
     dependencies:
@@ -954,14 +954,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/cardano:
     dependencies:
@@ -1021,14 +1021,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/casper:
     dependencies:
@@ -1085,14 +1085,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/concordium:
     dependencies:
@@ -1146,14 +1146,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/evm:
     dependencies:
@@ -1210,14 +1210,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/hedera:
     dependencies:
@@ -1274,14 +1274,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/keeta:
     dependencies:
@@ -1338,14 +1338,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/near:
     dependencies:
@@ -1417,14 +1417,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/stellar:
     dependencies:
@@ -1478,14 +1478,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/svm:
     dependencies:
@@ -1557,14 +1557,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.2
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/tvm:
     dependencies:
@@ -1621,14 +1621,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   ../../typescript/packages/mechanisms/xrpl:
     dependencies:
@@ -1682,14 +1682,14 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.5
-        version: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+        specifier: ^6.4.6
+        version: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+        version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   clients/advanced:
     dependencies:
@@ -11805,8 +11805,8 @@ packages:
       vite:
         optional: true
 
-  vite@6.4.5:
-    resolution: {integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==}
+  vite@6.4.6:
+    resolution: {integrity: sha512-RtsraAwEG68idOA6iUOoIpOlcSKROnf815aIq9qHTSrDNpLoBrBa12suyfcEd8qn0xwOVQI1Yhm1GbmTjF600A==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
@@ -17720,7 +17720,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+      vitest: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
 
   '@vitest/expect@4.1.12':
     dependencies:
@@ -17731,21 +17731,21 @@ snapshots:
       chai: 6.3.0
       tinyrainbow: 3.2.0
 
-  '@vitest/mocker@4.1.12(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))':
+  '@vitest/mocker@4.1.12(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))':
     dependencies:
       '@vitest/spy': 4.1.12
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
 
-  '@vitest/mocker@4.1.12(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))':
+  '@vitest/mocker@4.1.12(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))':
     dependencies:
       '@vitest/spy': 4.1.12
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
 
   '@vitest/pretty-format@4.1.12':
     dependencies:
@@ -23900,45 +23900,45 @@ snapshots:
       - utf-8-validate
       - zod
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.2)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.2)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     dependencies:
       debug: 4.4.1
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.2)
     optionalDependencies:
-      vite: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     dependencies:
       debug: 4.4.1
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
-      vite: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     dependencies:
       debug: 4.4.1
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
-      vite: 6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0):
+  vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0):
     dependencies:
       esbuild: 0.25.9
       fdir: 6.5.0(picomatch@4.0.3)
       picomatch: 4.0.3
-      postcss: 8.5.6
+      postcss: 8.5.23
       rollup: 4.46.4
       tinyglobby: 0.2.15
     optionalDependencies:
@@ -23948,12 +23948,12 @@ snapshots:
       lightningcss: 1.30.2
       tsx: 4.21.0
 
-  vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0):
+  vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0):
     dependencies:
       esbuild: 0.25.9
       fdir: 6.5.0(picomatch@4.0.3)
       picomatch: 4.0.3
-      postcss: 8.5.6
+      postcss: 8.5.23
       rollup: 4.46.4
       tinyglobby: 0.2.15
     optionalDependencies:
@@ -23963,10 +23963,10 @@ snapshots:
       lightningcss: 1.30.2
       tsx: 4.21.0
 
-  vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
+  vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.17.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     dependencies:
       '@vitest/expect': 4.1.12
-      '@vitest/mocker': 4.1.12(vite@6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+      '@vitest/mocker': 4.1.12(vite@6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       '@vitest/pretty-format': 4.1.12
       '@vitest/runner': 4.1.12
       '@vitest/snapshot': 4.1.12
@@ -23983,7 +23983,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.15
       tinyrainbow: 3.2.0
-      vite: 6.4.5(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.17.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
@@ -23993,10 +23993,10 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
+  vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.2)(@vitest/coverage-v8@4.1.12)(jsdom@26.1.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)):
     dependencies:
       '@vitest/expect': 4.1.12
-      '@vitest/mocker': 4.1.12(vite@6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
+      '@vitest/mocker': 4.1.12(vite@6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0))
       '@vitest/pretty-format': 4.1.12
       '@vitest/runner': 4.1.12
       '@vitest/snapshot': 4.1.12
@@ -24013,7 +24013,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.15
       tinyrainbow: 3.2.0
-      vite: 6.4.5(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
+      vite: 6.4.6(@types/node@22.20.2)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
