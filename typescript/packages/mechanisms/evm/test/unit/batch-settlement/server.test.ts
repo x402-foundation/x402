@@ -30,6 +30,7 @@ import {
   type FacilitatorClient,
 } from "@x402/core/server";
 import { privateKeyToAccount } from "viem/accounts";
+import { MIN_WITHDRAW_DELAY } from "../../../src/batch-settlement/constants";
 import * as Errors from "../../../src/batch-settlement/errors";
 
 function buildManager(scheme: BatchSettlementEvmScheme): BatchSettlementChannelManager {
@@ -308,7 +309,7 @@ describe("BatchSettlementEvmScheme — construction", () => {
     expect(server.getStorage()).toBeInstanceOf(InMemoryChannelStorage);
     expect(server.getLockStorage()).toBe(server.getStorage());
     expect(server.getReceiverAddress()).toBe(RECEIVER);
-    expect(server.getWithdrawDelay()).toBe(900);
+    expect(server.getWithdrawDelay()).toBe(MIN_WITHDRAW_DELAY);
     expect(server.getOnchainStateTtlMs()).toBe(300_000);
     expect(server.getReceiverAuthorizerSigner()).toBeUndefined();
   });

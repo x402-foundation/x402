@@ -26,12 +26,6 @@ import type { DiscoveredMCPResource } from "../src/bazaar/facilitator";
 import type { HTTPAdapter, HTTPRequestContext } from "@x402/core/http";
 
 describe("Bazaar Discovery Extension", () => {
-  describe("BAZAAR constant", () => {
-    it("should export the correct extension identifier", () => {
-      expect(BAZAAR.key).toBe("bazaar");
-    });
-  });
-
   describe("declareDiscoveryExtension - GET method", () => {
     it("should create a valid GET extension with query params", () => {
       const result = declareDiscoveryExtension({

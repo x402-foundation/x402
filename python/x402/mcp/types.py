@@ -1,13 +1,10 @@
 """Type definitions for MCP transport integration."""
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from ..schemas import PaymentPayload, PaymentRequirements, SettleResponse
 from ..schemas.base import Price
-
-if TYPE_CHECKING:
-    pass
 
 # Protocol constants for MCP x402 payment integration.
 MCP_PAYMENT_REQUIRED_CODE = 402
@@ -194,7 +191,6 @@ class PaymentResponseError(Exception):
     """
 
     def __init__(self, message: str, result: Any):
-        """Initialize an error carrying the tool result."""
         super().__init__(message)
         self.result = result
 

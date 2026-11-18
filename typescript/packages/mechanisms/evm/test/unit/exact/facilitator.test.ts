@@ -267,7 +267,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
       const result = await facilitator.verify(fullPayload, modifiedRequirements);
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(Errors.ErrRecipientMismatch);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload_recipient_mismatch");
     });
 
     it("should reject if amount doesn't match", async () => {
@@ -2620,9 +2620,73 @@ describe("ExactEvmScheme (Facilitator)", () => {
       expect(getCodeCount(requirements.asset)).toBe(2);
     });
   });
+
+  describe("non-canonical required amount", () => {
+    const amounts = ["1e4", "10000.0", "0x2710", "0.01", "1_000", "+1000", " 1000 "];
+
+    async function signedPayload(assetTransferMethod?: "permit2") {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: {
+          name: "USDC",
+          version: "2",
+          ...(assetTransferMethod ? { assetTransferMethod } : {}),
+        },
+      };
+      const paymentPayload = await client.createPaymentPayload(2, requirements);
+      const fullPayload: PaymentPayload = {
+        ...paymentPayload,
+        accepted: requirements,
+        resource: { url: "", description: "", mimeType: "" },
+      };
+      return { requirements, fullPayload };
+    }
+
+    it.each(amounts)("rejects EIP-3009 verify for %s", async amount => {
+      const { requirements, fullPayload } = await signedPayload();
+      const result = await facilitator.verify(fullPayload, { ...requirements, amount });
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_required_amount");
+    });
+
+    it.each(amounts)("rejects EIP-3009 settle for %s", async amount => {
+      const { requirements, fullPayload } = await signedPayload();
+      const result = await facilitator.settle(fullPayload, { ...requirements, amount });
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_required_amount");
+    });
+
+    it.each(amounts)("rejects Permit2 verify for %s", async amount => {
+      const { requirements, fullPayload } = await signedPayload("permit2");
+      const result = await facilitator.verify(fullPayload, { ...requirements, amount });
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("invalid_exact_evm_required_amount");
+    });
+
+    it.each(amounts)("rejects Permit2 settle for %s", async amount => {
+      const { requirements, fullPayload } = await signedPayload("permit2");
+      const result = await facilitator.settle(fullPayload, { ...requirements, amount });
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe("invalid_exact_evm_required_amount");
+    });
+  });
 });
 
 describe("shared Permit2 helpers", () => {
+  it("splitEip2612Signature normalizes a raw y-parity recovery byte to 27/28", () => {
+    const rs = "aa".repeat(64);
+    expect(splitEip2612Signature(`${rs}00`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}01`).v).toBe(28);
+    expect(splitEip2612Signature(`0x${rs}00`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}1b`).v).toBe(27);
+    expect(splitEip2612Signature(`${rs}1c`).v).toBe(28);
+  });
+
   it("mapSettleError maps known revert strings and truncates unknown ones", () => {
     const payload = {
       accepted: { scheme: "exact", network: "eip155:84532" },

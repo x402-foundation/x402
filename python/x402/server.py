@@ -236,7 +236,7 @@ class x402ResourceServer(x402ResourceServerBase):
                             result = await self._execute_hook(target, ctx)
                         break
                     except Exception as e:
-                        if phase not in ("call_facilitator", "before"):
+                        if phase not in ("call_facilitator", "before", "after"):
                             raise
                         phase, target, ctx = gen.throw(e)
         except StopIteration as e:
@@ -580,7 +580,7 @@ class x402ResourceServerSync(x402ResourceServerBase):
                             result = self._execute_hook_sync(target, ctx)
                         break
                     except Exception as e:
-                        if phase not in ("call_facilitator", "before"):
+                        if phase not in ("call_facilitator", "before", "after"):
                             raise
                         phase, target, ctx = gen.throw(e)
         except StopIteration as e:

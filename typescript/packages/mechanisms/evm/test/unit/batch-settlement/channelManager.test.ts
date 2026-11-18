@@ -769,6 +769,58 @@ describe("BatchSettlementChannelManager — refund()", () => {
     expect(results).toEqual([]);
   });
 
+  it.each(["refund", "refundIdleChannels"] as const)(
+    "%s skips fully charged channels and refunds the rest",
+    async method => {
+      // x402BatchSettlement reverts a zero-amount refund (ZeroRefund).
+      const facilitator = buildFacilitator(async (payload, reqs) =>
+        (payload.payload as { amount?: string }).amount === "0"
+          ? {
+              success: false,
+              errorReason: "simulation_failed",
+              errorMessage: "ZeroRefund()",
+              transaction: "",
+              network: reqs.network,
+            }
+          : { success: true, transaction: "0xtx", network: reqs.network },
+      );
+      const { manager, storage } = buildManager({ facilitator });
+      const chargedConfig = buildChannelConfig("01");
+      const refundableConfig = buildChannelConfig("02");
+      const charged = buildSession({
+        channelConfig: chargedConfig,
+        channelId: computeChannelId(chargedConfig),
+        balance: "500",
+        chargedCumulativeAmount: "500",
+        signedMaxClaimable: "500",
+        lastRequestTimestamp: Date.now() - 120_000,
+      });
+      const refundable = buildSession({
+        channelConfig: refundableConfig,
+        channelId: computeChannelId(refundableConfig),
+        balance: "500",
+        chargedCumulativeAmount: "100",
+        signedMaxClaimable: "100",
+        lastRequestTimestamp: Date.now() - 120_000,
+      });
+      await storeChannel(storage, charged);
+      await storeChannel(storage, refundable);
+
+      const results =
+        method === "refund"
+          ? await manager.refund()
+          : await manager.refundIdleChannels({ idleSecs: 60 });
+
+      expect(results).toEqual([{ channel: refundable.channelId, transaction: "0xtx" }]);
+      expect(facilitator.settle).toHaveBeenCalledTimes(1);
+      expect((facilitator.settle.mock.calls[0][0].payload as { amount: string }).amount).toBe(
+        "400",
+      );
+      expect(await storage.get(charged.channelId)).toBeDefined();
+      expect(await storage.get(refundable.channelId)).toBeUndefined();
+    },
+  );
+
   it("refundIdleChannels only refunds channels idle long enough", async () => {
     const { manager, storage } = buildManager();
     const idleConfig = buildChannelConfig("01");
@@ -1113,6 +1165,46 @@ describe("BatchSettlementChannelManager — auto-loop tick policies", () => {
     expect(onRefund).toHaveBeenCalledWith({ channel: selected.channelId, transaction: "0xtx" });
     expect(await storage.get(selected.channelId)).toBeUndefined();
     expect(await storage.get(skipped.channelId)).toBeDefined();
+  });
+
+  it("skips fully charged channels picked by the refund selector", async () => {
+    const { manager, storage, facilitator } = buildManager();
+    const chargedConfig = buildChannelConfig("01");
+    const refundableConfig = buildChannelConfig("02");
+    const charged = buildSession({
+      channelConfig: chargedConfig,
+      channelId: computeChannelId(chargedConfig),
+      balance: "1000",
+      chargedCumulativeAmount: "1000",
+    });
+    const refundable = buildSession({
+      channelConfig: refundableConfig,
+      channelId: computeChannelId(refundableConfig),
+      balance: "10000",
+    });
+    await storeChannel(storage, charged);
+    await storeChannel(storage, refundable);
+
+    const onRefund = vi.fn<(r: RefundResult) => void>();
+    const onError = vi.fn<(err: unknown) => void>();
+    manager.start({
+      refundIntervalSecs: 1,
+      selectRefundChannels: channels => channels,
+      onRefund,
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.runAllTicks();
+
+    await manager.stop();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onRefund).toHaveBeenCalledTimes(1);
+    expect(onRefund).toHaveBeenCalledWith({ channel: refundable.channelId, transaction: "0xtx" });
+    expect(
+      facilitator.settle.mock.calls.map(([p]) => (p.payload as { amount: string }).amount),
+    ).toEqual(["9000"]);
+    expect(await storage.get(charged.channelId)).toBeDefined();
   });
 
   it("invokes onError when an auto job throws", async () => {

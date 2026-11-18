@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+import httpx
 from eth_account import Account
 
 from x402 import x402Client, x402ClientSync
@@ -61,6 +63,7 @@ def create_e2e_client(
             ``[0]`` keeps the client on version 0 even when the facilitator
             advertises version 1.
     """
+    cardano_mnemonic = None if svm_only else os.getenv("CLIENT_CARDANO_MNEMONIC")
     evm_private_key = None if svm_only else os.getenv("CLIENT_EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("CLIENT_SVM_PRIVATE_KEY")
     tvm_private_key = None if svm_only else os.getenv("CLIENT_TVM_PRIVATE_KEY")
@@ -81,12 +84,12 @@ def create_e2e_client(
         print(json.dumps({"success": False, "error": "Missing required environment variables"}))
         raise SystemExit(1)
 
-    if not evm_private_key and not svm_private_key and not tvm_private_key:
+    if not evm_private_key and not svm_private_key and not tvm_private_key and not cardano_mnemonic:
         print(
             json.dumps(
                 {
                     "success": False,
-                    "error": "At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, or CLIENT_TVM_PRIVATE_KEY must be set",
+                    "error": "At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, CLIENT_TVM_PRIVATE_KEY, or CLIENT_CARDANO_MNEMONIC must be set",
                 }
             )
         )
@@ -145,6 +148,27 @@ def create_e2e_client(
             ExactTvmClientScheme(WalletV5R1MnemonicSigner(tvm_config)),
         )
 
+    if cardano_mnemonic:
+        from x402.mechanisms.cardano import (
+            BlockfrostConfig,
+            CardanoProviderConfig,
+            ClientCardanoSignerConfig,
+            to_client_cardano_signer,
+        )
+        from x402.mechanisms.cardano.exact import ExactCardanoClientScheme
+
+        network = resolve_network_caip2("cardano")
+        provider = CardanoProviderConfig(
+            blockfrost=BlockfrostConfig(
+                os.getenv("CARDANO_RPC_URL", "https://cardano-preprod.blockfrost.io/api/v0"),
+                os.environ["BLOCKFROST_PROJECT_ID"],
+            )
+        )
+        signer = to_client_cardano_signer(
+            ClientCardanoSignerConfig(cardano_mnemonic, network, provider)
+        )
+        client.register(network_caip2_pattern("cardano"), ExactCardanoClientScheme(signer))
+
     # E2e exercises custom assets and amounts above the default $1 USD cap.
     client.set_spend_controls(False)
 
@@ -173,7 +197,33 @@ def aggregate_batch_result(phase: str, results: list[dict], details: dict) -> di
     }
 
 
+def _await_cardano_wallet_settled(result: dict[str, Any]) -> None:
+    """Wait for indexed change before the harness releases the shared Cardano wallet."""
+    receipt = result.get("payment_response") or {}
+    if not receipt.get("network", "").startswith("cardano:"):
+        return
+    transaction, payer = receipt.get("transaction"), receipt.get("payer")
+    project_id, base_url = os.getenv("BLOCKFROST_PROJECT_ID"), os.getenv("CARDANO_RPC_URL")
+    if not all((transaction, payer, project_id, base_url)):
+        return
+    deadline = time.monotonic() + 120
+    with httpx.Client(timeout=10) as provider:
+        while time.monotonic() < deadline:
+            try:
+                response = provider.get(
+                    f"{base_url}/addresses/{payer}/utxos", headers={"project_id": project_id}
+                )
+                if response.is_success and any(
+                    row.get("tx_hash") == transaction for row in response.json()
+                ):
+                    return
+            except (httpx.HTTPError, ValueError):
+                pass
+            time.sleep(3)
+
+
 def _emit_and_exit(payload: dict[str, Any]) -> None:
+    _await_cardano_wallet_settled(payload)
     print(json.dumps(payload))
     raise SystemExit(0)
 

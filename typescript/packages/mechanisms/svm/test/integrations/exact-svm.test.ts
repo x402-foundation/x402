@@ -16,7 +16,11 @@ import {
   SettleResponse,
   SupportedResponse,
 } from "@x402/core/types";
-import { ExactSvmScheme as ExactSvmClient, toFacilitatorSvmSigner } from "../../src";
+import {
+  ExactSvmScheme as ExactSvmClient,
+  toFacilitatorSvmSigner,
+  USDC_DEVNET_ADDRESS,
+} from "../../src";
 import { ExactSvmScheme as ExactSvmServer } from "../../src/exact/server/scheme";
 import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitator/scheme";
 import type { ExactSvmPayloadV2 } from "../../src/types";
@@ -363,7 +367,7 @@ describe("SVM Integration Tests", () => {
 
         expect(requirements).toHaveLength(1);
         expect(requirements[0].amount).toBe(testCase.expectedAmount);
-        expect(requirements[0].asset).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // Devnet USDC
+        expect(requirements[0].asset).toBe(USDC_DEVNET_ADDRESS);
       }
     });
 
@@ -422,7 +426,7 @@ describe("SVM Integration Tests", () => {
       });
 
       expect(smallRequirements[0].amount).toBe("50000000"); // 50 * 1e6 (USDC)
-      expect(smallRequirements[0].asset).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // Devnet USDC
+      expect(smallRequirements[0].asset).toBe(USDC_DEVNET_ADDRESS);
     });
 
     it("should support multiple MoneyParser in chain", async () => {
@@ -476,7 +480,7 @@ describe("SVM Integration Tests", () => {
         price: 50,
         network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" as Network,
       });
-      expect(standardReq[0].asset).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // Default USDC
+      expect(standardReq[0].asset).toBe(USDC_DEVNET_ADDRESS);
     });
 
     it("should work with async MoneyParser (e.g., exchange rate lookup)", async () => {
@@ -530,7 +534,7 @@ describe("SVM Integration Tests", () => {
 
         expect(requirements).toHaveLength(1);
         expect(requirements[0].amount).toBe(testCase.expectedAmount);
-        expect(requirements[0].asset).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"); // Devnet USDC
+        expect(requirements[0].asset).toBe(USDC_DEVNET_ADDRESS);
       }
     });
   });

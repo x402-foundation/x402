@@ -22,7 +22,10 @@ import {
   unpackRefundAuthorizer,
 } from "../../../src/batch-settlement/utils";
 import { PERMIT2_ADDRESS } from "../../../src/constants";
-import { PERMIT2_DEPOSIT_COLLECTOR_ADDRESS } from "../../../src/batch-settlement/constants";
+import {
+  MIN_WITHDRAW_DELAY,
+  PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
+} from "../../../src/batch-settlement/constants";
 import {
   isBatchSettlementDepositPayload,
   isBatchSettlementVoucherPayload,
@@ -283,7 +286,7 @@ describe("buildChannelConfig", () => {
     expect(config.payerAuthorizer).toBe(getAddress(signer.address));
     expect(config.receiver).toBe(RECEIVER_ADDRESS);
     expect(config.token).toBe(ASSET);
-    expect(config.withdrawDelay).toBe(900);
+    expect(config.withdrawDelay).toBe(MIN_WITHDRAW_DELAY);
     expect(config.salt).toBe("0x0000000000000000000000000000000000000000000000000000000000000000");
   });
 
@@ -335,7 +338,7 @@ describe("buildChannelConfig", () => {
       makeDeps({ signer }),
       makeRequirements({ extra: { receiverAuthorizer: RECEIVER_AUTHORIZER } }),
     );
-    expect(cfg.withdrawDelay).toBe(900);
+    expect(cfg.withdrawDelay).toBe(MIN_WITHDRAW_DELAY);
   });
 
   it("respects custom salt from options", () => {

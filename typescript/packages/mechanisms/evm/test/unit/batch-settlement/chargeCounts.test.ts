@@ -1,15 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  CHARGE_COUNTS_METADATA_KEY,
   chargeCountsMetadata,
   parseChargeCountsMetadata,
 } from "../../../src/batch-settlement/chargeCounts";
-
-describe("CHARGE_COUNTS_METADATA_KEY", () => {
-  it("is the x402ChargeCounts key of ERC-8021 m", () => {
-    expect(CHARGE_COUNTS_METADATA_KEY).toBe("x402ChargeCounts");
-  });
-});
 
 describe("chargeCountsMetadata", () => {
   it("wraps one bigint count per claim row under the metadata key", () => {

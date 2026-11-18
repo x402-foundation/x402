@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -81,9 +81,6 @@ logger = logging.getLogger("x402")
 class _SyncServerAsyncHookError(TypeError):
     pass
 
-
-if TYPE_CHECKING:
-    pass
 
 # Invalid reason returned when a client's echoed extension info drops or changes a
 # server-advertised (non-dynamic) field.
@@ -1492,6 +1489,8 @@ class x402ResourceServerBase:
             )
             return verify_response
 
+        except _SyncServerAsyncHookError:
+            raise
         except Exception as e:
             failure_context = VerifyFailureContext(
                 payment_payload=payload,
@@ -1558,13 +1557,19 @@ class x402ResourceServerBase:
             "scheme": requirements.scheme,
         }
         keys = extension_keys if extension_keys is not None else list(declared.keys())
-        for _label, hook in get_labeled_server_hooks(
+        for label, hook in get_labeled_server_hooks(
             "after_verify",
             self,
             keys,
             scheme,
         ):
-            hook_result = yield ("after", hook, result_context)
+            try:
+                hook_result = yield ("after", hook, result_context)
+            except _SyncServerAsyncHookError:
+                raise
+            except Exception as error:
+                self._warn_resource_server_hook_failure("afterVerify", label, error)
+                continue
             if isinstance(hook_result, AbortResult):
                 yield (
                     "dispatch_cancel",

@@ -1,5 +1,15 @@
 # @x402/fastify
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+  - @x402/paywall@2.31.0
+  - @x402/extensions@2.31.0
+
 ## 2.30.0
 
 ### Minor Changes

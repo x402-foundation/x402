@@ -136,18 +136,15 @@ class x402MCPSession:
         probe_timeout = probe_read_timeout_seconds(
             read_timeout_seconds, self._max_request_timeout_seconds
         )
-        # First call without payment
         result = await self._session.call_tool(
             name=name,
             arguments=arguments or {},
             read_timeout_seconds=probe_timeout,
         )
 
-        # If no error, return directly
         if not result.isError:
             return self._build_result(result, payment_made=False)
 
-        # Try to extract payment required from error content
         payment_required = self._extract_payment_required(result)
         if payment_required is None:
             return self._build_result(result, payment_made=False)

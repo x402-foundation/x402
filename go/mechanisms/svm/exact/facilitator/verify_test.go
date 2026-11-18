@@ -266,7 +266,7 @@ func TestExactSvmScheme_ConfiguredTransactionVersions(t *testing.T) {
 	assert.Equal(t, 0, signer.simulateCalls)
 
 	defaults := NewExactSvmScheme(signer)
-	assert.Equal(t, []int{0, 1}, defaults.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
+	assert.Equal(t, svm.AdvertisedTransactionVersions, defaults.GetExtra(x402.Network(svm.SolanaDevnetCAIP2))[svm.ExtraTransactionVersions])
 
 	for _, invalid := range [][]int{{}, {2}, {0, -1}} {
 		assert.Panics(t, func() { NewExactSvmScheme(signer, &Config{TransactionVersions: invalid}) })

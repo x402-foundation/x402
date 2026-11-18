@@ -508,7 +508,6 @@ export async function handleAfterVerify(
   const withdrawRequestedAt = readExtraNumber(ex, "withdrawRequestedAt", 0);
   const refundNonce = readExtraNumber(ex, "refundNonce", 0);
 
-  // No local row: onchain totalClaimed is the baseline; fail closed if absent.
   if (totalClaimed === undefined) {
     return verificationStateUnavailable();
   }

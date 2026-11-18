@@ -194,8 +194,8 @@ func handleManagedEnrichSettlementPayload(s *BatchSettlementEvmScheme, ctx x402.
 
 	if ctx.Phase == x402.SettlePhaseCancel {
 		out := map[string]interface{}{"cancel": true}
-		for k, v := range pendingFields {
-			out[k] = v
+		if pendingId != "" {
+			out["pendingId"] = pendingId
 		}
 		return out, nil
 	}

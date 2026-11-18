@@ -88,6 +88,16 @@ const UINT256_DECIMAL = /^[0-9]{1,78}$/;
 const BYTES32_HEX = /^(?:0x)?[0-9a-fA-F]{64}$/;
 
 /**
+ * True when `value` is a uint256 decimal string.
+ *
+ * @param value - Candidate value
+ * @returns Whether `value` is digits only and within the uint256 range
+ */
+export function isUint256DecimalString(value: unknown): value is string {
+  return typeof value === "string" && UINT256_DECIMAL.test(value) && BigInt(value) <= UINT256_MAX;
+}
+
+/**
  * True for a non-null, non-array object.
  *
  * @param value - Candidate value
@@ -105,7 +115,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * @returns A field message, or undefined when `value` is a uint256 decimal string
  */
 function uint256Message(path: string, value: unknown): string | undefined {
-  if (typeof value !== "string" || !UINT256_DECIMAL.test(value) || BigInt(value) > UINT256_MAX) {
+  if (!isUint256DecimalString(value)) {
     return `${path} must be a uint256 decimal string`;
   }
 }

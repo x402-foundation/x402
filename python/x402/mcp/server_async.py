@@ -390,7 +390,11 @@ async def _process_paid_tool_call_async(
                 if canceled is not None:
                     return canceled
             return await _create_settlement_failed_result_async(
-                resource_server, tool_name, config, "Settlement failed"
+                resource_server,
+                tool_name,
+                config,
+                "Settlement failed",
+                network=payment_requirements.network,
             )
 
     try:
@@ -455,7 +459,11 @@ async def _process_paid_tool_call_async(
         if failure_receipt is None:
             if metering_error is not None and cancellation_completed:
                 return await _create_settlement_failed_result_async(
-                    resource_server, tool_name, config, "Payment metering failed"
+                    resource_server,
+                    tool_name,
+                    config,
+                    "Payment metering failed",
+                    network=payment_requirements.network,
                 )
             return result
         return attach_failure_path_receipt(result, failure_receipt)
@@ -709,7 +717,11 @@ async def _settle_payment_result_async(
             if canceled is not None:
                 return canceled
         return await _create_settlement_failed_result_async(
-            resource_server, tool_name, config, str(e)
+            resource_server,
+            tool_name,
+            config,
+            str(e),
+            network=payment_requirements.network,
         )
 
     if not settle_result.success:
@@ -784,14 +796,12 @@ async def _create_payment_required_result_async(
             config.extensions,
         )
 
-    # Convert to dict for structuredContent
     payment_required_dict = (
         payment_required.model_dump(by_alias=True, exclude_none=True)
         if hasattr(payment_required, "model_dump")
         else payment_required
     )
 
-    # Create content text
     content_text = json.dumps(payment_required_dict)
 
     return MCPToolResult(
@@ -807,6 +817,7 @@ async def _create_settlement_failed_result_async(
     config: PaymentWrapperConfig,
     error_message: str,
     *,
+    network: str | None = None,
     settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (async).
@@ -816,6 +827,7 @@ async def _create_settlement_failed_result_async(
         tool_name: Name of the tool for resource URL
         config: Payment wrapper configuration
         error_message: Error message describing settlement failure
+        network: Network of the matched requirement; defaults to the first accept
         settle_response: Failed settle response; its receipt is attached to ``_meta``
             when an after-settle abort failed an onchain settle
 
@@ -835,7 +847,7 @@ async def _create_settlement_failed_result_async(
         "success": False,
         "errorReason": error_message,
         "transaction": "",
-        "network": config.accepts[0].network,
+        "network": network or config.accepts[0].network,
     }
     if settle_response is not None:
         settlement_failure = settle_response.model_dump(by_alias=True, exclude_none=True)

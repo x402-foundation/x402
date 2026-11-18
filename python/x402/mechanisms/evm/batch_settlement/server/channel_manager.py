@@ -32,6 +32,7 @@ from .channel_manager_common import (
     get_claimable_vouchers_from_channels,
     get_idle_channels_for_refund,
     has_live_pending_request,
+    has_refundable_balance,
     now_ms,
 )
 from .storage import Channel
@@ -300,7 +301,7 @@ class BatchSettlementChannelManager:
         now = now_ms()
         results: list[RefundResult] = []
         for c in filter_in_network(channels, self._network):
-            if has_live_pending_request(c, now):
+            if has_live_pending_request(c, now) or not has_refundable_balance(c):
                 continue
             results.append(await self._refund_channel(c))
         return results

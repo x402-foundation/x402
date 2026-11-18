@@ -297,76 +297,181 @@ The `authorization` flow remains the default. Clients prefer `authorization` whe
 
 The Casper implementation uses CEP-3009 (`transfer_with_authorization`) — Casper's adaptation of EIP-3009 for CEP-18 tokens. The client signs an off-chain EIP-712 authorization; the facilitator relays it on-chain and pays the gas.
 
-Install the Casper package:
-
-```bash
-npm install @x402/casper
-```
-
 **Server**
 
-```typescript
-import { x402ResourceServer } from "@x402/core/server";
-import { ExactCasperScheme } from "@x402/casper/exact/server";
+<Tabs>
+  <Tab title="TypeScript">
+    Install the Casper package:
 
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("casper:casper-test", new ExactCasperScheme());
+    ```bash
+    npm install @x402/casper
+    ```
 
-// In your route config — price must be specified as an explicit asset amount:
-{
-  "GET /data": {
-    accepts: [
-      {
-        scheme: "exact",
-        price: {
-          amount: "1500000000", // atomic units
-          asset: "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52", // contract_package_hash
-          extra: { name: "csprUSD", version: "1" },
-        },
-        network: "casper:casper-test",
-        payTo: "007a9f9948cb7b258d18f3c5e85780372971b5b40096e724c9e596c284a01445fa",
+    ```typescript
+    import { x402ResourceServer } from "@x402/core/server";
+    import { ExactCasperScheme } from "@x402/casper/exact/server";
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("casper:casper-test", new ExactCasperScheme());
+
+    // In your route config — price must be specified as an explicit asset amount:
+    {
+      "GET /data": {
+        accepts: [
+          {
+            scheme: "exact",
+            price: {
+              amount: "1500000000", // atomic units
+              asset: "0cb6f94834c60510d532b0ae077b18b4100874a4c867396d61c2b13c790ead52", // contract_package_hash
+              extra: { name: "csprUSD", version: "1" },
+            },
+            network: "casper:casper-test",
+            payTo: "007a9f9948cb7b258d18f3c5e85780372971b5b40096e724c9e596c284a01445fa",
+          },
+        ],
+        description: "Data endpoint",
+        mimeType: "application/json",
       },
-    ],
-    description: "Data endpoint",
-    mimeType: "application/json",
-  },
-}
-```
+    }
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        x402http "github.com/x402-foundation/x402/go/v2/http"
+        nethttpmw "github.com/x402-foundation/x402/go/v2/http/nethttp"
+        casperserver "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/server"
+    )
+
+    facilitatorClient := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+        URL: "https://x402.org/facilitator",
+    })
+
+    // Price must be specified as an explicit asset amount for Casper
+    routes := x402http.RoutesConfig{
+        "GET /data": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: x402.Network("casper:casper-test"),
+                    PayTo:   "007a9f9948cb7b258d18f3c5e85780372971b5b40096e724c9e596c284a01445fa",
+                },
+            },
+            Description: "Data endpoint",
+            MimeType:    "application/json",
+        },
+    }
+
+    handler := nethttpmw.X402Payment(nethttpmw.Config{
+        Routes:      routes,
+        Facilitator: facilitatorClient,
+        Schemes: []nethttpmw.SchemeConfig{
+            {
+                Network: x402.Network("casper:casper-test"),
+                Server:  casperserver.NewExactCasperScheme(),
+            },
+        },
+    })(mux)
+    ```
+  </Tab>
+</Tabs>
 
 **Client**
 
-```typescript
-import { createClientCasperSigner } from "@x402/casper";
-import { ExactCasperScheme } from "@x402/casper/exact/client";
-import { x402Client } from "@x402/core/client";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createClientCasperSigner } from "@x402/casper";
+    import { ExactCasperScheme } from "@x402/casper/exact/client";
+    import { x402Client } from "@x402/core/client";
 
-// Default algorithm is ED25519; pass 2 for secp256k1
-const casperSigner = await createClientCasperSigner(process.env.CASPER_PRIVATE_KEY!);
+    // Default algorithm is ED25519; pass 2 for secp256k1
+    const casperSigner = await createClientCasperSigner(process.env.CASPER_PRIVATE_KEY!);
 
-const client = new x402Client()
-  .register("casper:*", new ExactCasperScheme(casperSigner));
-```
+    const client = new x402Client()
+      .register("casper:*", new ExactCasperScheme(casperSigner));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        x402 "github.com/x402-foundation/x402/go/v2"
+        exactcasper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/client"
+        caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
+    )
+
+    // Load signer from hex-encoded private key; algo is "ed25519" or "secp256k1"
+    casperSigner, err := caspersigners.NewClientSignerFromSecret(
+        os.Getenv("CASPER_PRIVATE_KEY"), "ed25519",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    x402Client := x402.Newx402Client().
+        Register("casper:*", exactcasper.NewExactCasperScheme(casperSigner))
+    ```
+  </Tab>
+</Tabs>
 
 **Facilitator**
 
-```typescript
-import { createFacilitatorCasperSigner } from "@x402/casper";
-import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
-import { x402Facilitator } from "@x402/core/facilitator";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { createFacilitatorCasperSigner } from "@x402/casper";
+    import { ExactCasperScheme } from "@x402/casper/exact/facilitator";
+    import { x402Facilitator } from "@x402/core/facilitator";
 
-const casperSigner = await createFacilitatorCasperSigner(
-  process.env.CASPER_PRIVATE_KEY!,
-  1, // 1 = ED25519, 2 = secp256k1
-  {
-    rpcUrlConfig: { "casper:casper-test": process.env.CASPER_RPC_URL! },
-    // Optional: enable speculative execution for preflight validation
-    // speculativeRpcUrlConfig: { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL! },
-  },
-);
+    const casperSigner = await createFacilitatorCasperSigner(
+      process.env.CASPER_PRIVATE_KEY!,
+      1, // 1 = ED25519, 2 = secp256k1
+      {
+        rpcUrlConfig: { "casper:casper-test": process.env.CASPER_RPC_URL! },
+        // Optional: enable speculative execution for preflight validation
+        // speculativeRpcUrlConfig: { "casper:casper-test": process.env.CASPER_SPECULATIVE_RPC_URL! },
+      },
+    );
 
-const facilitator = new x402Facilitator()
-  .register("casper:casper-test", new ExactCasperScheme(casperSigner));
-```
+    const facilitator = new x402Facilitator()
+      .register("casper:casper-test", new ExactCasperScheme(casperSigner));
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        "github.com/make-software/casper-go-sdk/v2/types/keypair"
+        x402 "github.com/x402-foundation/x402/go/v2"
+        casperfacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/facilitator"
+        caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
+    )
+
+    privKey, err := caspersigners.NewPrivateKeyFromSecret(
+        os.Getenv("CASPER_PRIVATE_KEY"), "ed25519",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    casperSigner := caspersigners.NewFacilitatorSigner(
+        caspersigners.FacilitatorSignerConfig{
+            Keys:    map[string]keypair.PrivateKey{"casper:casper-test": *privKey},
+            RpcURLs: map[string]string{"casper:casper-test": os.Getenv("CASPER_RPC_URL")},
+            // Optional: enable speculative execution for preflight validation
+            // SpeculativeRpcURLs: map[string]string{"casper:casper-test": os.Getenv("CASPER_SPECULATIVE_RPC_URL")},
+        },
+    )
+
+    facilitator := x402.Newx402Facilitator()
+    facilitator.Register(
+        []x402.Network{"casper:casper-test"},
+        casperfacilitator.NewExactCasperScheme(casperSigner, &casperfacilitator.ExactCasperSchemeConfig{}),
+    )
+    ```
+  </Tab>
+</Tabs>
 
 The `asset` field is the 32-byte hex `contract_package_hash` of the CEP-18 token. The `extra.name` and `extra.version` fields are required — they are used to construct the CEP-3009 EIP-712 domain separator.
 
@@ -567,80 +672,163 @@ Canton Coin (`CC`) is the native unit (1 CC = 1e10 atomic units). Dollar-string 
 
 The Cardano implementation uses a client-signed, facilitator-submitted model: the client builds and signs the complete transaction but never broadcasts it. The facilitator verifies and submits it after the resource handler runs.
 
-Install the Cardano package:
-
-```bash
-npm install @x402/cardano
-```
-
 **Server**
 
-```typescript
-import { x402ResourceServer } from "@x402/core/server";
-import { ExactCardanoScheme } from "@x402/cardano/exact/server";
-import { masumiEscrowAddress, toMasumiSellerSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    Install the Cardano package:
 
-const resourceServer = new x402ResourceServer(facilitatorClient)
-  .register("cardano:*", new ExactCardanoScheme());
+    ```bash
+    npm install @x402/cardano
+    ```
 
-// Address-to-address payment
-{
-  "GET /data": {
-    accepts: [
-      {
-        scheme: "exact",
-        price: {
-          amount: "1000000", // 1 USDM (6 decimals)
-          asset: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
-        },
-        network: "cardano:mainnet",
-        payTo: "addr1YourCardanoAddress",
-        maxTimeoutSeconds: 600,
+    ```typescript
+    import { x402ResourceServer } from "@x402/core/server";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/server";
+
+    const resourceServer = new x402ResourceServer(facilitatorClient)
+      .register("cardano:*", new ExactCardanoScheme());
+
+    // Address-to-address payment
+    {
+      "GET /data": {
+        accepts: [
+          {
+            scheme: "exact",
+            price: {
+              amount: "1000000", // 1 USDM (6 decimals)
+              asset: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad.0014df105553444d",
+            },
+            network: "cardano:mainnet",
+            payTo: "addr1YourCardanoAddress",
+            maxTimeoutSeconds: 600,
+          },
+        ],
       },
-    ],
-  },
-}
-```
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    Install the Cardano extras:
+
+    ```bash
+    pip install 'x402[cardano]'
+    ```
+
+    ```python
+    from x402 import x402ResourceServerSync
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
+    from x402.mechanisms.cardano.exact import ExactCardanoServerScheme
+
+    facilitator = HTTPFacilitatorClientSync(FacilitatorConfig(url="https://x402.org/facilitator"))
+    server = x402ResourceServerSync(facilitator)
+    server.register("cardano:*", ExactCardanoServerScheme())
+    server.initialize()
+    ```
+
+    Use `cardano:mainnet`, `cardano:preprod`, or `cardano:preview`. Dollar prices resolve to USDM on mainnet and preprod; preview requires an explicit asset. An explicit ADA price is `{"asset": "lovelace", "amount": "5000000"}`. Native tokens use `<56-char policy hex>.<asset-name hex>` with atomic integer amounts.
+  </Tab>
+</Tabs>
 
 **Client**
 
-```typescript
-import { x402Client } from "@x402/core/client";
-import { ExactCardanoScheme } from "@x402/cardano/exact/client";
-import { toClientCardanoSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/client";
+    import { toClientCardanoSigner } from "@x402/cardano";
 
-const provider = {
-  blockfrost: {
-    baseUrl: process.env.BLOCKFROST_PREPROD_URL!,
-    projectId: process.env.BLOCKFROST_PROJECT_ID!,
-  },
-};
+    const provider = {
+      blockfrost: {
+        baseUrl: process.env.BLOCKFROST_PREPROD_URL!,
+        projectId: process.env.BLOCKFROST_PROJECT_ID!,
+      },
+    };
 
-const clientSigner = toClientCardanoSigner({
-  mnemonic: process.env.CARDANO_MNEMONIC!,
-  network: "cardano:preprod",
-  provider,
-});
+    const clientSigner = toClientCardanoSigner({
+      mnemonic: process.env.CARDANO_MNEMONIC!,
+      network: "cardano:preprod",
+      provider,
+    });
 
-const client = new x402Client();
-client.register("cardano:*", new ExactCardanoScheme(clientSigner));
-```
+    const client = new x402Client();
+    client.register("cardano:*", new ExactCardanoScheme(clientSigner));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import os
+
+    from x402 import x402ClientSync
+    from x402.mechanisms.cardano import (
+        BlockfrostConfig,
+        CardanoProviderConfig,
+        ClientCardanoSignerConfig,
+        to_client_cardano_signer,
+    )
+    from x402.mechanisms.cardano.exact import ExactCardanoClientScheme
+
+    provider = CardanoProviderConfig(
+        blockfrost=BlockfrostConfig(
+            "https://cardano-preprod.blockfrost.io/api/v0",
+            os.environ["BLOCKFROST_PROJECT_ID"],
+        )
+    )
+    signer = to_client_cardano_signer(
+        ClientCardanoSignerConfig(
+            mnemonic=os.environ["CARDANO_MNEMONIC"],
+            network="cardano:preprod",
+            provider=provider,
+        )
+    )
+    client = x402ClientSync().register("cardano:*", ExactCardanoClientScheme(signer))
+    ```
+
+    Pass this client to the existing `requests`, `httpx`, or MCP adapter. Close the signer when the application shuts down.
+  </Tab>
+</Tabs>
 
 **Facilitator**
 
-```typescript
-import { x402Facilitator } from "@x402/core/facilitator";
-import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
-import { toFacilitatorCardanoSigner } from "@x402/cardano";
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { x402Facilitator } from "@x402/core/facilitator";
+    import { ExactCardanoScheme } from "@x402/cardano/exact/facilitator";
+    import { toFacilitatorCardanoSigner } from "@x402/cardano";
 
-const facilitatorSigner = toFacilitatorCardanoSigner({
-  network: "cardano:preprod",
-  provider,
-});
+    const facilitatorSigner = toFacilitatorCardanoSigner({
+      network: "cardano:preprod",
+      provider,
+    });
 
-const facilitator = new x402Facilitator()
-  .register("cardano:preprod", new ExactCardanoScheme(facilitatorSigner));
-```
+    const facilitator = new x402Facilitator()
+      .register("cardano:preprod", new ExactCardanoScheme(facilitatorSigner));
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402 import x402FacilitatorSync
+    from x402.mechanisms.cardano import (
+        FacilitatorCardanoSignerConfig,
+        to_facilitator_cardano_signer,
+    )
+    from x402.mechanisms.cardano.exact import ExactCardanoFacilitatorScheme
+
+    relay = to_facilitator_cardano_signer(
+        FacilitatorCardanoSignerConfig(
+            network="cardano:preprod", provider=provider, await_confirmation=False
+        )
+    )
+    facilitator = x402FacilitatorSync().register(
+        ["cardano:preprod"], ExactCardanoFacilitatorScheme(relay)
+    )
+    ```
+
+    A facilitator needs no mnemonic or funds. Blockfrost supplies transaction inclusion and confirmation depth; Koios is also supported via `KoiosConfig`. Verification, submission, and confirmation polling are synchronous — in an async HTTP application, offload with `asyncio.to_thread`.
+  </Tab>
+</Tabs>
 
 The facilitator only broadcasts the client's signed transaction — it requires no funded wallet.
 

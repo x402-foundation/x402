@@ -110,7 +110,6 @@ def create_payment_wrapper(
         is_async = asyncio.iscoroutinefunction(handler)
         tool_name = handler.__name__
 
-        # Build resource info, defaulting to tool name
         tool_resource = resource or ResourceInfo(
             url=f"mcp://tool/{tool_name}",
             description=f"Tool: {tool_name}",
@@ -184,7 +183,6 @@ def create_payment_wrapper(
             if not payment_data:
                 return await payment_required_result("Payment Required")
 
-            # Parse payment payload
             try:
                 if isinstance(payment_data, str):
                     payment_data = json.loads(payment_data)
@@ -363,7 +361,6 @@ def create_payment_wrapper(
                     return cancellation_unknown(failed)
                 return failed
 
-            # Build MCPToolResult for hooks
             from .types import MCPToolResult as MCPToolResultType
 
             mcp_result = MCPToolResultType(
@@ -441,7 +438,6 @@ def create_payment_wrapper(
                     network=payment_requirements.network,
                 )
 
-            # OnAfterSettlement hook
             if hooks and hooks.on_after_settlement:
                 settlement_ctx = SettlementContext(
                     tool_name=tool_name,
@@ -457,7 +453,6 @@ def create_payment_wrapper(
                 except Exception:
                     pass
 
-            # Return result with payment response in _meta
             payment_response = settle_result.model_dump(by_alias=True, exclude_none=True)
             response_meta = result_meta.copy()
             response_meta[MCP_PAYMENT_RESPONSE_META_KEY] = payment_response

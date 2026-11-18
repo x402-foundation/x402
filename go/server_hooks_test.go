@@ -217,6 +217,56 @@ func TestAfterVerifyHook(t *testing.T) {
 	}
 }
 
+func TestAfterVerifyHook_ThrowIsIsolated(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	laterCalled := false
+	cancelCalled := false
+	server := Newx402ResourceServer()
+	registerExactEvmScheme(server)
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		return nil, errors.New("after fail")
+	})
+	server.OnAfterVerify(func(ctx VerifyResultContext) (*AfterVerifyResult, error) {
+		laterCalled = true
+		return nil, nil
+	})
+	server.OnVerifiedPaymentCanceled(func(ctx VerifiedPaymentCanceledContext) error {
+		cancelCalled = true
+		return nil
+	})
+	server.facilitatorClients[Network("eip155:8453")] = map[string]FacilitatorClient{
+		"exact": &mockFacilitatorClient{
+			verify: func(ctx context.Context, payload []byte, reqs []byte) (*VerifyResponse, error) {
+				return &VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+			},
+		},
+	}
+
+	result, err := server.VerifyPayment(
+		context.Background(),
+		types.PaymentPayload{X402Version: 2, Payload: map[string]interface{}{}},
+		types.PaymentRequirements{Scheme: "exact", Network: "eip155:8453"},
+	)
+	if err != nil {
+		t.Fatalf("verify error = %v", err)
+	}
+	if result == nil || !result.IsValid {
+		t.Fatalf("result = %+v", result)
+	}
+	if !laterCalled {
+		t.Fatal("later afterVerify hook should run")
+	}
+	if cancelCalled {
+		t.Fatal("afterVerify hook error canceled the payment")
+	}
+	if !strings.Contains(logs.String(), "[x402] Resource server afterVerify hook threw (manual afterVerify hook #0): after fail") {
+		t.Fatalf("log = %q", logs.String())
+	}
+}
+
 // Test OnVerifyFailure hook - recovery
 func TestOnVerifyFailureHook_Recover(t *testing.T) {
 	server := Newx402ResourceServer()

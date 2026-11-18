@@ -274,7 +274,11 @@ def _process_paid_tool_call_sync(
                 if canceled is not None:
                     return canceled
             return _create_settlement_failed_result_sync(
-                resource_server, tool_name, config, "Settlement failed"
+                resource_server,
+                tool_name,
+                config,
+                "Settlement failed",
+                network=payment_requirements.network,
             )
 
     try:
@@ -339,7 +343,11 @@ def _process_paid_tool_call_sync(
         if failure_receipt is None:
             if metering_error is not None and cancellation_completed:
                 return _create_settlement_failed_result_sync(
-                    resource_server, tool_name, config, "Payment metering failed"
+                    resource_server,
+                    tool_name,
+                    config,
+                    "Payment metering failed",
+                    network=payment_requirements.network,
                 )
             return result
         return attach_failure_path_receipt(result, failure_receipt)
@@ -580,7 +588,9 @@ def _settle_payment_result_sync(
             )
             if canceled is not None:
                 return canceled
-        return _create_settlement_failed_result_sync(resource_server, tool_name, config, str(e))
+        return _create_settlement_failed_result_sync(
+            resource_server, tool_name, config, str(e), network=payment_requirements.network
+        )
 
     if not settle_result.success:
         return _create_settlement_failed_result_sync(
@@ -650,6 +660,7 @@ def _create_settlement_failed_result_sync(
     config: SyncPaymentWrapperConfig,
     error_message: str,
     *,
+    network: str | None = None,
     settle_response: SettleResponse | None = None,
 ) -> MCPToolResult:
     """Create a 402 settlement failed result (sync)."""
@@ -666,7 +677,7 @@ def _create_settlement_failed_result_sync(
         "success": False,
         "errorReason": error_message,
         "transaction": "",
-        "network": config.accepts[0].network,
+        "network": network or config.accepts[0].network,
     }
     if settle_response is not None:
         settlement_failure = settle_response.model_dump(by_alias=True, exclude_none=True)

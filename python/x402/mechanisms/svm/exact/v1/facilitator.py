@@ -394,15 +394,12 @@ class ExactSvmSchemeV1:
             extra = requirements.extra or {}
             fee_payer = extra["feePayer"]
 
-            # Sign transaction with the feePayer's signer
             fully_signed_tx = self._signer.sign_transaction(
                 svm_payload.transaction, fee_payer, network
             )
 
-            # Send transaction to network
             signature = self._signer.send_transaction(fully_signed_tx, network)
 
-            # Wait for confirmation
             try:
                 self._signer.confirm_transaction(signature, network)
             except TransactionOnchainFailureError as e:

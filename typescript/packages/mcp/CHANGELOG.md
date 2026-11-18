@@ -1,5 +1,17 @@
 # @x402/mcp Changelog
 
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+### Patch Changes
+
+- [54e20e8](https://github.com/x402-foundation/x402/commit/54e20e8): When payment cancellation fails after metering or a failed tool result, the MCP server returns a tool error that says payment cancellation outcome is unknown. The result keeps the tool error output, omits a new payment offer, and attaches only a receipt that was already known. ([#4152](https://github.com/x402-foundation/x402/pull/4152)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
 ## 2.30.0
 
 ### Minor Changes

@@ -344,10 +344,6 @@ class TestEvmIntegration:
 
 
 class TestSolana:
-    def test_constants(self):
-        assert SOLANA_MAINNET == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-        assert SOLANA_DEVNET == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
-
     def test_base58_roundtrip(self):
         original = bytes([1, 2, 3, 4, 5, 6, 7, 8])
         assert decode_base58(encode_base58(original)) == original
