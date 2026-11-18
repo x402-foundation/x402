@@ -148,6 +148,41 @@ const routes = {
 };
 ```
 
+### Custom payment failure responses
+
+Route callbacks can return a specific HTTP error response instead of the default
+402. For example, an application tracking unresolved payments can return 409
+after verification or 503 after a settlement failure:
+
+```typescript
+routes['GET /api/data'].verificationFailedResponse = (_request, failure) => {
+  if (failure.invalidReason === 'payment_in_progress') {
+    return {
+      status: 409,
+      headers: { 'Retry-After': '2' },
+      body: { error: 'operation_in_flight', retry: 'same_payment' },
+    };
+  }
+};
+
+routes['GET /api/data'].settlementFailedResponse = (_request, failure) => {
+  if (failure.errorReason === 'payment_unresolved') {
+    return {
+      status: 503,
+      headers: { 'Retry-After': '5' },
+      body: { error: 'payment_unresolved', transaction: failure.transaction },
+    };
+  }
+};
+```
+
+Both callbacks may be asynchronous. Returning `undefined` retains the existing
+402 response and, for settlement failures, `settlementFailedResponseBody`.
+Custom responses require a 400–599 status, use `Cache-Control: no-store`, and
+preserve generated settlement receipt headers. Callback errors propagate instead
+of generating a fresh payment challenge. The callbacks control HTTP responses;
+they do not provide payment persistence, idempotency, or automatic client retries.
+
 ## Client Configuration
 
 Use `fromConfig()` for declarative setup. Accept selection runs in three stages: **`spendControls`** enforce built-in safety caps, **`policies`** filter the remaining list, and **`paymentRequirementsSelector`** picks one accept (default: first remaining).

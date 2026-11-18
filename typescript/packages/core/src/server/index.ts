@@ -94,6 +94,8 @@ export type {
   UnpaidResponseBody,
   HTTPResponseBody,
   SettlementFailedResponseBody,
+  VerificationFailedResponse,
+  SettlementFailedResponse,
   ProcessSettleResultResponse,
   ProcessSettleSuccessResponse,
   ProcessSettleFailureResponse,
