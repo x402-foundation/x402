@@ -294,12 +294,23 @@ The following are normative consequences:
 > above is required when settlement confirmation is *asynchronous* — it can only arrive via a
 > lifecycle hook after the response has already been built. Where settlement confirmation is
 > *synchronous* with response construction (a runtime that settles inline before headers are
-> sent), a strictly simpler mechanism satisfies the same rule with no intermediate state:
-> never write the recovery record speculatively — write it only past two gates, a confirmed
-> settlement *and* a delivered (sub-3xx) response. That yields no staged record, no
-> `stageTimeoutSeconds`, and no promotion-hook-failure case; fail-closed falls out of "don't
-> write until the outcome is already known." Implementations SHOULD state which mechanism they
-> use. (Production corroboration: scvd.store, `x402-foundation/x402#3847`.)
+> sent), the staging state MAY be collapsed: no separate `staged` state and no
+> `stageTimeoutSeconds`, because nothing is written speculatively and fail-closed falls out of
+> "don't release until the outcome is known."
+>
+> **The attempt boundary is not optional in either architecture.** A settlement the rail accepts
+> and a durable record of that settlement are not one atomic act. The rail can accept the
+> payment and the process can die before the settlement reference, the operation identity, or
+> the stored response becomes durable; in that window the caller has paid and the server holds
+> nothing to serve or reconcile. A synchronous implementation MUST therefore record a durable
+> attempt boundary — operation identity, request fingerprint, verified scope, the authorization
+> reference, and the response (or a response reproducible under the declared projection) —
+> *before* calling settle, exactly as §5.1(7) requires; it MAY omit the staging timer and the
+> promotion hook. An implementation that writes only after settlement MUST instead declare the
+> recoverable mechanism that closes the same window, and control 10 exercises that kill point
+> for both architectures. Implementations SHOULD state which mechanism they use.
+> (Production corroboration: scvd.store, `x402-foundation/x402#3847`. The synchronous crash
+> window is NSPG13's review finding on this PR.)
 
 **5.2 Replay and conflict**
 
@@ -411,13 +422,25 @@ looking but incorrect implementation silently violates:
     both just before and just after the write becomes durable, then restart over the same store
     and replay the caller's retry with the same payment — **including a restart that arrives only
     after `stageTimeoutSeconds` has elapsed**, which is the lost-reply case where a timer would
-    otherwise remove the only copy of a response the caller paid for. Across those kill points and
+    otherwise remove the only copy of a response the caller paid for. The kill set MUST also
+    include the window between a settlement the rail has accepted and the durable write of the
+    attempt boundary, settlement reference, or stored response — in a synchronous settlement
+    architecture that is the whole span between the inline settle call and the record write — and
+    that window is exercised for both architectures. Across those kill points and
     three facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
-    the reply is lost), assert: at most one charge; at most one handler run across both
-    processes; every charge has a delivered or recoverable response behind it; and no response
-    is released or replayed without a confirmed settlement behind it; a final state of
-    `delivered` or `void`, never in flight; and exactly one receipt for a charged payment. A
-    service that deliberately releases a response before settlement is final (for example,
+    the reply is lost), assert the safety invariants: at most one charge; at most one handler run
+    across both processes; every charge has a delivered or recoverable response behind it; no
+    response is released or replayed without a confirmed settlement behind it; and exactly one
+    receipt for a charged payment. These invariants hold regardless of how the operation ends.
+    The record MUST NOT end in flight; it MUST end `delivered`, `void`, or `stuck`, and the
+    terminal state is judged separately from the invariants above:
+    - `void` is admissible only when non-settlement is proven — the settle failed, or the
+      authorization expired unused. Voiding an outcome the service could not establish fails this
+      control; that is the case `stuck` exists for.
+    - `stuck` is a conforming terminal state here, provided the record is retained, the key stays
+      blocked, an operator is alarmed, and retries receive `503 payment_unresolved`. Converting
+      an unknown paid outcome to `void` in order to finish green fails this control.
+    A service that deliberately releases a response before settlement is final (for example,
     batching on credit) MUST declare that mode in its extension advertisement; an undeclared
     pre-settlement release fails this control.
     (Vector set and results: Hitek-cel/detent — formerly latch402, `test/x402.test.ts`.)
@@ -529,3 +552,4 @@ that CAN be signed well-defined.
 | 0.7     | 2026-11-13 | The recovery invariant is now bidirectional (§5.4 control 10): every charge has a delivered or recoverable response behind it, and no response is released or replayed without a confirmed settlement behind it — a store can assert that offline, since every released or replayed response must point at a confirmed settlement. Modes that deliberately serve before settlement final (e.g., batching on credit) MUST declare the exception in their extension advertisement rather than ship it silently; an undeclared pre-settlement release fails the control. Prompted by Hitek-cel on x402-foundation/x402#3848 (comment 6837452445). | a32116150-ctrl (verify402) |
 | 0.8     | 2026-11-14 | Resolves the conflict NSPG13 found between §5.1(4) and control 10: the staging timeout now applies only to records with **no dispatched settlement attempt**. §5.1(7) makes the attempt a durable, write-ahead boundary (`settling` recorded before the facilitator call), retains the response, operation identity, fingerprint and scope for as long as the outcome is unknown, blocks key reuse and replacement work, and requires reconciliation to `delivered`, `void`, or an alarmed `stuck` — never a timer eviction. Control 10 now restarts past `stageTimeoutSeconds`; new control 11 pins the boundary and rejects a marker written after the call. Incorporates Hitek-cel's implementation data point that voiding a stale claim before `settling` is safe because nothing can have moved. | a32116150-ctrl (verify402) |
 | 0.9     | 2026-11-16 | Splits the two “don’t pay again yet” answers, after production evidence. While a settlement can still resolve, the retry gets `409 operation_in_flight` (per-operation conflict, `Retry-After` in seconds, caller retries the SAME payment — the IETF `Idempotency-Key` draft’s outstanding-request convention; corroborated by Hitek-cel’s Detent (then Latch), commits 23dc6df and a790564 — 0.6.0 on npm conforms to this split — and implemented identically in the reference implementation). Once the record resolves to `stuck`, the retry gets `503 payment_unresolved` with no `Retry-After`, naming the reason so it is not read as server-health 5xx (no failovers, breakers, or error budgets) — cv-scvd’s production design (“409 means I now know these conflict; 503 means I don’t know yet, retry”, source verified at commit d94addf72b7ed6ade375bca6f0fa34fae86ce745), and the outcome split Hitek-cel suggested. Control 11 now pins the `503` for stuck; no normative change to the write-ahead boundary itself. | a32116150-ctrl (verify402) |
+| 0.10    | 2026-11-18 | Closes the synchronous-settlement crash window NSPG13 found at `9238804`. §5.1 no longer permits a "write only after settlement" path with no intermediate state: settlement and its durable record are not atomic, so a synchronous implementation MUST either record the attempt boundary before the settle call (§5.1(7)) or declare the recoverable mechanism that closes the same window. Control 10 gains that kill point for both architectures, and its terminal-state clause is split from its safety invariants: `delivered`, `void`, or an alarmed, key-blocked `stuck` are all admissible endings, `void` only where non-settlement is proven, and converting an unknown paid outcome to `void` to finish green now fails the control. | a32116150-ctrl (verify402) |
