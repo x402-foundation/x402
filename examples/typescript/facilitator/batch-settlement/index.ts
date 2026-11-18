@@ -263,19 +263,6 @@ app.post("/settle", async (req, res) => {
   } catch (error) {
     console.error("Settle error:", error);
 
-    // Check if this was an abort from hook
-    if (
-      error instanceof Error &&
-      error.message.includes("Settlement aborted:")
-    ) {
-      // Return a proper SettleResponse instead of 500 error
-      return res.json({
-        success: false,
-        errorReason: error.message.replace("Settlement aborted: ", ""),
-        network: req.body?.paymentPayload?.network || "unknown",
-      } as SettleResponse);
-    }
-
     res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
     });
@@ -314,6 +301,11 @@ app.listen(parseInt(PORT), () => {
   console.log();
 });
 
+/**
+ * Stops the rent cleanup manager and exits the process.
+ *
+ * @returns A promise that never resolves because the process exits.
+ */
 async function shutdown(): Promise<void> {
   await rentCleanupManager?.stop();
   process.exit(0);

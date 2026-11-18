@@ -21,11 +21,13 @@ export const DEFAULT_ESTIMATED_LEDGER_SECONDS = 5;
 const HORIZON_LEDGERS_SAMPLE_SIZE = 20;
 
 /**
- * Configuration for RPC client connections
+ * Configuration for Stellar RPC and Horizon client connections
  */
 export interface RpcConfig {
   /** Custom RPC URL to use instead of defaults */
   url?: string;
+  /** Custom Horizon URL for the ledger close time estimate (defaults to the public SDF Horizon) */
+  horizonUrl?: string;
 }
 
 /**
@@ -117,15 +119,19 @@ export function getRpcClient(network: Network, rpcConfig?: RpcConfig): rpc.Serve
  * Creates a Horizon SDK client for the given network.
  *
  * @param network - The CAIP-2 network identifier
+ * @param rpcConfig - Optional configuration with custom Horizon URL
  * @returns A configured Horizon.Server instance
  * @throws {Error} If the network is unknown
  */
-export function getHorizonClient(network: Network): Horizon.Server {
+export function getHorizonClient(network: Network, rpcConfig?: RpcConfig): Horizon.Server {
+  const customHorizonUrl = rpcConfig?.horizonUrl;
   switch (network) {
     case STELLAR_TESTNET_CAIP2:
-      return new Horizon.Server(DEFAULT_TESTNET_HORIZON_URL);
+      return new Horizon.Server(customHorizonUrl || DEFAULT_TESTNET_HORIZON_URL, {
+        allowHttp: true, // Allow HTTP for testnet
+      });
     case STELLAR_PUBNET_CAIP2:
-      return new Horizon.Server(DEFAULT_PUBNET_HORIZON_URL);
+      return new Horizon.Server(customHorizonUrl || DEFAULT_PUBNET_HORIZON_URL);
     default:
       throw new Error(`Unknown Stellar network: ${network}`);
   }
@@ -138,11 +144,15 @@ export function getHorizonClient(network: Network): Horizon.Server {
  * than the Soroban RPC `getLedgers` method for this purpose.
  *
  * @param network - The CAIP-2 network identifier
+ * @param rpcConfig - Optional configuration with custom Horizon URL
  * @returns Estimated seconds per ledger, or DEFAULT_ESTIMATED_LEDGER_SECONDS (5) on error
  */
-export async function getEstimatedLedgerCloseTimeSeconds(network: Network): Promise<number> {
+export async function getEstimatedLedgerCloseTimeSeconds(
+  network: Network,
+  rpcConfig?: RpcConfig,
+): Promise<number> {
   try {
-    const horizon = getHorizonClient(network);
+    const horizon = getHorizonClient(network, rpcConfig);
     const page = await horizon.ledgers().limit(HORIZON_LEDGERS_SAMPLE_SIZE).order("desc").call();
     const records = page.records;
     if (!records || records.length < 2) return DEFAULT_ESTIMATED_LEDGER_SECONDS;

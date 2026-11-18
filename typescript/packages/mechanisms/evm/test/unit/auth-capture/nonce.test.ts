@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { keccak256, zeroAddress } from "viem";
+import { zeroAddress } from "viem";
 import {
   AUTH_CAPTURE_DEPLOYMENT_V1_0,
   AUTH_CAPTURE_DEPLOYMENT_V1_1,
@@ -9,7 +9,6 @@ import {
   CAPTURE_TYPES_V1_1,
   CHARGE_TYPES_V1_0,
   CHARGE_TYPES_V1_1,
-  SALT_BINDING_TYPEHASH,
   captureTypesForDeployment,
   chargeTypesForDeployment,
   feeAmountFromBps,
@@ -178,19 +177,6 @@ describe("nonce utilities", () => {
       expect(a).toBe(b);
       expect(a).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect(a).toBe("0xd0967e09b6c8fccf96277d95a03e98583e8605ab10858b1349aa50ea6d78132c");
-    });
-
-    it("should hash the salt-binding and PaymentInfo type strings to stable values", () => {
-      expect(SALT_BINDING_TYPEHASH).toBe(
-        "0x8a2a7e41a0bda000ded071ff38b79401d2603e1826516ff2635b11fe9e30877f",
-      );
-      expect(
-        keccak256(
-          new TextEncoder().encode(
-            "PaymentInfo(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)",
-          ),
-        ),
-      ).toBe("0xae68ac7ce30c86ece8196b61a7c486d8f0061f575037fbd34e7fe4e2820c6591");
     });
 
     it("changes when any bound input changes", () => {

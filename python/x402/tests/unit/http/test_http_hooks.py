@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from x402 import x402ResourceServer
+from x402 import x402ResourceServer, x402ResourceServerSync
 from x402.http.constants import PAYMENT_SIGNATURE_HEADER
 from x402.http.types import (
     HTTPRequestContext,
@@ -16,11 +17,13 @@ from x402.http.types import (
     RouteConfig,
 )
 from x402.http.utils import decode_payment_response_header, encode_payment_signature_header
-from x402.http.x402_http_server import x402HTTPResourceServer
+from x402.http.x402_http_server import x402HTTPResourceServer, x402HTTPResourceServerSync
 from x402.schemas import (
     AfterSettleAbortError,
+    AssetAmount,
     PaymentPayload,
     PaymentRequirements,
+    ResourceConfig,
     SettleResponse,
     VerifyResponse,
 )
@@ -362,3 +365,134 @@ class TestV1PayloadRejected:
         assert result.response is not None
         assert result.response.status == 402
         server.find_matching_requirements.assert_not_called()
+
+
+class _ExactScheme:
+    scheme = "exact"
+    default_asset_transfer_method = "default"
+    payment_flows = {
+        "default": {"supported": ("authorization",), "default": "authorization"},
+    }
+
+    def parse_price(self, price, network):
+        return AssetAmount(
+            amount="1000000",
+            asset="0x0000000000000000000000000000000000000000",
+        )
+
+    def enhance_payment_requirements(self, requirements, supported_kind, extensions):
+        return requirements
+
+
+class _SyncFacilitator:
+    def __init__(self) -> None:
+        self.verify_calls: list = []
+        self.settle_calls: list = []
+
+    def get_supported(self) -> SupportedResponse:
+        return SupportedResponse(
+            kinds=[
+                SupportedKind(x402_version=2, scheme="exact", network="eip155:8453"),
+            ],
+            extensions=[],
+            signers={},
+        )
+
+    def verify(self, payload, requirements) -> VerifyResponse:
+        self.verify_calls.append((payload, requirements))
+        return VerifyResponse(is_valid=True, payer="0xpayer")
+
+    def settle(self, payload, requirements) -> SettleResponse:
+        self.settle_calls.append((payload, requirements))
+        return SettleResponse(
+            success=True,
+            transaction="0xmock",
+            network=requirements.network,
+            payer="0xpayer",
+        )
+
+
+def _gate_http_server(mode: str):
+    if mode == "async":
+        client = MockFacilitatorClient()
+        server = x402ResourceServer(client)
+        http_cls = x402HTTPResourceServer
+    else:
+        client = _SyncFacilitator()
+        server = x402ResourceServerSync(client)
+        http_cls = x402HTTPResourceServerSync
+    server.register("eip155:8453", _ExactScheme())
+    server.initialize()
+    routes = {
+        "GET /api/protected": RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to="0x1234567890123456789012345678901234567890",
+                price="$0.01",
+                network="eip155:8453",
+            ),
+        )
+    }
+    return server, client, http_cls(server, routes)
+
+
+def _drive(result):
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
+class TestGateHookThrowHttpOutcomes:
+    @pytest.mark.parametrize("mode", ["async", "sync"])
+    def test_verify_hook_throw_hides_exception_text(self, mode):
+        server, client, http_server = _gate_http_server(mode)
+
+        def hook(_ctx):
+            raise RuntimeError("rpc secret https://internal.example/key")
+
+        server.on_before_verify(hook)
+        requirements = server.build_payment_requirements(
+            ResourceConfig(
+                scheme="exact",
+                pay_to="0x1234567890123456789012345678901234567890",
+                price="$0.01",
+                network="eip155:8453",
+            )
+        )[0]
+        payload = PaymentPayload(payload={}, accepted=requirements)
+        context = HTTPRequestContext(
+            adapter=PaymentHeaderAdapter(encode_payment_signature_header(payload)),
+            path="/api/protected",
+            method="GET",
+        )
+
+        result = _drive(http_server.process_http_request(context))
+
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 402
+        assert result.response.body == {"error": "before_verify_hook_error"}
+        assert "rpc secret" not in json.dumps(result.response.body)
+        assert client.verify_calls == []
+
+    @pytest.mark.parametrize("mode", ["async", "sync"])
+    def test_settle_hook_throw_uses_fixed_settle_error(self, mode):
+        server, client, http_server = _gate_http_server(mode)
+
+        def hook(_ctx):
+            raise RuntimeError("storage path /var/secret")
+
+        server.on_before_settle(hook)
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+
+        result = _drive(http_server.process_settlement(payload, requirements))
+
+        assert result.success is False
+        assert result.error_reason == "before_settle_hook_error"
+        decoded = decode_payment_response_header(result.headers["PAYMENT-RESPONSE"])
+        assert decoded.error_reason == "before_settle_hook_error"
+        assert decoded.error_message == "before settle hook failed"
+        assert "storage path" not in (decoded.error_reason or "")
+        assert "storage path" not in (decoded.error_message or "")
+        assert client.settle_calls == []

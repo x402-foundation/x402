@@ -41,6 +41,7 @@ export {
   UptoSvmRentCleanupManager,
 } from "./rentCleanupManager";
 export type {
+  RentCleanupCloseCandidate,
   RentCleanupCloseResult,
   RentCleanupOptions,
   RentCleanupReclaimResult,

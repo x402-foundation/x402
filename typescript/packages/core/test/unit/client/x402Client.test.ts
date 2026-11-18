@@ -2083,5 +2083,63 @@ describe("x402Client", () => {
       );
       expect(mockClient.createPaymentPayloadCalls[0].context?.maxAmountPerPayment).toBe("500000");
     });
+
+    function withAsset(asset: unknown): PaymentRequirements {
+      return {
+        ...buildPaymentRequirements({
+          scheme: "exact",
+          network,
+          amount: "1000",
+        }),
+        asset,
+      } as unknown as PaymentRequirements;
+    }
+
+    it("rejects a requirement that is missing asset", async () => {
+      const { client } = clientWithDefaultAsset();
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [withAsset(undefined)],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        name: "Error",
+        message: expect.stringMatching(/missing asset/),
+      });
+    });
+
+    it("rejects a non-string asset when spend controls are off", async () => {
+      const { client } = clientWithDefaultAsset(usdc, false);
+      await expect(
+        client.createPaymentPayload(
+          buildPaymentRequired({
+            accepts: [withAsset(84532)],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        name: "Error",
+        message: expect.stringMatching(/missing asset/),
+      });
+    });
+
+    it("pays the option that has an asset when another option does not", async () => {
+      const { client, mockClient } = clientWithDefaultAsset();
+      await client.createPaymentPayload(
+        buildPaymentRequired({
+          accepts: [
+            withAsset(undefined),
+            buildPaymentRequirements({
+              scheme: "exact",
+              network,
+              asset: usdc.asset,
+              amount: "1000",
+            }),
+          ],
+        }),
+      );
+      expect(mockClient.createPaymentPayloadCalls).toHaveLength(1);
+      expect(mockClient.createPaymentPayloadCalls[0].requirements.asset).toBe(usdc.asset);
+    });
   });
 });

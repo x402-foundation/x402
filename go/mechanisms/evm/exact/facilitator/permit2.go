@@ -154,7 +154,7 @@ func VerifyPermit2(
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidPayload, payer, "invalid permitted amount format")
 	}
-	requiredAmount, ok := new(big.Int).SetString(requirements.Amount, 10)
+	requiredAmount, ok := evm.ParseUint256String(requirements.Amount)
 	if !ok {
 		return nil, x402.NewVerifyError(ErrInvalidRequiredAmount, payer, "invalid required amount format")
 	}

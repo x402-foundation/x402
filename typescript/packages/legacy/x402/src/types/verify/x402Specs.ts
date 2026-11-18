@@ -15,6 +15,7 @@ export const schemes = ["exact"] as const;
 export const x402Versions = [1] as const;
 export const ErrorReasons = [
   "insufficient_funds",
+  "invalid_exact_evm_payload",
   "invalid_exact_evm_payload_authorization_valid_after",
   "invalid_exact_evm_payload_authorization_valid_before",
   "invalid_exact_evm_payload_authorization_value",

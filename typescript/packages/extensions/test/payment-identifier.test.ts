@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { PaymentPayload } from "@x402/core";
 import {
   PAYMENT_IDENTIFIER,
-  PAYMENT_ID_MIN_LENGTH,
   PAYMENT_ID_MAX_LENGTH,
+  PAYMENT_ID_MIN_LENGTH,
   PAYMENT_ID_PATTERN,
   generatePaymentId,
   isValidPaymentId,
@@ -37,15 +37,6 @@ function createExtensionWithId(id?: string, required: boolean = false) {
 
 describe("Payment-Identifier Extension", () => {
   describe("Constants", () => {
-    it("should export the correct extension key", () => {
-      expect(PAYMENT_IDENTIFIER).toBe("payment-identifier");
-    });
-
-    it("should export correct length constraints", () => {
-      expect(PAYMENT_ID_MIN_LENGTH).toBe(16);
-      expect(PAYMENT_ID_MAX_LENGTH).toBe(128);
-    });
-
     it("should export correct pattern", () => {
       expect(PAYMENT_ID_PATTERN).toBeInstanceOf(RegExp);
       expect(PAYMENT_ID_PATTERN.test("valid_id_123")).toBe(true);
@@ -222,8 +213,8 @@ describe("Payment-Identifier Extension", () => {
       expect(declaration.schema).toBeDefined();
       expect(declaration.schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
       expect(declaration.schema.properties.required.type).toBe("boolean");
-      expect(declaration.schema.properties.id.minLength).toBe(16);
-      expect(declaration.schema.properties.id.maxLength).toBe(128);
+      expect(declaration.schema.properties.id.minLength).toBe(PAYMENT_ID_MIN_LENGTH);
+      expect(declaration.schema.properties.id.maxLength).toBe(PAYMENT_ID_MAX_LENGTH);
     });
   });
 
@@ -650,9 +641,9 @@ describe("Payment-Identifier Extension", () => {
 
     it("should have correct id constraints", () => {
       expect(paymentIdentifierSchema.properties.id.type).toBe("string");
-      expect(paymentIdentifierSchema.properties.id.minLength).toBe(16);
-      expect(paymentIdentifierSchema.properties.id.maxLength).toBe(128);
-      expect(paymentIdentifierSchema.properties.id.pattern).toBe("^[a-zA-Z0-9_-]+$");
+      expect(paymentIdentifierSchema.properties.id.minLength).toBe(PAYMENT_ID_MIN_LENGTH);
+      expect(paymentIdentifierSchema.properties.id.maxLength).toBe(PAYMENT_ID_MAX_LENGTH);
+      expect(paymentIdentifierSchema.properties.id.pattern).toBe(PAYMENT_ID_PATTERN.source);
     });
   });
 

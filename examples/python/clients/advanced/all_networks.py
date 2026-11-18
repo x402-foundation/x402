@@ -4,7 +4,7 @@ Demonstrates how to create a client that supports all available networks with
 optional chain configuration via environment variables.
 
 New chain support should be added here in alphabetic order by network prefix
-(e.g., "eip155" before "solana" before "tvm").
+(e.g., "cardano" before "eip155" before "solana" before "tvm").
 """
 
 import asyncio
@@ -17,6 +17,13 @@ from eth_account import Account
 from x402 import x402Client
 from x402.http import x402HTTPClient
 from x402.http.clients import x402HttpxClient
+from x402.mechanisms.cardano import (
+    BlockfrostConfig,
+    CardanoProviderConfig,
+    ClientCardanoSignerConfig,
+    to_client_cardano_signer,
+)
+from x402.mechanisms.cardano.exact import ExactCardanoClientScheme
 from x402.mechanisms.evm import EthAccountSigner
 from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.svm import KeypairSigner
@@ -34,15 +41,18 @@ from x402.mechanisms.tvm.exact import ExactTvmClientScheme
 load_dotenv()
 
 
-def validate_environment() -> tuple[str | None, str | None, str | None, str, str]:
+def validate_environment() -> tuple[
+    str | None, str | None, str | None, str | None, str, str
+]:
     """Validate required environment variables.
 
     Returns:
-        Tuple of (evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path).
+        Tuple of (cardano_mnemonic, evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path).
 
     Raises:
         SystemExit: If required environment variables are missing.
     """
+    cardano_mnemonic = os.getenv("CARDANO_MNEMONIC")
     evm_private_key = os.getenv("EVM_PRIVATE_KEY")
     svm_private_key = os.getenv("SVM_PRIVATE_KEY")
     tvm_private_key = os.getenv("TVM_PRIVATE_KEY")
@@ -50,8 +60,15 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
     endpoint_path = os.getenv("ENDPOINT_PATH")
 
     # Validate at least one signer credential is provided
-    if not evm_private_key and not svm_private_key and not tvm_private_key:
-        print("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY is required")
+    if (
+        not cardano_mnemonic
+        and not evm_private_key
+        and not svm_private_key
+        and not tvm_private_key
+    ):
+        print(
+            "❌ Configure CARDANO_MNEMONIC, EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or TVM_PRIVATE_KEY"
+        )
         print("Please copy .env-local to .env and fill in the values.")
         sys.exit(1)
 
@@ -64,6 +81,7 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
         sys.exit(1)
 
     return (
+        cardano_mnemonic,
         evm_private_key,
         svm_private_key,
         tvm_private_key,
@@ -75,12 +93,37 @@ def validate_environment() -> tuple[str | None, str | None, str | None, str, str
 async def main() -> None:
     """Main entry point demonstrating httpx with x402 payments."""
     # Validate environment
-    evm_private_key, svm_private_key, tvm_private_key, base_url, endpoint_path = (
-        validate_environment()
-    )
+    (
+        cardano_mnemonic,
+        evm_private_key,
+        svm_private_key,
+        tvm_private_key,
+        base_url,
+        endpoint_path,
+    ) = validate_environment()
 
     # Create x402 client
     client = x402Client()
+
+    if cardano_mnemonic:
+        network = os.getenv("CARDANO_NETWORK", "cardano:preprod")
+        signer = to_client_cardano_signer(
+            ClientCardanoSignerConfig(
+                cardano_mnemonic,
+                network,
+                CardanoProviderConfig(
+                    blockfrost=BlockfrostConfig(
+                        os.getenv(
+                            "CARDANO_RPC_URL",
+                            "https://cardano-preprod.blockfrost.io/api/v0",
+                        ),
+                        os.environ["BLOCKFROST_PROJECT_ID"],
+                    )
+                ),
+            )
+        )
+        client.register("cardano:*", ExactCardanoClientScheme(signer))
+        print(f"Initialized Cardano account: {signer.get_address()}")
 
     # Register EVM payment scheme if private key provided
     if evm_private_key:
@@ -126,7 +169,9 @@ async def main() -> None:
     print(f"\nMaking request to: {url}\n")
 
     # Make request using async context manager
-    async with x402HttpxClient(client, timeout=30.0) as http:
+    async with x402HttpxClient(
+        client, timeout=120.0 if cardano_mnemonic else 30.0
+    ) as http:
         response = await http.get(url)
         await response.aread()
 

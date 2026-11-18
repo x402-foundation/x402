@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Resource server afterVerify hook errors are logged and skipped. They do not change the verify outcome. An abort or SkipHandler directive returned with the error still applies.'
+time: 2026-11-13T00:55:00Z

@@ -24,6 +24,7 @@ from x402.http import (
     x402HTTPResourceServer,
     x402HTTPResourceServerSync,
 )
+from x402.schemas import AbortResult
 from x402.schemas.hooks import VerifiedPaymentCancelOptions
 
 from ..mocks import (
@@ -241,6 +242,25 @@ class TestMockAuthorize:
         assert components.facilitator_client.settle_calls == 1
         assert settle.headers.get("PAYMENT-RESPONSE")
 
+    def test_cancels_when_before_settle_aborts_before_the_facilitator(
+        self, components: PaymentFlowFixture
+    ) -> None:
+        canceled: list = []
+        settle_failures: list = []
+        components.resource_server.on_before_settle(lambda _ctx: AbortResult(reason="gated"))
+        components.resource_server.on_verified_payment_canceled(canceled.append)
+        components.resource_server.on_settle_failure(settle_failures.append)
+
+        result = components.process_http_request(_paid_context(components))
+        assert result.type == "payment-verified"
+        settle = components.process_settlement(result)
+
+        assert settle.success is False
+        assert components.facilitator_client.settle_calls == 0
+        assert [ctx.reason for ctx in canceled] == ["settlement_preflight_failed"]
+        assert canceled[0].settled_phases == ()
+        assert settle_failures == []
+
 
 class TestMockUpfront:
     @pytest.fixture(params=["sync", "async"])
@@ -266,6 +286,20 @@ class TestMockUpfront:
         assert components.facilitator_client.settle_calls == 1
         assert settle.headers.get("PAYMENT-RESPONSE")
         assert settle.transaction == result.before_handler_settlement.result.transaction
+
+    def test_cancels_when_before_handler_settle_aborts_before_the_facilitator(
+        self, components: PaymentFlowFixture
+    ) -> None:
+        canceled: list = []
+        components.resource_server.on_before_settle(lambda _ctx: AbortResult(reason="gated"))
+        components.resource_server.on_verified_payment_canceled(canceled.append)
+
+        result = components.process_http_request(_paid_context(components))
+
+        assert result.type == "payment-error"
+        assert components.facilitator_client.settle_calls == 0
+        assert [ctx.reason for ctx in canceled] == ["settlement_preflight_failed"]
+        assert canceled[0].settled_phases == ()
 
 
 class TestMockEscrow:

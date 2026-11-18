@@ -278,6 +278,14 @@ export interface RentCleanupCloseResult {
   action: "abandon_close" | "forced_close" | "distribute";
 }
 
+/** A channel about to be closed or distributed. */
+export interface RentCleanupCloseCandidate {
+  channelId: string;
+  payer: string;
+  payTo: string;
+  action: RentCleanupCloseResult["action"];
+}
+
 /** Result of a successful reclaim batch transaction. */
 export interface RentCleanupReclaimResult {
   channelIds: string[];
@@ -318,6 +326,13 @@ export interface RentCleanupOptions {
    * `Cleanup(ctx, …)` returning `ctx.Err()`.
    */
   signal?: AbortSignal;
+  /**
+   * Runs before each close or distribute within {@link maxClosesPerRun} and
+   * before anything is signed. Throwing skips the channel and reports the
+   * error to `onError`; the skip uses no close budget, so the channel is
+   * retried on the next pass. Reclaim never calls it.
+   */
+  beforeCloseOrDistribute?: (candidate: RentCleanupCloseCandidate) => void | Promise<void>;
   onClose?: (result: RentCleanupCloseResult) => void;
   onReclaim?: (result: RentCleanupReclaimResult) => void;
   onError?: (error: unknown, context?: { channelId?: string }) => void;
@@ -669,6 +684,19 @@ export class PaymentChannelRentCleanupManager {
             continue;
           }
 
+          const action: RentCleanupCloseResult["action"] =
+            status === ChannelStatus.Open
+              ? "abandon_close"
+              : status === ChannelStatus.Closing
+                ? "forced_close"
+                : "distribute";
+          await opts.beforeCloseOrDistribute?.({
+            channelId: record.channelId,
+            payer: live.payer,
+            payTo: record.payTo,
+            action,
+          });
+
           const feePayer = live.payee;
           const feePayerSigner = this.resolveFeePayer(feePayer);
           if (!feePayerSigner) {
@@ -692,12 +720,7 @@ export class PaymentChannelRentCleanupManager {
           opts.onClose?.({
             channelId: record.channelId,
             transaction: signature,
-            action:
-              status === ChannelStatus.Open
-                ? "abandon_close"
-                : status === ChannelStatus.Closing
-                  ? "forced_close"
-                  : "distribute",
+            action,
           });
           await this.syncStorageAfterAction(record.channelId);
           continue;

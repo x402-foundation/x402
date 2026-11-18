@@ -70,8 +70,14 @@ def _requirements() -> PaymentRequirements:
 
 
 @pytest.fixture
-def recovery(monkeypatch):
+def recovery(monkeypatch, request):
     deps = _deps()
+    authorizer_mode = getattr(request, "param", None)
+    if authorizer_mode is not None:
+        assert authorizer_mode in ("implicit", "explicit")
+        deps.voucher_signer = EthAccountSigner(Account.from_key(OTHER_PRIVATE_KEY))
+        if authorizer_mode == "explicit":
+            deps.payer_authorizer = deps.voucher_signer.address
     requirements = _requirements()
     channel_id = compute_channel_id(
         build_channel_config(deps, requirements), str(requirements.network)
@@ -91,6 +97,8 @@ def recovery(monkeypatch):
     monkeypatch.setattr(deps.storage, "set", write)
     monkeypatch.setattr(deps.signer, "read_contract", read, raising=False)
     monkeypatch.setattr(deps.signer, "sign_typed_data", sign)
+    if deps.voucher_signer is not None:
+        monkeypatch.setattr(deps.voucher_signer, "sign_typed_data", sign)
     return SimpleNamespace(
         deps=deps,
         requirements=requirements,
@@ -226,6 +234,42 @@ class TestProcessCorrectivePaymentRequired:
 
         assert process_corrective_payment_required(recovery.deps, pr) is False
 
+        recovery.write.assert_not_called()
+        assert recovery.deps.storage.get(recovery.channel_id) == recovery.previous
+        recovery.sign.assert_not_called()
+
+    @pytest.mark.parametrize("recovery", ["implicit", "explicit"], indirect=True)
+    def test_delegated_voucher_recovers_without_resigning(self, recovery):
+        assert recovery.deps.signer.address != recovery.deps.voucher_signer.address
+        pr = _corrective(recovery, private_key=OTHER_PRIVATE_KEY)
+        expected = BatchSettlementClientContext(
+            charged_cumulative_amount="1000",
+            signed_max_claimable="1500",
+            signature=pr.accepts[0].extra["voucherState"]["signature"],
+            balance="10000",
+            total_claimed="500",
+        )
+
+        assert process_corrective_payment_required(recovery.deps, pr) is True
+
+        recovery.read.assert_called_once_with(
+            BATCH_SETTLEMENT_ADDRESS, BATCH_SETTLEMENT_ABI, "channels", recovery.channel_id
+        )
+        recovery.write.assert_called_once_with(recovery.channel_id.lower(), expected)
+        assert recovery.deps.storage.get(recovery.channel_id) == expected
+        recovery.sign.assert_not_called()
+
+    @pytest.mark.parametrize("recovery", ["implicit", "explicit"], indirect=True)
+    def test_delegated_recovery_rejects_payer_voucher_without_overwriting_state(self, recovery):
+        # Payer ownership does not authorize vouchers for a channel committed to a delegate.
+        assert recovery.deps.signer.address != recovery.deps.voucher_signer.address
+        pr = _corrective(recovery, private_key=TEST_PRIVATE_KEY)
+
+        assert process_corrective_payment_required(recovery.deps, pr) is False
+
+        recovery.read.assert_called_once_with(
+            BATCH_SETTLEMENT_ADDRESS, BATCH_SETTLEMENT_ABI, "channels", recovery.channel_id
+        )
         recovery.write.assert_not_called()
         assert recovery.deps.storage.get(recovery.channel_id) == recovery.previous
         recovery.sign.assert_not_called()

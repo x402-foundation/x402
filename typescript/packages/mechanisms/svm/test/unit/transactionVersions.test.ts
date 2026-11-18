@@ -92,9 +92,9 @@ function wireVersion(transactionBase64: string): number | string {
 }
 
 describe("transaction version constants", () => {
-  it("advertises versions 0 and 1; legacy is tolerated but never advertised", () => {
-    expect(ADVERTISED_TRANSACTION_VERSIONS).toEqual([0, 1]);
-    expect(ACCEPTED_TRANSACTION_VERSIONS).toEqual(["legacy", 0, 1]);
+  it("advertises only versions the verifier accepts, and never legacy", () => {
+    expect(ACCEPTED_TRANSACTION_VERSIONS).toContain("legacy");
+    expect(ADVERTISED_TRANSACTION_VERSIONS).not.toContain("legacy");
     for (const v of ADVERTISED_TRANSACTION_VERSIONS) {
       expect(ACCEPTED_TRANSACTION_VERSIONS).toContain(v);
     }

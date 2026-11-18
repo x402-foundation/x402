@@ -201,17 +201,6 @@ function lenFieldUnique(fields: WireField[], field: number, what: string): Uint8
 }
 
 /**
- * Number of length-delimited occurrences of a field (for duplicate detection on
- * scalar `Value` oneof members, which must each appear at most once).
- *
- * @param fields
- * @param field
- */
-function countLenField(fields: WireField[], field: number): number {
-  return lenFields(fields, field).length;
-}
-
-/**
  * Decode a length-delimited field as UTF-8 (strict).
  *
  * @param bytes
@@ -233,16 +222,6 @@ function varintFields(fields: WireField[], field: number): WireField[] {
 }
 
 /**
- * Number of WIRE_VARINT occurrences of a field (duplicate-oneof detection).
- *
- * @param fields
- * @param field
- */
-function countVarintField(fields: WireField[], field: number): number {
-  return varintFields(fields, field).length;
-}
-
-/**
  * All WIRE_64 (fixed64) occurrences of a field number, in order.
  *
  * @param fields
@@ -252,14 +231,6 @@ function fixed64Fields(fields: WireField[], field: number): WireField[] {
   return fields.filter(
     f => f.field === field && f.wire === WIRE_64 && f.fixed64Bytes !== undefined,
   );
-}
-
-/** Number of WIRE_64 occurrences of a field (duplicate-oneof detection for the
- * @param fields
- * @param field
- *  fixed64 `Value.timestamp` member, the analogue of `countVarintField`). */
-function countFixed64Field(fields: WireField[], field: number): number {
-  return fixed64Fields(fields, field).length;
 }
 
 /**
@@ -547,7 +518,7 @@ function assertSingleValueMember(value: Uint8Array): void {
   ];
   let present = 0;
   for (const m of lenMembers) {
-    const count = countLenField(v, m.tag);
+    const count = lenFields(v, m.tag).length;
     if (count > 1) {
       throw new PreparedDecodeError(
         `Value oneof member ${m.what} set ${count} times — ambiguous encoding ` +
@@ -557,7 +528,7 @@ function assertSingleValueMember(value: Uint8Array): void {
     if (count === 1) present++;
   }
   for (const m of varintMembers) {
-    const count = countVarintField(v, m.tag);
+    const count = varintFields(v, m.tag).length;
     if (count > 1) {
       throw new PreparedDecodeError(
         `Value oneof member ${m.what} set ${count} times — ambiguous encoding ` +
@@ -567,7 +538,7 @@ function assertSingleValueMember(value: Uint8Array): void {
     if (count === 1) present++;
   }
   for (const m of fixed64Members) {
-    const count = countFixed64Field(v, m.tag);
+    const count = fixed64Fields(v, m.tag).length;
     if (count > 1) {
       throw new PreparedDecodeError(
         `Value oneof member ${m.what} set ${count} times — ambiguous encoding ` +

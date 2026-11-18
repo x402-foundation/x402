@@ -40,6 +40,7 @@ class Channel:
 
     channel_id: str
     channel_config: ChannelConfig
+    network: str | None = None
     charged_cumulative_amount: str = "0"
     signed_max_claimable: str = "0"
     signature: str = "0x"
@@ -64,6 +65,8 @@ class Channel:
             "refundNonce": self.refund_nonce,
             "lastRequestTimestamp": self.last_request_timestamp,
         }
+        if self.network is not None:
+            out["network"] = self.network
         if self.onchain_synced_at is not None:
             out["onchainSyncedAt"] = self.onchain_synced_at
         if self.pending_request is not None:
@@ -76,6 +79,7 @@ class Channel:
         return cls(
             channel_id=data["channelId"],
             channel_config=ChannelConfig.from_dict(data["channelConfig"]),
+            network=data.get("network"),
             charged_cumulative_amount=str(data.get("chargedCumulativeAmount", "0")),
             signed_max_claimable=str(data.get("signedMaxClaimable", "0")),
             signature=data.get("signature", "0x"),
@@ -94,6 +98,7 @@ class Channel:
         return Channel(
             channel_id=self.channel_id,
             channel_config=self.channel_config,
+            network=self.network,
             charged_cumulative_amount=self.charged_cumulative_amount,
             signed_max_claimable=self.signed_max_claimable,
             signature=self.signature,

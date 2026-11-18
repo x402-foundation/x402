@@ -17,7 +17,7 @@ func TestGetExtraAdvertisesTransactionVersions(t *testing.T) {
 	scheme := newScheme(newMockSigner(t, 1), newStubRPC(t), nil)
 
 	extra := scheme.GetExtra(testNetwork)
-	assert.Equal(t, []int{0, 1}, extra[upto.ExtraTransactionVersions])
+	assert.Equal(t, svm.AdvertisedTransactionVersions, extra[upto.ExtraTransactionVersions])
 }
 
 func newV1PaymentFixture(t *testing.T, signer *mockSigner) *paymentFixture {
