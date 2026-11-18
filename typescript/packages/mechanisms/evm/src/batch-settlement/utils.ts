@@ -3,6 +3,7 @@ import {
   getAddress,
   hashTypedData,
   isAddressEqual,
+  isHex,
   padHex,
   recoverAddress,
   slice,
@@ -24,6 +25,7 @@ import type {
   ChannelConfig,
 } from "./types";
 import { getEvmChainId } from "../utils";
+import { isCanonicalEcdsaSignature } from "../shared/verifySignature";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -201,6 +203,21 @@ export function unpackRefundAuthorizer(salt: `0x${string}`): `0x${string}` {
 }
 
 /**
+ * Whether x402BatchSettlement can recover `signature`: OpenZeppelin ECDSA accepts only a
+ * 65-byte low-s signature with `v` of 27 or 28.
+ *
+ * @param signature - The r || s || v signature to inspect.
+ * @returns True when the contract's ECDSA recovery accepts the signature form.
+ */
+export function isContractRecoverableSignature(signature: `0x${string}`): boolean {
+  if (!isHex(signature) || signature.length !== 132 || !isCanonicalEcdsaSignature(signature)) {
+    return false;
+  }
+  const v = parseInt(signature.slice(130, 132), 16);
+  return v === 27 || v === 28;
+}
+
+/**
  * Verifies an EOA voucher via `ecrecover`, matching
  * `x402BatchSettlement._processVoucherClaim`. Does not need a channel row.
  *
@@ -212,6 +229,7 @@ export async function verifyEoaVoucherSignature(
   raw: BatchSettlementVoucherPayload,
   network: string,
 ): Promise<boolean> {
+  if (!isContractRecoverableSignature(raw.voucher.signature)) return false;
   try {
     const digest = hashTypedData({
       domain: getBatchSettlementEip712Domain(getEvmChainId(network)),
