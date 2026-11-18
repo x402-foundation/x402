@@ -15,7 +15,6 @@ address balance, `Coin<T>` objects, a swap, a contract withdrawal, or any mix.
 
 - **Address balance**: A balance of one coin type held directly by an address, rather than in coin
   objects.
-- **Coin reservation**: A transaction input that reserves part of an address balance.
 - **Gas owner**: The address that pays for gas: the sender, or a sponsor that co-signs.
 - **`GasCoin`**: The argument that refers to the gas coin. A command that uses it spends the gas
   owner's funds.
@@ -56,7 +55,8 @@ each such method to state the following:
 
 This is the default `authorization` flow. Sui also supports `upfront`, where the resource server
 settles before step 6. Finality is under a second, so `upfront` adds little latency, and a resource
-server MAY use it when the work is expensive.
+server MAY use it when the work is expensive. It advertises it as `extra.paymentFlow: "upfront"`
+(core spec §6.1).
 
 ## Network Format
 
@@ -80,16 +80,21 @@ x402 v2 uses CAIP-2 network identifiers:
 }
 ```
 
-- `asset`: The coin type `T`, as a normalized Sui struct tag.
+- `asset`: The coin type `T`, as a Sui struct tag.
 - `payTo`: The recipient address.
 - `amount`: The amount in atomic units, as a positive integer string.
 - `extra.feePayer` (optional): The facilitator's sponsor address. The facilitator advertises it in
   `/supported` and the resource server copies it into the requirements. See
   [Gas sponsorship](#gas-sponsorship).
 - `extra.maxGasBudget` (optional): The largest gas budget the sponsor accepts, in MIST, as an integer
-  string. Present whenever `extra.feePayer` is. A client using the sponsor MUST NOT exceed it.
+  string. The facilitator MUST advertise it in `/supported` alongside `extra.feePayer`, and the
+  resource server copies it. A client using the sponsor MUST NOT exceed it.
 - `extra.nonce` (optional): A Base64 value from the server that ties the payment to its challenge.
   See [Server-issued nonce](#server-issued-nonce).
+
+Coin types and addresses are compared in normalized form: addresses as `0x` and 64 lowercase hex
+digits, including inside struct tags, so `0x2::sui::SUI` matches
+`0x0000…0002::sui::SUI`.
 
 A resource server MUST NOT put the epoch or other build hints in `extra`. The server compares the
 client's `accepted.extra` to its own, and the epoch changes every 24 hours.
@@ -99,7 +104,10 @@ client's `accepted.extra` to its own, and the epoch changes every 24 hours.
 - `transaction`: The BCS-serialized Sui transaction, Base64-encoded.
 - `signature`: One Base64 Sui signature per required signer, as a string or an array. The required
   signers are the sender and, if different, the gas owner. When the facilitator's sponsor is the gas
-  owner, leave its signature out; the facilitator adds it at settlement.
+  owner and not the sender, leave its signature out; the facilitator adds it at settlement. The
+  facilitator MUST NOT add its sponsor's signature to a transaction whose sender is the sponsor:
+  that signature would authorize the whole transaction, not just gas, so such a transaction is not
+  sponsored and needs the sender's own signature.
 
 ```json
 {
@@ -174,9 +182,9 @@ A nonce longer than 32 bytes rules out a [gasless transfer](#gasless-transfers).
 ### Gas
 
 When the requirements include `extra.feePayer`, a client SHOULD use the facilitator's sponsor, and
-MAY pay its own gas instead. Otherwise it can make a [gasless transfer](#gasless-transfers) when
-eligible, or pay its own gas. A client MAY also use its own sponsor and include that sponsor's
-signature in the payload.
+MAY pay its own gas instead, which costs the facilitator nothing. Otherwise it can make a [gasless
+transfer](#gasless-transfers) when eligible, or pay its own gas. A client MAY also use its own
+sponsor and include that sponsor's signature in the payload.
 
 #### Gas sponsorship
 
@@ -186,17 +194,19 @@ To use the facilitator's sponsor, the client builds the transaction with:
 2. Gas owner set to the facilitator's sponsor.
 3. An empty gas payment (MUST), so gas comes from the sponsor's address balance.
 4. A gas budget no larger than `extra.maxGasBudget`.
-5. No command that uses `GasCoin`. A client paying in SUI with `tx.balance` or `tx.coin` passes
-   `useGasCoin: false`.
+5. No command that uses `GasCoin`. (In the TypeScript SDK, a SUI payment with `tx.balance` or
+   `tx.coin` passes `useGasCoin: false`.)
 
 The client signs as sender. At settlement the facilitator co-signs the same bytes as gas owner and
 submits them with both signatures.
 
-Whenever the gas owner is one of the facilitator's sponsors, whether or not the requirements name
-it, the facilitator MUST check the following at verify and again at settle:
+Whenever the gas owner is one of the facilitator's sponsors and not the sender, whether or not the
+requirements name it, the facilitator MUST check the following at verify and again at settle:
 
 - The gas payment is empty, so the transaction can't name the sponsor's coins.
-- The gas budget is at most `extra.maxGasBudget`.
+- The gas budget is at most the facilitator's own ceiling, the one it advertises as
+  `extra.maxGasBudget`. The facilitator MUST NOT take the ceiling from the requirements, which the
+  resource server builds.
 - No command uses `GasCoin`, which would spend the sponsor's funds.
 - No withdrawal draws from the sponsor, either as `Sponsor` or as `SenderAllowance` with the sponsor
   as `funder`. Sui rejects `Sponsor` withdrawals today; the check guards against that changing.
@@ -206,6 +216,11 @@ These checks apply only to sponsored payments. A payer covering its own gas may 
 A sponsored transaction rejected for lack of funds costs the sponsor nothing. One that fails during
 execution costs up to its gas budget. The sponsor SHOULD rate-limit each sender and MAY apply other
 policy.
+
+The sponsor also pays for the storage of any objects the transaction creates, and the storage rebate
+goes to whoever later deletes them, so a payer can turn sponsored gas into its own funds, up to the
+gas budget per payment. The sponsor SHOULD bound the storage it funds, for example by rejecting
+object creation or capping the simulated storage cost.
 
 Before co-signing, the facilitator SHOULD check the transaction's simulated effects, as in
 verification steps 7 and 8. It can rely on a recent verify of the same transaction against the same
@@ -250,8 +265,8 @@ The facilitator returns a `VerifyResponse` (core spec [§5.4](../../x402-specifi
    [expiration](#expiration) with both epochs set and a span of at most one
    (`invalid_exact_sui_payload_invalid_expiration`). This step checks only the variant, the epochs,
    and the span. Timestamps are not checked offline; simulation rejects them today.
-5. **Sponsorship.** When the gas owner is an address the facilitator sponsors for, the transaction
-   MUST pass the [sponsorship checks](#gas-sponsorship)
+5. **Sponsorship.** When the gas owner is an address the facilitator sponsors for, other than the
+   sender, the transaction MUST pass the [sponsorship checks](#gas-sponsorship)
    (`invalid_exact_sui_payload_sponsorship_rejected`).
 6. **Not already executed.** The facilitator recomputes the digest and looks it up. If the
    transaction has already executed, it rejects with `invalid_exact_sui_payload_already_executed`.
@@ -260,9 +275,10 @@ The facilitator returns a `VerifyResponse` (core spec [§5.4](../../x402-specifi
    it as missing. See [deduplication](#settlement-deduplication).
 7. **Simulate.** The facilitator simulates the signed transaction unchanged, with transaction checks
    on and without letting the node pick gas (`invalid_exact_sui_payload_simulation_failed`). This
-   catches an expired transaction. The facilitator MUST reject a simulation that uses mocked gas
-   (`gasPaymentMocked: true`), including for sponsored payments. Mock gas can fund a `GasCoin`
-   transfer and bypass gas funding checks even when the payment itself uses real funds. A valid
+   catches an expired transaction. The facilitator MUST reject a simulation in which the node
+   substituted a mock gas payment (reported as `gasPaymentMocked`), including for sponsored
+   payments. Mock gas can fund a `GasCoin` transfer and bypass gas funding checks even when the
+   payment itself uses real funds. A valid
    simulation MUST use the gas owner's actual funds, accounting for both gas and the transaction's
    withdrawals, or execute as an eligible gasless transaction.
 8. **Effects.** The simulated `balanceChanges` MUST pass the [effects check](#effects-check).
@@ -275,9 +291,9 @@ A balance change is `{ coinType, address, amount }`. Sui combines balance change
 coin type, so `payTo` normally has one entry. The facilitator adds up the `payTo` entries for
 `asset` (zero if there are none) and requires the total to equal `amount`
 (`invalid_exact_sui_payload_transfer_mismatch` when simulated, `settlement_effects_mismatch` when
-executed). It doesn't check what the payer spent or who else was paid. When `asset` is SUI and
-`payTo` is also the gas owner, gas is folded into the same balance change, so the payment can't
-match.
+executed). It doesn't check what the payer spent or who else was paid. The total is a net sum: when
+`asset` is SUI and `payTo` is also the gas owner, it includes the gas `payTo` paid, so it falls
+short of `amount`.
 
 The facilitator MUST ask for balance changes when the RPC only returns them on request. At verify,
 it MUST reject the payment if they're missing. At settle, if the result has no balance changes, it
@@ -324,9 +340,10 @@ transaction digest, per network, after the offline checks pass and before submit
 serving `/settle`. A claim is kept if settlement succeeds, until at least one epoch after `maxEpoch`
 ends, and released otherwise.
 
-Claims SHOULD survive restarts for as long as they are kept. A store that loses them, such as one
-kept in memory, lets a payment that already settled settle again within its window and be reported
-as a second success.
+Claims SHOULD survive restarts for as long as they are kept. The lookup in settlement step 4 catches
+most repeats when a claim is lost, but it is best-effort: with a store that loses claims, such as
+one kept in memory, a node that hasn't indexed the transaction lets a payment that already settled
+be reported as a second success.
 
 ## Security Considerations
 
