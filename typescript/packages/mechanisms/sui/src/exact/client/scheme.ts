@@ -29,6 +29,13 @@ export class ExactSuiScheme implements SchemeNetworkClient {
 
   private readonly getClient: SuiClientResolver;
   private readonly chainIds = new Map<Network, Promise<string>>();
+  /**
+   * The next `ValidDuring` nonce. A transaction with no coin inputs or server
+   * nonce can differ from an identical payment only by this value, so it is
+   * counted up from a random start instead of drawn at random each time, and
+   * never repeats within one client.
+   */
+  private nextExpirationNonce = crypto.getRandomValues(new Uint32Array(1))[0];
 
   /**
    * Creates a new ExactSuiScheme client instance.
@@ -115,7 +122,7 @@ export class ExactSuiScheme implements SchemeNetworkClient {
         minTimestamp: null,
         maxTimestamp: null,
         chain,
-        nonce: (Math.random() * 0x100000000) >>> 0,
+        nonce: this.takeExpirationNonce(),
       },
     });
 
@@ -136,6 +143,17 @@ export class ExactSuiScheme implements SchemeNetworkClient {
       x402Version,
       payload,
     };
+  }
+
+  /**
+   * Take the next `ValidDuring` nonce.
+   *
+   * @returns A u32 not used before by this client
+   */
+  private takeExpirationNonce(): number {
+    const nonce = this.nextExpirationNonce;
+    this.nextExpirationNonce = (nonce + 1) >>> 0;
+    return nonce;
   }
 
   /**

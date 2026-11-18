@@ -132,6 +132,37 @@ describe("ExactSuiScheme client", () => {
     ).resolves.toBeDefined();
   });
 
+  it("never reuses an expiration nonce for otherwise identical payments", async () => {
+    const nonces = new Set<number>();
+    const digests = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const payload = (await scheme.createPaymentPayload(2, testRequirements()))
+        .payload as ExactSuiPayload;
+      const nonce = decode(payload).expiration?.ValidDuring?.nonce;
+      expect(nonce).toBeTypeOf("number");
+      nonces.add(nonce!);
+      digests.add(await Transaction.from(payload.transaction).getDigest());
+    }
+    expect(nonces.size).toBe(20);
+    expect(digests.size).toBe(20);
+  });
+
+  it("wraps the expiration nonce at 2^32", async () => {
+    const values = vi.spyOn(crypto, "getRandomValues").mockImplementationOnce(array => {
+      (array as Uint32Array)[0] = 0xffffffff;
+      return array;
+    });
+    const wrapping = new ExactSuiScheme(payerKeypair, {
+      clients: { [SUI_TESTNET_CAIP2]: mock.client },
+    });
+    values.mockRestore();
+    const nonceOf = async () =>
+      decode((await wrapping.createPaymentPayload(2, testRequirements())).payload).expiration
+        ?.ValidDuring?.nonce;
+    expect(await nonceOf()).toBe(0xffffffff);
+    expect(await nonceOf()).toBe(0);
+  });
+
   it("fetches the epoch and chain id in parallel and caches the chain id", async () => {
     await scheme.createPaymentPayload(2, testRequirements());
     await scheme.createPaymentPayload(2, testRequirements());
