@@ -18,6 +18,7 @@ import {
   feePayer,
   mockClient,
   payer,
+  payerKeypair,
   payTo,
   signOnly,
   sponsorKeypair,
@@ -399,6 +400,28 @@ describe("ExactSuiScheme facilitator", () => {
           testRequirements(),
         );
         expect(result.isValid).toBe(true);
+      });
+
+      it.each([
+        ["left out", async () => [] as string[]],
+        ["from another key", (tx: string) => signOnly(tx, payerKeypair)],
+      ])("never co-signs for a sender that is the sponsor (signature %s)", async (_, sign) => {
+        const executeTransaction = vi.fn();
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          feePayer,
+          executeTransaction,
+        });
+        const requirements = testRequirements({ extra: { feePayer } });
+        const transaction = await buildTestTransaction({ sender: feePayer, gasOwner: feePayer });
+        const forged = testPayload(
+          { transaction, signature: await sign(transaction) },
+          requirements,
+        );
+        expect((await s.verify(forged, requirements)).isValid).toBe(false);
+        expect((await s.settle(forged, requirements)).success).toBe(false);
+        expect(executeTransaction).not.toHaveBeenCalled();
+        expect(mock.core.executeTransaction).not.toHaveBeenCalled();
       });
     });
 
