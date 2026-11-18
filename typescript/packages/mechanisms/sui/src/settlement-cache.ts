@@ -1,4 +1,4 @@
-import type { ClaimResult, SettlementGuard, SettlementKey } from "./types";
+import type { SettlementGuard, SettlementKey } from "./types";
 
 /**
  * In-process settlement guard, and the facilitator's default. Successful claims
@@ -8,10 +8,7 @@ import type { ClaimResult, SettlementGuard, SettlementKey } from "./types";
  * shared, durable {@link SettlementGuard} with atomic claims.
  */
 export class SettlementCache implements SettlementGuard {
-  private readonly entries = new Map<
-    string,
-    { network: string; maxEpoch: bigint; pending: boolean }
-  >();
+  private readonly entries = new Map<string, { network: string; maxEpoch: bigint }>();
   private readonly latestEpoch = new Map<string, bigint>();
 
   /**
@@ -19,29 +16,13 @@ export class SettlementCache implements SettlementGuard {
    * the same transaction cannot both claim it.
    *
    * @param key - The settlement identity
-   * @returns `true` if claimed, `"pending"` if claimed from a pending mark,
-   * `false` if already held
+   * @returns `true` if claimed, `false` if already held
    */
-  claim(key: SettlementKey): ClaimResult {
+  claim(key: SettlementKey): boolean {
     const id = cacheKey(key);
-    const entry = this.entries.get(id);
-    if (entry) {
-      if (!entry.pending) return false;
-      entry.pending = false;
-      return "pending";
-    }
-    this.entries.set(id, { network: key.network, maxEpoch: BigInt(key.maxEpoch), pending: false });
+    if (this.entries.has(id)) return false;
+    this.entries.set(id, { network: key.network, maxEpoch: BigInt(key.maxEpoch) });
     return true;
-  }
-
-  /**
-   * Mark a claim as a pending submission, so the next claim of it succeeds.
-   *
-   * @param key - The settlement identity
-   */
-  markPending(key: SettlementKey): void {
-    const entry = this.entries.get(cacheKey(key));
-    if (entry) entry.pending = true;
   }
 
   /**

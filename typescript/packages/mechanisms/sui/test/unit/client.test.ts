@@ -147,20 +147,37 @@ describe("ExactSuiScheme client", () => {
     expect(digests.size).toBe(20);
   });
 
-  it("wraps the expiration nonce at 2^32", async () => {
-    const values = vi.spyOn(crypto, "getRandomValues").mockImplementationOnce(array => {
+  it("never reuses an expiration nonce across client instances", async () => {
+    const other = new ExactSuiScheme(payerKeypair, {
+      clients: { [SUI_TESTNET_CAIP2]: mock.client },
+    });
+    const nonceOf = async (client: ExactSuiScheme) =>
+      decode((await client.createPaymentPayload(2, testRequirements())).payload).expiration
+        ?.ValidDuring?.nonce;
+    const first = await nonceOf(scheme);
+    const second = await nonceOf(other);
+    expect(second).toBe(((first as number) + 1) >>> 0);
+  });
+
+  it("starts the expiration nonce at a random point and wraps at 2^32", async () => {
+    vi.resetModules();
+    const fresh = await import("../../src/exact/client/scheme");
+    const random = vi.spyOn(crypto, "getRandomValues").mockImplementationOnce(array => {
       (array as Uint32Array)[0] = 0xffffffff;
       return array;
     });
-    const wrapping = new ExactSuiScheme(payerKeypair, {
-      clients: { [SUI_TESTNET_CAIP2]: mock.client },
-    });
-    values.mockRestore();
-    const nonceOf = async () =>
-      decode((await wrapping.createPaymentPayload(2, testRequirements())).payload).expiration
-        ?.ValidDuring?.nonce;
-    expect(await nonceOf()).toBe(0xffffffff);
-    expect(await nonceOf()).toBe(0);
+    try {
+      const client = new fresh.ExactSuiScheme(payerKeypair, {
+        clients: { [SUI_TESTNET_CAIP2]: mock.client },
+      });
+      const nonceOf = async () =>
+        decode((await client.createPaymentPayload(2, testRequirements())).payload).expiration
+          ?.ValidDuring?.nonce;
+      expect(await nonceOf()).toBe(0xffffffff);
+      expect(await nonceOf()).toBe(0);
+    } finally {
+      random.mockRestore();
+    }
   });
 
   it("fetches the epoch and chain id in parallel and caches the chain id", async () => {

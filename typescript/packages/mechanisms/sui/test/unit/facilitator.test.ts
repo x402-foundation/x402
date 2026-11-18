@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExactSuiScheme } from "../../src/exact/facilitator/scheme";
 import { SUI_MAINNET_CAIP2, SUI_TESTNET_CAIP2, USDC_TESTNET } from "../../src/constants";
 import { SettlementCache } from "../../src/settlement-cache";
+import { InMemoryPendingSettlementStore } from "@x402/core/facilitator";
 import type { SettlementGuard } from "../../src/types";
 import {
   buildTestTransaction,
@@ -741,7 +742,6 @@ describe("ExactSuiScheme facilitator", () => {
         const guard: SettlementGuard = {
           claim: vi.fn().mockResolvedValue(true),
           release: vi.fn(),
-          markPending: vi.fn(),
         };
         const s = new ExactSuiScheme({
           clients: { [SUI_TESTNET_CAIP2]: mock.client },
@@ -767,31 +767,86 @@ describe("ExactSuiScheme facilitator", () => {
         };
         expect(guard.claim).toHaveBeenCalledWith(key);
         expect(guard.release).toHaveBeenCalledWith(key);
-        expect(guard.markPending).not.toHaveBeenCalled();
       });
 
-      it("marks the claim pending instead of releasing it on settlement_pending", async () => {
-        const guard: SettlementGuard = {
-          claim: vi.fn().mockResolvedValue(true),
-          release: vi.fn(),
-          markPending: vi.fn(),
-        };
+      it("records a pending submission, then releases the claim", async () => {
+        const guard: SettlementGuard = { claim: vi.fn().mockResolvedValue(true), release: vi.fn() };
+        const pendingSettlementStore = new InMemoryPendingSettlementStore();
         const s = new ExactSuiScheme({
           clients: { [SUI_TESTNET_CAIP2]: mock.client },
           settlementGuard: guard,
+          pendingSettlementStore,
         });
         const transaction = await buildTestTransaction();
+        const digest = await digestOf(transaction);
         mock.core.executeTransaction.mockRejectedValue(new Error("boom"));
         expect(
           (await s.settle(testPayload(await signPayload(transaction)), testRequirements()))
             .errorReason,
         ).toBe("settlement_pending");
-        expect(guard.markPending).toHaveBeenCalledWith({
-          network: SUI_TESTNET_CAIP2,
-          digest: await digestOf(transaction),
-          maxEpoch: String(EPOCH + 1),
+        expect(pendingSettlementStore.entriesSnapshot()).toEqual({
+          [`${SUI_TESTNET_CAIP2}:${digest}`]: digest,
         });
-        expect(guard.release).not.toHaveBeenCalled();
+        expect(guard.release).toHaveBeenCalledOnce();
+      });
+
+      it("clears the pending record once a retry settles", async () => {
+        const pendingSettlementStore = new InMemoryPendingSettlementStore();
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          pendingSettlementStore,
+        });
+        const payload = await payment();
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        mock.core.executeTransaction.mockRejectedValueOnce(new Error("boom"));
+        expect((await s.settle(payload, testRequirements())).errorReason).toBe(
+          "settlement_pending",
+        );
+        settled(successRecord(exactBalanceChanges(), digest));
+        expect((await s.settle(payload, testRequirements())).success).toBe(true);
+        expect(pendingSettlementStore.entriesSnapshot()).toEqual({});
+      });
+
+      it("keeps the claim and reports a failure when the pending record can't be written", async () => {
+        const s = new ExactSuiScheme({
+          clients: { [SUI_TESTNET_CAIP2]: mock.client },
+          pendingSettlementStore: {
+            get: async () => undefined,
+            set: () => Promise.reject(new Error("store down")),
+            delete: async () => undefined,
+          },
+        });
+        const payload = await payment();
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        mock.core.executeTransaction.mockRejectedValueOnce(new Error("boom"));
+        expect(await s.settle(payload, testRequirements())).toMatchObject({
+          success: false,
+          errorReason: "transaction_failed",
+          transaction: digest,
+        });
+        // The claim is kept, so nothing resubmits until the payment is reconciled.
+        expect((await s.settle(payload, testRequirements())).errorReason).toBe(
+          "duplicate_settlement",
+        );
+        expect(mock.core.executeTransaction).toHaveBeenCalledOnce();
+      });
+
+      it("rejects its own landed submission as executed once the pending record is lost", async () => {
+        const payload = await payment();
+        const digest = await digestOf((payload.payload as { transaction: string }).transaction);
+        mock.core.executeTransaction.mockRejectedValueOnce(new Error("boom"));
+        expect((await scheme.settle(payload, testRequirements())).errorReason).toBe(
+          "settlement_pending",
+        );
+        // A restart loses the in-memory records.
+        const restarted = new ExactSuiScheme({ clients: { [SUI_TESTNET_CAIP2]: mock.client } });
+        mock.core.getTransaction.mockResolvedValue({
+          $kind: "Transaction",
+          Transaction: successRecord(exactBalanceChanges(), digest),
+        });
+        expect((await restarted.settle(payload, testRequirements())).errorReason).toBe(
+          "invalid_exact_sui_payload_already_executed",
+        );
       });
 
       it("rejects a payment that already executed elsewhere on its first settle", async () => {
@@ -827,7 +882,7 @@ describe("ExactSuiScheme facilitator", () => {
       it("reports a duplicate when a shared guard refuses the claim", async () => {
         const s = new ExactSuiScheme({
           clients: { [SUI_TESTNET_CAIP2]: mock.client },
-          settlementGuard: { claim: async () => false, release: vi.fn(), markPending: vi.fn() },
+          settlementGuard: { claim: async () => false, release: vi.fn() },
         });
         expect((await s.settle(await payment(), testRequirements())).errorReason).toBe(
           "duplicate_settlement",
@@ -848,7 +903,6 @@ describe("ExactSuiScheme facilitator", () => {
           settlementGuard: {
             claim: () => Promise.reject(new Error("store down")),
             release: vi.fn(),
-            markPending: vi.fn(),
           },
         });
         const payload = await payment();
@@ -864,7 +918,6 @@ describe("ExactSuiScheme facilitator", () => {
         const guard: SettlementGuard = {
           claim: vi.fn().mockResolvedValue(true),
           release: vi.fn(),
-          markPending: vi.fn(),
           observeEpoch: vi.fn(),
         };
         const s = new ExactSuiScheme({
@@ -1450,20 +1503,6 @@ describe("SettlementCache", () => {
     expect(cache.claim(key)).toBe(true);
     expect(cache.claim(key)).toBe(false);
     cache.release(key);
-    expect(cache.claim(key)).toBe(true);
-  });
-
-  it("lets one claim through after markPending", () => {
-    const cache = new SettlementCache();
-    expect(cache.claim(key)).toBe(true);
-    cache.markPending(key);
-    expect(cache.claim(key)).toBe("pending");
-    expect(cache.claim(key)).toBe(false);
-  });
-
-  it("ignores markPending for a key it does not hold", () => {
-    const cache = new SettlementCache();
-    cache.markPending(key);
     expect(cache.claim(key)).toBe(true);
   });
 
