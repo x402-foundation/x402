@@ -1,0 +1,12 @@
+# Integration-test operators only. Not audited. Do not use in production.
+# Isolated from the audited contracts/evm Foundry project.
+[profile.default]
+src = "."
+out = "out"
+libs = []
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+cbor_metadata = false
+bytecode_hash = "none"

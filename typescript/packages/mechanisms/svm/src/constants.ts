@@ -1,0 +1,128 @@
+/**
+ * Token program addresses for SPL Token and Token-2022
+ * These addresses are the same across all Solana networks (mainnet, devnet, testnet)
+ */
+export const TOKEN_PROGRAM_ADDRESS = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+export const TOKEN_2022_PROGRAM_ADDRESS = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+export const COMPUTE_BUDGET_PROGRAM_ADDRESS = "ComputeBudget111111111111111111111111111111";
+export const MEMO_PROGRAM_ADDRESS = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+
+/**
+ * Phantom/Solflare Lighthouse program address
+ * Phantom and Solflare wallets inject Lighthouse assertion instructions for
+ * user protection on mainnet transactions. The facilitator treats only
+ * assertion variants as guards; other Lighthouse variants can mutate state.
+ * Guards are allowed anywhere in the instruction list (before, after, or
+ * interspersed among the protocol instructions), rather than assuming a
+ * fixed count or position. Wallets do not guarantee a stable instruction
+ * count or position for these; treat any such assumption as unsupported.
+ * See: https://github.com/x402-foundation/x402/issues/828
+ *  and: https://github.com/x402-foundation/x402/issues/2097
+ */
+export const LIGHTHOUSE_PROGRAM_ADDRESS = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95";
+
+/**
+ * Default RPC URLs for Solana networks
+ */
+export const DEVNET_RPC_URL = "https://api.devnet.solana.com";
+export const TESTNET_RPC_URL = "https://api.testnet.solana.com";
+export const MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com";
+export const DEVNET_WS_URL = "wss://api.devnet.solana.com";
+export const TESTNET_WS_URL = "wss://api.testnet.solana.com";
+export const MAINNET_WS_URL = "wss://api.mainnet-beta.solana.com";
+
+/**
+ * Compute budget configuration
+ * All prices are in microlamports (1 lamport = 1,000,000 microlamports)
+ */
+export const DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
+export const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 5_000_000; // 5 lamports
+export const DEFAULT_COMPUTE_UNIT_LIMIT = 20_000;
+
+/**
+ * Reference default ceiling on the compute unit limit a sponsor pays for
+ * (scheme_exact_svm.md §2.2.1), applied to a version-0 `SetComputeUnitLimit`
+ * and a version-1 header `computeUnitLimit` alike.
+ */
+export const DEFAULT_MAX_COMPUTE_UNITS = 400_000;
+
+/**
+ * Default ceiling on a sponsored transaction's required signatures: the client
+ * and the fee payer. Any other required signer is a base fee the sponsor pays
+ * for a party outside the payment (scheme_exact_svm.md §2.1.4).
+ */
+export const DEFAULT_MAX_REQUIRED_SIGNATURES = 2;
+export const MAX_MEMO_BYTES = 256;
+
+/**
+ * Transaction message versions the SVM verifiers accept. Version 0 carries its
+ * compute budget as ComputeBudget instructions and version 1 (SIMD-0385) in
+ * the message config; the verifiers model both, and reject any other version
+ * before its instructions are inspected. Legacy is tolerated for backward
+ * compatibility but deprecated and never advertised; see
+ * {@link ADVERTISED_TRANSACTION_VERSIONS}.
+ */
+export const ACCEPTED_TRANSACTION_VERSIONS: readonly (number | string)[] = ["legacy", 0, 1];
+
+/**
+ * Transaction message versions a facilitator advertises as
+ * `extra.transactionVersions` in `/supported`. Clients build one of these.
+ */
+export const ADVERTISED_TRANSACTION_VERSIONS: readonly number[] = [0, 1];
+
+/**
+ * Transaction versions this client implementation can construct. A client
+ * whose signer cannot sign version 1 narrows this with its
+ * `transactionVersions` option.
+ */
+export const CLIENT_SUPPORTED_TRANSACTION_VERSIONS: readonly (0 | 1)[] = [0, 1];
+
+/**
+ * How long a transaction is held in the duplicate settlement cache (ms).
+ * Covers the Solana blockhash lifetime (~60-90s) with margin.
+ */
+export const SETTLEMENT_TTL_MS = 120_000;
+
+/**
+ * Solana address validation regex (base58, 32-44 characters)
+ */
+export const SVM_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * CAIP-2 network identifiers for Solana (V2)
+ */
+export const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+export const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+export const SOLANA_TESTNET_CAIP2 = "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z";
+
+/**
+ * V1 to V2 network identifier mappings (for backwards compatibility)
+ * V1 used simple names like solana, V2 uses CAIP-2
+ */
+export const V1_TO_V2_NETWORK_MAP: Record<string, string> = {
+  solana: SOLANA_MAINNET_CAIP2,
+  "solana-devnet": SOLANA_DEVNET_CAIP2,
+  "solana-testnet": SOLANA_TESTNET_CAIP2,
+};
+
+/**
+ * Normalize v1 or CAIP-2 SVM network id to CAIP-2.
+ *
+ * @param network - V1 name or CAIP-2 id
+ * @returns CAIP-2 network identifier
+ */
+export function normalizeNetwork(network: string): string {
+  if (network.includes(":")) {
+    const supported = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_TESTNET_CAIP2];
+    if (!supported.includes(network)) {
+      throw new Error(`Unsupported SVM network: ${network}`);
+    }
+    return network;
+  }
+
+  const caip2Network = V1_TO_V2_NETWORK_MAP[network];
+  if (!caip2Network) {
+    throw new Error(`Unsupported SVM network: ${network}`);
+  }
+  return caip2Network;
+}

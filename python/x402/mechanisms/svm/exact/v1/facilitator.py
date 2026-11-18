@@ -1,0 +1,432 @@
+"""SVM facilitator implementation for Exact payment scheme (V1 legacy)."""
+
+from __future__ import annotations
+
+import random
+from collections.abc import Sequence
+from typing import Any
+
+try:
+    from solders.pubkey import Pubkey
+except ImportError as e:
+    raise ImportError(
+        "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
+    ) from e
+
+from .....schemas import Network, SettleResponse, VerifyResponse
+from .....schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
+from ...constants import (
+    ERR_AMOUNT_INSUFFICIENT,
+    ERR_DUPLICATE_SETTLEMENT,
+    ERR_FEE_PAYER_MISSING,
+    ERR_FEE_PAYER_NOT_MANAGED,
+    ERR_FEE_PAYER_TRANSFERRING,
+    ERR_MEMO_COUNT,
+    ERR_MEMO_MISMATCH,
+    ERR_MINT_MISMATCH,
+    ERR_NETWORK_MISMATCH,
+    ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_RECIPIENT_MISMATCH,
+    ERR_SIMULATION_FAILED,
+    ERR_TRANSACTION_DECODE_FAILED,
+    ERR_TRANSACTION_FAILED,
+    ERR_TRANSACTION_SIZE_EXCEEDED,
+    ERR_UNKNOWN_FIFTH_INSTRUCTION,
+    ERR_UNKNOWN_FOURTH_INSTRUCTION,
+    ERR_UNKNOWN_SEVENTH_INSTRUCTION,
+    ERR_UNKNOWN_SIXTH_INSTRUCTION,
+    ERR_UNSUPPORTED_SCHEME,
+    ERR_UNSUPPORTED_TRANSACTION_VERSION,
+    LIGHTHOUSE_PROGRAM_ADDRESS,
+    MEMO_PROGRAM_ADDRESS,
+    SCHEME_EXACT,
+    TOKEN_2022_PROGRAM_ADDRESS,
+    TOKEN_PROGRAM_ADDRESS,
+)
+from ...errors import TransactionOnchainFailureError
+from ...settlement_cache import SettlementCache
+from ...signer import FacilitatorSvmSigner
+from ...types import ExactSvmPayload
+from ...utils import (
+    check_exact_compute_budget,
+    decode_transaction_from_payload,
+    derive_ata,
+    get_token_payer_from_transaction,
+    get_transaction_version,
+    is_accepted_transaction_version,
+    normalize_accepted_transaction_versions,
+    peek_wire_transaction_version,
+    transaction_message_hash,
+    transaction_size_exceeded,
+)
+
+
+class ExactSvmSchemeV1:
+    """SVM facilitator implementation for Exact payment scheme (V1).
+
+    V1 differences:
+    - scheme/network at payload top level
+    - Uses maxAmountRequired from requirements
+    - Legacy network names
+
+    Attributes:
+        scheme: The scheme identifier ("exact").
+        caip_family: The CAIP family pattern ("solana:*").
+    """
+
+    scheme = SCHEME_EXACT
+    caip_family = "solana:*"
+
+    def __init__(
+        self,
+        signer: FacilitatorSvmSigner,
+        settlement_cache: SettlementCache | None = None,
+        transaction_versions: Sequence[int] | None = None,
+    ):
+        """Create ExactSvmSchemeV1 facilitator.
+
+        Args:
+            signer: SVM signer for verification/settlement.
+            settlement_cache: Optional shared settlement cache (one is created if omitted).
+            transaction_versions: Transaction message versions this facilitator
+                accepts and advertises as ``extra.transactionVersions``. Any other
+                version is rejected with ``unsupported_transaction_version``; legacy
+                is accepted exactly when 0 is. Narrow it to ``[0]`` for a sponsor
+                whose signer or RPC does not yet handle version 1. Defaults to
+                ``[0, 1]``.
+
+        Raises:
+            ValueError: If ``transaction_versions`` is empty or holds anything
+                but 0 and 1.
+        """
+        self._signer = signer
+        self._transaction_versions = normalize_accepted_transaction_versions(transaction_versions)
+        self._settlement_cache = settlement_cache or SettlementCache()
+
+    def get_extra(self, network: Network) -> dict[str, Any] | None:
+        """Get mechanism-specific extra data.
+
+        Args:
+            network: Network identifier.
+
+        Returns:
+            Extra data with feePayer address and transactionVersions.
+        """
+        _ = network  # Unused
+        addresses = self._signer.get_addresses()
+        fee_payer = random.choice(addresses)
+        return {
+            "feePayer": fee_payer,
+            "transactionVersions": list(self._transaction_versions),
+        }
+
+    def get_signers(self, network: Network) -> list[str]:
+        """Get facilitator wallet addresses.
+
+        Args:
+            network: Network identifier.
+
+        Returns:
+            List of facilitator addresses.
+        """
+        _ = network  # Unused
+        return list(self._signer.get_addresses())
+
+    def verify(
+        self,
+        payload: PaymentPayloadV1,
+        requirements: PaymentRequirementsV1,
+        context=None,
+    ) -> VerifyResponse:
+        """Verify SPL token payment payload (V1).
+
+        V1 validation differences:
+        - scheme/network at top level of payload
+        - Uses maxAmountRequired for amount check
+
+        Args:
+            payload: V1 payment payload.
+            requirements: V1 payment requirements.
+
+        Returns:
+            VerifyResponse with is_valid and payer.
+        """
+        svm_payload = ExactSvmPayload.from_dict(payload.payload)
+        network = requirements.network
+
+        # V1: Validate scheme at top level
+        if payload.scheme != SCHEME_EXACT or requirements.scheme != SCHEME_EXACT:
+            return VerifyResponse(is_valid=False, invalid_reason=ERR_UNSUPPORTED_SCHEME, payer="")
+
+        # V1: Validate network at top level
+        if payload.network != requirements.network:
+            return VerifyResponse(is_valid=False, invalid_reason=ERR_NETWORK_MISMATCH, payer="")
+
+        extra = requirements.extra or {}
+        fee_payer_str = extra.get("feePayer")
+        if not fee_payer_str or not isinstance(fee_payer_str, str):
+            return VerifyResponse(is_valid=False, invalid_reason=ERR_FEE_PAYER_MISSING, payer="")
+
+        # Verify that the requested feePayer is managed by this facilitator
+        signer_addresses = self._signer.get_addresses()
+        if fee_payer_str not in signer_addresses:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_FEE_PAYER_NOT_MANAGED, payer=""
+            )
+
+        # Parse and Validate Transaction Structure
+        # Read the version from the raw bytes first so a newer wire format is
+        # reported as unsupported however the installed solders handles it.
+        wire_version = peek_wire_transaction_version(svm_payload.transaction)
+        if wire_version is not None and not is_accepted_transaction_version(
+            wire_version, self._transaction_versions
+        ):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
+            )
+
+        try:
+            tx = decode_transaction_from_payload(svm_payload)
+        except Exception:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_TRANSACTION_DECODE_FAILED, payer=""
+            )
+
+        # Version allowlist, checked before any signature or instruction check:
+        # every check below reads its fee policy from version-specific structure.
+        version = get_transaction_version(tx.message)
+        if not is_accepted_transaction_version(version, self._transaction_versions):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_UNSUPPORTED_TRANSACTION_VERSION, payer=""
+            )
+
+        # Size limit of the message version (§1.5): 1232 bytes for legacy and
+        # version 0, 4096 for version 1. The decoder accepts larger payloads.
+        if transaction_size_exceeded(svm_payload.transaction, version):
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_TRANSACTION_SIZE_EXCEEDED, payer=""
+            )
+
+        message = tx.message
+        instructions = message.instructions
+        static_accounts = list(message.account_keys)
+
+        budget_error, transfer_index = check_exact_compute_budget(message)
+        if budget_error:
+            return VerifyResponse(is_valid=False, invalid_reason=budget_error, payer="")
+
+        # Get token payer
+        payer = get_token_payer_from_transaction(tx)
+        if not payer:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=""
+            )
+
+        # Verify Transfer Instruction
+        transfer_ix = instructions[transfer_index]
+        transfer_program = static_accounts[transfer_ix.program_id_index]
+        transfer_program_str = str(transfer_program)
+
+        token_program = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+        token_2022_program = Pubkey.from_string(TOKEN_2022_PROGRAM_ADDRESS)
+
+        if transfer_program != token_program and transfer_program != token_2022_program:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
+            )
+
+        # Verify optional instructions (if present)
+        optional_instructions = instructions[transfer_index + 1 :]
+        if optional_instructions:
+            lighthouse_program = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
+            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+            # Named by optional slot, so the same codes apply on version 1,
+            # whose optional slots start at index 1 rather than 3.
+            invalid_reasons = [
+                ERR_UNKNOWN_FOURTH_INSTRUCTION,
+                ERR_UNKNOWN_FIFTH_INSTRUCTION,
+                ERR_UNKNOWN_SIXTH_INSTRUCTION,
+                ERR_UNKNOWN_SEVENTH_INSTRUCTION,
+            ]
+
+            for idx, optional_ix in enumerate(optional_instructions):
+                optional_program = static_accounts[optional_ix.program_id_index]
+                if optional_program in (lighthouse_program, memo_program):
+                    continue
+
+                reason = (
+                    invalid_reasons[idx]
+                    if idx < len(invalid_reasons)
+                    else ERR_UNKNOWN_SIXTH_INSTRUCTION
+                )
+                return VerifyResponse(is_valid=False, invalid_reason=reason, payer=payer)
+
+        # Verify memo content matches extra.memo when present
+        extra = requirements.extra or {}
+        expected_memo = extra.get("memo")
+        if expected_memo and isinstance(expected_memo, str):
+            memo_program = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+            memo_ixs = [
+                ix
+                for ix in optional_instructions
+                if static_accounts[ix.program_id_index] == memo_program
+            ]
+            if len(memo_ixs) != 1:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_COUNT, payer=payer)
+            actual_memo = bytes(memo_ixs[0].data).decode("utf-8")
+            if actual_memo != expected_memo:
+                return VerifyResponse(is_valid=False, invalid_reason=ERR_MEMO_MISMATCH, payer=payer)
+
+        # Parse transfer instruction
+        transfer_accounts = list(transfer_ix.accounts)
+        transfer_data = bytes(transfer_ix.data)
+
+        # TransferChecked data: [12 (discriminator), u64 amount, u8 decimals]
+        if len(transfer_data) < 10 or transfer_data[0] != 12:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
+            )
+
+        # TransferChecked accounts: [source, mint, destination, owner]
+        if len(transfer_accounts) < 4:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_NO_TRANSFER_INSTRUCTION, payer=payer
+            )
+
+        _source_ata = static_accounts[transfer_accounts[0]]  # noqa: F841
+        mint = static_accounts[transfer_accounts[1]]
+        dest_ata = static_accounts[transfer_accounts[2]]
+        authority = static_accounts[transfer_accounts[3]]
+
+        amount = int.from_bytes(transfer_data[1:9], "little")
+
+        # Verify facilitator's signers are not transferring their own funds
+        authority_str = str(authority)
+        if authority_str in signer_addresses:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_FEE_PAYER_TRANSFERRING, payer=payer
+            )
+
+        # Verify mint address matches requirements
+        mint_str = str(mint)
+        if mint_str != requirements.asset:
+            return VerifyResponse(is_valid=False, invalid_reason=ERR_MINT_MISMATCH, payer=payer)
+
+        # Verify destination ATA
+        expected_dest_ata = derive_ata(
+            requirements.pay_to, requirements.asset, transfer_program_str
+        )
+        if str(dest_ata) != expected_dest_ata:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_RECIPIENT_MISMATCH, payer=payer
+            )
+
+        # V1: Verify transfer amount meets maxAmountRequired
+        required_amount = int(requirements.max_amount_required)
+        if amount < required_amount:
+            return VerifyResponse(
+                is_valid=False, invalid_reason=ERR_AMOUNT_INSUFFICIENT, payer=payer
+            )
+
+        # Sign and Simulate Transaction
+        try:
+            fully_signed_tx = self._signer.sign_transaction(
+                svm_payload.transaction, fee_payer_str, network
+            )
+            self._signer.simulate_transaction(fully_signed_tx, network)
+        except Exception as e:
+            error_msg = str(e)
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_SIMULATION_FAILED,
+                invalid_message=error_msg,
+                payer=payer,
+            )
+
+        return VerifyResponse(is_valid=True, payer=payer)
+
+    def settle(
+        self,
+        payload: PaymentPayloadV1,
+        requirements: PaymentRequirementsV1,
+        context=None,
+    ) -> SettleResponse:
+        """Settle SPL token payment on-chain (V1).
+
+        Same settlement logic as V2, but uses V1 payload/requirements.
+
+        Args:
+            payload: V1 payment payload.
+            requirements: V1 payment requirements.
+
+        Returns:
+            SettleResponse with success, transaction, and payer.
+        """
+        svm_payload = ExactSvmPayload.from_dict(payload.payload)
+        network = payload.network
+
+        # First verify
+        verify_result = self.verify(payload, requirements, context)
+        if not verify_result.is_valid:
+            return SettleResponse(
+                success=False,
+                error_reason=verify_result.invalid_reason,
+                network=network,
+                payer=verify_result.payer,
+                transaction="",
+            )
+
+        # Decode the transaction to compute the message hash used as the cache key.
+        tx = decode_transaction_from_payload(svm_payload)
+
+        # Duplicate settlement check keyed on message hash (immune to mutable fee-payer sig at slot 0).
+        tx_key = transaction_message_hash(tx)
+        if self._settlement_cache.is_duplicate(tx_key):
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_DUPLICATE_SETTLEMENT,
+                network=network,
+                payer=verify_result.payer or "",
+                transaction="",
+            )
+
+        try:
+            extra = requirements.extra or {}
+            fee_payer = extra["feePayer"]
+
+            fully_signed_tx = self._signer.sign_transaction(
+                svm_payload.transaction, fee_payer, network
+            )
+
+            signature = self._signer.send_transaction(fully_signed_tx, network)
+
+            try:
+                self._signer.confirm_transaction(signature, network)
+            except TransactionOnchainFailureError as e:
+                self._settlement_cache.delete(tx_key)
+                return SettleResponse(
+                    success=False,
+                    error_reason=ERR_TRANSACTION_FAILED,
+                    error_message=str(e),
+                    transaction=signature,
+                    network=network,
+                    payer=verify_result.payer or "",
+                )
+
+            return SettleResponse(
+                success=True,
+                transaction=signature,
+                network=network,
+                payer=verify_result.payer,
+            )
+
+        except Exception as e:
+            self._settlement_cache.delete(tx_key)
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_TRANSACTION_FAILED,
+                error_message=str(e),
+                transaction="",
+                network=network,
+                payer=verify_result.payer or "",
+            )

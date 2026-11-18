@@ -1,0 +1,242 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  HTTPRequestContext,
+  HTTPResponseInstructions,
+  PaywallProvider,
+  x402HTTPResourceServer,
+  x402ResourceServer,
+  RoutesConfig,
+  FacilitatorResponseError,
+  getFacilitatorResponseError as getCoreFacilitatorResponseError,
+  prepareHttpServer,
+  PaymentCancellationDispatcher,
+  CompletedSettlement,
+  SETTLEMENT_OVERRIDES_HEADER,
+  withPrivateCacheControl,
+} from "@x402/core/server";
+import type { PreparedHttpServer } from "@x402/core/server";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import { NextAdapter } from "./adapter";
+
+/**
+ * Result of createHttpServer
+ */
+export type HttpServerInstance = PreparedHttpServer;
+
+export const getFacilitatorResponseError = getCoreFacilitatorResponseError;
+
+/**
+ * Builds a normalized 502 response for facilitator boundary failures.
+ *
+ * @param error - The facilitator response error to surface
+ * @returns A JSON 502 response
+ */
+export function createFacilitatorErrorResponse(error: FacilitatorResponseError): NextResponse {
+  return new NextResponse(JSON.stringify({ error: error.message }), {
+    status: 502,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Logs an unexpected error and builds a generic 500 without leaking internals.
+ *
+ * @param error - The unexpected error
+ * @returns A JSON 500 response
+ */
+export function createInternalErrorResponse(error: unknown): NextResponse {
+  console.error(error);
+  return new NextResponse(JSON.stringify({ error: "Internal Server Error" }), {
+    status: 500,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Decode percent-escapes in a request path.
+ *
+ * @param path - Request path
+ * @returns Decoded path, or the original if decoding fails
+ */
+function decodedRoutePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Creates and configures the x402 HTTP server with initialization logic
+ *
+ * @param routes - The route configuration for the server
+ * @param server - The x402 resource server instance
+ * @param paywall - Optional paywall provider for custom payment UI
+ * @param syncFacilitatorOnStart - Whether to sync with the facilitator on start (defaults to true)
+ * @returns The HTTP server instance with initialization function
+ */
+export function createHttpServer(
+  routes: RoutesConfig,
+  server: x402ResourceServer,
+  paywall?: PaywallProvider,
+  syncFacilitatorOnStart: boolean = true,
+): HttpServerInstance {
+  const httpServer = new x402HTTPResourceServer(server, routes);
+
+  return prepareHttpServer(httpServer, paywall, syncFacilitatorOnStart);
+}
+
+/**
+ * Creates HTTP request context from a Next.js request
+ *
+ * @param request - The Next.js request object
+ * @returns The HTTP request context for x402 processing
+ */
+export function createRequestContext(request: NextRequest): HTTPRequestContext {
+  // Create adapter and context
+  const adapter = new NextAdapter(request);
+  const path = request.nextUrl.pathname;
+  return {
+    adapter,
+    path,
+    decodedPath: decodedRoutePath(path),
+    method: request.method,
+    paymentHeader: adapter.getHeader("payment-signature") || adapter.getHeader("x-payment"),
+  };
+}
+
+/**
+ * Handles payment error result by creating a 402 response
+ *
+ * @param response - The HTTP response instructions from payment verification
+ * @returns A Next.js response with the appropriate 402 status and headers
+ */
+export function handlePaymentError(response: HTTPResponseInstructions): NextResponse {
+  // Payment required but not provided or invalid
+  const headers = new Headers(response.headers);
+  if (response.isHtml) {
+    headers.set("Content-Type", "text/html");
+    return new NextResponse(response.body as string, {
+      status: response.status,
+      headers,
+    });
+  }
+  const mediaType = headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  const isJson = !mediaType || mediaType === "application/json" || mediaType.endsWith("+json");
+  if (typeof response.body === "string" && !isJson) {
+    return new NextResponse(response.body, {
+      status: response.status,
+      headers,
+    });
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return new NextResponse(JSON.stringify(response.body || {}), {
+    status: response.status,
+    headers,
+  });
+}
+
+/**
+ * Handles settlement after a successful response
+ *
+ * @param httpServer - The x402 HTTP resource server instance
+ * @param response - The Next.js response from the protected route
+ * @param paymentPayload - The payment payload from the client
+ * @param paymentRequirements - The payment requirements for the route
+ * @param declaredExtensions - Optional declared extensions (for per-key enrichment)
+ * @param cancellationDispatcher - Cancels payments that should not settle after the handler
+ * @param httpContext - HTTP request context for extensions
+ * @param beforeHandlerSettlement - Optional before-handler settle for PAYMENT-RESPONSE echo
+ * @returns The response with settlement headers or an error response if settlement fails
+ */
+export async function handleSettlement(
+  httpServer: x402HTTPResourceServer,
+  response: NextResponse,
+  paymentPayload: PaymentPayload,
+  paymentRequirements: PaymentRequirements,
+  declaredExtensions: Record<string, unknown> | undefined,
+  cancellationDispatcher: PaymentCancellationDispatcher,
+  httpContext: HTTPRequestContext,
+  beforeHandlerSettlement?: CompletedSettlement,
+): Promise<NextResponse> {
+  // If the response from the protected route is >= 400, do not settle payment
+  if (response.status >= 400) {
+    const cancelSettlement = await cancellationDispatcher.cancel({
+      reason: "handler_failed",
+      responseStatus: response.status,
+    });
+    response.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+    const failureHeaders = httpServer.createFailurePathSettlementHeaders(
+      cancelSettlement,
+      beforeHandlerSettlement,
+      paymentPayload,
+      response.headers.get("Cache-Control"),
+    );
+    if (failureHeaders) {
+      Object.entries(failureHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+    }
+    return response;
+  }
+
+  try {
+    // Get response body for extensions
+    const responseBody = Buffer.from(await response.arrayBuffer());
+
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
+    const result = await httpServer.processSettlement(
+      paymentPayload,
+      paymentRequirements,
+      declaredExtensions,
+      { request: httpContext, responseBody, responseHeaders },
+      undefined,
+      beforeHandlerSettlement,
+    );
+
+    if (!result.success) {
+      // Settlement failed - do not return the protected resource
+      const { response } = result;
+      const body = response.isHtml ? response.body : JSON.stringify(response.body ?? {});
+      return new NextResponse(body, {
+        status: response.status,
+        headers: response.headers,
+      });
+    }
+
+    // Settlement succeeded - add headers and return the buffered response.
+    const settled = new NextResponse(response.body === null ? null : responseBody, {
+      status: response.status,
+      headers: response.headers,
+    });
+    settled.headers.delete("transfer-encoding");
+    Object.entries(result.headers).forEach(([key, value]) => {
+      settled.headers.set(key, value);
+    });
+    settled.headers.set(
+      "Cache-Control",
+      withPrivateCacheControl(settled.headers.get("Cache-Control")),
+    );
+
+    // Strip internal settlement override header before sending to client.
+    settled.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
+
+    return settled;
+  } catch (error) {
+    if (error instanceof FacilitatorResponseError) {
+      return createFacilitatorErrorResponse(error);
+    }
+    console.error("Settlement failed:", error);
+    // If settlement fails, return an error response
+    return new NextResponse(JSON.stringify({}), {
+      status: 402,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}

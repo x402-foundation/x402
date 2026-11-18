@@ -1,0 +1,63 @@
+import { config } from "dotenv";
+import { x402Client, wrapAxiosWithPayment, x402HTTPClient } from "@x402/axios";
+import { AuthCaptureEvmScheme } from "@x402/evm/auth-capture/client";
+import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { UptoEvmScheme } from "@x402/evm/upto/client";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { UptoSvmScheme } from "@x402/svm/upto/client";
+import { privateKeyToAccount } from "viem/accounts";
+import { createKeyPairSignerFromBytes } from "@solana/kit";
+import { base58 } from "@scure/base";
+import axios from "axios";
+
+config();
+
+const evmPrivateKey = process.env.EVM_PRIVATE_KEY as `0x${string}`;
+const svmPrivateKey = process.env.SVM_PRIVATE_KEY as string;
+const evmRpcUrl = process.env.EVM_RPC_URL;
+const baseURL = process.env.RESOURCE_SERVER_URL || "http://localhost:4021";
+const endpointPath = process.env.ENDPOINT_PATH || "/weather";
+const url = `${baseURL}${endpointPath}`;
+
+/**
+ * Example demonstrating how to use @x402/axios to make requests to x402-protected endpoints.
+ *
+ * Required environment variables:
+ * - EVM_PRIVATE_KEY: The private key of the EVM signer
+ * - SVM_PRIVATE_KEY: The private key of the SVM signer
+ *
+ * Optional environment variables:
+ * - EVM_RPC_URL: JSON-RPC endpoint for on-chain reads (enables gas sponsoring extensions)
+ */
+async function main(): Promise<void> {
+  const evmSigner = privateKeyToAccount(evmPrivateKey);
+  const svmSigner = await createKeyPairSignerFromBytes(base58.decode(svmPrivateKey));
+  const rpcOptions = evmRpcUrl ? { rpcUrl: evmRpcUrl } : undefined;
+
+  const client = new x402Client()
+    .register("eip155:*", new ExactEvmScheme(evmSigner, rpcOptions))
+    .register("eip155:*", new UptoEvmScheme(evmSigner, rpcOptions))
+    .register("eip155:*", new AuthCaptureEvmScheme(evmSigner))
+    .register("solana:*", new ExactSvmScheme(svmSigner))
+    .register("solana:*", new UptoSvmScheme(svmSigner))
+    .setSpendControls({
+      maxAmountPerPayment: "$1",
+    });
+
+  const api = wrapAxiosWithPayment(axios.create(), client);
+  const httpClient = new x402HTTPClient(client);
+
+  console.log(`Making request to: ${url}\n`);
+  const response = await api.get(url);
+  const result = httpClient.parsePaymentResult({
+    status: response.status,
+    getHeader: name => response.headers[name.toLowerCase()],
+    body: response.data,
+  });
+  console.dir(result, { depth: null });
+}
+
+main().catch(error => {
+  console.error(error?.response?.data?.error ?? error);
+  process.exit(1);
+});

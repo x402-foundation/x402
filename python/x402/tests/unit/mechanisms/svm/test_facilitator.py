@@ -1,0 +1,1244 @@
+"""Tests for ExactSvmScheme facilitator."""
+
+import base64
+import hashlib
+from unittest.mock import patch
+
+import pytest
+from solders.hash import Hash
+from solders.instruction import AccountMeta, Instruction
+from solders.keypair import Keypair
+from solders.message import MessageV0
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+from solders.transaction import VersionedTransaction
+
+from x402.mechanisms.svm import (
+    COMPUTE_BUDGET_PROGRAM_ADDRESS,
+    ERR_PROTOCOL_INSTRUCTION_ORDER,
+    ERR_UNKNOWN_INSTRUCTION,
+    LIGHTHOUSE_PROGRAM_ADDRESS,
+    MEMO_PROGRAM_ADDRESS,
+    SOLANA_DEVNET_CAIP2,
+    SOLANA_MAINNET_CAIP2,
+    TOKEN_PROGRAM_ADDRESS,
+    USDC_DEVNET_ADDRESS,
+)
+from x402.mechanisms.svm.constants import (
+    ERR_MEMO_COUNT,
+    ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+)
+from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme, InstructionIdentity
+from x402.mechanisms.svm.utils import derive_ata, transaction_message_hash
+from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
+
+
+class MockFacilitatorSigner:
+    """Mock facilitator signer for testing."""
+
+    def __init__(self, addresses: list[str] | None = None):
+        self._addresses = addresses or ["FeePayer1111111111111111111111111111"]
+
+    def get_addresses(self) -> list[str]:
+        return self._addresses
+
+    def sign_transaction(self, tx_base64: str, fee_payer: str, network: str) -> str:
+        if fee_payer not in self._addresses:
+            raise ValueError(f"No signer for feePayer {fee_payer}")
+        return tx_base64
+
+    def simulate_transaction(self, tx_base64: str, network: str) -> None:
+        pass
+
+    def send_transaction(self, tx_base64: str, network: str) -> str:
+        return "mockSignature123"
+
+    def confirm_transaction(self, signature: str, network: str) -> None:
+        pass
+
+
+class _ConfirmTimeoutSigner(MockFacilitatorSigner):
+    """Signer whose broadcast never confirms in time (settlement_pending)."""
+
+    def confirm_transaction(self, signature: str, network: str) -> None:
+        raise TimeoutError("rpc: timeout waiting for confirmation")
+
+
+_COMPUTE_BUDGET_PUBKEY = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
+_TOKEN_PUBKEY = Pubkey.from_string(TOKEN_PROGRAM_ADDRESS)
+_LIGHTHOUSE_PUBKEY = Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS)
+_MEMO_PUBKEY = Pubkey.from_string(MEMO_PROGRAM_ADDRESS)
+
+
+def _lighthouse_instruction() -> Instruction:
+    return Instruction(_LIGHTHOUSE_PUBKEY, bytes([0x02]), [])
+
+
+def _build_exact_fixture(
+    before: list | None = None,
+    after: list | None = None,
+    facilitator: Keypair | None = None,
+):
+    """Build a syntactically valid exact-SVM payment payload/requirements pair:
+    ComputeLimit + ComputePrice + TransferChecked, with `before`/`after` guard
+    instructions inserted ahead of/appended past the protocol sequence --
+    reproducing wallets (e.g. Phantom) that inject Lighthouse assertions both
+    before and after the payment instructions.
+
+    Returns (payload, requirements, facilitator_address).
+    """
+    facilitator = facilitator or Keypair()
+    owner = Keypair()
+    mint = Keypair().pubkey()
+    pay_to = Keypair().pubkey()
+
+    source_ata = Pubkey.from_string(derive_ata(str(owner.pubkey()), str(mint)))
+    dest_ata = Pubkey.from_string(derive_ata(str(pay_to), str(mint)))
+
+    amount = 1000
+    decimals = 6
+    cu_limit_ix = Instruction(
+        _COMPUTE_BUDGET_PUBKEY, bytes([2]) + (200000).to_bytes(4, "little"), []
+    )
+    cu_price_ix = Instruction(_COMPUTE_BUDGET_PUBKEY, bytes([3]) + (1000).to_bytes(8, "little"), [])
+    transfer_ix = Instruction(
+        _TOKEN_PUBKEY,
+        bytes([12]) + amount.to_bytes(8, "little") + bytes([decimals]),
+        [
+            AccountMeta(source_ata, False, True),
+            AccountMeta(mint, False, False),
+            AccountMeta(dest_ata, False, True),
+            AccountMeta(owner.pubkey(), True, False),
+        ],
+    )
+
+    instructions = [*(before or []), cu_limit_ix, cu_price_ix, transfer_ix, *(after or [])]
+
+    message = MessageV0.try_compile(facilitator.pubkey(), instructions, [], Hash.default())
+    num_sigs = message.header.num_required_signatures
+    signatures = [Signature.default()] * num_sigs
+    owner_index = list(message.account_keys).index(owner.pubkey())
+    signatures[owner_index] = owner.sign_message(bytes(message))
+
+    tx = VersionedTransaction.populate(message, signatures)
+    encoded = base64.b64encode(bytes(tx)).decode()
+
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network=SOLANA_DEVNET_CAIP2,
+        asset=str(mint),
+        amount=str(amount),
+        pay_to=str(pay_to),
+        max_timeout_seconds=3600,
+        extra={"feePayer": str(facilitator.pubkey())},
+    )
+    payload = PaymentPayload(
+        x402_version=2,
+        resource=ResourceInfo(
+            url="http://example.com/protected",
+            description="Test resource",
+            mime_type="application/json",
+        ),
+        accepted=requirements,
+        payload={"transaction": encoded},
+    )
+
+    return payload, requirements, str(facilitator.pubkey())
+
+
+def _block_instruction(
+    program: Pubkey, discriminator: bytes, fee_payer: Pubkey | None = None
+) -> Instruction:
+    """Stand-in for an operator-configured preflight/postflight instruction; `fee_payer`,
+    if given, is attached as a readonly account (to test isolation)."""
+    return Instruction(
+        program, discriminator, [AccountMeta(fee_payer, False, False)] if fee_payer else []
+    )
+
+
+def _memo_instruction(data: bytes) -> Instruction:
+    return Instruction(_MEMO_PUBKEY, data, [])
+
+
+_SETUP, _FINISH = Keypair().pubkey(), Keypair().pubkey()
+_LONG = bytes(range(1, 9))
+_PRE = [InstructionIdentity(_SETUP, b"\xaa")]
+_POST = [InstructionIdentity(_FINISH, b"\xbb")]
+_GUARD = _lighthouse_instruction
+_SETUP_IX = lambda fp=None: _block_instruction(_SETUP, b"\xaa", fp)  # noqa: E731
+_FINISH_IX = lambda fp=None: _block_instruction(_FINISH, b"\xbb", fp)  # noqa: E731
+_BOTH = {"preflight_instruction_allowlist": [_PRE], "postflight_instruction_allowlist": [_POST]}
+
+
+class TestVerifyPath1InstructionLayout:
+    """Path 1 identity-based layout: guards anywhere, protocol instructions in fixed
+    relative order, optional fee-payer-isolated preflight/postflight allowlists."""
+
+    @pytest.mark.parametrize(
+        ("before", "after", "scheme_kwargs", "memo", "reason"),
+        [
+            pytest.param([_GUARD()], [], {}, None, None, id="guard-before-phantom"),
+            pytest.param([], [_GUARD()], {}, None, None, id="guard-after"),
+            pytest.param([_GUARD()] * 2, [_GUARD()], {}, None, None, id="guards-both-sides"),
+            pytest.param([_GUARD()] * 3, [_GUARD()] * 5, {}, None, None, id="many-guards-no-cap"),
+            pytest.param(
+                [],
+                [_memo_instruction(b"one"), _memo_instruction(b"two")],
+                {},
+                None,
+                None,
+                id="several-memos-without-extra-memo",
+            ),
+            pytest.param(
+                [],
+                [_memo_instruction(b"one"), _memo_instruction(b"two")],
+                {},
+                "one",
+                ERR_MEMO_COUNT,
+                id="several-memos-with-extra-memo",
+            ),
+            pytest.param(
+                [_memo_instruction(b"early")],
+                [],
+                {},
+                None,
+                ERR_PROTOCOL_INSTRUCTION_ORDER,
+                id="memo-before-transfer",
+            ),
+            pytest.param([_SETUP_IX()], [_FINISH_IX()], _BOTH, None, None, id="pre-and-postflight"),
+            pytest.param([_SETUP_IX()], [], {}, None, ERR_UNKNOWN_INSTRUCTION, id="no-allowlist"),
+            pytest.param(
+                [_block_instruction(_SETUP, b"\xff")],
+                [],
+                {"preflight_instruction_allowlist": [_PRE]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="preflight-wrong-discriminator",
+            ),
+            pytest.param(
+                [],
+                [_block_instruction(_FINISH, b"\xff")],
+                {"postflight_instruction_allowlist": [_POST]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="postflight-wrong-discriminator",
+            ),
+            pytest.param(
+                [_block_instruction(_SETUP, _LONG), _GUARD(), _FINISH_IX()],
+                [],
+                {
+                    "preflight_instruction_allowlist": [
+                        [InstructionIdentity(_SETUP, _LONG), InstructionIdentity(_FINISH, b"\xbb")]
+                    ]
+                },
+                None,
+                None,
+                id="tuple-with-interspersed-guard-and-long-discriminator",
+            ),
+            pytest.param(
+                [_SETUP_IX],
+                [],
+                {"preflight_instruction_allowlist": [_PRE]},
+                None,
+                ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+                id="fee-payer-in-preflight",
+            ),
+            pytest.param(
+                [],
+                [_FINISH_IX],
+                {"postflight_instruction_allowlist": [_POST]},
+                None,
+                ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
+                id="fee-payer-in-postflight",
+            ),
+            pytest.param(
+                [_SETUP_IX()],
+                [],
+                {"preflight_instruction_allowlist": [[]]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="empty-tuple-fails-closed",
+            ),
+            pytest.param(
+                [_SETUP_IX()],
+                [],
+                {"preflight_instruction_allowlist": [[InstructionIdentity(_SETUP, b"")]]},
+                None,
+                ERR_UNKNOWN_INSTRUCTION,
+                id="empty-discriminator-fails-closed",
+            ),
+        ],
+    )
+    def test_layout(self, before, after, scheme_kwargs, memo, reason):
+        facilitator_key = Keypair()
+        # A callable stands in for an instruction that needs the fee payer as an account.
+        before, after = (
+            [ix(facilitator_key.pubkey()) if callable(ix) else ix for ix in ixs]
+            for ixs in (before, after)
+        )
+        payload, requirements, facilitator_addr = _build_exact_fixture(
+            before=before, after=after, facilitator=facilitator_key
+        )
+        if memo:
+            requirements.extra["memo"] = memo
+        facilitator = ExactSvmFacilitatorScheme(
+            MockFacilitatorSigner([facilitator_addr]), **scheme_kwargs
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is (reason is None)
+        assert result.invalid_reason == reason
+
+    def test_rejects_duplicate_transfer_instruction(self):
+        payload, requirements, facilitator_addr = _build_exact_fixture()
+        tx_bytes = base64.b64decode(payload.payload["transaction"])
+        tx = VersionedTransaction.from_bytes(tx_bytes)
+
+        dup_instructions = list(tx.message.instructions) + [tx.message.instructions[2]]
+        message = MessageV0(
+            tx.message.header,
+            tx.message.account_keys,
+            tx.message.recent_blockhash,
+            dup_instructions,
+            tx.message.address_table_lookups,
+        )
+        signatures = list(tx.signatures)
+        dup_tx = VersionedTransaction.populate(message, signatures)
+        payload.payload["transaction"] = base64.b64encode(bytes(dup_tx)).decode()
+
+        signer = MockFacilitatorSigner([facilitator_addr])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_PROTOCOL_INSTRUCTION_ORDER
+
+    def test_rejects_unknown_program_anywhere(self):
+        system_program = Pubkey.from_string("11111111111111111111111111111111")
+        unknown_ix = Instruction(system_program, bytes([0x00]), [])
+        payload, requirements, facilitator_addr = _build_exact_fixture(after=[unknown_ix])
+        signer = MockFacilitatorSigner([facilitator_addr])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == ERR_UNKNOWN_INSTRUCTION
+
+
+class TestInstructionSecurity:
+    def test_invalid_guard_after_unknown_wrapper(self):
+        from x402.mechanisms.svm.constants import ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+
+        payload, requirements, address = _build_exact_fixture(
+            before=[
+                Instruction(Pubkey.default(), b"\x00", []),
+                Instruction(_LIGHTHOUSE_PUBKEY, b"\x00", []),
+            ]
+        )
+        result = ExactSvmFacilitatorScheme(MockFacilitatorSigner([address])).verify(
+            payload, requirements
+        )
+        assert result.invalid_reason == ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+
+    @pytest.mark.parametrize(
+        "data", [b"", b"\x00\x00\x00\x00\x00", b"\x01", b"\x12", b"\xff", b"\x02", b"\x11"]
+    )
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("postflight", [False, True])
+    @pytest.mark.parametrize("allowlisted", [False, True])
+    def test_lighthouse_policy(self, data, reference, postflight, allowlisted):
+        from x402.mechanisms.svm.constants import (
+            ERR_FEE_PAYER_TRANSFERRING,
+            ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
+        )
+
+        facilitator = Keypair()
+        instruction = Instruction(
+            _LIGHTHOUSE_PUBKEY,
+            data,
+            [AccountMeta(facilitator.pubkey(), True, True)] if reference else [],
+        )
+        payload, requirements, address = _build_exact_fixture(
+            before=[] if postflight else [instruction],
+            after=[instruction] if postflight else [],
+            facilitator=facilitator,
+        )
+        options = {}
+        if allowlisted:
+            options[
+                "postflight_instruction_allowlist"
+                if postflight
+                else "preflight_instruction_allowlist"
+            ] = [[InstructionIdentity(_LIGHTHOUSE_PUBKEY, data or b"\x00")]]
+        signer = MockFacilitatorSigner([address])
+        with (
+            patch.object(signer, "sign_transaction") as sign,
+            patch.object(signer, "simulate_transaction") as simulate,
+        ):
+            result = ExactSvmFacilitatorScheme(signer, **options).verify(payload, requirements)
+        invalid = not data or not 2 <= data[0] <= 17
+        expected = (
+            ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+            if invalid
+            else ERR_FEE_PAYER_TRANSFERRING
+            if reference
+            else None
+        )
+        assert result.invalid_reason == expected
+        assert result.is_valid is (expected is None)
+        if expected:
+            sign.assert_not_called()
+            simulate.assert_not_called()
+
+    @pytest.mark.parametrize("discriminator", range(2, 18))
+    def test_all_assertion_discriminators(self, discriminator):
+        payload, requirements, address = _build_exact_fixture(
+            after=[Instruction(_LIGHTHOUSE_PUBKEY, bytes([discriminator]), [])]
+        )
+        assert (
+            ExactSvmFacilitatorScheme(MockFacilitatorSigner([address]))
+            .verify(payload, requirements)
+            .is_valid
+        )
+
+    @pytest.mark.parametrize("postflight", [False, True])
+    @pytest.mark.parametrize(
+        "token_program", [TOKEN_PROGRAM_ADDRESS, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]
+    )
+    def test_allowlisted_duplicate_transfer(self, postflight, token_program):
+        from x402.mechanisms.svm.constants import ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED
+
+        payload, requirements, address = _build_exact_fixture()
+        tx = VersionedTransaction.from_bytes(base64.b64decode(payload.payload["transaction"]))
+        instructions = list(tx.message.instructions)
+        transfer = instructions[2]
+        keys = list(tx.message.account_keys)
+        keys[transfer.program_id_index] = Pubkey.from_string(token_program)
+        instructions = instructions + [transfer] if postflight else [transfer] + instructions
+        message = MessageV0(
+            tx.message.header,
+            keys,
+            tx.message.recent_blockhash,
+            instructions,
+            tx.message.address_table_lookups,
+        )
+        payload.payload["transaction"] = base64.b64encode(
+            bytes(VersionedTransaction.populate(message, tx.signatures))
+        ).decode()
+        options = {
+            "postflight_instruction_allowlist"
+            if postflight
+            else "preflight_instruction_allowlist": [
+                [InstructionIdentity(Pubkey.from_string(token_program), b"\x0c")]
+            ]
+        }
+        signer = MockFacilitatorSigner([address])
+        with (
+            patch.object(signer, "sign_transaction") as sign,
+            patch.object(signer, "simulate_transaction") as simulate,
+        ):
+            result = ExactSvmFacilitatorScheme(signer, **options).verify(payload, requirements)
+        assert result.invalid_reason == ERR_PREFLIGHT_POSTFLIGHT_TRANSFER_NOT_ALLOWED
+        sign.assert_not_called()
+        simulate.assert_not_called()
+
+
+class TestExactSvmSchemeConstructor:
+    """Test ExactSvmScheme facilitator constructor."""
+
+    def test_should_create_instance_with_correct_scheme(self):
+        """Should create instance with correct scheme."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        assert facilitator.scheme == "exact"
+
+    def test_uses_provided_pending_store_instead_of_a_fresh_default(self):
+        """A caller-supplied PendingSettlementStore must be the instance actually used,
+        not merely accepted and ignored in favor of the default. This is what lets a
+        multi-instance facilitator inject a shared, network-backed store."""
+        from x402.pending_settlement_store import InMemoryPendingSettlementStore
+
+        signer = MockFacilitatorSigner()
+        custom_store = InMemoryPendingSettlementStore()
+        facilitator = ExactSvmFacilitatorScheme(signer, pending_store=custom_store)
+
+        assert facilitator._pending_store is custom_store
+
+
+class TestVerify:
+    """Test verify method."""
+
+    def test_should_reject_if_scheme_does_not_match(self):
+        """Should reject if scheme does not match."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="wrong",  # Wrong scheme
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": "base64transaction=="},
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "unsupported_scheme"
+
+    def test_should_reject_if_network_does_not_match(self):
+        """Should reject if network does not match."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_MAINNET_CAIP2,  # Mainnet
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": "validbase64transaction=="},
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,  # Devnet
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        # Network check happens early
+        assert result.is_valid is False
+        assert result.invalid_reason == "network_mismatch"
+
+    def test_should_reject_if_fee_payer_is_missing(self):
+        """Should reject if feePayer is missing."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={},  # Missing feePayer
+            ),
+            payload={"transaction": "base64transaction=="},
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={},  # Missing feePayer
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_exact_svm_payload_missing_fee_payer"
+
+    def test_should_reject_if_transaction_cannot_be_decoded(self):
+        """Should reject if transaction cannot be decoded."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": "invalid!!!"},  # Invalid base64
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        # Transaction decoding or instruction validation fails
+        assert "invalid_exact_svm_payload" in result.invalid_reason
+
+
+class TestSettle:
+    """Test settle method."""
+
+    def test_should_fail_settlement_if_verification_fails(self):
+        """Should fail settlement if verification fails."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="wrong",  # Wrong scheme
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": "base64transaction=="},
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+        # settle() now decodes the transaction up front (to key the pending-settlement
+        # store) before verify() runs, so an arbitrary test string needs a fake decode to
+        # reach the scheme-mismatch check below.
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda payload: _FakeTx(payload.transaction),
+        ):
+            result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "unsupported_scheme"
+        assert result.network == SOLANA_DEVNET_CAIP2
+
+    def test_should_fail_settlement_with_settlement_pending_on_confirm_timeout(self):
+        """Confirm-timeout must report settlement_pending (not transaction_failed) and
+        populate the pending-settlement store with the broadcast signature."""
+
+        signer = _ConfirmTimeoutSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=requirements,
+            payload={"transaction": "AAAA"},
+        )
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda payload: _FakeTx(payload.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "settlement_pending"
+        assert result.transaction == "mockSignature123"
+        assert (
+            facilitator._pending_store.get(transaction_message_hash(_FakeTx("AAAA")))
+            == "mockSignature123"
+        )
+
+
+def _make_settle_fixtures(signer, transaction: str = "cachedTransaction=="):
+    facilitator = ExactSvmFacilitatorScheme(signer)
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network=SOLANA_DEVNET_CAIP2,
+        asset=USDC_DEVNET_ADDRESS,
+        amount="100000",
+        pay_to="PayToAddress11111111111111111111111111",
+        max_timeout_seconds=3600,
+        extra={"feePayer": "FeePayer1111111111111111111111111111"},
+    )
+    payload = PaymentPayload(
+        x402_version=2,
+        resource=ResourceInfo(
+            url="http://example.com/protected",
+            description="Test resource",
+            mime_type="application/json",
+        ),
+        accepted=requirements,
+        payload={"transaction": transaction},
+    )
+    return facilitator, payload, requirements
+
+
+class TestSettlePendingSettlementStoreReconciliation:
+    """Cache-hit reconciliation and store-lifecycle tests for ExactSvmScheme.settle()."""
+
+    def test_cache_miss_broadcast_success_leaves_store_empty(self):
+        signer = MockFacilitatorSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is True
+        assert (
+            facilitator._pending_store.get(
+                transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+            )
+            is None
+        )
+
+    def test_cache_hit_skips_verify_and_send_then_reconciles_success(self):
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                first = facilitator.settle(payload, requirements)
+                assert first.success is False
+
+                # The signature confirms on the next attempt.
+                signer.confirm_transaction = lambda signature, network: None
+                with patch.object(
+                    facilitator,
+                    "verify",
+                    side_effect=AssertionError("verify must be skipped on a pending-store hit"),
+                ):
+                    second = facilitator.settle(payload, requirements)
+
+        assert second.success is True
+        assert second.transaction == first.transaction
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._pending_store.get(tx_key) is None
+
+    def test_cache_hit_still_unconfirmed_returns_settlement_pending_again(self):
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                first = facilitator.settle(payload, requirements)
+                second = facilitator.settle(payload, requirements)
+
+        assert first.success is False
+        assert second.success is False
+        assert second.error_reason == "settlement_pending"
+        assert second.transaction == first.transaction
+
+    def test_verify_only_failure_is_terminal_and_never_touches_store(self):
+        signer = MockFacilitatorSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=False, invalid_reason="invalid_signature"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "invalid_signature"
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._pending_store.get(tx_key) is None
+
+    def test_confirm_timeout_preserves_duplicate_cache_entry(self):
+        """A confirm-wait timeout is non-terminal (the transaction really was broadcast), so
+        the dedup lock must stay held — otherwise a fresh settle for the identical payload
+        (e.g. from a caller without a shared PendingSettlementStore) could re-verify and
+        re-send a transaction that's already in flight. Mirrors the Go/TS SVM exact tests.
+        """
+
+        signer = _ConfirmTimeoutSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+        assert facilitator._settlement_cache.is_duplicate(tx_key) is True
+
+    def test_send_failure_is_terminal_and_deletes_duplicate_cache_entry(self):
+        class _SendFailsSigner(MockFacilitatorSigner):
+            def send_transaction(self, tx_base64: str, network: str) -> str:
+                raise RuntimeError("rpc: connection refused")
+
+        signer = _SendFailsSigner()
+        facilitator, payload, requirements = _make_settle_fixtures(signer)
+
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=lambda p: _FakeTx(p.transaction),
+        ):
+            with patch.object(
+                facilitator,
+                "verify",
+                return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+            ):
+                facilitator.settle(payload, requirements)
+                tx_key = transaction_message_hash(_FakeTx(payload.payload["transaction"]))
+
+                # The failed send must not leave the transaction stuck in the duplicate
+                # cache — a retry with the identical payload should reach send again
+                # rather than being rejected as a duplicate.
+                assert facilitator._settlement_cache.is_duplicate(tx_key) is False
+
+
+class TestFacilitatorSchemeAttributes:
+    """Test facilitator scheme attributes."""
+
+    def test_scheme_attribute_is_exact(self):
+        """scheme attribute should be 'exact'."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        assert facilitator.scheme == "exact"
+
+    def test_caip_family_attribute(self):
+        """caip_family attribute should be 'solana:*'."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        assert facilitator.caip_family == "solana:*"
+
+    def test_get_extra_returns_fee_payer(self):
+        """get_extra should return feePayer address."""
+        signer = MockFacilitatorSigner(["TestFeePayer11111111111111111111111"])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        extra = facilitator.get_extra(SOLANA_DEVNET_CAIP2)
+
+        assert extra is not None
+        assert "feePayer" in extra
+        assert extra["feePayer"] == "TestFeePayer11111111111111111111111"
+
+    def test_get_signers_returns_signer_addresses(self):
+        """get_signers should return list of signer addresses."""
+        addresses = [
+            "Signer1111111111111111111111111111111",
+            "Signer2222222222222222222222222222222",
+        ]
+        signer = MockFacilitatorSigner(addresses)
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        result = facilitator.get_signers(SOLANA_DEVNET_CAIP2)
+
+        assert result == addresses
+
+
+class _FakeTx:
+    """Transaction-shaped fixture with a distinct, valid v0 message per input string."""
+
+    def __init__(self, transaction_str: str) -> None:
+        payer = Pubkey.from_bytes(hashlib.sha256(transaction_str.encode()).digest())
+        instruction = Instruction(
+            Pubkey.from_string("11111111111111111111111111111111"),
+            transaction_str.encode(),
+            [],
+        )
+        self.message = MessageV0.try_compile(payer, [instruction], [], Hash.default())
+
+
+class TestDuplicateSettlementCache:
+    """Test duplicate settlement cache in settle method."""
+
+    @pytest.fixture(autouse=True)
+    def mock_decode(self):
+        """Patch decode_transaction_from_payload in both V1 and V2 facilitator modules.
+
+        The settle method now decodes the transaction to compute its message hash before
+        the cache check. These tests use arbitrary strings, not real Solana binaries, so
+        we return a fake transaction whose message bytes are deterministically derived
+        from the transaction string. Same string → same hash → cache hit; different
+        strings → different hashes → cache miss.
+        """
+        fake = lambda payload: _FakeTx(payload.transaction)  # noqa: E731
+        with patch(
+            "x402.mechanisms.svm.exact.facilitator.decode_transaction_from_payload",
+            side_effect=fake,
+        ):
+            with patch(
+                "x402.mechanisms.svm.exact.v1.facilitator.decode_transaction_from_payload",
+                side_effect=fake,
+            ):
+                yield
+
+    def _make_payload(self, transaction: str) -> PaymentPayload:
+        wire = VersionedTransaction.populate(_FakeTx(transaction).message, [Signature.default()])
+        return PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "FeePayer1111111111111111111111111111"},
+            ),
+            payload={"transaction": base64.b64encode(bytes(wire)).decode()},
+        )
+
+    def _make_requirements(self) -> PaymentRequirements:
+        return PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+
+    def test_should_reject_duplicate_settlement(self):
+        """Second settle call with the same transaction should be rejected."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+        payload = self._make_payload("sameTransactionBase64==")
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(payload, requirements)
+            assert result1.success is True
+
+            result2 = facilitator.settle(payload, requirements)
+            assert result2.success is False
+            assert result2.error_reason == "duplicate_settlement"
+
+    def test_should_allow_distinct_transactions(self):
+        """Two different transactions should both settle successfully."""
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(self._make_payload("transactionA=="), requirements)
+            assert result1.success is True
+
+            result2 = facilitator.settle(self._make_payload("transactionB=="), requirements)
+            assert result2.success is True
+
+    def test_should_evict_cache_entries_after_ttl(self):
+        """Cache entries should be pruned after TTL so they no longer block locally.
+
+        NOTE: In production the Solana RPC would still reject a re-submitted
+        transaction that already landed on-chain. This test only verifies that
+        the in-memory cache correctly prunes expired entries.
+        """
+        signer = MockFacilitatorSigner()
+        facilitator = ExactSvmFacilitatorScheme(signer)
+        requirements = self._make_requirements()
+        payload = self._make_payload("expiringTransaction==")
+
+        with patch.object(
+            facilitator,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = facilitator.settle(payload, requirements)
+            assert result1.success is True
+
+            # Simulate TTL expiration by backdating the cache entry
+            for key in facilitator._settlement_cache.entries:
+                facilitator._settlement_cache.entries[key] -= 121.0
+
+            result2 = facilitator.settle(payload, requirements)
+            assert result2.success is True
+
+    def test_shared_cache_blocks_cross_version_duplicates(self):
+        """V1 and V2 sharing a cache should catch cross-version duplicates."""
+        from x402.mechanisms.svm.exact.v1.facilitator import (
+            ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1,
+        )
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+        from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
+
+        signer = MockFacilitatorSigner()
+        shared_cache = SettlementCache()
+        v2 = ExactSvmFacilitatorScheme(signer, shared_cache)
+        v1 = ExactSvmFacilitatorSchemeV1(signer, shared_cache)
+        payload = self._make_payload("crossVersionTx==")
+
+        # Settle via V2 first
+        with patch.object(
+            v2,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result1 = v2.settle(
+                payload,
+                self._make_requirements(),
+            )
+            assert result1.success is True
+
+        # Same tx via V1 should be rejected by the shared cache
+        v1_payload = PaymentPayloadV1(
+            scheme="exact",
+            network="solana-devnet",
+            payload=payload.payload,
+        )
+        v1_requirements = PaymentRequirementsV1(
+            scheme="exact",
+            network="solana-devnet",
+            asset=USDC_DEVNET_ADDRESS,
+            max_amount_required="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            resource="https://example.com",
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+        with patch.object(
+            v1,
+            "verify",
+            return_value=VerifyResponse(is_valid=True, payer="PayerAddress"),
+        ):
+            result2 = v1.settle(v1_payload, v1_requirements)
+            assert result2.success is False
+            assert result2.error_reason == "duplicate_settlement"
+
+
+class TestVerifyFeePayer:
+    """Test fee payer verification in verify method."""
+
+    def test_should_reject_if_fee_payer_not_managed(self):
+        """Should reject if feePayer is not managed by facilitator."""
+        signer = MockFacilitatorSigner(["ManagedPayer111111111111111111111111"])
+        facilitator = ExactSvmFacilitatorScheme(signer)
+
+        payload = PaymentPayload(
+            x402_version=2,
+            resource=ResourceInfo(
+                url="http://example.com/protected",
+                description="Test resource",
+                mime_type="application/json",
+            ),
+            accepted=PaymentRequirements(
+                scheme="exact",
+                network=SOLANA_DEVNET_CAIP2,
+                asset=USDC_DEVNET_ADDRESS,
+                amount="100000",
+                pay_to="PayToAddress11111111111111111111111111",
+                max_timeout_seconds=3600,
+                extra={"feePayer": "UnmanagedPayer1111111111111111111"},  # Not managed
+            ),
+            payload={"transaction": "base64transaction=="},
+        )
+
+        requirements = PaymentRequirements(
+            scheme="exact",
+            network=SOLANA_DEVNET_CAIP2,
+            asset=USDC_DEVNET_ADDRESS,
+            amount="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            extra={"feePayer": "UnmanagedPayer1111111111111111111"},  # Not managed
+        )
+
+        result = facilitator.verify(payload, requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "fee_payer_not_managed_by_facilitator"
+
+
+class TestSettlementCachePruneOptimization:
+    """Verify the early-break prune optimization preserves insertion-order semantics."""
+
+    def test_prunes_only_expired_entries_preserves_fresh_ones(self):
+        """Entries older than TTL are pruned; newer entries survive."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-a")
+        cache.is_duplicate("tx-b")
+        cache.is_duplicate("tx-c")
+
+        # Backdate tx-a past TTL (121s), leave tx-b and tx-c fresh
+        base = cache.entries["tx-a"]
+        cache.entries["tx-a"] = base - 121.0
+
+        assert cache.is_duplicate("tx-a") is False, "expired entry should have been pruned"
+        assert cache.is_duplicate("tx-b") is True, "fresh entry should still be cached"
+        assert cache.is_duplicate("tx-c") is True, "fresh entry should still be cached"
+
+    def test_prunes_all_entries_when_all_expired(self):
+        """When every entry is expired, all should be pruned."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-1")
+        cache.is_duplicate("tx-2")
+        cache.is_duplicate("tx-3")
+
+        for k in list(cache.entries):
+            cache.entries[k] -= 121.0
+
+        assert cache.is_duplicate("tx-1") is False
+        assert cache.is_duplicate("tx-2") is False
+        assert cache.is_duplicate("tx-3") is False
+
+    def test_prunes_nothing_when_all_fresh(self):
+        """When no entries are expired, none should be pruned."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        cache.is_duplicate("tx-x")
+        cache.is_duplicate("tx-y")
+        cache.is_duplicate("tx-z")
+
+        assert cache.is_duplicate("tx-x") is True
+        assert cache.is_duplicate("tx-y") is True
+        assert cache.is_duplicate("tx-z") is True
+
+    def test_early_break_preserves_ordered_entries(self):
+        """Insertion-order iteration means the break fires at the first fresh entry."""
+        from x402.mechanisms.svm.settlement_cache import SettlementCache
+
+        cache = SettlementCache()
+
+        # Insert A, B, C in order with small gaps
+        cache.is_duplicate("tx-old-1")
+        cache.is_duplicate("tx-old-2")
+        cache.is_duplicate("tx-fresh")
+
+        # Expire only the first two
+        for k in ("tx-old-1", "tx-old-2"):
+            cache.entries[k] -= 121.0
+
+        # Trigger prune
+        cache.is_duplicate("tx-new")
+
+        assert "tx-old-1" not in cache.entries, "first expired entry should be pruned"
+        assert "tx-old-2" not in cache.entries, "second expired entry should be pruned"
+        assert "tx-fresh" in cache.entries, "fresh entry after expired ones should survive"
+        assert "tx-new" in cache.entries, "newly inserted entry should be present"

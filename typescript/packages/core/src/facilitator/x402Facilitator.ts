@@ -1,0 +1,566 @@
+import { x402Version } from "..";
+import { SettleResponse, VerifyResponse } from "../types/facilitator";
+import { FacilitatorExtension } from "../types/extensions";
+import { SchemeNetworkFacilitator, FacilitatorContext } from "../types/mechanisms";
+import { PaymentPayload, PaymentRequirements } from "../types/payments";
+import { Network } from "../types";
+import { networkMatchesPattern, type SchemeData } from "../utils";
+
+/**
+ * Facilitator Hook Context Interfaces
+ */
+
+export interface FacilitatorVerifyContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+}
+
+export interface FacilitatorVerifyResultContext extends FacilitatorVerifyContext {
+  result: VerifyResponse;
+}
+
+export interface FacilitatorVerifyFailureContext extends FacilitatorVerifyContext {
+  error: Error;
+}
+
+export interface FacilitatorSettleContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+}
+
+export interface FacilitatorSettleResultContext extends FacilitatorSettleContext {
+  result: SettleResponse;
+}
+
+export interface FacilitatorSettleFailureContext extends FacilitatorSettleContext {
+  error: Error;
+}
+
+/**
+ * Facilitator Hook Type Definitions
+ */
+
+export type FacilitatorBeforeVerifyHook = (
+  context: FacilitatorVerifyContext,
+) => Promise<void | { abort: true; reason: string; message?: string }>;
+
+export type FacilitatorAfterVerifyHook = (context: FacilitatorVerifyResultContext) => Promise<void>;
+
+export type FacilitatorOnVerifyFailureHook = (
+  context: FacilitatorVerifyFailureContext,
+) => Promise<void | { recovered: true; result: VerifyResponse }>;
+
+export type FacilitatorBeforeSettleHook = (
+  context: FacilitatorSettleContext,
+) => Promise<void | { abort: true; reason: string; message?: string }>;
+
+export type FacilitatorAfterSettleHook = (context: FacilitatorSettleResultContext) => Promise<void>;
+
+export type FacilitatorOnSettleFailureHook = (
+  context: FacilitatorSettleFailureContext,
+) => Promise<void | { recovered: true; result: SettleResponse }>;
+
+/**
+ * Facilitator client for the x402 payment protocol.
+ * Manages payment scheme registration, verification, and settlement.
+ */
+export class x402Facilitator {
+  private readonly registeredFacilitatorSchemes: Map<
+    number,
+    SchemeData<SchemeNetworkFacilitator>[] // Array to support multiple facilitators per version
+  > = new Map();
+  private readonly extensions: Map<string, FacilitatorExtension> = new Map();
+
+  private beforeVerifyHooks: FacilitatorBeforeVerifyHook[] = [];
+  private afterVerifyHooks: FacilitatorAfterVerifyHook[] = [];
+  private onVerifyFailureHooks: FacilitatorOnVerifyFailureHook[] = [];
+  private beforeSettleHooks: FacilitatorBeforeSettleHook[] = [];
+  private afterSettleHooks: FacilitatorAfterSettleHook[] = [];
+  private onSettleFailureHooks: FacilitatorOnSettleFailureHook[] = [];
+
+  /**
+   * Registers a scheme facilitator for the current x402 version.
+   * Networks are stored and used for getSupported() - no need to specify them later.
+   *
+   * @param networks - Single network or array of networks this facilitator supports
+   * @param facilitator - The scheme network facilitator to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  register(networks: Network | Network[], facilitator: SchemeNetworkFacilitator): x402Facilitator {
+    const networksArray = Array.isArray(networks) ? networks : [networks];
+    return this._registerScheme(x402Version, networksArray, facilitator);
+  }
+
+  /**
+   * Registers a scheme facilitator for x402 version 1.
+   * Networks are stored and used for getSupported() - no need to specify them later.
+   *
+   * @param networks - Single network or array of networks this facilitator supports
+   * @param facilitator - The scheme network facilitator to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  registerV1(
+    networks: Network | Network[],
+    facilitator: SchemeNetworkFacilitator,
+  ): x402Facilitator {
+    const networksArray = Array.isArray(networks) ? networks : [networks];
+    return this._registerScheme(1, networksArray, facilitator);
+  }
+
+  /**
+   * Registers a protocol extension.
+   *
+   * @param extension - The extension object to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  registerExtension(extension: FacilitatorExtension): x402Facilitator {
+    this.extensions.set(extension.key, extension);
+    return this;
+  }
+
+  /**
+   * Gets the list of registered extension keys.
+   *
+   * @returns Array of extension key strings
+   */
+  getExtensions(): string[] {
+    return Array.from(this.extensions.keys());
+  }
+
+  /**
+   * Gets a registered extension by key.
+   *
+   * @param key - The extension key to look up
+   * @returns The extension object, or undefined if not registered
+   */
+  getExtension<T extends FacilitatorExtension = FacilitatorExtension>(key: string): T | undefined {
+    return this.extensions.get(key) as T | undefined;
+  }
+
+  /**
+   * Register a hook to execute before facilitator payment verification.
+   * Can abort verification by returning { abort: true, reason: string, message?: string }
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onBeforeVerify(hook: FacilitatorBeforeVerifyHook): x402Facilitator {
+    this.beforeVerifyHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute after verification returns a result, including
+   * `isValid: false`. A thrown verification error uses `onVerifyFailure` instead.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onAfterVerify(hook: FacilitatorAfterVerifyHook): x402Facilitator {
+    this.afterVerifyHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute when verification throws.
+   * It does not run for a result with `isValid: false`. Use `onAfterVerify` for that rejection.
+   * Can recover from failure by returning { recovered: true, result: VerifyResponse }
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onVerifyFailure(hook: FacilitatorOnVerifyFailureHook): x402Facilitator {
+    this.onVerifyFailureHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute before facilitator payment settlement.
+   * Can abort settlement by returning { abort: true, reason: string, message?: string }
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onBeforeSettle(hook: FacilitatorBeforeSettleHook): x402Facilitator {
+    this.beforeSettleHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute after successful facilitator payment settlement.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onAfterSettle(hook: FacilitatorAfterSettleHook): x402Facilitator {
+    this.afterSettleHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute when facilitator payment settlement fails.
+   * Can recover from failure by returning { recovered: true, result: SettleResponse }
+   *
+   * @param hook - The hook function to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  onSettleFailure(hook: FacilitatorOnSettleFailureHook): x402Facilitator {
+    this.onSettleFailureHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Gets supported payment kinds, extensions, and signers.
+   * Uses networks registered during register() calls - no parameters needed.
+   * Returns flat array format for backward compatibility with V1 clients.
+   *
+   * @returns Supported response with kinds as array (with version in each element), extensions, and signers
+   */
+  getSupported(): {
+    kinds: Array<{
+      x402Version: number;
+      scheme: string;
+      network: string;
+      extra?: Record<string, unknown>;
+    }>;
+    extensions: string[];
+    signers: Record<string, string[]>;
+  } {
+    const kinds: Array<{
+      x402Version: number;
+      scheme: string;
+      network: string;
+      extra?: Record<string, unknown>;
+    }> = [];
+    const signersByFamily: Record<string, Set<string>> = {};
+
+    for (const [version, schemeDataArray] of this.registeredFacilitatorSchemes) {
+      for (const schemeData of schemeDataArray) {
+        const { facilitator, networks } = schemeData;
+        const scheme = facilitator.scheme;
+
+        for (const network of networks) {
+          const extra = facilitator.getExtra(network);
+          kinds.push({
+            x402Version: version,
+            scheme,
+            network,
+            ...(extra && { extra }),
+          });
+
+          const family = facilitator.caipFamily;
+          if (!signersByFamily[family]) {
+            signersByFamily[family] = new Set();
+          }
+          facilitator.getSigners(network).forEach(signer => signersByFamily[family].add(signer));
+        }
+      }
+    }
+
+    const signers: Record<string, string[]> = {};
+    for (const [family, signerSet] of Object.entries(signersByFamily)) {
+      signers[family] = Array.from(signerSet);
+    }
+
+    return {
+      kinds,
+      extensions: this.getExtensions(),
+      signers,
+    };
+  }
+
+  /**
+   * Verifies a payment payload against requirements.
+   *
+   * @param paymentPayload - The payment payload to verify
+   * @param paymentRequirements - The payment requirements to verify against
+   * @returns Promise resolving to the verification response
+   */
+  async verify(
+    paymentPayload: PaymentPayload,
+    paymentRequirements: PaymentRequirements,
+  ): Promise<VerifyResponse> {
+    const context: FacilitatorVerifyContext = {
+      paymentPayload,
+      requirements: paymentRequirements,
+    };
+
+    // This is a gate phase, so a throwing hook is deliberately not isolated:
+    // verification fails closed instead of skipping the check.
+    for (const hook of this.beforeVerifyHooks) {
+      const result = await hook(context);
+      if (result && "abort" in result && result.abort) {
+        return {
+          isValid: false,
+          invalidReason: result.reason,
+          invalidMessage: result.message,
+        };
+      }
+    }
+
+    try {
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
+      const facilitatorContext = this.buildFacilitatorContext();
+      const verifyResult = await schemeNetworkFacilitator.verify(
+        paymentPayload,
+        paymentRequirements,
+        facilitatorContext,
+      );
+
+      const resultContext: FacilitatorVerifyResultContext = {
+        ...context,
+        result: verifyResult,
+      };
+
+      for (const hook of this.afterVerifyHooks) {
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterVerify", error);
+        }
+      }
+
+      return verifyResult;
+    } catch (error) {
+      const failureContext: FacilitatorVerifyFailureContext = {
+        ...context,
+        error: error as Error,
+      };
+
+      for (const hook of this.onVerifyFailureHooks) {
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onVerifyFailure", hookError);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Settles a payment based on the payload and requirements.
+   *
+   * @param paymentPayload - The payment payload to settle
+   * @param paymentRequirements - The payment requirements for settlement
+   * @returns Promise resolving to the settlement response. A before-hook abort resolves with
+   * `success: false`.
+   */
+  async settle(
+    paymentPayload: PaymentPayload,
+    paymentRequirements: PaymentRequirements,
+  ): Promise<SettleResponse> {
+    const context: FacilitatorSettleContext = {
+      paymentPayload,
+      requirements: paymentRequirements,
+    };
+
+    for (const hook of this.beforeSettleHooks) {
+      const result = await hook(context);
+      if (result && "abort" in result && result.abort) {
+        return {
+          success: false,
+          errorReason: result.reason,
+          errorMessage: result.message,
+          transaction: "",
+          network: paymentRequirements.network,
+        };
+      }
+    }
+
+    try {
+      const schemeNetworkFacilitator = this.resolveSchemeNetworkFacilitator(
+        paymentPayload.x402Version,
+        paymentRequirements,
+      );
+      const facilitatorContext = this.buildFacilitatorContext();
+      const settleResult = await schemeNetworkFacilitator.settle(
+        paymentPayload,
+        paymentRequirements,
+        facilitatorContext,
+      );
+
+      const resultContext: FacilitatorSettleResultContext = {
+        ...context,
+        result: settleResult,
+      };
+
+      // Isolate afterSettle hook failures: settlement has already executed
+      // onchain, so a throwing observer must not convert a successful settle
+      // into an error response (or trigger onSettleFailure hooks).
+      for (const hook of this.afterSettleHooks) {
+        try {
+          await hook(resultContext);
+        } catch (error) {
+          this.warnFacilitatorHookFailure("afterSettle", error);
+        }
+      }
+
+      return settleResult;
+    } catch (error) {
+      const failureContext: FacilitatorSettleFailureContext = {
+        ...context,
+        error: error as Error,
+      };
+
+      for (const hook of this.onSettleFailureHooks) {
+        try {
+          const result = await hook(failureContext);
+          if (result && "recovered" in result && result.recovered) {
+            return result.result;
+          }
+        } catch (hookError) {
+          this.warnFacilitatorHookFailure("onSettleFailure", hookError);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Returns the first facilitator for this version whose scheme matches and whose
+   * network is listed or matches that registration's pattern.
+   *
+   * @param x402Version - Payment payload version
+   * @param requirements - Scheme and network to match
+   * @returns The registered facilitator
+   */
+  private resolveSchemeNetworkFacilitator(
+    x402Version: PaymentPayload["x402Version"],
+    requirements: PaymentRequirements,
+  ): SchemeNetworkFacilitator {
+    const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version);
+    if (!schemeDataArray) {
+      throw new Error(`No facilitator registered for x402 version: ${x402Version}`);
+    }
+
+    for (const schemeData of schemeDataArray) {
+      if (schemeData.facilitator.scheme !== requirements.scheme) {
+        continue;
+      }
+      if (
+        schemeData.networks.has(requirements.network) ||
+        networkMatchesPattern(schemeData.pattern, requirements.network)
+      ) {
+        return schemeData.facilitator;
+      }
+    }
+
+    throw new Error(
+      `No facilitator registered for scheme: ${requirements.scheme} and network: ${requirements.network}`,
+    );
+  }
+
+  /**
+   * Logs a warning when an advisory lifecycle hook (after* or on*Failure) throws.
+   *
+   * @param phase - Lifecycle phase whose hook threw
+   * @param error - Thrown value or rejection reason
+   */
+  private warnFacilitatorHookFailure(phase: string, error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`[x402] Facilitator ${phase} hook threw: ${detail}`);
+  }
+
+  /**
+   * Builds a FacilitatorContext from the registered extensions map.
+   * Passed to mechanism verify/settle so they can access extension capabilities.
+   *
+   * @returns A FacilitatorContext backed by this facilitator's registered extensions
+   */
+  private buildFacilitatorContext(): FacilitatorContext {
+    const extensionsMap = this.extensions;
+    return {
+      getExtension<T extends FacilitatorExtension = FacilitatorExtension>(
+        key: string,
+      ): T | undefined {
+        return extensionsMap.get(key) as T | undefined;
+      },
+    };
+  }
+
+  /**
+   * Internal method to register a scheme facilitator.
+   *
+   * @param x402Version - The x402 protocol version
+   * @param networks - Array of concrete networks this facilitator supports
+   * @param facilitator - The scheme network facilitator to register
+   * @returns The x402Facilitator instance for chaining
+   */
+  private _registerScheme(
+    x402Version: number,
+    networks: Network[],
+    facilitator: SchemeNetworkFacilitator,
+  ): x402Facilitator {
+    if (!this.registeredFacilitatorSchemes.has(x402Version)) {
+      this.registeredFacilitatorSchemes.set(x402Version, []);
+    }
+    const schemeDataArray = this.registeredFacilitatorSchemes.get(x402Version)!;
+
+    // One SchemeData entry per CAIP-2 namespace present in `networks`, not
+    // one entry for the whole (possibly mixed-namespace) list: a single
+    // `pattern` can only ever be a wildcard for ONE namespace at a time
+    // (derivePattern's own contract), so a mixed-namespace registration
+    // (e.g. ["stellar:testnet", "eip155:8453"]) needs one wildcard per
+    // namespace it actually covers, not a single pattern collapsed onto
+    // the first network's namespace, which previously provided no
+    // wildcard coverage in ANY namespace involved: it just duplicated the
+    // exact-match Set's own coverage of that one network. Each entry's
+    // `networks` is scoped to its OWN namespace's networks (not the full,
+    // possibly mixed-namespace set): every network is still found in its
+    // own namespace's entry, so exact matching (checked first in
+    // resolveSchemeNetworkFacilitator, before pattern matching) stays
+    // correct, and getSupported() no longer walks the same network once
+    // per namespace entry and advertises duplicate kinds for it.
+    const networksByNamespace = new Map<string, Network[]>();
+    for (const network of networks) {
+      const namespace = network.split(":")[0];
+      const existing = networksByNamespace.get(namespace);
+      if (existing) {
+        existing.push(network);
+      } else {
+        networksByNamespace.set(namespace, [network]);
+      }
+    }
+
+    for (const namespaceNetworks of networksByNamespace.values()) {
+      schemeDataArray.push({
+        facilitator,
+        networks: new Set(namespaceNetworks),
+        pattern: this.derivePattern(namespaceNetworks),
+      });
+    }
+
+    return this;
+  }
+
+  /**
+   * Derives a wildcard pattern from an array of networks.
+   * If all networks share the same namespace, returns wildcard pattern.
+   * Otherwise returns the first network for exact matching.
+   *
+   * @param networks - Array of networks
+   * @returns Derived pattern for matching
+   */
+  private derivePattern(networks: Network[]): Network {
+    if (networks.length === 0) return "" as Network;
+    if (networks.length === 1) return networks[0];
+
+    const namespaces = networks.map(n => n.split(":")[0]);
+    const uniqueNamespaces = new Set(namespaces);
+
+    if (uniqueNamespaces.size === 1) {
+      return `${namespaces[0]}:*` as Network;
+    }
+
+    return networks[0];
+  }
+}

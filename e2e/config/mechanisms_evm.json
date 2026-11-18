@@ -1,0 +1,568 @@
+{
+  "env": {
+    "SERVER_EVM_ADDRESS": {
+      "required": true,
+      "roles": [
+        "server"
+      ]
+    },
+    "CLIENT_EVM_PRIVATE_KEY": {
+      "required": true,
+      "roles": [
+        "client"
+      ]
+    },
+    "FACILITATOR_EVM_PRIVATE_KEY": {
+      "required": true,
+      "roles": [
+        "facilitator"
+      ]
+    },
+    "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "EVM_PERMIT2_ASSET": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    },
+    "EVM_BATCH_SETTLEMENT_CHANNEL": {
+      "required": false,
+      "roles": [
+        "client"
+      ]
+    },
+    "EVM_BATCH_SETTLEMENT_PHASE": {
+      "required": false,
+      "roles": [
+        "client"
+      ]
+    },
+    "EVM_BATCH_SETTLEMENT_RECOVERY": {
+      "required": false,
+      "roles": [
+        "client"
+      ]
+    },
+    "CLIENT_EVM_BATCH_SETTLEMENT_VOUCHER_SIGNER_PRIVATE_KEY": {
+      "required": false,
+      "roles": [
+        "client"
+      ]
+    },
+    "EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE": {
+      "required": false,
+      "roles": [
+        "server",
+        "client",
+        "facilitator"
+      ]
+    },
+    "SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY": {
+      "required": false,
+      "roles": [
+        "server"
+      ]
+    }
+  },
+  "testnet": {
+    "name": "Base Sepolia",
+    "caip2": "eip155:84532",
+    "rpcUrlDefault": "https://sepolia.base.org",
+    "permit2Asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "permit2AssetName": "USDC"
+  },
+  "mainnet": {
+    "name": "Base",
+    "caip2": "eip155:8453",
+    "rpcUrlDefault": "https://mainnet.base.org",
+    "permit2Asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "permit2AssetName": "USD Coin"
+  },
+  "routes": {
+    "/batch-settlement/evm/eip3009": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement/evm/permit2": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": [
+        "bazaar",
+        "eip2612GasSponsoring"
+      ]
+    },
+    "/batch-settlement/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": [
+        "bazaar",
+        "erc20ApprovalGasSponsoring"
+      ]
+    },
+    "/batch-settlement-managed/evm/eip3009": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "facilitatorManaged": true
+      },
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true,
+        "facilitatorManaged": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "coldstart": true,
+        "facilitatorManaged": true
+      },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": [
+        "bazaar",
+        "eip2612GasSponsoring"
+      ]
+    },
+    "/batch-settlement-managed/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "batch-settlement",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "facilitatorSdks": [
+        "go"
+      ],
+      "schemeOptions": {
+        "coldstart": true,
+        "facilitatorManaged": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": [
+        "bazaar",
+        "erc20ApprovalGasSponsoring"
+      ]
+    },
+    "/exact/evm/eip3009": {
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/evm/eip3009/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "paymentFlow": "upfront",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/evm/permit2": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/evm/permit2/upfront": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "paymentFlow": "upfront",
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ]
+    },
+    "/exact/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "usd": "$0.001",
+        "declareAssetTransferMethod": true
+      },
+      "extensions": [
+        "bazaar",
+        "eip2612GasSponsoring"
+      ]
+    },
+    "/exact/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "exact",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2"
+      },
+      "extensions": [
+        "bazaar",
+        "erc20ApprovalGasSponsoring"
+      ]
+    },
+    "/upto/evm/permit2": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "settlementOverride": {
+        "amount": "1000"
+      }
+    },
+    "/upto/evm/permit2-eip2612GasSponsoring": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar",
+        "eip2612GasSponsoring"
+      ],
+      "settlementOverride": {
+        "amount": "1000"
+      }
+    },
+    "/upto/evm/permit2-erc20ApprovalGasSponsoring": {
+      "scheme": "upto",
+      "assetTransferMethod": "permit2",
+      "sdks": [
+        "typescript",
+        "go",
+        "python"
+      ],
+      "schemeOptions": {
+        "coldstart": true
+      },
+      "price": {
+        "amount": "2000",
+        "assetRef": "permit2"
+      },
+      "extensions": [
+        "bazaar",
+        "erc20ApprovalGasSponsoring"
+      ],
+      "settlementOverride": {
+        "amount": "1000"
+      }
+    },
+    "/auth-capture/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "requiresEnv": "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "paymentFlow": "escrow",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "sync"
+      }
+    },
+    "/auth-capture/evm/permit2": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "permit2",
+      "requiresEnv": "SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "paymentFlow": "escrow",
+      "schemeOptions": {
+        "permit2Direct": true
+      },
+      "price": {
+        "amount": "1000",
+        "assetRef": "permit2",
+        "permit2Domain": true
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "sync"
+      }
+    },
+    "/auth-capture-facilitator-authorizer/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "paymentFlow": "escrow",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "sync"
+      }
+    },
+    "/auth-capture-deferred/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "paymentFlow": "escrow",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "delegated",
+        "paymentFlow": "escrow",
+        "captureMode": "deferred"
+      }
+    },
+    "/auth-capture-custom-forwarding/evm/eip3009": {
+      "scheme": "auth-capture",
+      "assetTransferMethod": "eip3009",
+      "sdks": [
+        "typescript",
+        "go"
+      ],
+      "paymentFlow": "escrow",
+      "price": {
+        "usd": "$0.001"
+      },
+      "extensions": [
+        "bazaar"
+      ],
+      "schemeExtra": {
+        "feeRecipient": "0x0000000000000000000000000000000000000000",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "operatorType": "custom",
+        "paymentFlow": "escrow",
+        "captureMode": "deferred",
+        "captureAuthorizer": "0x8FE415CdB559fBF5B235B81CC4F7a69684A274bb",
+        "receiverAuthorizer": "0x0000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

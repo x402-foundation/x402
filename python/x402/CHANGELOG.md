@@ -1,0 +1,432 @@
+# x402 Python SDK Changelog
+
+<!-- towncrier release notes start -->
+
+## [2.28.0] - 2026-11-12
+
+### Fixed
+
+- A throwing resource-server before-verify hook now returns `before_verify_hook_error` with the message `before verify hook failed`, and a throwing before-settle hook fails closed with `before_settle_hook_error` and `before settle hook failed`. The payer no longer sees the exception text. ([#4153](https://github.com/x402-foundation/x402/pull/4153)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Facilitator before-verify and before-settle aborts now raise `VerifyError` and `SettleError` instead of `PaymentAbortedError`, and copy the hook message onto `invalid_message` and `error_message`. ([#4098](https://github.com/x402-foundation/x402/pull/4098)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Failures before the facilitator is reached during settlement (a `before_settle` abort or throw, or a settlement payload enrichment error) now dispatch `settlement_preflight_failed` cancellation to `on_verified_payment_canceled` hooks and the scheme's `settle_on_cancel`, then re-raise the original error. No cancel is dispatched for an after-handler settle on a flow that already settled before the handler. `VerifiedPaymentCanceledContext` and `VerifiedPaymentCancelOptions` gain an optional `verify_result`, set for `after_verify_aborted`. **Behavior change:** `on_settle_failure` hooks now run only once the facilitator was reached, matching the TypeScript and Go SDKs. `VerifiedPaymentCancellationReason` gains `settlement_preflight_failed`. ([#4148](https://github.com/x402-foundation/x402/pull/4148)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fixed EVM batch-settlement channel managers claiming or refunding channels of another network that shares the same channel storage. `Channel` now carries an optional `network` that server hooks persist from the request requirements; claim, refund, idle-refund, selector and pending-withdrawal selection use it first and fall back to the channel-id binding for rows written without one. A failed claim batch no longer blocks later batches or the settlement of successful claims: `claim` and `claim_and_settle` now raise `BatchClaimError` exposing the batch `errors`, successful `results` and any completed `settle`, and the automatic claim job reports both the successful batches and the failure. ([#4186](https://github.com/x402-foundation/x402/pull/4186)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fixed exact SVM Path 1 rejecting Lighthouse assertion guards before the compute-budget/TransferChecked sequence or beyond Python's old six-instruction cap. Identity classification preserves protocol relative order while permitting assertions anywhere without a count cap. Only assertion discriminators 2..=17 are guards, and every guard must isolate the facilitator fee payer. MemoryWrite, MemoryClose, empty data, and unknown variants are rejected without smart-wallet fallback; previously accepted unsafe Lighthouse instructions are intentionally rejected. Configured preflight/postflight blocks cannot hide top-level TransferChecked instructions; their CPI effects remain operator-trusted. Existing error constants remain exported, but Path 1 no longer emits invalid_exact_svm_payload_transaction_instructions_length or invalid_exact_svm_payload_unknown_{fourth,fifth,sixth,seventh}_instruction. Callers branching on those strings must handle invalid_exact_svm_payload_unknown_instruction and invalid_exact_svm_payload_transaction_instructions_order instead. ([#3615](https://github.com/x402-foundation/x402/pull/3615)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Fixed exact and upto EIP-2612 `settleWithPermit` so a raw y-parity recovery byte (0 or 1) is sent as 27 or 28. Those KMS and HSM signatures no longer revert on exact settle or on upto verify simulation and settle. ([#4218](https://github.com/x402-foundation/x402/pull/4218)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fixed the batch-settlement channel manager aborting a refund sweep on a channel whose balance is already fully charged. `refund` and `refund_idle_channels` now skip such channels instead of sending a zero-amount cooperative refund, which the contract rejects, so the channels after it are still refunded. ([#4173](https://github.com/x402-foundation/x402/pull/4173)) - Thanks [@yaokaiy](https://github.com/yaokaiy)!
+- Fixed the v1 legacy chain IDs for `story` (1514), `educhain` (41923) and `skale-base-sepolia` (324705682); the previous values were testnet chain IDs, so v1 EIP-3009 signatures for these networks used a different EIP-712 domain chainId than the TypeScript and Go SDKs and failed onchain signature recovery. ([#4170](https://github.com/x402-foundation/x402/pull/4170)) - Thanks [@yaokaiy](https://github.com/yaokaiy)!
+- Preserve MCP payment approval on one explicitly authorized corrective retry using the original approved terms. Keep `payment_made=True` whenever a payment payload was submitted, including pending or failed settlement. When a corrective retry is denied, the sync client returns the earlier result with this flag set; the async client raises `PaymentRequiredError` carrying that result in `result`. Any other error that stops the retry keeps its type and carries the earlier result in `mcp_result`. Expose only successful, processed receipts through `payment_response` and after-payment observers; retain failure details for core recovery hooks and in raw results. `call_tool` and `call_tool_with_payment` now raise `PaymentResponseError` for core receipt-processing failures, retaining paid output in `result` and the original error in `__cause__`. After-payment observer exceptions retain their original type and carry paid output in `mcp_result` without masking core errors. Preserve bounded before-execution amount overrides and accept nonnegative integer metering amounts as decimal strings. Invalid amounts use consistent error and cancellation handling in either execution hook. Protect other verified terms and advertised accepts. Invalid metering cancels instead of charging the ceiling; a throwing `on_after_execution` hook now also cancels exact payments instead of being swallowed and allowing settlement. Align cancellation hooks for execution failures and explicit pre-submission settlement aborts while preserving original verified terms, uncertain settlement outcomes, and known upfront receipts. Keep failed cancellation receipts in the error body; TypeScript clients that read only `_meta` do not automatically process them. When cancellation itself fails after a metering failure or a failed tool result, every wrapper, including FastMCP, returns an error result marked `Payment cancellation outcome unknown` with no payment-required offer, instead of raising. FastMCP now builds 402 responses through `create_payment_required_response`, preserving scheme and extension enrichment. ([#3735](https://github.com/x402-foundation/x402/pull/3735)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- Register the `ethereum` and `flare` v1 legacy networks. Both were in `V1_NETWORK_CHAIN_IDS` with a default asset, but missing from `V1_NETWORKS`, the list the exact registration helpers iterate, so a Python client refused a v1 402 on Ethereum mainnet or Flare (`NoMatchingRequirementsError`) and a Python facilitator neither advertised nor verified them (`SchemeNotFoundError`). TypeScript and Go already pay both. ([#4212](https://github.com/x402-foundation/x402/pull/4212)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+- The Flask and FastAPI middlewares no longer send the internal `Settlement-Overrides` header to the client when the route handler returns an error status. Overrides only apply when a settlement runs, so the header is now stripped on that failure path too, matching the TypeScript and Go adapters. ([#4227](https://github.com/x402-foundation/x402/pull/4227)) - Thanks [@erkancamli](https://github.com/erkancamli)!
+- `detect_version`, `get_scheme_and_network`, `match_payload_to_requirements`, `parse_payment_required` and `parse_payment_payload` now raise `ValueError` instead of `AttributeError` for non-object JSON, including a non-object V2 `accepted` field. `detect_payment_required_version` does the same for a non-object response body. `verify_from_bytes` and `settle_from_bytes` now raise `ValueError` for non-object requirements instead of sending them to the facilitator. ([#4044](https://github.com/x402-foundation/x402/pull/4044)) - Thanks [@nniiovoo](https://github.com/nniiovoo)!
+- `on_payment_response` hooks now only trigger a recovery retry when they return `RecoveredResponseResult` (or a mapping with `recovered: True`), matching TypeScript and the MCP clients. Any other return value is ignored and the remaining hooks still run. Before, a hook that returned anything other than `None` made the httpx and requests transports sign a second payment and resend the request, even after the first payment had settled. ([#4194](https://github.com/x402-foundation/x402/pull/4194)) - Thanks [@agnij-dutta](https://github.com/agnij-dutta)!
+
+### Added
+
+- Add Hemi mainnet (chain ID 43111) and Hemi Testnet (chain ID 743111) with USDC.e as the default stablecoin, and the v1 network names `hemi` and `hemi-testnet`. ([#4213](https://github.com/x402-foundation/x402/pull/4213)) - Thanks [@dimitryB](https://github.com/dimitryB) and [@claude](https://github.com/claude)!
+- Add Robinhood Chain mainnet (chain ID 4663) with USDG (Global Dollar) as the default stablecoin. ([#4207](https://github.com/x402-foundation/x402/pull/4207)) - Thanks [@soli0x](https://github.com/soli0x)!
+- Added Cardano support to the `exact` scheme behind the optional `x402[cardano]` extra: client, resource server and facilitator for the `default`, `script` and `masumi` asset transfer methods, with Blockfrost and Koios providers, confirmation policies and pending-settlement resumption, matching the TypeScript `@x402/cardano` package. ([#3546](https://github.com/x402-foundation/x402/pull/3546)) - Thanks [@Kammerlo](https://github.com/Kammerlo) and [@claude](https://github.com/claude)!
+- Added an optional preflight/postflight instruction-tuple allowlist to the exact SVM facilitator's Path 1 (static layout) verification. `ExactSvmScheme.__init__` accepts `preflight_instruction_allowlist`/`postflight_instruction_allowlist` kwargs, each a list of instruction tuples (program address + discriminator identities), that may match as a contiguous block immediately before/after the required protocol instructions - e.g. atomically channeling funds from an out-of-band mechanism into the same transaction as the merchant transfer. Guard (Lighthouse) instructions may be interspersed within a matched block. A matched block is fee-payer-isolation-checked before being accepted. An empty tuple or empty discriminator never matches (fail closed). Both allowlists default to empty, which is a strict no-op - existing behavior is unchanged unless explicitly configured. ([#3615](https://github.com/x402-foundation/x402/pull/3615)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+
+### Removals
+
+- `x402.mcp.utils.register_schemes` was removed. Register schemes on the payment client directly with `register` or `register_v1`. ([#4159](https://github.com/x402-foundation/x402/pull/4159)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+
+## [2.27.0] - 2026-11-04
+
+### Fixed
+
+- Fixed SIWX nonce storage detection so `record_nonce` is called after access is granted and incomplete nonce-tracking implementations are rejected. ([#4080](https://github.com/x402-foundation/x402/pull/4080)) - Thanks [@tahzeer](https://github.com/tahzeer)!
+- Fixed the Python upto Permit2 facilitator to return structured `invalid_upto_evm_payload` verify/settle errors (and `invalid_upto_evm_required_amount` for a malformed required amount) for malformed payloads instead of raising or returning ad-hoc reasons, matching the Go implementation's behavior. ([#4060](https://github.com/x402-foundation/x402/pull/4060)) - Thanks [@scks1](https://github.com/scks1)!
+- Isolate errors from advisory `x402Facilitator` and `x402FacilitatorSync` hooks: a throwing `after_verify`, `after_settle`, `on_verify_failure` or `on_settle_failure` hook is now logged and skipped instead of changing the verify/settle outcome. Previously a throwing `after_settle` hook rejected `settle()` after settlement had already executed onchain. Gate hooks (`before_verify`, `before_settle`) still fail closed: a throw or abort stops verification or settlement before the scheme facilitator is called. ([#4072](https://github.com/x402-foundation/x402/pull/4072)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Report confirmed or finalized Solana execution failures as terminal settlement errors with their transaction signatures, releasing pending and duplicate entries. Keep uncertain V2 confirmations pending and continue polling processed errors. ([#4033](https://github.com/x402-foundation/x402/pull/4033)) - Thanks [@snuff12](https://github.com/snuff12)!
+
+### Added
+
+- SVM exact payments support transaction version 1 (SIMD-0385). Facilitators advertise and accept `extra.transactionVersions` `[0, 1]`, and clients build the highest version they share with the facilitator; pass `transaction_versions=[0]` to `ExactSvmScheme` / `ExactSvmSchemeV1` to keep a signer that cannot sign version 1 on version 0. A client-built version 1 transaction carries no ComputeBudget instructions: its message config sets the compute unit limit, a 4 MiB loaded-account-data limit (`DEFAULT_LOADED_ACCOUNTS_DATA_SIZE_LIMIT`) and the total priority fee in lamports, and it may be up to 4096 bytes. The facilitator verifies the version 1 layout (TransferChecked first, then up to four Lighthouse/Memo instructions), requires the compute unit and loaded-account-data limits, caps the priority fee as `priorityFee * 1000000 <= maxPriceMicroLamports * computeUnitLimit`, and rejects a requested heap size or any ComputeBudget instruction with the new `invalid_exact_svm_payload_transaction_loaded_accounts_data_size_limit_missing`, `invalid_exact_svm_payload_transaction_v1_heap_size` and `invalid_exact_svm_payload_transaction_v1_compute_budget_instruction` reasons. Verifiers also enforce the serialized size limit of the message version (1232 bytes for legacy and version 0, 4096 bytes for version 1) and reject an oversized payment with the new `invalid_exact_svm_payload_transaction_size_exceeded` reason. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+- The SVM exact facilitators (`ExactSvmScheme`, `ExactSvmSchemeV1`) and `register_exact_svm_facilitator` take `transaction_versions` (default `[0, 1]`): the message versions they accept and advertise as `extra.transactionVersions`. Pass `[0]` to keep a sponsor whose signer or RPC does not handle version 1 on version 0; any other version is rejected with `unsupported_transaction_version`, and legacy is accepted exactly when 0 is. New helper: `normalize_accepted_transaction_versions`; `is_accepted_transaction_version` takes an optional accepted set. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+
+### Misc
+
+- `x402[svm]` now requires `solders>=0.29.0` and `httpx`, and no longer installs `solana`: every `solana` release that supports Python 3.10 pins `solders` below 0.28, which cannot decode transaction version 1. The SVM mechanism talks JSON-RPC through the new `x402.mechanisms.svm.rpc.SvmRpcClient`. The facilitator signer signs `to_bytes_versioned(message)`, which applies the right prefix for legacy, version 0 and version 1 messages, and the private `FacilitatorKeypairSigner._is_versioned_transaction` helper is removed. ([#3971](https://github.com/x402-foundation/x402/pull/3971)) - Thanks [@lgalabru](https://github.com/lgalabru)!
+
+
+## [2.26.0] - 2026-10-28
+
+### Fixed
+
+- A route keyed without an HTTP method, or a single route config, no longer matches `OPTIONS` requests, so the CORS preflight falls through to the app instead of getting a 402. Routes keyed explicitly as `"OPTIONS /path"` still require payment. ([#3738](https://github.com/x402-foundation/x402/pull/3738)) - Thanks [@agnij-dutta](https://github.com/agnij-dutta)!
+- An after-settle hook can raise `AfterSettleAbortError` to fail an onchain-successful settle closed (`success=False`) while keeping its transaction, amount, payer and extra, and the batch-settlement deposit persist step now does so on store failures instead of reporting a successful settle. Only `AfterSettleAbortError` fails the settle closed; other after-settle hook errors still propagate, unlike Go which logs them. ([#3995](https://github.com/x402-foundation/x402/pull/3995)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Bazaar advertises a method that fits the declared input. A body route probed with GET is cataloged as POST, and a query route probed with POST is cataloged as GET, instead of copying the probe method. ([#3880](https://github.com/x402-foundation/x402/pull/3880)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Bounded buffered HTTP response bodies in Python payment, facilitator, and Bazaar clients (1 MiB for control-plane responses, 4 MiB for Bazaar discovery). ([#3369](https://github.com/x402-foundation/x402/pull/3369)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen), [@cursoragent](https://github.com/cursoragent)!
+- Bounded the `x402[mcp]` extra to `mcp<2`; mcp 2.x removed `mcp.server.fastmcp`, breaking server-side paid tools on a fresh install. ([#3425](https://github.com/x402-foundation/x402/pull/3425)) - Thanks [@snellsteven](https://github.com/snellsteven) and [@claude](https://github.com/claude)!
+- EVM exact, upto, and batch-settlement clients log a warning, once per network, when gas sponsoring is advertised but the signer cannot read the chain, and they no longer sign an ERC-20 approval without that read. ([#3903](https://github.com/x402-foundation/x402/pull/3903)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fail closed when a batch-settlement refund receipt has no positive Refunded amount. Expose FacilitatorWeb3Signer.web3 and compare indexed bytes32 channel ids as hex so the SDK signer actually decodes. ([#3096](https://github.com/x402-foundation/x402/pull/3096)) - Thanks [@SashaMIT](https://github.com/SashaMIT)!
+- Fixed Flask and FastAPI JSON-encoding a payment-error body when the response declares `text/plain`. A string body with that content type is now sent as text, preserving newlines. JSON object bodies are unchanged. ([#3901](https://github.com/x402-foundation/x402/pull/3901)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fixed `x402Client` (async) blocking the event loop while a scheme builds the payment payload. Scheme `create_payment_payload` calls, which can do synchronous network I/O such as Solana RPC reads, now run in a worker thread; `x402ClientSync` is unchanged. ([#3671](https://github.com/x402-foundation/x402/pull/3671)) - Thanks [@JulienKervarrec](https://github.com/JulienKervarrec)!
+- Fixed batch-settlement charged-amount baseline when the server has no local channel record (after a full refund, idle auto-refund, or restart). The server now uses the facilitator-verified onchain `totalClaimed` instead of inferring it from the client voucher, and rejects the request if it is missing. The facilitator now requires non-refund vouchers and deposits to advance `maxClaimableAmount` to at least `totalClaimed + amount`. The facilitator also rejects a malformed or negative `requirements.amount` with a typed invalid response, keeps the minimum advance strictly above `totalClaimed` (so zero-price routes behave identically across SDKs), and the server parses `totalClaimed` with one canonical rule (no leading zeros, bounded numeric fallback). ([#3655](https://github.com/x402-foundation/x402/pull/3655)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- Fixed exact SVM verification to report a missing or wrong-program recipient token account after a failed simulation, while other simulation failures stay transaction_simulation_failed and settle includes the verify message. ([#4026](https://github.com/x402-foundation/x402/pull/4026)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Fixed mixed-namespace `register()` and `register_v1()` so each CAIP-2 namespace keeps its own wildcard. A namespace with one network now stays an exact match, same as the TypeScript facilitator, instead of becoming `namespace:*`. ([#3990](https://github.com/x402-foundation/x402/pull/3990)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Keep FastAPI responsive while retrying facilitator initialization, sharing the in-flight attempt across requests even when a waiting request is cancelled. ([#3613](https://github.com/x402-foundation/x402/pull/3613)) - Thanks [@Adkid-Zephyr](https://github.com/Adkid-Zephyr)!
+- Non-browser HTTP 402 responses include the rejection reason in the JSON body when no custom unpaid body is set. FastAPI and Flask return settlement_failed when settlement throws. ([#3883](https://github.com/x402-foundation/x402/pull/3883)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Raised the uv requirement and Python dependency floors to releases that include fixes for published security advisories. ([#3982](https://github.com/x402-foundation/x402/pull/3982)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- Regenerated the EVM and AVM paywall templates, which had not been rebuilt since May. They now include the Algorand CAIP-2 network ID fix, spend-control handling and the Celo Sepolia and Sei testnet faucet links. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- Reject malformed V2 network identifiers that do not match CAIP-2 syntax. ([#3878](https://github.com/x402-foundation/x402/pull/3878)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Reject non-canonical high-s EIP-3009 signatures during Python facilitator verification. ([#3912](https://github.com/x402-foundation/x402/pull/3912)) - Thanks [@ketchupz1999](https://github.com/ketchupz1999)!
+- Required payment for HEAD requests when the matching route is configured for GET. ([#3796](https://github.com/x402-foundation/x402/pull/3796)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- Resource server `settle_on_cancel` now runs on every verified payment cancel, even when no before-handler settle completed, and the scheme decides from `settled_phases`. `resolve_failure_path_settlement` includes a cancel receipt only when a before-handler settlement exists. ([#3992](https://github.com/x402-foundation/x402/pull/3992)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Resource servers run after_verify when the facilitator returns an invalid verify result, and run on_verify_failure only when verification raises. ([#3988](https://github.com/x402-foundation/x402/pull/3988)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- The HTTP resource server now rejects V1 payloads in the `PAYMENT-SIGNATURE` header with a 402 instead of failing with a 500 during requirement matching. ([#3715](https://github.com/x402-foundation/x402/pull/3715)) - Thanks [@s1ns3nz0](https://github.com/s1ns3nz0)!
+- The `requests` and `httpx` clients no longer add `Access-Control-Expose-Headers` to payment retries. It is a CORS response header, so sending it on a request had no effect. ([#3717](https://github.com/x402-foundation/x402/pull/3717)) - Thanks [@agnij-dutta](https://github.com/agnij-dutta)!
+- The exact EVM facilitator (V1 and V2) now returns `invalid_exact_evm_payload` from `verify` and `settle` for malformed EIP-3009 and Permit2 payloads (missing or wrongly typed authorization fields, non-hex or wrong-length EIP-3009 nonces, numeric fields that are not uint256 decimal strings) instead of raising. Numeric fields sent as JSON numbers are now rejected, matching the Go facilitator. `invalid_message` / `error_message` names the malformed field. ([#4020](https://github.com/x402-foundation/x402/pull/4020)) - Thanks [@deniskrds](https://github.com/deniskrds)!
+- Updated the built-in EVM paywall's bundled network metadata, including Monad testnet. ([#3855](https://github.com/x402-foundation/x402/pull/3855)) - Thanks [@asooge](https://github.com/asooge)!
+- `HTTPFacilitatorClient` again accepts path-keyed `create_headers` results whose per-path values are mappings other than `dict`, such as `httpx.Headers`. Since #3587 these raised `ValueError` as if they were a flat headers dict. ([#3895](https://github.com/x402-foundation/x402/pull/3895)) - Thanks [@nniiovoo](https://github.com/nniiovoo)!
+- `HTTPFacilitatorClient` now raises `ValueError` when a `create_headers` callable returns a flat headers dict (e.g. `{"Authorization": "..."}`) instead of one keyed by facilitator path (`verify`/`settle`/`supported`), matching TypeScript. Previously auth was silently dropped on every request. `x402.FacilitatorConfig.create_headers` is now typed with the path-keyed shape. ([#3587](https://github.com/x402-foundation/x402/pull/3587)) - Thanks [@nniiovoo](https://github.com/nniiovoo) and [@claude](https://github.com/claude)!
+- `PaywallConfig.faucet_urls` is now honored when the server renders the built-in paywall template (no paywall provider registered). Previously only `PaywallBuilder` providers injected it. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- `decode_payment_signature_header` and `decode_payment_required_header` now raise `ValueError` instead of `AttributeError` when a header decodes to non-object JSON. `get_payment_required_response` does the same for non-object V1 response-body JSON. ([#3917](https://github.com/x402-foundation/x402/pull/3917)) - Thanks [@nniiovoo](https://github.com/nniiovoo)!
+- `register_exact_evm_client` and `register_exact_svm_client` now register V1 networks only when they match the provided `networks`, so a client scoped to e.g. `eip155:84532` no longer signs V1 payments for other networks such as `base` mainnet. ([#3935](https://github.com/x402-foundation/x402/pull/3935)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- `resolve_settlement_override_amount()` now rejects raw, percent, and dollar overrides whose resolved atomic amount exceeds `PaymentRequirements.amount`. ([#3877](https://github.com/x402-foundation/x402/pull/3877)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- `x402MCPClientSync` has the payment hooks (`on_payment_required`, `on_before_payment`, `on_after_payment`), `call_tool_with_payment` and `get_tool_payment_requirements` again, and raises `PaymentRequiredError` when auto-payment is off or a payment is denied, matching `x402MCPClient`. The `mcp/tests` suite now runs as part of `pytest`. ([#3907](https://github.com/x402-foundation/x402/pull/3907)) - Thanks [@agnij-dutta](https://github.com/agnij-dutta)!
+- httpx paid and recovery 402 responses are returned when the inner transport has not bound a request yet. ([#4013](https://github.com/x402-foundation/x402/pull/4013)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
+### Added
+
+- Added `PaywallConfig.rpc_urls` (browser RPC endpoint per chain, keyed by CAIP-2), also available via `PaywallBuilder.with_config(rpc_urls=...)`. The Solana paywall uses it for the balance check and for building the payment transaction instead of the public `api.mainnet-beta.solana.com`, which rejects browser requests. Chains without an entry keep the public default. ([#3599](https://github.com/x402-foundation/x402/pull/3599)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- Added facilitator-authored settlement metadata (`m`) to the builder-code ERC-8021 Schema 2 suffix. `DataSuffixContext` accepts `metadata`, the CBOR encoder and parser handle `m`, and encoding fails when the CBOR exceeds 65,535 bytes. ([#3723](https://github.com/x402-foundation/x402/pull/3723)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- SVM facilitators now advertise the transaction message versions they accept as `extra.transactionVersions` (`[0]`) in `/supported`; servers copy it into `PaymentRequirements.extra`, and clients fail fast with `unsupported_transaction_version` when version 0 is not among the advertised versions. Verifiers reject any message version they do not model with `unsupported_transaction_version` before inspecting instructions; legacy messages remain accepted for backward compatibility but are deprecated and never advertised. ([#3474](https://github.com/x402-foundation/x402/pull/3474)) - Thanks [@lgalabru](https://github.com/lgalabru) and [@claude](https://github.com/claude)!
+
+
+## [2.25.0] - 2026-09-29
+
+### Fixed
+
+- Cap the `svm` extra at `solana<0.40`. `solana` 0.40.0 removed the synchronous `solana.rpc.api` module that the SVM signers, clients and server import, so a fresh `pip install x402[svm]` resolved to 0.40.x and `from x402.mechanisms.svm import KeypairSigner` failed with a misleading "requires solana packages" error. ([#3573](https://github.com/x402-foundation/x402/pull/3573)) - Thanks [@JulienKervarrec](https://github.com/JulienKervarrec)!
+
+### Added
+
+- Add Arc mainnet (chain ID 5042) and Arc Testnet (chain ID 5042002) with native USDC as the default stablecoin. ([#3590](https://github.com/x402-foundation/x402/pull/3590)) - Thanks [@NotMcAfee](https://github.com/NotMcAfee)!
+- Add Monad testnet USDC (EIP-3009) as the default asset for `eip155:10143` so `"$0.10"` dollar-string pricing resolves on Monad testnet. Register v1 network name `monad-testnet`. ([#3570](https://github.com/x402-foundation/x402/pull/3570)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
+
+## [2.24.0] - 2026-09-22
+
+### Fixed
+
+- FastAPI and Flask payment middleware now also match routes against each framework's decoded request path (Starlette's `request.url.path`, Werkzeug's `PATH_INFO`) in addition to the escaped path, requiring payment if either matches. A literal protected route (e.g. `GET /api/premium`) could previously be reached unpaid by encoding its path separator (`/api%2Fpremium`), since the escaped-path check alone did not match while the framework still decoded and dispatched to the paid handler. The FastAPI decoded-path check now also strips the ASGI `root_path` mount prefix (as Starlette's own router does internally) so apps mounted under a non-empty `root_path` remain protected instead of always fail-opening. ([#3502](https://github.com/x402-foundation/x402/pull/3502)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent), [@claude](https://github.com/claude)!
+- FastMCP paid-tool 402s now expose the protocol InvalidReason instead of a prefixed verify error string. ([#3494](https://github.com/x402-foundation/x402/pull/3494)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- MCP 402 responses snapshot payment accepts before scheme enrichers so batch-settlement recovery retries still match. ([#3495](https://github.com/x402-foundation/x402/pull/3495)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+
+## [2.23.0] - 2026-09-15
+
+### Fixed
+
+- EVM exact settle's ERC-6492 branch now reads payer deployment from the verify it already awaited rather than issuing a second eth_getCode. Both reads happen within one settle call and before any deploy transaction, so this is not the post-deploy re-read that races RPC state propagation. ([#3366](https://github.com/x402-foundation/x402/pull/3366)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- HTTP adapters now exit on permanent facilitator capability or route configuration errors during initialize, matching TypeScript and Go. Transient facilitator timeouts stay retryable. ([#3364](https://github.com/x402-foundation/x402/pull/3364)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen), [@cursoragent](https://github.com/cursoragent)!
+- HTTPFacilitatorClient now defaults to a 90s per-request timeout so long settle() calls can finish. ([#3409](https://github.com/x402-foundation/x402/pull/3409)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- MCP clients cap tool-call read timeouts at `max_request_timeout_seconds` (default 600s) while honoring accept `maxTimeoutSeconds` below that ceiling. ([#3481](https://github.com/x402-foundation/x402/pull/3481)) - Thanks [@phdargen](https://github.com/phdargen)!
+- MCP tool calls now derive their request timeout from the accept's maxTimeoutSeconds (default 300s) instead of the MCP SDK's 60s default, so slow-finality settlements no longer abort mid-flight. The initial 402 probe uses a 300s ceiling unless the caller passes an explicit read_timeout_seconds. ([#3443](https://github.com/x402-foundation/x402/pull/3443)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- `_is_valid_route_template` now decodes a routeTemplate to a fixed point (up to a bounded pass budget) before running its traversal/scheme-injection checks, instead of a single unquote pass. A double- or deeper-encoded payload (`%252e%252e`, `%253a%252f%252f`, ...) previously survived one decode still percent-encoded and slipped past the `..`/`://` checks, letting a malicious routeTemplate cause the facilitator to catalog a payment under an arbitrary URL. ([#3440](https://github.com/x402-foundation/x402/pull/3440)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Add Celo mainnet USDT and USAT (EIP-3009) as default assets for `eip155:42220` so `"$0.10 USDT"` and `"$0.10 USAT"` resolve on Celo; bare `"$0.10"` still resolves to USDC. ([#3457](https://github.com/x402-foundation/x402/pull/3457)) - Thanks [@GigaHierz](https://github.com/GigaHierz)!
+- Pass the resolved atomic `spend_controls` cap to every scheme on `PaymentPayloadContext.max_amount_per_payment` (omitted when uncapped) so capital-locking schemes can reuse client policy without re-resolving it. Batch-settlement EVM servers always announce `extra.minDeposit` (default `10 × amount`, optional per-route override via `accepts.extra.minDeposit`). Clients size deposits from the hint when valid, clamped to that cap × `deposit_multiplier` when a spend cap is set. Uncapped payments (`spend_controls=False` or no per-asset cap) also leave deposits uncapped. Older 402s fall back to `deposit_multiplier` for sizing. Servers may opt in to SDK enforcement via `enforce_min_deposit=True` (default off; facilitator never enforces). Export `invalid_batch_settlement_evm_deposit_below_min_deposit` for custom server enforcement. ([#3480](https://github.com/x402-foundation/x402/pull/3480)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+### Misc
+
+- EVM facilitators now cache a positive asset-contract check for 15 minutes instead of issuing a fresh eth_getCode on the payment token for every payment. Only positive results are cached, so a token observed mid-deployment still recovers on the next request. ([#3362](https://github.com/x402-foundation/x402/pull/3362)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+
+
+## [2.22.0] - 2026-09-04
+
+### Fixed
+
+- Reject v2 payloads that forge builder-code app attribution (`a`) when the resource server did not declare it or the echo does not match; omit payload `a` on v1 facilitator settlement. ([#3320](https://github.com/x402-foundation/x402/pull/3320)) - Thanks [@PhilBot402](https://github.com/PhilBot402)!
+- Stop false-positive bazaar startup warnings for pre-enrichment HTTP extensions by injecting a synthetic method from the route pattern (or body/query inference) before JSON-schema validation. ([#3308](https://github.com/x402-foundation/x402/pull/3308)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Added optional `extension_responses` on `VerifyResponse` and `SettleResponse`. The HTTP facilitator client populates it from the `EXTENSION-RESPONSES` header. `encode_payment_response_header` excludes the sidechannel from buyer-facing `PAYMENT-RESPONSE` encoding. ([#3306](https://github.com/x402-foundation/x402/pull/3306)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Allow facilitators to configure the EVM transaction gas limit on `FacilitatorWeb3Signer`. ([#3233](https://github.com/x402-foundation/x402/pull/3233)) - Thanks [@nniiovoo](https://github.com/nniiovoo) and [@claude](https://github.com/claude)!
+
+
+## [2.21.0] - 2026-08-27
+
+### Fixed
+
+- Restore Ethereum mainnet (eip155:1) and Avalanche C-Chain (eip155:43114) USDC as default assets so v1-legacy network names keep working after the shared CAIP-2 table migration. ([#3241](https://github.com/x402-foundation/x402/pull/3241)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+- Stop persisting untrusted batch-settlement `channelState` from PAYMENT-RESPONSE. Successful payment responses update local storage from previous state plus capped `chargedAmount` and any client-signed deposit, except when a present extra `chargedCumulativeAmount` does not equal that next cumulative — then the charge write is skipped. Onchain snapshot diffs and a missing extra cumulative do not block the write. Refunds cap the signed amount to the locally refundable balance. Failed settlements leave local state unchanged. A disagreeing server is handled by existing corrective recovery. ([#3251](https://github.com/x402-foundation/x402/pull/3251)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Add Sei mainnet (chain ID 1329) and Sei Testnet (chain ID 1328) with native USDC as the default stablecoin, and correct the legacy Sei testnet chain ID. ([#3227](https://github.com/x402-foundation/x402/pull/3227)) - Thanks [@alexander-sei](https://github.com/alexander-sei)!
+- Add payment-flow handlers so schemes can declare authorization, upfront, and escrow verify/settle ordering, with matching 402 extra, client selection, and HTTP/MCP settlement receipts. ([#3247](https://github.com/x402-foundation/x402/pull/3247)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Added upfront payment flow support for the exact scheme on EVM, SVM, and TVM. ([#3240](https://github.com/x402-foundation/x402/pull/3240)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Misc
+
+- SVM `get_network_config` and `NETWORK_CONFIGS` now hold transport endpoints only (`rpc_url`, `ws_url`). Default assets stay in `default_assets.py`. EVM bundled network config remains removed; use `get_default_asset` and `get_evm_chain_id`. ([#3241](https://github.com/x402-foundation/x402/pull/3241)) - Thanks [@phdargen](https://github.com/phdargen) and [@cursoragent](https://github.com/cursoragent)!
+
+
+## [2.20.0] - 2026-08-18
+
+### Fixed
+
+- Add a `settlement_pending` error reason for the `exact`, `upto`, and `batch-settlement` EVM schemes. A receipt-wait failure after a settle/claim/deposit/refund transaction broadcast (e.g. an RPC error or timeout) now returns `settlement_pending` with the broadcast transaction hash and network instead of the previous terminal error, since the transaction may still confirm on chain — callers relying on the old terminal error reason for this case should switch to handling `settlement_pending`. Settlement now also validates the broadcast transaction hash before waiting on it, so a signer that reports success without a usable hash fails terminally rather than reporting `settlement_pending` without a hash to reconcile against. An ERC-20-approval-gas-sponsoring extension signer that fails to broadcast a valid settlement transaction hash for `exact`/`upto` Permit2 settlement now reports `erc20_approval_broadcast_failed` (previously the internal-only sentinel `erc20_approval_tx_failed` could leak through as the error reason). `FacilitatorWeb3Signer` accepts a `confirmation_timeout_seconds` argument (default `120`, unchanged) bounding the receipt wait, so facilitators behind a platform request deadline can make the wait raise — and settlement report `settlement_pending` with the broadcast hash — before the process is killed mid-wait. ([#3083](https://github.com/x402-foundation/x402/pull/3083)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@ethanoroshiba](https://github.com/ethanoroshiba), [@claude](https://github.com/claude), [@cursoragent](https://github.com/cursoragent)!
+- Corrected Monad USDC's EIP-712 domain name to `"USDC"` in the v1 legacy default-asset table; v1 `transferWithAuthorization` signatures on Monad previously failed on-chain signature recovery. ([#3153](https://github.com/x402-foundation/x402/pull/3153)) - Thanks [@Im-Madhur-Gupta](https://github.com/Im-Madhur-Gupta)!
+- Parse and convert money as decimal strings internally so high-precision prices (for example MegaUSD at 18 decimals) are not rounded through `float`. `parse_money` / `parse_money_string` return the extracted decimal substring; money parsers now take `str | int | float` (`parse_price` always passes a string). Amounts smaller than one atomic unit truncate to `"0"` instead of raising. Note: the money-parser amount type is a breaking change for custom parsers that assumed `float`. ([#3154](https://github.com/x402-foundation/x402/pull/3154)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Normalize each mechanism's default assets into `DEFAULT_ASSETS` + `get_default_asset` / `find_default_asset`, and add client `spend_controls`: by default only recognized pegged assets are allowed with a `$1` USD cap; opt into other tokens via `allowed_assets` (list with optional integer atomic `max_amount_per_payment`, or `True` to allow any); pass `spend_controls=False` to disable all spend controls. A non-integer per-asset cap is a config error; a non-integer 402 amount on that path is dropped. `$` settlement overrides throw when `get_asset_decimals` is unknown instead of guessing 6 decimals. MCP `from_config` forwards `spend_controls`. ([#3154](https://github.com/x402-foundation/x402/pull/3154)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.19.0] - 2026-08-11
+
+### Fixed
+
+- Fixed payment-gate route matching on the escaped request path so percent-encoded separators and trailing-slash wildcard prefixes cannot bypass verification. Middleware now passes the raw WSGI/ASGI path for route matching, `_normalize_path` decodes one segment at a time while re-escaping decoded separators, and trailing `/*` patterns also match their bare prefix. ([#3073](https://github.com/x402-foundation/x402/pull/3073)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed wildcard (`*`) route matching in the HTTP server when the wildcard tail contains a decoded line feed. Wildcard route regexes now compile with `re.DOTALL`, preventing protected routes from being missed before payment verification and settlement. ([#3055](https://github.com/x402-foundation/x402/pull/3055)) - Thanks [@saneGuy](https://github.com/saneGuy)!
+
+
+## [2.18.0] - 2026-08-04
+
+### Fixed
+
+- Merge server and client builder-code `s` arrays during extension re-merge instead of dropping the client's (fully deduped, including duplicates within either side), treat echoed builder-code `s` specifically as additive (client-first, with scalar/list coercion) in extension echo validation while other extensions' array fields keep exact echo matching, and let `declare_builder_code_extension` optionally declare service codes for the application itself. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+- Registered client extensions now always receive `enrich_payment_payload`, regardless of whether the resource server advertised the extension key in `PaymentRequired.extensions`. Server declarations continue to govern field preservation via merge and echo validation. Extensions that require a server declaration must no-op internally when the server did not advertise them.
+- Reject bazaar discovery extension schemas containing external "$ref"/"$id" values (anything other than a same-document "#" fragment) before validation, preventing an attacker-controlled schema from triggering an outbound HTTP request or local file read (SSRF/LFI, CWE-918) ([#3039](https://github.com/x402-foundation/x402/pull/3039)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- Set Cache-Control on x402 HTTP payment responses: `no-store` on 402/412 PAYMENT-REQUIRED and settlement failures, and merge `private` on 200 PAYMENT-RESPONSE success so shared caches cannot store user-specific settlement metadata. ([#2990](https://github.com/x402-foundation/x402/pull/2990)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Verify the expected ERC-20 Transfer event in exact EIP-3009 settle receipts when logs are available, matching the Go SDK check from #2727 and the open TypeScript fix in #2385. ([#3032](https://github.com/x402-foundation/x402/pull/3032)) - Thanks [@SashaMIT](https://github.com/SashaMIT)!
+- `validate_extensions` now rejects a client echo whose builder-code `s` exceeds the combined client+server budget instead of accepting it and leaving truncation to the facilitator. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+
+### Added
+
+- Add Celo mainnet (chain ID 42220) and Celo Sepolia (chain ID 11142220) support with USDC as the default stablecoin ([#3025](https://github.com/x402-foundation/x402/pull/3025)) - Thanks [@GigaHierz](https://github.com/GigaHierz) and [@claude](https://github.com/claude)!
+- Add Flare mainnet (chain ID 14) support with USD₮0 as the default stablecoin ([#3031](https://github.com/x402-foundation/x402/pull/3031)) - Thanks [@whawk46](https://github.com/whawk46)!
+- `builder-code` `s` entries now use dedicated per-party reservations (`MAX_CLIENT_SERVICE_CODES`=5, `MAX_SERVER_SERVICE_CODES`=5, `MAX_FACILITATOR_SERVICE_CODES`=1, summing to `MAX_SERVICE_CODES`=11) instead of one shared cap, and `BuilderCodeFacilitatorExtension` gained a new `service_code` field so the facilitator can append its own service code at settlement. ([#3027](https://github.com/x402-foundation/x402/pull/3027)) - Thanks [@ethanoroshiba](https://github.com/ethanoroshiba)!
+
+
+## [2.17.0] - 2026-07-27
+
+### Fixed
+
+- Cap builder-code service codes to 5 entries. ([#2912](https://github.com/x402-foundation/x402/pull/2912)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Preserve streaming request bodies when retrying an HTTPX request with payment headers. ([#2899](https://github.com/x402-foundation/x402/pull/2899)) - Thanks [@realmehmetali](https://github.com/realmehmetali)!
+
+### Added
+
+- Add SVM server blockhash hints and client fallback behavior. ([#2937](https://github.com/x402-foundation/x402/pull/2937)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.16.0] - 2026-07-17
+
+### Fixed
+
+- Defer batch-settlement channel reservation until after successful verify, validate canonical channel ids with path confinement, and allow after-verify hooks to abort with `after_verify_aborted` cleanup. ([#2863](https://github.com/x402-foundation/x402/pull/2863)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed auto-wrapping of custom signers extending eth_account's BaseAccount (not just LocalAccount) for x402 payment signing ([#2884](https://github.com/x402-foundation/x402/pull/2884)) - Thanks [@0xkurious](https://github.com/0xkurious)!
+- Require a configured `origin` for SIWX server integration. Challenge issuance and proof validation now bind to this operator-defined public origin instead of deriving trust from request headers or per-route declaration fields. Pass `origin` to `create_siwx_resource_server_extension()` or `create_siwx_request_hook()`; remove `domain` and `resource_uri` from `declare_siwx_extension()`. ([#2859](https://github.com/x402-foundation/x402/pull/2859)) - Thanks [@phdargen](https://github.com/phdargen)!
+- The Flask WSGI middleware now logs the exception and surfaces a settle failure (`402` with a `PAYMENT-RESPONSE` header, `success=false`) when the settlement path raises an unexpected error, instead of a silent empty-body `402`. The client-facing reason is kept generic; the raw exception detail is logged only. Mirrors the FastAPI fix in #2622. ([#2721](https://github.com/x402-foundation/x402/pull/2721)) - Thanks [@kakedashi3](https://github.com/kakedashi3)!
+
+### Removals
+
+- SIWX validation and verification results now use `is_valid`, `invalid_reason`, `invalid_message`, and `payer` instead of `valid`, `error`, and `address`. Each failure includes a machine-readable `invalid_siwx_*` code aligned with the TypeScript SDK. ([#2889](https://github.com/x402-foundation/x402/pull/2889)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.15.0] - 2026-07-10
+
+### Fixed
+
+- Fixed Flask middleware skipping settlement on 3xx responses, allowing paid content behind redirects to be delivered without onchain payment. ([#2826](https://github.com/x402-foundation/x402/pull/2826)) - Thanks [@phdargen](https://github.com/phdargen)!
+- Fixed `flask_payment_middleware_from_config`, which raised `TypeError` at construction because it built the async `x402ResourceServer` for the sync Flask middleware; it now uses `x402ResourceServerSync`. ([#2810](https://github.com/x402-foundation/x402/pull/2810)) - Thanks [@kakedashi3](https://github.com/kakedashi3)!
+- Fixed cross-SDK MCP interop: the FastMCP payment wrapper now verifies and settles against the advertised `accepts` entry that matches the payment payload instead of always using the first entry, and omits `None` optional fields from serialized `PaymentRequired` results so stricter clients accept them. ([#2774](https://github.com/x402-foundation/x402/pull/2774)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Add Igra mainnet (eip155:38833) default stablecoin USDC via Permit2 ([#2800](https://github.com/x402-foundation/x402/pull/2800)) - Thanks [@emdin](https://github.com/emdin)!
+- Added the `builder-code` extension for onchain payment attribution. Also added the enabling core capabilities: client re-merge preserving server-declared extension fields, server-side extension echo validation (with opt-in dynamic `info` fields), and EVM `data_suffix` plumbing threaded through settlement. Marked the `sign-in-with-x` extension's `nonce`, `issuedAt`, and `expirationTime` as dynamic `info` fields so regenerated challenges pass echo validation. ([#2795](https://github.com/x402-foundation/x402/pull/2795)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.14.0] - 2026-06-26
+
+### Added
+
+- Expanded wallet compatibility so payments verify and settle consistently across plain EOAs, deployed smart accounts (ERC-4337 / ERC-7579), counterfactual ERC-6492 wallets, and ERC-7702-delegated EOAs. Pre-verification now mirrors on-chain signature checking, so a payment that passes `verify` is the same one that succeeds at `settle`. Added counterfactual ERC-6492 support to the `exact` and `batch-settlement` flows — the wallet is deployed and its signature validated together during `verify` — gated by a new `eip6492_allowed_factories` allowlist you set on the facilitator scheme config. Also added a wallet-compatibility guide documenting which wallet and scheme combinations are supported. ([#2658](https://github.com/x402-foundation/x402/pull/2658)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe) and [@cursoragent](https://github.com/cursoragent)!
+- Made the batch-settlement facilitator's receiver-authorizer signer optional: when omitted, the facilitator no longer advertises a `receiverAuthorizer` in `/supported`, and claim/refund execution returns `invalid_batch_settlement_evm_authorizer_not_configured` instead of auto-signing when a payload omits its authorizer signature. Added a fail-fast startup check on the resource server: a batch-settlement server with no `receiver_authorizer_signer` configured now raises during `initialize()` when the facilitator advertises no usable `receiverAuthorizer`. ([#2706](https://github.com/x402-foundation/x402/pull/2706)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+
+## [2.13.1] - 2026-06-19
+
+### Fixed
+
+- Cache SVM exact client mint metadata to avoid repeated mint RPC fetches. ([#2629](https://github.com/x402-foundation/x402/pull/2629)) - Thanks [@wnjoon](https://github.com/wnjoon)!
+
+
+## [2.13.0] - 2026-06-12
+
+### Fixed
+
+- Fixed a bug where EVM facilitator verify accepted payments whose asset address was an EOA. Calling any function on an EOA via ``eth_call`` silently returns empty data without reverting, causing on-chain simulation to pass and the subsequent settlement to land as a no-op with no ``Transfer`` event emitted. The fix checks ``eth_getCode`` on the asset address early in the verify path for all EVM payment schemes (EIP-3009, Permit2 exact, Permit2 upto); any address with no bytecode is rejected with ``asset_not_deployed_contract``. ([#2554](https://github.com/x402-foundation/x402/pull/2554)) - Thanks [@CarsonRoscoe](https://github.com/CarsonRoscoe)!
+- Run Python payment creation failure hooks when after-payment hooks raise. ([#2540](https://github.com/x402-foundation/x402/pull/2540)) - Thanks [@skyc1e](https://github.com/skyc1e)!
+- Set EVM authorization ``validAfter`` to 0 to reduce onchain timing failures when payloads are queued or block timestamps lag behind client clocks. ([#2601](https://github.com/x402-foundation/x402/pull/2601)) - Thanks [@phdargen](https://github.com/phdargen)!
+
+### Added
+
+- Add Mezo mainnet (chain ID 31612) support with mUSD as the default stablecoin ([#2590](https://github.com/x402-foundation/x402/pull/2590)) - Thanks [@ryanRfox](https://github.com/ryanRfox)!
+- Add XDC Network mainnet (chain ID 50) and Apothem testnet (chain ID 51) support with USDC as the default stablecoin ([#2597](https://github.com/x402-foundation/x402/pull/2597)) - Thanks [@AnilChinchawale](https://github.com/AnilChinchawale)!
+
+
+## [2.12.0] - 2026-05-29
+
+### Fixed
+
+- Export documented Python MCP client factory helpers from ``x402.mcp``. ([#export-mcp-client-factories](https://github.com/x402-foundation/x402/pull/export-mcp-client-factories))
+- Preserve existing FastMCP ``CallToolResult`` metadata when attaching x402 payment responses. ([#preserve-fastmcp-result-meta](https://github.com/x402-foundation/x402/pull/preserve-fastmcp-result-meta))
+- Fixed SVM exact facilitator deduplication to key on the transaction message hash rather than the full signed-transaction bytes, preventing an attacker from bypassing the cache by randomizing the mutable fee-payer signature slot. ([#2482](https://github.com/x402-foundation/x402/pull/2482))
+- Thread Bazaar service metadata from HTTP `RouteConfig` and MCP `PaymentWrapperConfig` into `PaymentRequired.resource`, and extend bazaar facilitator discovery/catalog types so verified payments persist description, MIME type, service metadata, and echoed extension payloads. ([#2496](https://github.com/x402-foundation/x402/pull/2496))
+- **[Breaking for facilitator implementers using ERC-4337 smart wallet deployment]** Fixed ERC-6492 factory call injection vulnerability in EVM exact settlement (v1 and v2) and simplified the configuration API. The `deploy_erc4337_with_eip6492` boolean field has been removed from `ExactEvmSchemeConfig` and `ExactEvmSchemeV1Config`. `eip6492_allowed_factories: list[str]` is now the sole gate: settlement deploys an undeployed smart wallet if and only if its factory address is present in the allowlist (case-insensitive). An empty or omitted list disables the feature entirely and returns `eip6492_factory_not_allowed`. Facilitators previously using `deploy_erc4337_with_eip6492=True` must remove that parameter and populate `eip6492_allowed_factories` with every factory address they trust.
+
+### Added
+
+- Thread bazaar service metadata fields (`service_name`, `tags`, `icon_url`) from `RouteConfig` through to `ResourceInfo`. The wire-format schema fields landed in #2200 but the server-side `RouteConfig` had no way to populate them — servers wanting rich Bazaar listings had to bypass the SDK. This wires the missing plumbing. ([#route-config-service-metadata](https://github.com/x402-foundation/x402/pull/route-config-service-metadata))
+- Added startup-time JSON-schema validation for bazaar discovery extensions in FastAPI and Flask middleware ([#671](https://github.com/x402-foundation/x402/pull/671))
+
+### Misc
+
+- Add unit tests for `sign_eip2612_permit` in the EIP-2612 gas sponsoring extension covering nonce read, EIP-712 domain/types/message construction, and return shape (mirrors the `sign_erc20_approval_transaction` test pattern). ([#python-eip2612-permit-signing-tests](https://github.com/x402-foundation/x402/pull/python-eip2612-permit-signing-tests))
+
+
+## [2.11.0] - 2026-05-22
+
+### Fixed
+
+- unwrap ERC-6492 signatures for permit2 flows ([#2352](https://github.com/x402-foundation/x402/pull/2352))
+
+### Added
+
+- Add HPP mainnet (chain ID 190415) and HPP Sepolia (chain ID 181228) support with USDC.e (Bridged USDC) as the default stablecoin ([#add-hpp-chains-default-stablecoin](https://github.com/x402-foundation/x402/pull/add-hpp-chains-default-stablecoin))
+- Add ADI Chain (chain ID 36900) support with USDC.e as the default stablecoin ([#adi-chain](https://github.com/x402-foundation/x402/pull/adi-chain))
+- Added `batch-settlement-evm` scheme: an EVM payment-channel mechanism that batches multiple requests off-chain using cumulative vouchers and submits a single on-chain claim instead of one transaction per payment. Includes `BatchSettlementEvmScheme` for client and server, `BatchSettlementEvmFacilitator` for on-chain deposit, claim, and cooperative refund execution, and `BatchSettlementChannelManager` with auto-claim/settle scheduling and `FileChannelStorage` for persistent server-side channel state. ([#batch-settlement-evm](https://github.com/x402-foundation/x402/pull/batch-settlement-evm))
+- Added a curated testnet faucet map to the paywall plus `PaywallConfig.faucet_urls` (per-chain override keyed by CAIP-2). Unmapped chains render "No faucet configured." instead of a fallback link. Available via `PaywallBuilder.with_config(faucet_urls=...)`. ([#2160](https://github.com/x402-foundation/x402/pull/2160))
+- Added missing lifecycle hooks and extension/scheme-level adapter pattern ([#2388](https://github.com/x402-foundation/x402/pull/2388))
+- Added siwx extension ([#2393](https://github.com/x402-foundation/x402/pull/2393))
+
+
+## [2.10.0] - 2026-05-13
+
+### Added
+
+- Add Radius Network (chain ID 723487) and Radius Testnet (chain ID 72344) support with SBC as the default stablecoin ([#radius-network-default-asset](https://github.com/x402-foundation/x402/pull/radius-network-default-asset))
+- Added the TVM exact-payment mechanism to the Python SDK, including client, server, facilitator, and example coverage for TON testnet/mainnet flows. ([#tvm-python-sdk](https://github.com/x402-foundation/x402/pull/tvm-python-sdk))
+- Added Bazaar service metadata fields (`service_name`, `tags`, `icon_url`) on `ResourceInfo`, plus `_is_valid_service_name` / `_sanitize_tags` / `_is_valid_icon_url` / `_sanitize_resource_service_metadata` helpers in `x402.extensions.bazaar.facilitator` that `extract_discovery_info` now applies with soft-drop semantics. ([#150](https://github.com/x402-foundation/x402/pull/150))
+- Log the `EXTENSION-RESPONSES` header from facilitator verify/settle responses. The HTTP facilitator client decodes the header and logs allowlisted fields (`status`, `rejectedReason`, `reason`, `code`) without attaching data to `VerifyResponse` or `SettleResponse`. ([#2161](https://github.com/x402-foundation/x402/pull/2161))
+
+### Misc
+
+- Expose `DEFAULT_MAX_FEE_PER_GAS` and `DEFAULT_MAX_PRIORITY_FEE_PER_GAS` from `x402.mechanisms.evm.constants` and use them as the fallback when fee estimation is unavailable in `sign_erc20_approval_transaction`. Mirrors the TypeScript SDK's named constants; numeric defaults (1 gwei / 0.1 gwei) are unchanged. ([#erc20-approval-default-gas-fees](https://github.com/x402-foundation/x402/pull/erc20-approval-default-gas-fees))
+
+
+## [2.9.0] - 2026-04-27
+
+### Added
+
+- Added `extensions` parameter to MCP payment wrapper config and `declare_mcp_discovery_extension` helper so paid MCP tools can declare Bazaar discovery metadata and appear in `/discovery/resources`. ([#2087](https://github.com/x402-foundation/x402/pull/2087))
+
+
+## [2.8.0] - 2026-04-17
+
+### Added
+
+- Add Arbitrum One (chain ID 42161) and Arbitrum Sepolia (chain ID 421614) support with USDC as the default stablecoin ([#1877](https://github.com/x402-foundation/x402/pull/1877))
+- Add `upto` scheme support for Python SDK, including EVM client, server, and facilitator implementations with partial settlement support ([#2023](https://github.com/x402-foundation/x402/pull/2023))
+
+
+## [2.7.0] - 2026-04-13
+
+### Added
+
+- Add optional `extra.memo` support to SVM exact scheme. When present, the client uses the seller-provided memo as Memo instruction data instead of a random nonce, and the facilitator verifies the memo content matches. ([#1682](https://github.com/x402-foundation/x402/pull/1682))
+
+
+## [2.6.0] - 2026-04-02
+
+### Fixed
+
+- Fixed author attribution to reference x402 Foundation instead of Coinbase ([#123](https://github.com/x402-foundation/x402/pull/123))
+- Fixed race condition in lazy facilitator initialization for FastAPI and Flask middleware under concurrent requests. ([#1584](https://github.com/x402-foundation/x402/pull/1584))
+- Fix extra: null incompatibility between python facilitator and TS zod schema ([#1762](https://github.com/x402-foundation/x402/pull/1762))
+
+### Added
+
+- Add Mezo Testnet (chain ID 31611) support with mUSD as the default stablecoin ([#mezo-testnet-default-asset](https://github.com/x402-foundation/x402/pull/mezo-testnet-default-asset))
+- Add Polygon mainnet (chain ID 137) support with USDC as the default stablecoin ([#polygon-support](https://github.com/x402-foundation/x402/pull/polygon-support))
+- Add Stable mainnet (chain ID 988) support with USDT0 as the default stablecoin ([#stable-support](https://github.com/x402-foundation/x402/pull/stable-support))
+- Add Stable testnet (chain ID 2201) support with USDT0 as the default stablecoin ([#stable-testnet-support](https://github.com/x402-foundation/x402/pull/stable-testnet-support))
+- Added dynamic route support to the Bazaar discovery extension — servers can now declare ``[param]`` route segments that consolidate to a single catalog entry per route template, with automatic ``pathParams`` enrichment and ``:param``-style ``routeTemplate`` in discovery output. ([#424](https://github.com/x402-foundation/x402/pull/424))
+
+
+## [2.5.0] - 2026-03-19
+
+### Fixed
+
+- Fixed Python HTTP middleware to return `502` instead of `500` when the facilitator responds with invalid JSON or schema-invalid data. ([#545](https://github.com/x402-foundation/x402/pull/545))
+
+### Added
+
+- Added Permit2 support to the Python SDK exact EVM mechanism with full TS/Go parity. The client routes to Permit2 (`PermitWitnessTransferFrom`) when `assetTransferMethod == "permit2"` in payment requirements extra, and the facilitator verifies and settles via the `x402ExactPermit2Proxy` contract. Includes `eip2612GasSponsoring` and `erc20ApprovalGasSponsoring` extension support for gasless Permit2 approval flows, universal signature verification via `signer.verify_typed_data` (EOA + EIP-1271 + ERC-6492), and `settleWithPermit` settlement path. Added E2E `/protected-permit2`, `/protected-permit2-eip2612`, and `/protected-permit2-erc20` endpoints to Flask server, and updated httpx client for cross-language Permit2 testing. ([#689](https://github.com/x402-foundation/x402/pull/689))
+
+
+## [2.4.0] - 2026-03-16
+
+### Fixed
+
+- Fixed paywall config injection targeting </body> causing SVG parse errors in the browser ([#1550](https://github.com/x402-foundation/x402/pull/1550))
+
+### Added
+
+- Simulate transaction in verify and (optional) settle; Added multicall utility for efficient rpc calls; Fixed undeployed smart wallet handling to prevent facilitator grieving and account for implementation dependent verifyTypedData; Enforce strict amount equality per spec in evm exact; Fix extra field passthrough in resource configs ([#1474](https://github.com/x402-foundation/x402/pull/1474))
+
+
+## [2.3.0] - 2026-03-06
+
+### Fixed
+
+- Add in-memory SettlementCache to prevent duplicate SVM transaction settlement during on-chain confirmation window ([#svm-duplicate-settlement](https://github.com/x402-foundation/x402/pull/svm-duplicate-settlement))
+- Added serialize_by_alias=True to BaseX402Model so model_dump_json() produces spec-compliant camelCase by default ([#1120](https://github.com/x402-foundation/x402/pull/1120))
+- Auto-wrap eth_account LocalAccount in EthAccountSigner when passed to ExactEvmScheme or ExactEvmSchemeV1 ([#1121](https://github.com/x402-foundation/x402/pull/1121))
+- Added assetTransferMethod and supportsEip2612 flag to defaultAssets ([#1359](https://github.com/x402-foundation/x402/pull/1359))
+- Added dynamic function for servers to generate custom response for settlement failures defaulting to empty ([#1430](https://github.com/x402-foundation/x402/pull/1430))
+
+### Added
+
+- Separated v1 legacy network name resolution from v2 CAIP-2 resolution; get_evm_chain_id now only accepts eip155:CHAIN_ID format, v1 code uses evm.v1.utils ([#split-v1-v2-networks](https://github.com/x402-foundation/x402/pull/split-v1-v2-networks))
+
+
+## [2.2.0] - 2026-02-20
+
+### Fixed
+
+- Fixed SVM V1 client transaction signing to use `VersionedTransaction.populate()` with explicit signature slots, matching the V2 approach and fixing "not enough signers" errors. ([#v1-svm-signers](https://github.com/x402-foundation/x402/pull/v1-svm-signers))
+- Added payment-identifier extension for tracking and validating payment identifiers ([#1111](https://github.com/x402-foundation/x402/pull/1111))
+
+### Added
+
+- Upgraded facilitator extension registration from string keys to FacilitatorExtension dataclass. Added FacilitatorContext passed through SchemeNetworkFacilitator.verify/settle for mechanism access to extension capabilities. ([#facilitator-extension-objects](https://github.com/x402-foundation/x402/pull/facilitator-extension-objects))
+- Increased EVM validAfter buffer from 30 seconds to 10 minutes for consistency with TypeScript SDK. ([#validafter-buffer](https://github.com/x402-foundation/x402/pull/validafter-buffer))
+
+
+## [2.1.0] - 2026-02-11
+
+### Added
+
+- Add MegaETH mainnet (chain ID 4326) support with USDM as the default stablecoin ([#megaeth-support](https://github.com/x402-foundation/x402/pull/megaeth-support))
+- Added memo instruction with random nonce to SVM transactions to ensure uniqueness and prevent duplicate transaction attacks ([#1048](https://github.com/x402-foundation/x402/pull/1048))
+- Added MCP transport integration for x402 payment protocol ([#1131](https://github.com/x402-foundation/x402/pull/1131))
+
+
+## 2.0.0
+- Implements x402 2.0.0 for the Python SDK.
+
+## 1.0.0
+- Implements x402 1.0.0 for the Python SDK.

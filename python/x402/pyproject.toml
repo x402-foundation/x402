@@ -1,0 +1,239 @@
+[project]
+name = "x402"
+version = "2.28.0"
+description = "x402 Payment Protocol SDK for Python"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [{ name = "x402 Foundation" }]
+keywords = ["x402", "payment", "protocol", "http", "402"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "nest-asyncio>=1.6.0",
+    "pydantic>=2.0.0",
+    "typing_extensions>=4.0.0",
+]
+
+[project.optional-dependencies]
+# HTTP clients - install one based on your preference
+httpx = ["httpx>=0.28.1"]
+requests = ["requests>=2.33.0"]
+
+# Server frameworks - install one based on your stack
+flask = ["flask>=3.1.3"]
+fastapi = ["fastapi[standard]>=0.162.0", "starlette>=1.3.1"]
+
+# Blockchain mechanisms - install based on which chains you need
+cardano = [
+    "pycardano>=0.19.2,<0.20",
+    # PyCardano's cbor2pure backend imports exception classes removed in cbor2 6.
+    "cbor2>=5.6.5,<6",
+    "lzstring>=1.0.4,<2",
+    "rfc8785>=0.1.4,<1",
+    "httpx>=0.28.1",
+    "PyNaCl>=1.5.0",
+]
+evm = [
+    "eth-abi>=5.0.0",
+    "eth-keys>=0.5.0",
+    "eth-utils>=4.0.0",
+    "eth-account>=0.13.0",
+    "web3>=7.15.0",
+]
+# solders 0.29 is the first release that decodes and builds transaction
+# version 1 (SIMD-0385). RPC goes over httpx (mechanisms/svm/rpc.py) because
+# solana-py pins solders below 0.28 on every release that supports Python 3.10.
+svm = [
+    "solders>=0.29.0",
+    "httpx>=0.28.1",
+]
+tvm = [
+    "httpx>=0.28.1",
+    "pytoniq>=0.1.39",
+    "pytoniq-core>=0.1.36",
+    "PyNaCl>=1.5.0",
+]
+
+# MCP (Model Context Protocol) integration
+# Upper bound: mcp 2.x removed mcp.server.fastmcp, which x402.mcp.server imports.
+mcp = ["mcp>=1.30.0,<2"]
+
+# Extensions - optional functionality
+extensions = [
+    "jsonschema>=4.0.0",
+    "idna>=3.15",
+    "signinwithethereum>=5.0.1",
+    "PyNaCl>=1.5.0",
+]
+
+# Convenience bundles
+clients = ["x402[httpx,requests]"]
+servers = ["x402[flask,fastapi]"]
+mechanisms = ["x402[cardano,evm,svm,tvm]"]
+all = ["x402[httpx,requests,flask,fastapi,cardano,evm,svm,tvm,mcp,extensions]"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "black>=26.10.1",
+    "towncrier>=24.8.0,<25",
+    # Include all optional deps for testing
+    "httpx>=0.28.1",
+    "requests>=2.33.0",
+    "flask>=3.1.3",
+    "fastapi[standard]>=0.162.0",
+    "starlette>=1.3.1",
+    # Cardano dependencies
+    "pycardano>=0.19.2,<0.20",
+    "cbor2>=5.6.5,<6",
+    "lzstring>=1.0.4,<2",
+    "rfc8785>=0.1.4,<1",
+    # EVM dependencies
+    "eth-abi>=5.0.0",
+    "eth-keys>=0.5.0",
+    "eth-utils>=4.0.0",
+    "eth-account>=0.13.0",
+    "web3>=7.15.0",
+    # SVM dependencies
+    "solders>=0.29.0",
+    # TVM dependencies
+    "pytoniq>=0.1.39",
+    "pytoniq-core>=0.1.36",
+    "PyNaCl>=1.5.0",
+    # MCP dependencies
+    "mcp>=1.30.0,<2",
+    "nest-asyncio>=1.6.0",
+    # Extensions dependencies
+    "jsonschema>=4.0.0",
+    "idna>=3.15",
+    "signinwithethereum==5.0.1",
+    "PyNaCl>=1.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/x402-foundation/x402"
+Documentation = "https://x402.org"
+Repository = "https://github.com/x402-foundation/x402"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "*.py",
+    "**/*.py",
+    "py.typed",
+    "mcp/CHANGELOG.md",
+    "mcp/README.md",
+]
+exclude = [
+    "tests/",
+    "**/__pycache__/",
+]
+
+[tool.hatch.build.targets.wheel]
+# Force inclusion with package name remapping
+[tool.hatch.build.targets.wheel.force-include]
+"__init__.py" = "x402/__init__.py"
+"client.py" = "x402/client.py"
+"client_base.py" = "x402/client_base.py"
+"hook_adapters.py" = "x402/hook_adapters.py"
+"hook_policy.py" = "x402/hook_policy.py"
+"server.py" = "x402/server.py"
+"server_base.py" = "x402/server_base.py"
+"facilitator.py" = "x402/facilitator.py"
+"facilitator_base.py" = "x402/facilitator_base.py"
+"interfaces.py" = "x402/interfaces.py"
+"payment_flow.py" = "x402/payment_flow.py"
+"pending_settlement_store.py" = "x402/pending_settlement_store.py"
+"py.typed" = "x402/py.typed"
+"schemas" = "x402/schemas"
+"http" = "x402/http"
+"mechanisms" = "x402/mechanisms"
+"extensions" = "x402/extensions"
+"mcp/CHANGELOG.md" = "x402/mcp/CHANGELOG.md"
+"mcp/README.md" = "x402/mcp/README.md"
+"mcp/__init__.py" = "x402/mcp/__init__.py"
+"mcp/client.py" = "x402/mcp/client.py"
+"mcp/client_async.py" = "x402/mcp/client_async.py"
+"mcp/constants.py" = "x402/mcp/constants.py"
+"mcp/server.py" = "x402/mcp/server.py"
+"mcp/server_async.py" = "x402/mcp/server_async.py"
+"mcp/server_sync.py" = "x402/mcp/server_sync.py"
+"mcp/types.py" = "x402/mcp/types.py"
+"mcp/utils.py" = "x402/mcp/utils.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["x402"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["pycardano.*", "lzstring"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "mcp/tests"]
+
+[tool.towncrier]
+package = "x402"
+filename = "CHANGELOG.md"
+directory = "changelog.d/"
+title_format = "## [{version}] - {project_date}"
+issue_format = "[#{issue}](https://github.com/x402-foundation/x402/pull/{issue})"
+
+[tool.towncrier.fragment.feature]
+name = "Added"
+
+[tool.towncrier.fragment.bugfix]
+name = "Fixed"
+
+[tool.towncrier.fragment.doc]
+name = "Documentation"
+
+[tool.towncrier.fragment.removal]
+name = "Removals"
+
+[tool.towncrier.fragment.misc]
+name = "Misc"
+
+[tool.uv]
+required-version = ">=0.13.4"
+exclude-newer = "3 days"

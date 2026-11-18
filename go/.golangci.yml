@@ -1,0 +1,172 @@
+# golangci-lint configuration for x402 Go SDK
+# See: https://golangci-lint.run/usage/configuration/
+version: "2"
+
+linters:
+  enable:
+    # Detect common mistakes with asynchronous code
+    - asasalint
+    # Check for non-ASCII identifiers
+    - asciicheck
+    # Detect dangerous Unicode characters (security)
+    - bidichk
+    # Detect unclosed HTTP response bodies
+    - bodyclose
+    # Detect loop variable capture issues (Go 1.22+)
+    - copyloopvar
+    # Check for time.Duration type misuse
+    - durationcheck
+    # Check error handling, wrapping, and type assertions
+    - errorlint
+    # Check compiler directives (//go:generate, etc.)
+    - gocheckcompilerdirectives
+    # Check logger calls for consistency
+    - loggercheck
+    # Ensure append results are assigned (prevent bugs)
+    - makezero
+    # Enforce struct tags in JSON/YAML marshaling
+    - musttag
+    # Find code that returns nil even on error paths
+    - nilerr
+    # Check for missing context.Context in HTTP requests
+    - noctx
+    # Ensure protobuf getters are used (avoid nil panics)
+    - protogetter
+    # Detect useless reassignments
+    - reassign
+    # Check sql.Rows.Err() is called
+    - rowserrcheck
+    # Detect unclosed sql.Rows
+    - sqlclosecheck
+    # Report unused function parameters
+    - unparam
+    # Additional linters for SDK quality
+    # Detect slice bound check issues
+    - sloglint
+    # Find ineffective assignments
+    - ineffassign
+    # Check for misspellings in comments
+    - misspell
+    # Detect naked returns in functions > 5 lines
+    - nakedret
+    # Check for Printf format string mismatches
+    - govet
+    # Detect suspicious constructs (e.g., empty branches)
+    - staticcheck
+    # Deprecated function and constant detection
+    - gocritic
+    # Check for unused exported symbols (important for SDK)
+    - unused
+    # Detect context.Context misuse
+    - contextcheck
+
+  exclusions:
+    # Relax checks for generated files
+    generated: lax
+    presets:
+      # Skip comment-related checks (godoc, etc.)
+      - comments
+      # Reduce common false positives
+      - common-false-positives
+      # Skip legacy linter rules
+      - legacy
+      # Relax standard error handling checks where appropriate
+      - std-error-handling
+    paths:
+      # Exclude generated files
+      - .*\.gen\.go$
+      - .*_gen\.go$
+      - .*_generated\.go$
+      # Exclude legacy code (separate module, may have different standards)
+      - legacy/
+      # Exclude test utilities and mocks
+      - test/mocks/
+      # Exclude template files (generated HTML content)
+      - http/.*_template\.go$
+
+    rules:
+      # Allow unused parameters in test files (common for table-driven tests)
+      - linters:
+          - unparam
+        path: _test\.go$
+      # Allow naked returns in short test helpers
+      - linters:
+          - nakedret
+        path: _test\.go$
+      # Allow magic numbers in test files
+      - linters:
+          - mnd
+        path: _test\.go$
+      # Reduce noise from gocritic in tests (if-else chains, etc.)
+      - linters:
+          - gocritic
+        path: _test\.go$
+      # Allow unchecked errors in test files (common pattern for test setup)
+      - linters:
+          - errcheck
+        path: _test\.go$
+      # Allow HTTP calls without context in test files
+      - linters:
+          - noctx
+        path: _test\.go$
+      # Allow staticcheck style issues in test files
+      - linters:
+          - staticcheck
+        path: _test\.go$
+        text: "ST1023"
+      # Allow ineffective assignments in test files (often intentional)
+      - linters:
+          - ineffassign
+        path: _test\.go$
+      # Allow unused code in test files (mock implementations, etc.)
+      - linters:
+          - unused
+        path: test/
+      # Allow error wrapping without %w in certain contexts
+      - linters:
+          - errorlint
+        text: "non-wrapping format verb"
+      # Gin context is passed by value intentionally
+      - linters:
+          - contextcheck
+        path: http/gin/
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      # Exclude legacy code from formatting checks
+      - legacy/
+      # Exclude test mocks
+      - test/mocks/
+      # Exclude template files
+      - http/.*_template\.go$
+
+output:
+  # Show all issues, not just first per line
+  show-stats: true
+  # Enable sorting
+  sort-results: true
+  # Sort by file, then line, then column
+  sort-order:
+    - file
+    - linter
+
+issues:
+  # Report all issues (don't limit)
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Include test files
+  exclude-dirs-use-default: false
+  # Faster linting by not analyzing dependencies
+  exclude-dirs:
+    - vendor
+
+run:
+  # Timeout for linting (generous for large codebases)
+  timeout: 5m
+  # Use all available CPU cores
+  concurrency: 0
+  # Don't skip directories
+  allow-parallel-runners: true
+

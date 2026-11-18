@@ -1,0 +1,6 @@
+{
+  "repository": "solana-foundation/payment-channels",
+  "revision": "0c07d5751c8972abf6a219570a3f39a72f46f879",
+  "path": "program/payment_channels/idl/payment_channels.json",
+  "gitBlob": "eb6f704524dfdb044753f29831ad55120fcabc22"
+}

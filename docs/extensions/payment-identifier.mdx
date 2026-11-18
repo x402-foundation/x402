@@ -1,0 +1,848 @@
+---
+title: "Payment-Identifier (Idempotency)"
+description: "The payment-identifier extension enables idempotency for x402 payments, allowing clients to safely retry requests without duplicate payment processing."
+---
+
+The payment-identifier extension provides an idempotency mechanism for x402 payments. Clients can include a unique payment ID with their requests, and servers can use this ID to deduplicate payment processing - ensuring that retries with the same payment ID return cached responses without re-processing payments.
+
+## Use Cases
+
+- **Network failures**: Safely retry failed requests without duplicate payments
+- **Client crashes**: Resume requests after restart using persisted payment IDs
+- **Load balancing**: Same request can hit different servers with shared cache
+- **Testing**: Replay requests during development without spending funds
+
+## How It Works
+
+1. Server advertises `payment-identifier` extension support in the `PaymentRequired` response
+2. Client generates a unique payment ID and includes it in the `PaymentPayload`
+3. Server caches responses keyed by payment ID (with configurable TTL)
+4. Retry requests with the same payment ID return cached responses without re-processing payment
+
+## Quickstart for Buyers (Clients)
+
+<Tabs>
+<Tab title="TypeScript">
+
+### Step 1: Generate a Payment ID
+
+Use the `generatePaymentId()` utility to create a unique identifier:
+
+```typescript
+import { generatePaymentId } from "@x402/extensions/payment-identifier";
+
+const paymentId = generatePaymentId();
+// Example: "pay_7d5d747be160e280504c099d984bcfe0"
+
+// Custom prefix
+const orderId = generatePaymentId("order_");
+// Example: "order_7d5d747be160e280504c099d984bcfe0"
+```
+
+### Step 2: Add Payment ID to Extensions
+
+Hook into the payment flow to add the payment ID before payload creation:
+
+```typescript
+import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import {
+  appendPaymentIdentifierToExtensions,
+  generatePaymentId,
+} from "@x402/extensions/payment-identifier";
+
+const client = new x402Client();
+// ... register schemes ...
+
+// Generate a unique payment ID for this logical request
+const paymentId = generatePaymentId();
+
+// Hook into payment flow to add the payment ID
+client.onBeforePaymentCreation(async ({ paymentRequired }) => {
+  if (paymentRequired.extensions) {
+    // Only appends if server declared the extension
+    appendPaymentIdentifierToExtensions(paymentRequired.extensions, paymentId);
+  }
+});
+
+const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+
+// First request - payment is processed
+const response1 = await fetchWithPayment(url);
+
+// Retry with same payment ID - cached response returned (no payment)
+const response2 = await fetchWithPayment(url);
+```
+
+</Tab>
+<Tab title="Python">
+
+### Step 1: Generate a Payment ID
+
+Use the `generate_payment_id()` utility to create a unique identifier:
+
+```python
+from x402.extensions.payment_identifier import generate_payment_id
+
+payment_id = generate_payment_id()
+# Example: "pay_7d5d747be160e280504c099d984bcfe0"
+
+# Custom prefix
+order_id = generate_payment_id("order_")
+# Example: "order_7d5d747be160e280504c099d984bcfe0"
+```
+
+### Step 2: Add Payment ID to Extensions
+
+Hook into the payment flow to add the payment ID before payload creation:
+
+```python
+from x402 import x402Client
+from x402.extensions.payment_identifier import (
+    append_payment_identifier_to_extensions,
+    generate_payment_id,
+)
+from x402.http.clients import x402HttpxClient
+from x402.schemas import PaymentCreationContext
+
+client = x402Client()
+# ... register schemes ...
+
+# Generate a unique payment ID for this logical request
+payment_id = generate_payment_id()
+
+# Hook into payment flow to add the payment ID
+async def before_payment_creation(context: PaymentCreationContext) -> None:
+    extensions = context.payment_required.extensions
+    if extensions is not None:
+        # Only appends if server declared the extension
+        append_payment_identifier_to_extensions(extensions, payment_id)
+
+client.on_before_payment_creation(before_payment_creation)
+
+async with x402HttpxClient(client) as http:
+    # First request - payment is processed
+    response1 = await http.get(url)
+
+    # Retry with same payment ID - cached response returned (no payment)
+    response2 = await http.get(url)
+```
+
+</Tab>
+<Tab title="Go">
+
+### Step 1: Generate a Payment ID
+
+Use the `GeneratePaymentID()` utility to create a unique identifier:
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+// Generate with default prefix "pay_"
+paymentID := paymentidentifier.GeneratePaymentID("")
+// Example: "pay_7d5d747be160e280504c099d984bcfe0"
+
+// Generate with custom prefix
+paymentID = paymentidentifier.GeneratePaymentID("order_")
+// Example: "order_7d5d747be160e280504c099d984bcfe0"
+```
+
+### Step 2: Add Payment ID to Extensions
+
+Hook into the payment flow to add the payment ID before payload creation:
+
+```go
+import (
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+)
+
+client := x402.Newx402Client()
+// ... register schemes ...
+
+// Generate a unique payment ID for this logical request
+paymentID := paymentidentifier.GeneratePaymentID("")
+
+// Hook into payment flow to add the payment ID
+client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
+    if ctx.Extensions == nil {
+        return nil, nil
+    }
+
+    // Only add if server declared the extension
+    if ctx.Extensions[paymentidentifier.PAYMENT_IDENTIFIER] == nil {
+        return nil, nil
+    }
+
+    err := paymentidentifier.AppendPaymentIdentifierToExtensions(ctx.Extensions, paymentID)
+    if err != nil {
+        return nil, err
+    }
+
+    return nil, nil
+})
+
+// First request - payment is processed
+response1, err := client.MakeRequest(url)
+
+// Retry with same payment ID - cached response returned (no payment)
+response2, err := client.MakeRequest(url)
+```
+
+</Tab>
+</Tabs>
+
+
+### Best Practices
+
+1. **Generate payment IDs at the logical request level**, not per retry
+2. **Persist payment IDs** for long-running operations so they survive restarts
+3. **Use descriptive prefixes** (e.g., `generatePaymentId("order_")`) to identify payment types
+4. **Don't reuse payment IDs** across different logical requests
+
+## Quickstart for Sellers (Servers)
+
+<Tabs>
+<Tab title="TypeScript">
+
+### Step 1: Advertise Extension Support
+
+Declare the payment-identifier extension in your route configuration:
+
+```typescript
+import {
+  paymentMiddlewareFromHTTPServer,
+  x402ResourceServer,
+  x402HTTPResourceServer,
+} from "@x402/express";
+import {
+  declarePaymentIdentifierExtension,
+  PAYMENT_IDENTIFIER,
+} from "@x402/extensions/payment-identifier";
+
+const routes = {
+  "GET /weather": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: "$0.001",
+        network: "eip155:84532",
+        payTo: address,
+      },
+    ],
+    extensions: {
+      [PAYMENT_IDENTIFIER]: declarePaymentIdentifierExtension(false), // optional
+    },
+  },
+};
+```
+
+**Optional vs Required:**
+
+```typescript
+// Payment ID is optional (clients can omit it)
+declarePaymentIdentifierExtension(false)
+
+// Payment ID is required (clients must provide it or receive 400 Bad Request)
+declarePaymentIdentifierExtension(true)
+```
+
+### Step 2: Cache Responses After Settlement
+
+Store responses after successful payment settlement:
+
+```typescript
+import { extractPaymentIdentifier } from "@x402/extensions/payment-identifier";
+
+// In-memory cache (use Redis in production)
+const idempotencyCache = new Map<string, { timestamp: number; response: unknown }>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+const resourceServer = new x402ResourceServer(facilitatorClient)
+  .register("eip155:84532", new ExactEvmScheme())
+  .onAfterSettle(async ({ paymentPayload }) => {
+    const paymentId = extractPaymentIdentifier(paymentPayload);
+    if (paymentId) {
+      idempotencyCache.set(paymentId, {
+        timestamp: Date.now(),
+        response: { /* your response data */ },
+      });
+    }
+  });
+```
+
+### Step 3: Check Cache Before Payment
+
+Use the `onProtectedRequest` hook to return cached responses and skip payment processing:
+
+```typescript
+const httpServer = new x402HTTPResourceServer(resourceServer, routes)
+  .onProtectedRequest(async (context) => {
+    if (!context.paymentHeader) return;
+
+    try {
+      const paymentPayload = JSON.parse(
+        Buffer.from(context.paymentHeader, "base64").toString("utf-8"),
+      );
+      const paymentId = extractPaymentIdentifier(paymentPayload);
+
+      if (paymentId) {
+        const cached = idempotencyCache.get(paymentId);
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+          return { grantAccess: true }; // Skip payment, serve from cache
+        }
+      }
+    } catch {
+      // Invalid payment header, continue to normal payment flow
+    }
+  });
+```
+
+</Tab>
+<Tab title="Python">
+
+### Step 1: Advertise Extension Support
+
+Declare the payment-identifier extension in your route configuration:
+
+```python
+from x402.server import x402ResourceServer
+from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+from x402.http.types import RouteConfig
+from x402.mechanisms.evm.exact import ExactEvmServerScheme
+from x402.extensions.payment_identifier import (
+    declare_payment_identifier_extension,
+    PAYMENT_IDENTIFIER,
+)
+
+routes = {
+    "GET /weather": RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:84532",
+                pay_to=address,
+            ),
+        ],
+        extensions={
+            PAYMENT_IDENTIFIER: declare_payment_identifier_extension(required=False),  # optional
+        },
+    ),
+}
+```
+
+**Optional vs Required:**
+
+```python
+# Payment ID is optional (clients can omit it)
+declare_payment_identifier_extension(required=False)
+
+# Payment ID is required (clients must provide it or receive 400 Bad Request)
+declare_payment_identifier_extension(required=True)
+```
+
+### Step 2: Cache Responses After Settlement
+
+Store responses after successful payment settlement:
+
+```python
+import time
+from x402.schemas import SettleContext
+from x402.extensions.payment_identifier import extract_payment_identifier
+
+# In-memory cache (use Redis in production)
+idempotency_cache: dict = {}
+CACHE_TTL_SECONDS = 60 * 60  # 1 hour
+
+async def after_settle(ctx: SettleContext) -> None:
+    payment_id = extract_payment_identifier(ctx.payment_payload)
+    if payment_id:
+        idempotency_cache[payment_id] = {
+            "timestamp": time.time(),
+            "response": {},  # your response data
+        }
+
+server = x402ResourceServer(facilitator)
+server.register("eip155:84532", ExactEvmServerScheme())
+server.on_after_settle(after_settle)
+```
+
+### Step 3: Check Cache Before Payment
+
+Use FastAPI middleware to check the cache before the payment middleware processes the request:
+
+```python
+import base64
+import json
+from fastapi import Request, Response
+from x402.schemas import PaymentPayload
+
+@app.middleware("http")
+async def idempotency_middleware(request: Request, call_next):
+    payment_header = request.headers.get("X-Payment")
+    if payment_header:
+        try:
+            payment_data = json.loads(base64.b64decode(payment_header))
+            payment_payload = PaymentPayload.model_validate(payment_data)
+            payment_id = extract_payment_identifier(payment_payload)
+
+            if payment_id:
+                cached = idempotency_cache.get(payment_id)
+                if cached and time.time() - cached["timestamp"] < CACHE_TTL_SECONDS:
+                    return Response(
+                        content=json.dumps(cached["response"]),
+                        media_type="application/json",
+                    )
+        except Exception:
+            pass  # Invalid payment header, continue to normal flow
+
+    return await call_next(request)
+
+# Add payment middleware AFTER idempotency middleware
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+```
+
+</Tab>
+<Tab title="Go">
+
+### Step 1: Advertise Extension Support
+
+Declare the payment-identifier extension in your route configuration:
+
+```go
+import (
+    x402http "github.com/x402-foundation/x402/go/v2/http"
+    "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+)
+
+// Optional or required payment identifier (pick one)
+paymentIdExtension := paymentidentifier.DeclarePaymentIdentifierExtension(false) // optional
+// paymentIdExtension = paymentidentifier.DeclarePaymentIdentifierExtension(true) // required
+
+routes := x402http.RoutesConfig{
+    "GET /weather": {
+        Accepts: []x402http.PaymentOption{
+            {
+                Scheme:  "exact",
+                Price:   "$0.001",
+                Network: "eip155:84532",
+                PayTo:   address,
+            },
+        },
+        Extensions: map[string]interface{}{
+            paymentidentifier.PAYMENT_IDENTIFIER: paymentIdExtension,
+        },
+    },
+}
+```
+
+### Step 2: Extract Payment ID
+
+Use the `ExtractPaymentIdentifier()` utility to get the payment ID from the payload:
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+// In your handler
+payload := c.MustGet("x402_payload").(x402.PaymentPayload)
+
+paymentID, err := paymentidentifier.ExtractPaymentIdentifier(payload, true)
+if err != nil {
+    // Handle invalid payment ID
+    c.JSON(400, gin.H{"error": err.Error()})
+    return
+}
+
+// Check for duplicate
+if existingResponse, found := processedPayments[paymentID]; found {
+    // Return cached response
+    c.JSON(200, existingResponse)
+    return
+}
+```
+
+### Step 3: Cache Responses
+
+Store responses after successful payment processing:
+
+```go
+// In-memory cache (use Redis in production)
+var processedPayments = make(map[string]interface{})
+
+// After processing payment
+processedPayments[paymentID] = responseData
+```
+
+</Tab>
+</Tabs>
+
+
+### Request Binding
+
+Servers should bind each payment ID to a normalized fingerprint of the request before returning a cached result. The fingerprint should cover the parts of the request that make the paid operation unique:
+
+- `scheme`, `network`, `asset`, `amount`, `payTo`
+- Resource path and HTTP method
+- Application-level operation or order identifier (when available)
+
+Store the first observed fingerprint with the payment ID. Later requests with the same ID and the same fingerprint can return the cached response. Later requests with the same ID but a different fingerprint should return `409 Conflict` — not a cached response or a second execution.
+
+When the same backend handles multiple paid resources, scope the storage key by tenant, merchant, route, or facilitator account to avoid cross-resource collisions.
+
+### Idempotency Behavior
+
+| Scenario | Server Response |
+|----------|-----------------|
+| New payment ID | Process payment normally, cache response |
+| Same payment ID, same request fingerprint (within TTL) | Return cached response, skip payment |
+| Same payment ID, different request fingerprint | Return 409 Conflict |
+| Same payment ID (after TTL) | Process payment normally, update cache |
+| No payment ID | Process payment normally (no caching) |
+| `required: true`, no payment ID provided | Return 400 Bad Request |
+
+### Configuration Options
+
+#### Cache TTL
+
+Adjust `CACHE_TTL_MS` (TypeScript/Go) or `CACHE_TTL_SECONDS` (Python) based on your use case:
+- Short TTL (5-15 min): For time-sensitive resources
+- Long TTL (1-24 hours): For static or infrequently changing resources
+
+### Production Considerations
+
+1. **Use Redis or similar** instead of in-memory cache for distributed systems
+2. **Handle cache failures gracefully** - if cache is unavailable, process payment normally
+3. **Bind payment IDs to request fingerprints** - store the fingerprint (scheme, network, asset, amount, payTo, route, and application operation ID) alongside the payment ID and return `409 Conflict` if the same ID is replayed with a different fingerprint
+4. **Monitor cache hit rates** to tune TTL and detect abuse
+
+## API Reference
+
+<Tabs>
+<Tab title="TypeScript">
+
+### Client Functions
+
+#### `generatePaymentId(prefix?)`
+
+Generates a cryptographically secure unique payment identifier.
+
+```typescript
+import { generatePaymentId } from "@x402/extensions/payment-identifier";
+
+const paymentId = generatePaymentId();
+// Returns: "pay_<32-character-hex-string>"
+
+const orderId = generatePaymentId("order_");
+// Returns: "order_<32-character-hex-string>"
+```
+
+#### `appendPaymentIdentifierToExtensions(extensions, id?)`
+
+Adds a payment identifier to the extensions object. Only modifies extensions if the server declared support for the extension. If no payment ID is provided, one is generated automatically.
+
+```typescript
+import { appendPaymentIdentifierToExtensions } from "@x402/extensions/payment-identifier";
+
+const extensions = paymentRequired.extensions ?? {};
+appendPaymentIdentifierToExtensions(extensions, "pay_custom_id_1234567890abcdef");
+// extensions now contains the payment-identifier extension (only if server declared it)
+```
+
+#### `isValidPaymentId(id)`
+
+Validates a payment identifier format.
+
+```typescript
+import { isValidPaymentId } from "@x402/extensions/payment-identifier";
+
+isValidPaymentId("pay_7d5d747be160e280504c099d984bcfe0"); // true
+isValidPaymentId("invalid"); // false (too short)
+```
+
+### Server Functions
+
+#### `declarePaymentIdentifierExtension(required?)`
+
+Creates a payment-identifier extension declaration for resource servers.
+
+```typescript
+import { declarePaymentIdentifierExtension } from "@x402/extensions/payment-identifier";
+
+// Optional payment ID (default)
+const extension = declarePaymentIdentifierExtension();
+
+// Required payment ID
+const extensionRequired = declarePaymentIdentifierExtension(true);
+```
+
+#### `extractPaymentIdentifier(paymentPayload)`
+
+Extracts the payment identifier from a payment payload.
+
+```typescript
+import { extractPaymentIdentifier } from "@x402/extensions/payment-identifier";
+
+const paymentId = extractPaymentIdentifier(paymentPayload);
+if (paymentId) {
+  // Check cache, implement idempotency logic
+}
+```
+
+#### `validatePaymentIdentifier(extension)`
+
+Validates the payment identifier extension object structure and ID format.
+
+```typescript
+import { validatePaymentIdentifier } from "@x402/extensions/payment-identifier";
+
+const extension = paymentPayload.extensions?.["payment-identifier"];
+const result = validatePaymentIdentifier(extension);
+if (!result.valid) {
+  console.error(result.errors);
+}
+```
+
+### Constants
+
+```typescript
+import {
+  PAYMENT_IDENTIFIER,      // "payment-identifier"
+  PAYMENT_ID_MIN_LENGTH,   // 16
+  PAYMENT_ID_MAX_LENGTH,   // 128
+  PAYMENT_ID_PATTERN,      // /^[a-zA-Z0-9_-]+$/
+} from "@x402/extensions/payment-identifier";
+```
+
+</Tab>
+<Tab title="Python">
+
+### Client Functions
+
+#### `generate_payment_id(prefix="pay_")`
+
+Generates a cryptographically secure unique payment identifier.
+
+```python
+from x402.extensions.payment_identifier import generate_payment_id
+
+payment_id = generate_payment_id()
+# Returns: "pay_<32-character-hex-string>"
+
+order_id = generate_payment_id("order_")
+# Returns: "order_<32-character-hex-string>"
+```
+
+#### `append_payment_identifier_to_extensions(extensions, id=None)`
+
+Adds a payment identifier to the extensions object. Only modifies extensions if the server declared support for the extension. If no payment ID is provided, one is generated automatically.
+
+```python
+from x402.extensions.payment_identifier import append_payment_identifier_to_extensions
+
+extensions = payment_required.extensions or {}
+append_payment_identifier_to_extensions(extensions, "pay_custom_id_1234567890abcdef")
+# extensions now contains the payment-identifier extension (only if server declared it)
+```
+
+#### `is_valid_payment_id(id)`
+
+Validates a payment identifier format.
+
+```python
+from x402.extensions.payment_identifier import is_valid_payment_id
+
+is_valid_payment_id("pay_7d5d747be160e280504c099d984bcfe0")  # True
+is_valid_payment_id("invalid")  # False (too short)
+```
+
+### Server Functions
+
+#### `declare_payment_identifier_extension(required=False)`
+
+Creates a payment-identifier extension declaration for resource servers.
+
+```python
+from x402.extensions.payment_identifier import declare_payment_identifier_extension
+
+# Optional payment ID (default)
+extension = declare_payment_identifier_extension()
+
+# Required payment ID
+extension_required = declare_payment_identifier_extension(required=True)
+```
+
+#### `extract_payment_identifier(payment_payload)`
+
+Extracts the payment identifier from a payment payload.
+
+```python
+from x402.extensions.payment_identifier import extract_payment_identifier
+
+payment_id = extract_payment_identifier(payment_payload)
+if payment_id:
+    # Check cache, implement idempotency logic
+    pass
+```
+
+#### `validate_payment_identifier(extension)`
+
+Validates the payment identifier extension object structure and ID format.
+
+```python
+from x402.extensions.payment_identifier import validate_payment_identifier
+
+extension = payment_payload.extensions.get("payment-identifier")
+result = validate_payment_identifier(extension)
+if not result.valid:
+    print(result.errors)
+```
+
+### Constants
+
+```python
+from x402.extensions.payment_identifier import (
+    PAYMENT_IDENTIFIER,      # "payment-identifier"
+    PAYMENT_ID_MIN_LENGTH,   # 16
+    PAYMENT_ID_MAX_LENGTH,   # 128
+    PAYMENT_ID_PATTERN,      # re.compile(r"^[a-zA-Z0-9_-]+$")
+)
+```
+
+</Tab>
+<Tab title="Go">
+
+### Client Functions
+
+#### `GeneratePaymentID(prefix string)`
+
+Generates a cryptographically secure unique payment identifier.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+// Generate with default prefix "pay_"
+paymentID := paymentidentifier.GeneratePaymentID("")
+// Returns: "pay_<32-character-hex-string>"
+
+// Generate with custom prefix
+paymentID = paymentidentifier.GeneratePaymentID("order_")
+// Returns: "order_<32-character-hex-string>"
+```
+
+#### `AppendPaymentIdentifierToExtensions(extensions map[string]interface{}, id string) error`
+
+Adds a payment identifier to the extensions object. Only modifies extensions if the server declared support for the extension. Pass an empty string to auto-generate an ID.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+extensions := make(map[string]interface{})
+err := paymentidentifier.AppendPaymentIdentifierToExtensions(extensions, "pay_custom_id_1234567890abcdef")
+// extensions now contains the payment-identifier extension (only if server declared it)
+```
+
+#### `IsValidPaymentID(id string) bool`
+
+Validates a payment identifier format.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+valid := paymentidentifier.IsValidPaymentID("pay_7d5d747be160e280504c099d984bcfe0") // true
+valid = paymentidentifier.IsValidPaymentID("invalid") // false (too short)
+```
+
+### Server Functions
+
+#### `DeclarePaymentIdentifierExtension(required bool) PaymentIdentifierExtension`
+
+Creates a payment-identifier extension declaration for resource servers.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+// Optional payment ID
+extension := paymentidentifier.DeclarePaymentIdentifierExtension(false)
+
+// Required payment ID
+extensionRequired := paymentidentifier.DeclarePaymentIdentifierExtension(true)
+```
+
+#### `ExtractPaymentIdentifier(payload PaymentPayload, validate bool) (string, error)`
+
+Extracts the payment identifier from a payment payload.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+paymentID, err := paymentidentifier.ExtractPaymentIdentifier(payload, true)
+if err != nil {
+    // Handle error
+}
+if paymentID != "" {
+    // Check cache, implement idempotency logic
+}
+```
+
+#### `ValidatePaymentIdentifier(extension interface{}) ValidationResult`
+
+Validates the payment identifier extension object structure and ID format.
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+extension := payload.Extensions[paymentidentifier.PAYMENT_IDENTIFIER]
+result := paymentidentifier.ValidatePaymentIdentifier(extension)
+if !result.Valid {
+    // Handle validation errors
+    fmt.Println(result.Errors)
+}
+```
+
+### Constants
+
+```go
+import "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+
+const (
+    PAYMENT_IDENTIFIER    = "payment-identifier"
+    PAYMENT_ID_MIN_LENGTH = 16
+    PAYMENT_ID_MAX_LENGTH = 128
+)
+
+var PAYMENT_ID_PATTERN = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+```
+
+</Tab>
+</Tabs>
+
+## Examples
+
+Full working examples are available in the x402 repository:
+
+**TypeScript:**
+- [TypeScript Client Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/clients/payment-identifier)
+- [TypeScript Server Example](https://github.com/x402-foundation/x402/tree/main/examples/typescript/servers/payment-identifier)
+
+**Python:**
+- [Python Client Example](https://github.com/x402-foundation/x402/tree/main/examples/python/clients/payment-identifier)
+- [Python Server Example](https://github.com/x402-foundation/x402/tree/main/examples/python/servers/payment-identifier)
+
+**Go:**
+- [Go Client Example](https://github.com/x402-foundation/x402/tree/main/examples/go/clients/payment-identifier)
+- [Go Server Example](https://github.com/x402-foundation/x402/tree/main/examples/go/servers/payment-identifier)
+
+## FAQ
+
+**Q: What happens if I reuse a payment ID for a different request?**
+A: If the request fingerprint differs from the original (different scheme, network, asset, amount, route, etc.), the server should return `409 Conflict`. Don't reuse payment IDs across different logical requests.
+
+**Q: How long are payment IDs cached?**
+A: This is configurable by the server. Typical TTLs range from 5 minutes to 24 hours depending on the use case.
+
+**Q: Can I use custom payment ID formats?**
+A: Payment IDs must be 16-128 characters, alphanumeric with hyphens and underscores allowed. Use `isValidPaymentId()` to validate custom IDs.
+
+**Q: What if the server doesn't support payment-identifier?**
+A: The extension is optional. If the server doesn't advertise support, clients can still make payments normally without idempotency.

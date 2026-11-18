@@ -1,0 +1,234 @@
+import { describe, it, expect } from "vitest";
+import type {
+  ExactEvmPayloadV1,
+  ExactEvmPayloadV2,
+  ExactEIP3009Payload,
+  ExactPermit2Payload,
+} from "../../src/types";
+import {
+  isPermit2Payload,
+  isEIP3009Payload,
+  validateEip3009Payload,
+  validateExactEvmPayload,
+  validateUptoPermit2Payload,
+} from "../../src/types";
+
+describe("EVM Types", () => {
+  describe("ExactEvmPayloadV1", () => {
+    it("should accept valid payload structure", () => {
+      const payload: ExactEvmPayloadV1 = {
+        signature: "0x1234567890abcdef",
+        authorization: {
+          from: "0x1234567890123456789012345678901234567890",
+          to: "0x9876543210987654321098765432109876543210",
+          value: "100000",
+          validAfter: "1234567890",
+          validBefore: "1234567890",
+          nonce: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        },
+      };
+
+      expect(payload.signature).toBeDefined();
+      expect(payload.authorization.from).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      expect(payload.authorization.nonce).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    });
+
+    it("should allow optional signature", () => {
+      const payload: ExactEvmPayloadV1 = {
+        authorization: {
+          from: "0x1234567890123456789012345678901234567890",
+          to: "0x9876543210987654321098765432109876543210",
+          value: "100000",
+          validAfter: "1234567890",
+          validBefore: "1234567890",
+          nonce: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        },
+      };
+
+      expect(payload.signature).toBeUndefined();
+      expect(payload.authorization).toBeDefined();
+    });
+  });
+
+  describe("ExactEvmPayloadV2", () => {
+    it("should accept EIP-3009 payload structure", () => {
+      const payload: ExactEvmPayloadV2 = {
+        signature: "0x1234567890abcdef",
+        authorization: {
+          from: "0x1234567890123456789012345678901234567890",
+          to: "0x9876543210987654321098765432109876543210",
+          value: "100000",
+          validAfter: "1234567890",
+          validBefore: "1234567890",
+          nonce: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        },
+      };
+
+      // V2 should be compatible with V1
+      const payloadV1: ExactEvmPayloadV1 = payload;
+      expect(payloadV1).toEqual(payload);
+    });
+
+    it("should accept Permit2 payload structure", () => {
+      const payload: ExactPermit2Payload = {
+        signature: "0x1234567890abcdef",
+        permit2Authorization: {
+          from: "0x1234567890123456789012345678901234567890",
+          permitted: {
+            token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            amount: "1000000",
+          },
+          spender: "0x4020B671C4c523a852c11a5EC58F27F235e80001",
+          nonce: "12345",
+          deadline: "1234567890",
+          witness: {
+            to: "0x9876543210987654321098765432109876543210",
+            validAfter: "1234567000",
+          },
+        },
+      };
+
+      expect(payload.signature).toBeDefined();
+      expect(payload.permit2Authorization).toBeDefined();
+      expect(payload.permit2Authorization.permitted.token).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    });
+  });
+
+  describe("Type Guards", () => {
+    const eip3009Payload: ExactEIP3009Payload = {
+      signature: "0x1234567890abcdef",
+      authorization: {
+        from: "0x1234567890123456789012345678901234567890",
+        to: "0x9876543210987654321098765432109876543210",
+        value: "100000",
+        validAfter: "1234567890",
+        validBefore: "1234567890",
+        nonce: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      },
+    };
+
+    const permit2Payload: ExactPermit2Payload = {
+      signature: "0x1234567890abcdef",
+      permit2Authorization: {
+        from: "0x1234567890123456789012345678901234567890",
+        permitted: {
+          token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          amount: "1000000",
+        },
+        spender: "0x4020B671C4c523a852c11a5EC58F27F235e80001",
+        nonce: "12345",
+        deadline: "1234567890",
+        witness: {
+          to: "0x9876543210987654321098765432109876543210",
+          validAfter: "1234567000",
+        },
+      },
+    };
+
+    describe("isEIP3009Payload", () => {
+      it("should return true for EIP-3009 payload", () => {
+        expect(isEIP3009Payload(eip3009Payload)).toBe(true);
+      });
+
+      it("should return false for Permit2 payload", () => {
+        expect(isEIP3009Payload(permit2Payload)).toBe(false);
+      });
+    });
+
+    describe("isPermit2Payload", () => {
+      it("should return true for Permit2 payload", () => {
+        expect(isPermit2Payload(permit2Payload)).toBe(true);
+      });
+
+      it("should return false for EIP-3009 payload", () => {
+        expect(isPermit2Payload(eip3009Payload)).toBe(false);
+      });
+    });
+  });
+});
+
+describe("validateExactEvmPayload", () => {
+  function eip3009(authorization: Record<string, unknown> = {}) {
+    return {
+      signature: `0x${"00".repeat(65)}`,
+      authorization: {
+        from: "0x1234567890123456789012345678901234567890",
+        to: "0x0987654321098765432109876543210987654321",
+        value: "1000000",
+        validAfter: "0",
+        validBefore: "1000003600",
+        nonce: `0x${"00".repeat(32)}`,
+        ...authorization,
+      },
+    };
+  }
+
+  it("accepts a well-formed EIP-3009 payload", () => {
+    expect(validateExactEvmPayload(eip3009())).toBeUndefined();
+  });
+
+  it("accepts the largest uint256 value", () => {
+    expect(
+      validateExactEvmPayload(eip3009({ value: ((1n << 256n) - 1n).toString() })),
+    ).toBeUndefined();
+  });
+
+  it("accepts a nonce without a 0x prefix", () => {
+    expect(validateExactEvmPayload(eip3009({ nonce: "ab".repeat(32) }))).toBeUndefined();
+  });
+
+  it("names a non-object root as the payload", () => {
+    for (const root of ["not-an-object", null, []]) {
+      expect(validateExactEvmPayload(root)).toBe("payload must be an object");
+      expect(validateEip3009Payload(root)).toBe("payload must be an object");
+    }
+  });
+});
+
+describe("validateUptoPermit2Payload", () => {
+  function uptoPermit2(witness: Record<string, unknown> = {}) {
+    return {
+      permit2Authorization: {
+        from: "0x1234567890123456789012345678901234567890",
+        permitted: {
+          token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          amount: "1000000",
+        },
+        spender: "0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002",
+        nonce: "12345678901234567890",
+        deadline: "1000003600",
+        witness: {
+          to: "0x0987654321098765432109876543210987654321",
+          facilitator: "0x1111111111111111111111111111111111111111",
+          validAfter: "0",
+          ...witness,
+        },
+      },
+      signature: `0x${"00".repeat(65)}`,
+    };
+  }
+
+  it("accepts a well-formed upto Permit2 payload", () => {
+    expect(validateUptoPermit2Payload(uptoPermit2())).toBeUndefined();
+  });
+
+  it("accepts the largest uint256 permitted amount", () => {
+    const payload = uptoPermit2();
+    payload.permit2Authorization.permitted.amount = ((1n << 256n) - 1n).toString();
+    expect(validateUptoPermit2Payload(payload)).toBeUndefined();
+  });
+
+  it("rejects a witness without the facilitator field", () => {
+    const payload = uptoPermit2();
+    delete (payload.permit2Authorization.witness as Record<string, unknown>).facilitator;
+    expect(validateUptoPermit2Payload(payload)).toBe(
+      "permit2Authorization.witness.facilitator must be a string",
+    );
+  });
+
+  it("names a non-object root as the payload", () => {
+    for (const root of ["not-an-object", null, []]) {
+      expect(validateUptoPermit2Payload(root)).toBe("payload must be an object");
+    }
+  });
+});
