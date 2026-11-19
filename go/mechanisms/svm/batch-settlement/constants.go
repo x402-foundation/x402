@@ -38,6 +38,15 @@ const (
 	ExtraMaxIdleSecs        = "maxIdleSecs"
 	ExtraMaxClaimChannels   = "maxClaimChannels"
 	ExtraMaxSettleChannels  = "maxSettleChannels"
+	ExtraChannelStates      = "channelStates"
+)
+
+// BatchRedemptionChannelState.Status values.
+const (
+	ChannelStatusOpen        = "open"
+	ChannelStatusClosing     = "closing"
+	ChannelStatusSealed      = "sealed"
+	ChannelStatusDistributed = "distributed"
 )
 
 // Redemption batch capacities (scheme_batch_settlement_svm.md, "Facilitator-built
