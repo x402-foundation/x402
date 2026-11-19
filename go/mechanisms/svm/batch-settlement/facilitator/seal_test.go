@@ -712,6 +712,69 @@ func TestBatchSettlementSeal(t *testing.T) {
 	}
 
 	for _, intent := range []CloseIntent{CloseIntentSeal, CloseIntentRefund} {
+		t.Run(fmt.Sprintf("delivers the payout of a confirmed %s on retry when its payout record could not be written", intent), func(t *testing.T) {
+			channel, payload, amount := live(nil), any(sealPayload(t, 3_000)), "2500"
+			if intent == CloseIntentRefund {
+				channel, payload, amount = openLive, refundPayload(t, 3_000), "7000"
+			}
+			payouts := &payoutLog{}
+			fixture := facilitator(t, channel, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+			attributing(fixture, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: 7_000}, nil)
+			store := &resultSetFailingStore{PendingSettlementStore: fixture.scheme.pendingStore}
+			store.fail.Store(true)
+			fixture.scheme.pendingStore = store
+			ctx := context.Background()
+			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
+			distributed := func() *generated.Channel {
+				return live(func(channel *generated.Channel) {
+					channel.Status = uint8(generated.ChannelStatus_Distributed)
+					channel.Settlement = generated.SettlementWatermarks{Settled: 3_000, PayoutWatermark: 3_000}
+				})
+			}
+			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return distributed(), nil
+			}
+
+			first := settleThrown(t, fixture.scheme, payload)
+			assert.Equal(t, x402.ErrSettlementPending, first.ErrorReason)
+			assert.Equal(t, signature, first.Transaction)
+			assert.Empty(t, payouts.calls())
+			stored, found, err := store.Get(ctx, key)
+			require.NoError(t, err)
+			require.True(t, found, "the confirmed close keeps its signature for a retry")
+			assert.Equal(t, signature, stored)
+
+			// The close landed: the channel no longer has the status a new close needs.
+			store.fail.Store(false)
+			fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return distributed(), nil
+			}
+			fixture.scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
+				return durableResult{OK: true, Signature: signature}, nil
+			}
+			recovered := settle(t, fixture.scheme, payload)
+			assert.True(t, recovered.Success, "a retry reconciles the remembered close instead of failing with close_state")
+			assert.Equal(t, amount, recovered.Amount)
+			assert.Equal(t, "2500", recovered.Extra["paidToReceiver"])
+			assert.Equal(t, signature, recovered.Transaction)
+			assert.Len(t, fixture.submits, 1)
+			calls := payouts.calls()
+			require.Len(t, calls, 1)
+			assert.Equal(t, "2500", calls[0].response.Amount)
+			for _, remaining := range []string{key, resultKey(key)} {
+				_, stored, err := store.Get(ctx, remaining)
+				require.NoError(t, err)
+				assert.False(t, stored, remaining)
+			}
+
+			again := settle(t, fixture.scheme, payload)
+			assert.False(t, again.Success)
+			assert.Equal(t, batchsettlement.ErrCloseState, again.ErrorReason)
+			assert.Len(t, payouts.calls(), 1, "the payout is not delivered twice")
+		})
+	}
+
+	for _, intent := range []CloseIntent{CloseIntentSeal, CloseIntentRefund} {
 		t.Run(fmt.Sprintf("keeps a hookless %s pending when its closed state is not visible yet, and answers the retry even when the channel cannot be read", intent), func(t *testing.T) {
 			channel, payload, amount := live(nil), any(sealPayload(t, 3_000)), "2500"
 			if intent == CloseIntentRefund {

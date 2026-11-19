@@ -1624,6 +1624,18 @@ func (s *resultDeleteFailingStore) Delete(ctx context.Context, key string) error
 	return s.PendingSettlementStore.Delete(ctx, key)
 }
 
+type resultSetFailingStore struct {
+	x402.PendingSettlementStore
+	fail atomic.Bool
+}
+
+func (s *resultSetFailingStore) Set(ctx context.Context, key, value string) error {
+	if s.fail.Load() && strings.HasSuffix(key, ":result") {
+		return errors.New("write unavailable")
+	}
+	return s.PendingSettlementStore.Set(ctx, key, value)
+}
+
 type failingPendingStore struct {
 	getErr    error
 	setErr    error
