@@ -154,6 +154,10 @@ func executeRefundWithSignature(
 
 	// Handle claims + refund atomically if claims are present
 	if len(payload.Claims) > 0 {
+		claimArgs, err := buildVoucherClaimArgs(payload.Claims)
+		if err != nil {
+			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "", err.Error())
+		}
 		// Resolve claim authorizer signature — auto-sign if absent
 		var claimSig []byte
 		if payload.ClaimAuthorizerSignature != "" {
@@ -175,8 +179,6 @@ func executeRefundWithSignature(
 					fmt.Sprintf("failed to sign claim batch for refund: %s", err))
 			}
 		}
-
-		claimArgs := buildVoucherClaimArgs(payload.Claims)
 
 		// ABI-encode both calls for multicall.
 		claimAbi, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementClaimWithSignatureABI)))
@@ -573,7 +575,11 @@ func buildDirectRefundCall(
 	if err != nil {
 		return refundCall{}, fmt.Errorf("failed to load claim ABI: %s", err)
 	}
-	claimCalldata, err := claimAbi.Pack("claim", buildVoucherClaimArgs(payload.Claims))
+	claimArgs, err := buildVoucherClaimArgs(payload.Claims)
+	if err != nil {
+		return refundCall{}, err
+	}
+	claimCalldata, err := claimAbi.Pack("claim", claimArgs)
 	if err != nil {
 		return refundCall{}, fmt.Errorf("failed to encode claim calldata: %s", err)
 	}

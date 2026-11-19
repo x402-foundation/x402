@@ -8,6 +8,7 @@ from typing import Any
 try:
     from eth_account import Account
     from eth_account.messages import encode_typed_data
+    from eth_keys.constants import SECPK1_N
     from eth_utils import to_checksum_address
 except ImportError as e:
     raise ImportError(
@@ -81,6 +82,18 @@ def erc3009_authorization_time_invalid_reason(valid_after: int, valid_before: in
     return None
 
 
+def is_contract_recoverable_signature(signature: bytes) -> bool:
+    """Return whether x402BatchSettlement's OpenZeppelin ECDSA recovery accepts signature.
+
+    It requires 65 bytes, a low s value and v of 27 or 28.
+    """
+    return (
+        len(signature) == 65
+        and int.from_bytes(signature[32:64], "big") <= SECPK1_N // 2
+        and signature[64] in (27, 28)
+    )
+
+
 def _signature_to_bytes(signature: str | bytes) -> bytes:
     if isinstance(signature, bytes):
         return signature
@@ -109,10 +122,15 @@ def verify_batch_settlement_voucher_typed_data(
         "maxClaimableAmount": int(max_claimable_amount),
     }
 
-    sig_bytes = _signature_to_bytes(signature)
+    try:
+        sig_bytes = _signature_to_bytes(signature)
+    except ValueError:
+        return False
     is_zero = int(payer_authorizer, 16) == 0
 
     if not is_zero:
+        if not is_contract_recoverable_signature(sig_bytes):
+            return False
         try:
             signable = encode_typed_data(
                 domain_data=domain,
@@ -134,6 +152,7 @@ def verify_batch_settlement_voucher_typed_data(
             primary_type="Voucher",
             message=message,
             signature=sig_bytes,
+            eoa_signature_check=is_contract_recoverable_signature,
         )
     except Exception:
         return False
