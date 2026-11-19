@@ -116,6 +116,30 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	"eip155:4801": {
 		{Asset: "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
 	},
+	"eip155:10": {
+		{Asset: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:130": {
+		{Asset: "0x078D782b760474a361dDA0AF3839290b0EF57AD6", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:146": {
+		{Asset: "0x29219dd400f2Bf60E5a23d13Be72B486D4038894", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:999": {
+		{Asset: "0xb88339CB7199b77E23DB6E890353E22632Ba630f", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:57073": {
+		{Asset: "0x2D270e6886d130D724215A266106e6832161EAEd", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:59144": {
+		{Asset: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:81224": {
+		{Asset: "0xd996633a415985DBd7D6D12f4A4343E31f5037cf", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:98866": {
+		{Asset: "0x222365EF19F7947e5484218551B56bb3965Aa7aF", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
 	"eip155:4663": {
 		{Asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", Name: "Global Dollar", Version: "1", Decimals: 6, Symbol: "USDG"},
 	},

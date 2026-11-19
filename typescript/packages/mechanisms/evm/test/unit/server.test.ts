@@ -107,6 +107,27 @@ describe("ExactEvmScheme (Server)", () => {
       });
     });
 
+    // Circle-issued USDC. The EIP-712 name and version are what each token reports on chain, and
+    // the domain separator recomputed from them matches the contract's DOMAIN_SEPARATOR().
+    describe.each([
+      ["OP Mainnet", "eip155:10", "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", "USD Coin"],
+      ["Unichain", "eip155:130", "0x078D782b760474a361dDA0AF3839290b0EF57AD6", "USDC"],
+      ["Sonic", "eip155:146", "0x29219dd400f2Bf60E5a23d13Be72B486D4038894", "USDC"],
+      ["HyperEVM", "eip155:999", "0xb88339CB7199b77E23DB6E890353E22632Ba630f", "USDC"],
+      ["Ink", "eip155:57073", "0x2D270e6886d130D724215A266106e6832161EAEd", "USDC"],
+      ["Linea", "eip155:59144", "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", "USDC"],
+      ["Codex", "eip155:81224", "0xd996633a415985DBd7D6D12f4A4343E31f5037cf", "USDC"],
+      ["Plume", "eip155:98866", "0x222365EF19F7947e5484218551B56bb3965Aa7aF", "USDC"],
+    ] as const)("%s network", (_label, network, usdc, name) => {
+      it("should resolve dollar prices to native USDC with its EIP-712 domain", async () => {
+        const result = await server.parsePrice("$0.001", network);
+        expect(result.asset).toBe(usdc);
+        expect(result.amount).toBe("1000"); // 6 decimals
+        expect(result.extra).toEqual({ name, version: "2" });
+        expect(result.extra).not.toHaveProperty("assetTransferMethod");
+      });
+    });
+
     describe("pre-parsed price objects", () => {
       it("should handle pre-parsed price objects with asset", async () => {
         const result = await server.parsePrice(
