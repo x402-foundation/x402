@@ -94,6 +94,26 @@ class TestParsePrice:
             assert result.asset == get_default_asset(network)["asset"]
             assert result.amount == "1000000"
 
+    class TestWorldChainNetworks:
+        """Test World Chain mainnet and World Chain Sepolia."""
+
+        @pytest.mark.parametrize(
+            ("network", "usdc"),
+            [
+                ("eip155:480", "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1"),
+                ("eip155:4801", "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88"),
+            ],
+        )
+        def test_should_use_world_chain_usdc(self, network, usdc):
+            """Should resolve dollar prices to World Chain USDC with its EIP-712 domain."""
+            server = ExactEvmServerScheme()
+
+            result = server.parse_price("$0.01", network)
+
+            assert result.asset == usdc
+            assert result.amount == "10000"
+            assert result.extra == {"name": "USDC", "version": "2"}
+
     class TestUnknownNetwork:
         """Test networks without a configured default stablecoin."""
 

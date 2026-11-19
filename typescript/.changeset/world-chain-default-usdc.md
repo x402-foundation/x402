@@ -1,0 +1,5 @@
+---
+'@x402/evm': patch
+---
+
+Add World Chain (`eip155:480`) and World Chain Sepolia (`eip155:4801`) USDC as default assets, matching the Go SDK, so `"$0.01"` prices resolve there and default client spend controls accept World Chain USDC.

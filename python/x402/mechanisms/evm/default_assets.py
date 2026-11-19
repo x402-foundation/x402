@@ -349,6 +349,24 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "asset_transfer_method": "permit2",
         },
     ],  # Hemi testnet USDC.e (no EIP-3009, no EIP-2612)
+    "eip155:480": [
+        {
+            "asset": "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # World Chain USDC
+    "eip155:4801": [
+        {
+            "asset": "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # World Chain Sepolia USDC
 }
 
 
