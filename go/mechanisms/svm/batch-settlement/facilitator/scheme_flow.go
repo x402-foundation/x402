@@ -457,7 +457,8 @@ func (f *BatchSvmScheme) assertOpenReplayCaller(ctx context.Context, validated V
 	if err != nil {
 		return err
 	}
-	if record != nil && record.CallerIdentity != "" && record.CallerIdentity != identity {
+	// A lost row, or one without the opener's identity, fails closed.
+	if record == nil || record.CallerIdentity != identity {
 		return fmt.Errorf("%s: caller identity does not match the channel binding", batchsettlement.ErrDelegatedUnauthenticated)
 	}
 	return nil
@@ -905,14 +906,35 @@ func observedStates(prepared []PreparedDistribution, channels []*generated.Chann
 
 // distributedStates is nil unless every channel was read: the server adopts only a complete batch.
 func distributedStates(prepared []PreparedDistribution, channels []*generated.Channel) []batchsettlement.BatchRedemptionChannelState {
+	return completeStates(prepared, channels, distributedSnapshot)
+}
+
+// completeStates is nil unless every channel was read.
+func completeStates(prepared []PreparedDistribution, channels []*generated.Channel, snapshot func(string, *generated.Channel) batchsettlement.BatchRedemptionChannelState) []batchsettlement.BatchRedemptionChannelState {
 	states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
 	for i, item := range prepared {
 		if channels[i] == nil {
 			return nil
 		}
-		states[i] = distributedSnapshot(item.ChannelID, channels[i])
+		states[i] = snapshot(item.ChannelID, channels[i])
 	}
 	return states
+}
+
+// confirmedStates reads the channels again, after a recovered sweep was attributed
+// (which records the slot the read must reach). The channels read before the
+// recovery may have moved on, for instance by a later claim, so they cannot say what
+// the recovered transaction left behind: the watermarks are the chain's own.
+func (f *BatchSvmScheme) confirmedStates(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements) ([]batchsettlement.BatchRedemptionChannelState, error) {
+	channels := make([]*generated.Channel, len(prepared))
+	for i, item := range prepared {
+		channel, err := f.readChannel(ctx, requirements.Network, item.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		channels[i] = channel
+	}
+	return completeStates(prepared, channels, redemptionSnapshot), nil
 }
 
 func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, channels []*generated.Channel, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
@@ -928,7 +950,16 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 		}
 		response = SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, "", err.Error(), signature)
 	} else {
-		if states := distributedStates(prepared, channels); states != nil {
+		// A fresh sweep paid every channel up to its settled watermark as read before it.
+		// A recovered one may predate watermarks that moved since, so read the chain again.
+		states := distributedStates(prepared, channels)
+		if fromPending {
+			var readErr error
+			if states, readErr = f.confirmedStates(ctx, prepared, requirements); readErr != nil {
+				return unfinished(readErr), nil
+			}
+		}
+		if states != nil {
 			response.Extra[batchsettlement.ExtraChannelStates] = states
 		}
 		if f.config.OnDistributionConfirmed != nil {
@@ -957,9 +988,10 @@ func (f *BatchSvmScheme) completePayout(ctx context.Context, key string, respons
 	return nil
 }
 
-// attributeDistribution reads the confirmed sweep and attributes the
-// recipient's payout. It reads chain state only and can be repeated.
-func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+// confirmedEvidence reads a confirmed transaction with its token-balance metadata, waiting
+// for the metadata to become visible, and rejects one that failed onchain. It records the
+// transaction's slot so later channel reads reach it.
+func (f *BatchSvmScheme) confirmedEvidence(ctx context.Context, signature, network string) (*svm.FacilitatorConfirmedTransaction, error) {
 	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
 	if !ok {
 		return nil, fmt.Errorf("getConfirmedTransaction is required for payout accounting")
@@ -970,7 +1002,7 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature st
 	}
 	var evidence *svm.FacilitatorConfirmedTransaction
 	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
-		evidence, err = reader.GetConfirmedTransaction(ctx, parsed, requirements.Network)
+		evidence, err = reader.GetConfirmedTransaction(ctx, parsed, network)
 		if err == nil && evidence != nil && evidence.Meta != nil && evidence.Meta.PreTokenBalances != nil && evidence.Meta.PostTokenBalances != nil {
 			break
 		}
@@ -986,7 +1018,76 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature st
 	if evidence.Meta.Err != nil {
 		return nil, &svm.TransactionOnchainFailureError{Message: "distribution transaction failed onchain"}
 	}
-	f.rememberSlot(requirements.Network, evidence.Slot)
+	f.rememberSlot(network, evidence.Slot)
+	return evidence, nil
+}
+
+// attributeClose reads the confirmed seal or cooperative refund and attributes what it
+// paid the receiver and returned to the payer. A receiver that is also the payer or the
+// treasury shares a token account with them, so the two cannot be told apart.
+func (f *BatchSvmScheme) attributeClose(ctx context.Context, signature string, requirements types.PaymentRequirements, terms BatchTerms, payer string) (CloseAttribution, error) {
+	if payer == requirements.PayTo ||
+		paymentchannels.ResolveTreasuryOwner(f.config.PaymentChannelsTreasuryOwner, requirements.Network).String() == requirements.PayTo {
+		return CloseAttribution{}, &PayoutAttributionAmbiguousError{}
+	}
+	evidence, err := f.confirmedEvidence(ctx, signature, requirements.Network)
+	if err != nil {
+		return CloseAttribution{}, err
+	}
+	tokenProgram, err := solana.PublicKeyFromBase58(terms.TokenProgram)
+	if err != nil {
+		return CloseAttribution{}, err
+	}
+	paid, err := ownerBalanceChange(evidence, requirements.PayTo, requirements.Asset, tokenProgram)
+	if err != nil {
+		return CloseAttribution{}, fmt.Errorf("receiver payout: %w", err)
+	}
+	refunded, err := ownerBalanceChange(evidence, payer, requirements.Asset, tokenProgram)
+	if err != nil {
+		return CloseAttribution{}, fmt.Errorf("payer refund: %w", err)
+	}
+	return CloseAttribution{PaidToReceiver: paid, RefundedToPayer: refunded}, nil
+}
+
+// ownerBalanceChange is the increase of owner's token balance of mint across the transaction.
+func ownerBalanceChange(evidence *svm.FacilitatorConfirmedTransaction, owner, mint string, tokenProgram solana.PublicKey) (uint64, error) {
+	ownerKey, err := solana.PublicKeyFromBase58(owner)
+	if err != nil {
+		return 0, err
+	}
+	mintKey, err := solana.PublicKeyFromBase58(mint)
+	if err != nil {
+		return 0, err
+	}
+	account, err := paymentchannels.FindATA(ownerKey, mintKey, tokenProgram)
+	if err != nil {
+		return 0, err
+	}
+	index := indexOf(evidence.AccountKeys, account.String())
+	if index < 0 {
+		return 0, fmt.Errorf("token account is absent from the transaction")
+	}
+	pre, err := balanceOf(evidence.Meta.PreTokenBalances, index, mint, owner)
+	if err != nil {
+		return 0, err
+	}
+	post, err := balanceOf(evidence.Meta.PostTokenBalances, index, mint, owner)
+	if err != nil {
+		return 0, err
+	}
+	if post < pre {
+		return 0, fmt.Errorf("negative balance change")
+	}
+	return post - pre, nil
+}
+
+// attributeDistribution reads the confirmed sweep and attributes the
+// recipient's payout. It reads chain state only and can be repeated.
+func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+	evidence, err := f.confirmedEvidence(ctx, signature, requirements.Network)
+	if err != nil {
+		return nil, err
+	}
 	tokenProgram, err := solana.PublicKeyFromBase58(prepared[0].Terms.TokenProgram)
 	if err != nil {
 		return nil, err
@@ -1339,11 +1440,16 @@ func balanceHasAccount(balances []svm.FacilitatorTokenBalance, accountIndex int)
 }
 
 func tokenBalance(balances []svm.FacilitatorTokenBalance, accountIndex int, requirements types.PaymentRequirements) (uint64, error) {
+	return balanceOf(balances, accountIndex, requirements.Asset, requirements.PayTo)
+}
+
+// balanceOf is the token balance listed for accountIndex, which must be owner's balance of mint; zero when unlisted.
+func balanceOf(balances []svm.FacilitatorTokenBalance, accountIndex int, mint, owner string) (uint64, error) {
 	for _, balance := range balances {
 		if balance.AccountIndex != accountIndex {
 			continue
 		}
-		if balance.Mint != requirements.Asset || balance.Owner != requirements.PayTo {
+		if balance.Mint != mint || balance.Owner != owner {
 			return 0, fmt.Errorf("payout recipient balance mismatch")
 		}
 		return paymentchannels.ParseU64(balance.UITokenAmount.Amount, "payout balance")

@@ -7,6 +7,8 @@ const (
 	ChannelStatusOpen = batchsettlement.ChannelStatusOpen
 	// ChannelStatusClosing is a channel whose payer has started a forced close.
 	ChannelStatusClosing = batchsettlement.ChannelStatusClosing
+	// ChannelStatusSealed is a channel whose close has been applied onchain but whose unpaid settled amount is not yet distributed.
+	ChannelStatusSealed = batchsettlement.ChannelStatusSealed
 	// ChannelStatusDistributed is a channel that has been paid out.
 	ChannelStatusDistributed = batchsettlement.ChannelStatusDistributed
 )

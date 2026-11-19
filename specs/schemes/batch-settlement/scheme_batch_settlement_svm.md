@@ -1883,7 +1883,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   because the channel is no longer `Closing`, or because the voucher is below
   `settled`, SHOULD carry `extra.channelStates[]` with the channel. The server
   SHOULD record a `distributed` channel as paid out, and a `sealed` one by its
-  `settled` value, instead of sealing again; none of these is a new seal.
+  `settled` value and `sealed` status (so a later `distribute` still pays its
+  unpaid `settled - payoutWatermark`), instead of sealing again; none of these is
+  a new seal.
 - **Reclaim.** A channel can transition from `Distributed` to deallocated only
   once. Concurrent reclaim attempts require no additional replay mitigation;
   later attempts observe an absent account or invalid status.
@@ -2000,10 +2002,16 @@ only for `settlement_pending`: a retry of a completed claim, `seal`, refund, or
 `distribute` MUST fail rather than be answered from channel status. A remembered
 broadcast whose blockhash is no longer valid and that the network has no record
 of MUST be dropped, so a retry broadcasts afresh instead of staying
-`settlement_pending`. A retry of a deposit whose `open` timed out and has since
+`settlement_pending`. A retry of a `seal` or cooperative refund whose broadcast timed
+out and has since landed MUST be answered from its remembered broadcast, with the
+payout and refund read from the confirmed transaction, before the channel's
+status is read: the channel no longer has the status a new close needs, but the
+retry is not a new close. A
+retry of a deposit whose `open` timed out and has since
 landed MUST be answered only from its remembered broadcast, once, and only for
-the caller that opened a delegated channel; without one it is judged as a
-`top_up`. A facilitator that exposes a payout hook MUST instead keep the
+the caller that opened a delegated channel, and fails closed when the facilitator
+holds no row for that channel naming the caller; without a remembered broadcast
+it is judged as a `top_up`. A facilitator that exposes a payout hook MUST instead keep the
 confirmed payout record, from the moment it observes the confirmation, until
 the hook has run, and delete it then. A `/settle` retry that finds the record
 finishes the hook, deletes the record, and returns the payout; if the hook or the

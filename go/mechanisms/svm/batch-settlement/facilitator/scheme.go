@@ -1039,6 +1039,8 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,
+		ReconcileBroadcast:      f.reconcileBroadcast,
+		AttributeClose:          f.attributeClose,
 		NowSeconds:              f.now,
 		OnDistributionConfirmed: f.config.OnDistributionConfirmed,
 	}

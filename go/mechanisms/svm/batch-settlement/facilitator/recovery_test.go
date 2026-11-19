@@ -408,6 +408,100 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.Equal(t, "successor", got)
 	})
 
+	t.Run("reports the onchain payout watermark of a recovered sweep that a later claim has passed", func(t *testing.T) {
+		payload := batchsettlement.BatchSettlePayload{
+			Type:     batchsettlement.PayloadTypeSettle,
+			Channels: []batchsettlement.BatchSettleChannel{{ChannelID: channelID, ChannelConfig: channelConfig}},
+		}
+		key := "batch:distribute:" + network + ":" + channelID
+		store := x402.NewInMemoryPendingSettlementStore()
+		require.NoError(t, store.Set(context.Background(), key, tx))
+		inner := newScriptedSigner(t, 1)
+		inner.keys[0] = feePayer
+		signer := &capabilitySigner{
+			scriptedSigner: inner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return payoutEvidence(t, "200", "1200"), nil
+			},
+		}
+		scheme := newScheme(t, signer, store, nil)
+		configure(scheme)
+		// The timed-out sweep paid up to 1000; a claim then settled up to 3000.
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return channel(func(ch *generated.Channel) {
+				ch.Settlement = generated.SettlementWatermarks{Settled: 3000, PayoutWatermark: 1000}
+			}), nil
+		}
+		scheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+			return durableResult{}, errors.New("should not submit")
+		}
+		response, err := scheme.settleDistributions(context.Background(), payload, requirements)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, "1000", response.Amount)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "3000", PayoutWatermark: "1000",
+		}}, response.Extra[batchsettlement.ExtraChannelStates], "the unpaid 2000 must stay unpaid in the reported state")
+
+		t.Run("stays pending when the channel cannot be read after the recovery", func(t *testing.T) {
+			require.NoError(t, store.Set(context.Background(), key, tx))
+			var reads atomic.Int32
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				if reads.Add(1) == 1 {
+					return channel(func(ch *generated.Channel) {
+						ch.Settlement = generated.SettlementWatermarks{Settled: 3000, PayoutWatermark: 1000}
+					}), nil
+				}
+				return nil, errors.New("rpc unavailable")
+			}
+			pending, err := scheme.settleDistributions(context.Background(), payload, requirements)
+			require.NoError(t, err)
+			require.False(t, pending.Success)
+			require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+			require.Equal(t, tx, pending.Transaction)
+			_, ok, err := store.Get(context.Background(), key)
+			require.NoError(t, err)
+			require.True(t, ok, "the pending record is kept for the retry")
+		})
+	})
+
+	t.Run("attributes a confirmed close to the receiver payout and the payer refund", func(t *testing.T) {
+		tokenProgram := solana.MustPublicKeyFromBase58(svm.TokenProgramAddress)
+		mintKey := solana.MustPublicKeyFromBase58(mint)
+		receiverATA, err := paymentchannels.FindATA(solana.MustPublicKeyFromBase58(receiver), mintKey, tokenProgram)
+		require.NoError(t, err)
+		payerATA, err := paymentchannels.FindATA(payer.PublicKey(), mintKey, tokenProgram)
+		require.NoError(t, err)
+		balance := func(index int, owner, amount string) svm.FacilitatorTokenBalance {
+			return svm.FacilitatorTokenBalance{AccountIndex: index, Mint: mint, Owner: owner, UITokenAmount: svm.FacilitatorTokenAmount{Amount: amount}}
+		}
+		inner := newScriptedSigner(t, 1)
+		inner.keys[0] = feePayer
+		signer := &capabilitySigner{
+			scriptedSigner: inner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return &svm.FacilitatorConfirmedTransaction{
+					Slot:        100,
+					AccountKeys: []string{receiverATA.String(), payerATA.String()},
+					Meta: &svm.FacilitatorConfirmedMeta{
+						PreTokenBalances:  []svm.FacilitatorTokenBalance{balance(0, receiver, "200"), balance(1, payer.PublicKey().String(), "50")},
+						PostTokenBalances: []svm.FacilitatorTokenBalance{balance(0, receiver, "2700"), balance(1, payer.PublicKey().String(), "7050")},
+					},
+				}, nil
+			},
+		}
+		scheme := newScheme(t, signer, x402.NewInMemoryPendingSettlementStore(), nil)
+		attribution, err := scheme.attributeClose(context.Background(), tx, requirements, terms, payer.PublicKey().String())
+		require.NoError(t, err)
+		require.Equal(t, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: 7_000}, attribution)
+
+		own := requirements
+		own.PayTo = payer.PublicKey().String()
+		_, err = scheme.attributeClose(context.Background(), tx, own, terms, payer.PublicKey().String())
+		var ambiguous *PayoutAttributionAmbiguousError
+		require.ErrorAs(t, err, &ambiguous, "a receiver that is also the payer shares its token account")
+	})
+
 	t.Run("recovers the actual payout after a lost response and restart without changing the request", func(t *testing.T) {
 		payload := batchsettlement.BatchSettlePayload{
 			Type:     batchsettlement.PayloadTypeSettle,
@@ -433,7 +527,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		configure(first)
 		first.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			return channel(func(ch *generated.Channel) {
-				ch.Settlement = generated.SettlementWatermarks{Settled: 1700}
+				ch.Settlement = generated.SettlementWatermarks{Settled: 1700, PayoutWatermark: 1700}
 			}), nil
 		}
 		var firstSubmits atomic.Int32

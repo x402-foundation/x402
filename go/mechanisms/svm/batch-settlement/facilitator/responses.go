@@ -68,8 +68,13 @@ func comparableRequirements(requirements types.PaymentRequirements) types.Paymen
 }
 
 // PendingSignatureOf returns the signature carried by an error that means the
-// broadcast's outcome is unknown.
+// broadcast's outcome is unknown. A transaction that failed onchain has a known
+// outcome, even when a broadcast wraps it, so it carries none.
 func PendingSignatureOf(err error) (string, bool) {
+	var onchain *svm.TransactionOnchainFailureError
+	if errors.As(err, &onchain) {
+		return "", false
+	}
 	var confirm *paymentchannels.ChannelBroadcastConfirmationError
 	if errors.As(err, &confirm) {
 		return confirm.Signature, confirm.Signature != ""
@@ -112,6 +117,8 @@ func redemptionSnapshot(channelID string, channel *generated.Channel) batchsettl
 }
 
 // distributedSnapshot is the state a confirmed distribute leaves behind: payout caught up to settled, and a sealed channel paid out.
+// It is valid only for a channel read before that distribute was built; a channel read after
+// may have settled more since, so use redemptionSnapshot for one.
 func distributedSnapshot(channelID string, channel *generated.Channel) batchsettlement.BatchRedemptionChannelState {
 	state := redemptionSnapshot(channelID, channel)
 	state.PayoutWatermark = state.TotalClaimed

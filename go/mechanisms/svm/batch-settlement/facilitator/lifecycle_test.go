@@ -2120,6 +2120,17 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, string(x402.ErrSettlementPending), pending.Response.ErrorReason)
 		require.Equal(t, fixedSigStr, pending.Response.Transaction)
 
+		onchain := &paymentchannels.ChannelBroadcastConfirmationError{Signature: fixedSigStr, Err: &svm.TransactionOnchainFailureError{Message: "reverted"}}
+		_, found := PendingSignatureOf(onchain)
+		require.False(t, found, "a transaction that failed onchain has no outcome left to wait for")
+		_, err = scheme.broadcastDurably(ctx, "onchain", network, payer.Address().String(), func(func(string, string) error) (string, error) {
+			return "", onchain
+		})
+		require.Equal(t, "transaction_failed", ClassifyError(err))
+		_, recorded, getErr := scheme.pendingStore.Get(ctx, "onchain")
+		require.NoError(t, getErr)
+		require.False(t, recorded, "no pending record is kept for a broadcast that failed onchain")
+
 		terminalStore := &scriptedPendingStore{
 			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
