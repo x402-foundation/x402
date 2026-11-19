@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from x402.http.types import HTTPRequestContext, PaymentOption, RouteConfig
 from x402.schemas.extensions import ClientExtension
@@ -27,8 +27,41 @@ from .verify import verify_siwx_signature
 SIWxHookEvent = dict[str, Any]
 
 
+_DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
+
+
+def _canonical_netloc(parsed: ParseResult, origin: str) -> str:
+    """Canonicalize the host and port the way the WHATWG URL parser does."""
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f'Invalid SIWX origin: "{origin}" is not a valid URL')
+
+    if ":" in host:
+        netloc = f"[{host}]"
+    elif any(ord(char) > 127 for char in host):
+        try:
+            netloc = host.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError(f'Invalid SIWX origin: "{origin}" has an invalid host') from exc
+    else:
+        netloc = host
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f'Invalid SIWX origin: "{origin}" has an invalid port') from exc
+
+    if port is not None and port != _DEFAULT_PORTS.get(parsed.scheme.lower()):
+        netloc = f"{netloc}:{port}"
+    return netloc
+
+
 def normalize_configured_origin(origin: str) -> str:
-    """Normalize and validate a configured SIWX origin."""
+    """Normalize and validate a configured SIWX origin.
+
+    Mirrors the TypeScript SDK, which uses the WHATWG URL parser: the host is
+    lowercased, a default port is dropped, and an IDN host becomes punycode.
+    """
     parsed = urlparse(origin)
 
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -44,7 +77,7 @@ def normalize_configured_origin(origin: str) -> str:
             f'Invalid SIWX origin: "{origin}" must not include a path, query, or fragment'
         )
 
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return f"{parsed.scheme.lower()}://{_canonical_netloc(parsed, origin)}"
 
 
 @dataclass(kw_only=True)
