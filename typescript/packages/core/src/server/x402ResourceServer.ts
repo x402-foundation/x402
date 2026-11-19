@@ -171,6 +171,15 @@ export interface VerifiedPaymentCanceledContext extends SettleContext {
   readonly settledPhases: readonly SettlePhase[];
 }
 
+/**
+ * Context for {@link OnVerifiedPaymentCompletedHook}: the handler succeeded in a flow that
+ * settles only before it. `result` is that before-handler settlement; `transportContext`
+ * carries the response the transport is about to send.
+ */
+export interface VerifiedPaymentCompletedContext extends SettleResultContext {
+  readonly settledPhases: readonly SettlePhase[];
+}
+
 export interface VerifiedPaymentCancelOptions {
   reason: VerifiedPaymentCancellationReason;
   error?: unknown;
@@ -284,6 +293,10 @@ export type OnVerifiedPaymentCanceledHook = (
   context: VerifiedPaymentCanceledContext,
 ) => Promise<void>;
 
+export type OnVerifiedPaymentCompletedHook = (
+  context: VerifiedPaymentCompletedContext,
+) => Promise<void>;
+
 /**
  * Optional overrides for settlement parameters.
  * Used to support partial settlement (e.g., upto scheme billing by actual usage).
@@ -382,6 +395,7 @@ type HookAdapterHandles = {
   afterSettle?: AfterSettleHook;
   onSettleFailure?: OnSettleFailureHook;
   onVerifiedPaymentCanceled?: OnVerifiedPaymentCanceledHook;
+  onVerifiedPaymentCompleted?: OnVerifiedPaymentCompletedHook;
 };
 
 type ExtensionAdapterHandles = HookAdapterHandles;
@@ -414,6 +428,7 @@ export class x402ResourceServer {
   private afterSettleHooks: AfterSettleHook[] = [];
   private onSettleFailureHooks: OnSettleFailureHook[] = [];
   private onVerifiedPaymentCanceledHooks: OnVerifiedPaymentCanceledHook[] = [];
+  private onVerifiedPaymentCompletedHooks: OnVerifiedPaymentCompletedHook[] = [];
 
   /**
    * Creates a new x402ResourceServer instance.
@@ -702,6 +717,18 @@ export class x402ResourceServer {
    */
   onVerifiedPaymentCanceled(hook: OnVerifiedPaymentCanceledHook): x402ResourceServer {
     this.onVerifiedPaymentCanceledHooks.push(hook);
+    return this;
+  }
+
+  /**
+   * Register a hook to execute when the handler succeeds in a flow that settles only before
+   * the handler (e.g. `upfront`), where no after-handler settle hook runs.
+   *
+   * @param hook - The hook function to register
+   * @returns The x402ResourceServer instance for chaining
+   */
+  onVerifiedPaymentCompleted(hook: OnVerifiedPaymentCompletedHook): x402ResourceServer {
+    this.onVerifiedPaymentCompletedHooks.push(hook);
     return this;
   }
 
@@ -1218,6 +1245,45 @@ export class x402ResourceServer {
         return cancelPromise;
       },
     };
+  }
+
+  /**
+   * Notify hooks that the handler succeeded for a payment settled only before the handler.
+   * Hook errors are warned, not thrown: the payment has settled and the response is ready.
+   *
+   * @param settlement - The before-handler settlement for this request
+   * @param paymentPayload - Signed payment payload from the client
+   * @param declaredExtensions - Optional per-extension declarations for the request
+   * @param transportContext - Optional transport-specific context, including the response
+   */
+  async notifyVerifiedPaymentCompleted(
+    settlement: CompletedSettlement,
+    paymentPayload: PaymentPayload,
+    declaredExtensions: Record<string, unknown> = {},
+    transportContext?: unknown,
+  ): Promise<void> {
+    const requirements = settlement.requirements;
+    const context: VerifiedPaymentCompletedContext = {
+      paymentPayload,
+      requirements,
+      declaredExtensions,
+      phase: "after-handler",
+      transportContext,
+      result: settlement.result,
+      settledPhases: [settlement.phase],
+    };
+
+    for (const { label, hook } of this.getLabeledHooks(
+      "onVerifiedPaymentCompleted",
+      Object.keys(declaredExtensions),
+      { network: requirements.network as Network, scheme: requirements.scheme },
+    )) {
+      try {
+        await hook(context);
+      } catch (error) {
+        this.warnResourceServerHookFailure("onVerifiedPaymentCompleted", label, error);
+      }
+    }
   }
 
   /**
