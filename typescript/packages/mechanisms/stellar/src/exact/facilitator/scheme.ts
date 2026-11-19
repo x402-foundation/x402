@@ -3,7 +3,9 @@ import {
   Transaction,
   FeeBumpTransaction,
   Address,
+  MuxedAccount,
   Operation,
+  StrKey,
   xdr,
   rpc,
   TransactionBuilder,
@@ -654,10 +656,14 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
   ): VerifyResponse | undefined {
     // Soroban token transfer events follow the [CAP-46](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0046-06.md) format:
     // Topic: ["transfer", from, to], Data: amount
+    // Since [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md), a transfer
+    // to a muxed address puts the base account in the `to` topic and emits
+    // Data: { amount, to_muxed_id }.
     const transferEvents: Array<{
       from: string;
       to: string;
       amount: bigint;
+      toMuxedId?: string;
     }> = [];
 
     // Parse events into
@@ -716,9 +722,9 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
         // Extract from, to, and amount
         const from = scValToNative(topics[1]) as string;
         const to = scValToNative(topics[2]) as string;
-        const amount = scValToNative(body.data) as bigint;
+        const { amount, toMuxedId } = parseTransferEventData(body.data);
 
-        transferEvents.push({ from, to, amount });
+        transferEvents.push({ from, to, amount, toMuxedId });
       } catch (error: unknown) {
         if (error instanceof Error) {
           console.error("Error parsing diagnostic event:", error.message);
@@ -744,7 +750,8 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     if (transferEvent.from !== fromAddress) {
       return invalidVerifyResponse("invalid_exact_stellar_payload_event_wrong_from", fromAddress);
     }
-    if (transferEvent.to !== toAddress) {
+    const expectedTo = splitMuxedAddress(toAddress);
+    if (transferEvent.to !== expectedTo.base || transferEvent.toMuxedId !== expectedTo.muxedId) {
       return invalidVerifyResponse("invalid_exact_stellar_payload_event_wrong_to", fromAddress);
     }
     if (transferEvent.amount !== expectedAmount) {
@@ -839,4 +846,37 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
 
     return undefined;
   }
+}
+
+/**
+ * Reads the data of a SEP-41 transfer event: a bare i128 amount, or the CAP-67
+ * map `{ amount, to_muxed_id }` emitted for a transfer to a muxed address.
+ *
+ * @param data - The event data
+ * @returns The amount, and the muxed id when present
+ */
+function parseTransferEventData(data: xdr.ScVal): { amount: bigint; toMuxedId?: string } {
+  if (data.type === "scvMap") {
+    const fields = scValToNative(data) as { amount?: bigint; to_muxed_id?: bigint };
+    return {
+      amount: fields.amount as bigint,
+      toMuxedId: fields.to_muxed_id === undefined ? undefined : String(fields.to_muxed_id),
+    };
+  }
+  return { amount: scValToNative(data) as bigint };
+}
+
+/**
+ * Splits an M... address into its base G... account and muxed id.
+ * Any other address is returned as is.
+ *
+ * @param address - The recipient address
+ * @returns The base address, and the muxed id for an M... address
+ */
+function splitMuxedAddress(address: string): { base: string; muxedId?: string } {
+  if (!StrKey.isValidMed25519PublicKey(address)) {
+    return { base: address };
+  }
+  const muxed = MuxedAccount.fromAddress(address, "0");
+  return { base: muxed.baseAccount().accountId(), muxedId: muxed.id() };
 }
