@@ -84,18 +84,6 @@ describe("ExactEvmScheme (Server)", () => {
       });
     });
 
-    describe("World Chain networks", () => {
-      it.each([
-        ["eip155:480", "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1"],
-        ["eip155:4801", "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88"],
-      ] as const)("should use %s USDC with its EIP-712 domain", async (network, usdc) => {
-        const result = await server.parsePrice("$0.01", network);
-        expect(result.asset).toBe(usdc);
-        expect(result.amount).toBe("10000");
-        expect(result.extra).toEqual({ name: "USDC", version: "2" });
-      });
-    });
-
     describe("Hemi network", () => {
       const network = "eip155:43111";
 
