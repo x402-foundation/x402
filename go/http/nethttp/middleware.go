@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -267,10 +268,20 @@ func handlePaymentError(w http.ResponseWriter, response *x402http.HTTPResponseIn
 		w.Header().Set(key, value)
 	}
 
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
 	if response.IsHTML {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(response.Status)
 		fmt.Fprint(w, response.Body)
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		w.WriteHeader(response.Status)
+		fmt.Fprint(w, text)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.Status)
@@ -319,26 +330,22 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					var cancelSettlement *x402.SettleResponse
-					if result.CancellationDispatcher != nil {
-						err, ok := rec.(error)
-						if !ok {
-							err = fmt.Errorf("%v", rec)
-						}
-						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+					err, ok := rec.(error)
+					if !ok {
+						err = fmt.Errorf("%v", rec)
+					}
+					headers := server.ResolveCancelledSettlement(
+						result.CancellationDispatcher,
+						x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
-						})
-					}
-					if headers := server.CreateFailurePathSettlementHeaders(
-						cancelSettlement,
+						},
 						result.BeforeHandlerSettlement,
 						result.PaymentPayload,
-						w.Header().Get("Cache-Control"),
-					); headers != nil {
-						for key, value := range headers {
-							w.Header().Set(key, value)
-						}
+						w.Header(),
+					)
+					for key, value := range headers {
+						w.Header().Set(key, value)
 					}
 					panic(rec)
 				}
@@ -349,22 +356,18 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 
 	// Don't settle if response failed
 	if capture.statusCode >= 400 {
-		var cancelSettlement *x402.SettleResponse
-		if result.CancellationDispatcher != nil {
-			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+		headers := server.ResolveCancelledSettlement(
+			result.CancellationDispatcher,
+			x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: capture.statusCode,
-			})
-		}
-		if headers := server.CreateFailurePathSettlementHeaders(
-			cancelSettlement,
+			},
 			result.BeforeHandlerSettlement,
 			result.PaymentPayload,
-			capture.Header().Get("Cache-Control"),
-		); headers != nil {
-			for key, value := range headers {
-				w.Header().Set(key, value)
-			}
+			capture.Header(),
+		)
+		for key, value := range headers {
+			w.Header().Set(key, value)
 		}
 		w.WriteHeader(capture.statusCode)
 		_, _ = w.Write(capture.body.Bytes())
@@ -403,7 +406,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
-			_ = json.NewEncoder(w).Encode(map[string]any{})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}

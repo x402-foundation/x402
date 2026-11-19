@@ -28,6 +28,7 @@ try:
     )
     from x402.mechanisms.evm.batch_settlement.types import ChannelConfig, is_voucher_payload
     from x402.mechanisms.evm.batch_settlement.utils import compute_channel_id
+    from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
     from x402.mechanisms.evm.signers import EthAccountSigner
     from x402.schemas import (
         PaymentPayload,
@@ -260,6 +261,31 @@ class TestCreatePaymentPayload:
         s = BatchSettlementEvmScheme(signer)
         result = s.create_payment_payload(_requirements(amount="1000"))
         assert result["deposit"]["amount"] == "5000"
+
+    def test_warns_once_and_skips_sponsored_permit_when_signer_cannot_read(self, caplog):
+        _reset_sponsoring_warnings()
+        signer = _signer()
+        scheme = BatchSettlementEvmScheme(signer)
+        requirements = _requirements(
+            amount="100",
+            extra={
+                "receiverAuthorizer": RECEIVER_AUTHORIZER,
+                "name": "USDC",
+                "version": "2",
+                "assetTransferMethod": "permit2",
+            },
+        )
+        advertised = {"eip2612GasSponsoring": {}}
+
+        with caplog.at_level("WARNING", logger="x402.mechanisms.evm.signer"):
+            result = scheme.create_payment_payload(requirements, advertised)
+
+        extensions = result.get("__extensions") or {}
+        assert "eip2612GasSponsoring" not in extensions
+        warnings = [
+            record for record in caplog.records if "cannot read the chain" in record.getMessage()
+        ]
+        assert len(warnings) == 1
 
 
 def _make_payment_payload(payload: dict) -> PaymentPayload:

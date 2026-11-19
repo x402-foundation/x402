@@ -86,8 +86,8 @@ When a sealed channel's receiver is also the refund recipient or protocol treasu
 **V1 Protocol Support** - Legacy x402 protocol with simple network names
 
 **Exports:**
-- `ExactSvmClientV1` - V1 client implementation
-- `ExactSvmFacilitatorV1` - V1 facilitator implementation
+- `ExactSvmSchemeV1` - V1 client implementation
+- `ExactSvmSchemeV1` (from `@x402/svm/exact/v1/facilitator`) - V1 facilitator implementation
 - `NETWORKS` - Array of all supported V1 network names
 
 **Supported V1 Networks:**
@@ -168,8 +168,8 @@ import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 const client = new x402Client()
   .register("solana:*", new ExactSvmScheme(signer)) // fixed-price
   .register("solana:*", new UptoSvmScheme(signer))  // usage-based
-  .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(signer))
-  .registerSchemeV1("solana", new ExactSvmSchemeV1(signer));
+  .registerV1("solana-devnet", new ExactSvmSchemeV1(signer))
+  .registerV1("solana", new ExactSvmSchemeV1(signer));
 ```
 
 ### 3. Using Config (Flexible)

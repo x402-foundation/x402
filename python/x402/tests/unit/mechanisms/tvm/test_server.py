@@ -262,7 +262,7 @@ class TestEnhancePaymentRequirements:
                     _make_requirements(network=TVM_TESTNET).asset,
                     TVM_TESTNET,
                 )
-                == 6
+                == get_default_asset(TVM_TESTNET)["decimals"]
             )
 
 

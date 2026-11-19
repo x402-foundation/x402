@@ -8,6 +8,7 @@ except ImportError as e:
     raise ImportError(
         "EVM mechanism requires ethereum packages. Install with: pip install x402[evm]"
     ) from e
+from collections.abc import Callable
 from typing import Any
 
 from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI
@@ -144,12 +145,27 @@ def verify_universal_signature(
     Returns:
         (valid, sig_data) tuple.
     """
-    sig_data = parse_erc6492_signature(signature)
-
-    # Always fetch code — routing mirrors on-chain SignatureChecker (code.length-based).
-    # The old is_eoa_signature fast-path skipped this for 65-byte sigs, causing
-    # pre-verify to return valid for 7702 EOAs whose delegate rejects raw ECDSA on-chain.
     code = signer.get_code(signer_address)
+    return verify_universal_signature_with_code(
+        signer,
+        signer_address,
+        hash,
+        signature,
+        code,
+        allow_undeployed,
+    )
+
+
+def verify_universal_signature_with_code(
+    signer: FacilitatorEvmSigner,
+    signer_address: str,
+    hash: bytes,
+    signature: bytes,
+    code: bytes,
+    allow_undeployed: bool = True,
+) -> tuple[bool, ERC6492SignatureData]:
+    """Verify a signature using bytecode the caller already fetched."""
+    sig_data = parse_erc6492_signature(signature)
     is_deployed = len(code) > 0
     sig_data.code_deployed = is_deployed
 
@@ -157,11 +173,6 @@ def verify_universal_signature(
         if has_deployment_info(sig_data):
             if not allow_undeployed:
                 raise ValueError("Undeployed smart wallet not allowed")
-            # ERC-6492 counterfactual — wallet not yet deployed. Return (False, sig_data)
-            # to signal "deferred to simulation/settle", matching Go's (false, sigData, nil).
-            # Callers that check `valid=True` to accept payments must explicitly handle this
-            # case: the payment is not valid until simulation confirms the factory deploys
-            # the wallet and the transfer succeeds.
             return (False, sig_data)
 
         # No code, no deployment info — plain EOA path (ecrecover only)
@@ -253,6 +264,8 @@ def verify_typed_data_strict(
     signature: bytes,
     code: bytes | None = None,
     raise_unavailable: bool = False,
+    *,
+    eoa_signature_check: Callable[[bytes], bool] | None = None,
 ) -> bool:
     """Strict typed-data signature verification that mirrors on-chain SignatureChecker.
 
@@ -273,6 +286,7 @@ def verify_typed_data_strict(
         code: Bytecode already fetched for ``address``; when given, no ``eth_getCode`` is issued.
         raise_unavailable: Raise SignatureCheckUnavailableError when an EIP-1271 call fails
             without reverting, instead of returning False.
+        eoa_signature_check: Optional signature-form check for the ECDSA branch.
 
     Returns:
         True iff on-chain SignatureChecker would accept the signature.
@@ -285,6 +299,8 @@ def verify_typed_data_strict(
     if code is None:
         code = signer.get_code(address)
     if not code:
+        if eoa_signature_check is not None and not eoa_signature_check(signature):
+            return False
         # EOA path: pure ecrecover. On-chain ecrecover never reverts — invalid
         # signatures (wrong length, bad encoding) return address(0), so we mirror
         # that by returning False instead of raising.

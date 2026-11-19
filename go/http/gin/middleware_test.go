@@ -340,6 +340,72 @@ func TestPaymentMiddleware_CallsNextWhenNoPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestPaymentMiddleware_SendsDeclaredTextPlainPaymentErrorBody(t *testing.T) {
+	expected := "Payment required.\nPreview line 2."
+	mockClient := &mockFacilitatorClient{
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	mockServer := &mockSchemeServer{scheme: "exact"}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+			Description: "API access",
+			UnpaidResponseBody: func(context.Context, x402http.HTTPRequestContext) (*x402http.UnpaidResponse, error) {
+				return &x402http.UnpaidResponse{
+					ContentType: "text/plain; charset=utf-8",
+					Body:        expected,
+				}, nil
+			},
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", mockServer),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+
+	router.GET("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": "protected"})
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("Accept", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("Expected status 402, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != expected {
+		t.Fatalf("Expected raw text body %q, got %q (Content-Type %q)", expected, got, w.Header().Get("Content-Type"))
+	}
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(strings.ToLower(contentType), "text/plain") {
+		t.Fatalf("Expected Content-Type to contain text/plain, got %q", contentType)
+	}
+}
+
 func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 	mockClient := &mockFacilitatorClient{
 		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
@@ -393,6 +459,14 @@ func TestPaymentMiddleware_Returns402JSONForPaymentError(t *testing.T) {
 
 	if w.Header().Get("PAYMENT-REQUIRED") == "" {
 		t.Error("Expected PAYMENT-REQUIRED header")
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if response["error"] != "Payment required" {
+		t.Errorf("Expected body {error: Payment required}, got %v", response)
 	}
 }
 
@@ -607,6 +681,178 @@ func TestPaymentMiddleware_SkipsSettlementWhenHandlerReturns400OrHigher(t *testi
 	}
 }
 
+// An abort is not how a handler declines a paid request: only a status of 400
+// or higher withholds settlement. A downstream middleware that aborts after
+// writing 401 must deliver that response. Previously this path discarded the
+// captured body and status, sending an empty 200 while withholding the payment.
+func TestPaymentMiddleware_AbortedResponseReachesClient(t *testing.T) {
+	settleCalled := false
+	router := createAbortTestRouter(&settleCalled)
+
+	// A downstream middleware rejects the request after payment verification.
+	router.Use(func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "bad token"})
+	})
+	router.POST("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"secret": "data"})
+	})
+
+	w := servePaymentRequest(router)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), "bad token") {
+		t.Errorf("Expected aborted body to reach the client, got %q", w.Body.String())
+	}
+
+	if settleCalled {
+		t.Error("Settlement should NOT be called when the handler aborts with 401")
+	}
+}
+
+// A downstream middleware that aborts below 400, for example a cache hit that
+// serves a stored response, has delivered the resource and must therefore
+// settle. Aborts are only a decline when the status is 400 or higher, matching
+// the Echo, net/http and TypeScript adapters.
+func TestPaymentMiddleware_AbortBelow400Settles(t *testing.T) {
+	settleCalled := false
+	router := createAbortTestRouter(&settleCalled)
+
+	router.Use(func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"cached": "resource"})
+		c.Abort()
+	})
+	router.POST("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"secret": "data"})
+	})
+
+	w := servePaymentRequest(router)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), "cached") {
+		t.Errorf("Expected the downstream response to reach the client, got %q", w.Body.String())
+	}
+
+	if !settleCalled {
+		t.Error("Settlement SHOULD be called when the handler aborts below 400")
+	}
+}
+
+// A redirect must reach the client as a redirect. c.Redirect renders with code
+// -1 before http.Redirect sets the real status, so a capture that recorded -1
+// would mark itself written and drop the 302, delivering a 200 for a redirect.
+// Echo and net/http deliver the 302 and settle, since a 3xx is below 400.
+func TestPaymentMiddleware_AbortedRedirectDeliversStatus(t *testing.T) {
+	settleCalled := false
+	router := createAbortTestRouter(&settleCalled)
+
+	router.Use(func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "https://example.com/elsewhere")
+		c.Abort()
+	})
+	router.POST("/api", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"secret": "data"})
+	})
+
+	w := servePaymentRequest(router)
+
+	if w.Code != http.StatusFound {
+		t.Errorf("Expected status 302, got %d", w.Code)
+	}
+
+	if loc := w.Header().Get("Location"); loc != "https://example.com/elsewhere" {
+		t.Errorf("Expected Location header to be preserved, got %q", loc)
+	}
+
+	if !settleCalled {
+		t.Error("Settlement SHOULD be called for a 302, matching the Echo and net/http adapters")
+	}
+}
+
+// A non-positive status code carries no status to capture. gin's own writer
+// ignores these, and c.Redirect depends on that, so the capture must match.
+func TestResponseCapture_IgnoresNonPositiveStatusCode(t *testing.T) {
+	capture := &responseCapture{
+		ResponseWriter: &mockGinResponseWriter{
+			ResponseRecorder: httptest.NewRecorder(),
+		},
+		body:       &bytes.Buffer{},
+		statusCode: http.StatusOK,
+	}
+
+	capture.WriteHeader(-1)
+
+	if capture.Written() {
+		t.Error("Expected a -1 status to leave the capture unwritten")
+	}
+
+	capture.WriteHeader(http.StatusFound)
+
+	if capture.statusCode != http.StatusFound {
+		t.Errorf("Expected status 302 to be captured next, got %d", capture.statusCode)
+	}
+}
+
+// createAbortTestRouter builds a router wired with the payment middleware and a
+// route whose handler must never run on the aborted paths.
+func createAbortTestRouter(settleCalled *bool) *gin.Engine {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+		settleFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			*settleCalled = true
+			return &x402.SettleResponse{Success: true, Transaction: "0xtx"}, nil
+		},
+		supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"POST /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	router := createTestRouter()
+	router.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+	return router
+}
+
+func servePaymentRequest(router *gin.Engine) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
 func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 	mockClient := &mockFacilitatorClient{
 		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
@@ -667,13 +913,12 @@ func TestPaymentMiddleware_Returns402WhenSettlementFails(t *testing.T) {
 		t.Errorf("Expected status 402, got %d", w.Code)
 	}
 
-	// Empty body by default on settlement failure
 	var response map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
-	if len(response) != 0 {
-		t.Errorf("Expected empty body {}, got %v", response)
+	if response["error"] != "settlement_failed" {
+		t.Errorf("Expected body {error: settlement_failed}, got %v", response)
 	}
 
 	// AYMENT-RESPONSE header must be included on settlement failure
@@ -1922,4 +2167,101 @@ func TestPaymentMiddleware_LiteralRoutePercentEncodedSeparatorBypass(t *testing.
 			t.Errorf("Expected status 404 for /health, got %d", w.Code)
 		}
 	})
+}
+
+// The internal Settlement-Overrides header only applies when a settlement runs.
+// On the handler-failure path nothing settles, so the middleware must strip it
+// rather than forward it to the client. Mirrors the net/http test: this is the
+// only check that the adapter passes the same header map it writes the client
+// response to.
+func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerFailure(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	r := gin.New()
+	r.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+	r.GET("/api", func(c *gin.Context) {
+		SetSettlementOverrides(c, &x402.SettlementOverrides{})
+		c.Status(http.StatusInternalServerError)
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Expected status 500, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get(x402http.SettlementOverridesHeader); got != "" {
+		t.Errorf("Expected Settlement-Overrides to be stripped, got %q", got)
+	}
+}
+
+// Aborting a verified request must not leave Settlement-Overrides on the response.
+func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerAbort(t *testing.T) {
+	mockClient := &mockFacilitatorClient{
+		verifyFunc: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+			return &x402.VerifyResponse{IsValid: true, Payer: "0xpayer"}, nil
+		},
+	}
+
+	routes := x402http.RoutesConfig{
+		"GET /api": x402http.RouteConfig{
+			Accepts: x402http.PaymentOptions{
+				{
+					Scheme:  "exact",
+					PayTo:   "0xtest",
+					Price:   "$1.00",
+					Network: "eip155:1",
+				},
+			},
+		},
+	}
+
+	r := gin.New()
+	r.Use(PaymentMiddlewareFromConfig(routes,
+		WithFacilitatorClient(mockClient),
+		WithScheme("eip155:1", &mockSchemeServer{scheme: "exact"}),
+		WithSyncFacilitatorOnStart(true),
+		WithTimeout(5*time.Second),
+	))
+	r.GET("/api", func(c *gin.Context) {
+		SetSettlementOverrides(c, &x402.SettlementOverrides{})
+		c.AbortWithStatus(http.StatusForbidden)
+	})
+
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Header.Set("PAYMENT-SIGNATURE", createPaymentHeader("0xtest"))
+	req.Host = "example.com"
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if got := w.Header().Get(x402http.SettlementOverridesHeader); got != "" {
+		t.Errorf("Expected Settlement-Overrides to be stripped on abort, got %q", got)
+	}
 }

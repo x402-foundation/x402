@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -342,8 +343,16 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 	}
 
 	// Send response body
+	contentType := response.Headers["Content-Type"]
+	if contentType == "" {
+		contentType = response.Headers["content-type"]
+	}
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
 	if response.IsHTML {
 		c.Data(response.Status, "text/html; charset=utf-8", []byte(response.Body.(string)))
+	} else if text, ok := response.Body.(string); ok && mediaType == "text/plain" {
+		c.Data(response.Status, contentType, []byte(text))
 	} else {
 		c.JSON(response.Status, response.Body)
 	}
@@ -394,26 +403,22 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					var cancelSettlement *x402.SettleResponse
-					if result.CancellationDispatcher != nil {
-						err, ok := rec.(error)
-						if !ok {
-							err = fmt.Errorf("%v", rec)
-						}
-						cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+					err, ok := rec.(error)
+					if !ok {
+						err = fmt.Errorf("%v", rec)
+					}
+					headers := server.ResolveCancelledSettlement(
+						result.CancellationDispatcher,
+						x402.VerifiedPaymentCancelOptions{
 							Reason: x402.CancellationReasonHandlerThrew,
 							Err:    err,
-						})
-					}
-					if headers := server.CreateFailurePathSettlementHeaders(
-						cancelSettlement,
+						},
 						result.BeforeHandlerSettlement,
 						result.PaymentPayload,
-						writer.Header().Get("Cache-Control"),
-					); headers != nil {
-						for key, value := range headers {
-							c.Header(key, value)
-						}
+						writer.Header(),
+					)
+					for key, value := range headers {
+						c.Header(key, value)
 					}
 					panic(rec)
 				}
@@ -422,49 +427,23 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		}()
 	}
 
-	// Check if aborted by the handler (SkipHandler is an intentional bypass, not a failure).
-	if !skipHandler && c.IsAborted() {
-		var cancelSettlement *x402.SettleResponse
-		if result.CancellationDispatcher != nil {
-			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
-				Reason:         x402.CancellationReasonHandlerFailed,
-				ResponseStatus: writer.statusCode,
-			})
-		}
-		if headers := server.CreateFailurePathSettlementHeaders(
-			cancelSettlement,
-			result.BeforeHandlerSettlement,
-			result.PaymentPayload,
-			writer.Header().Get("Cache-Control"),
-		); headers != nil {
-			for key, value := range headers {
-				c.Header(key, value)
-			}
-		}
-		return
-	}
-
 	// Restore original writer
 	c.Writer = writer.ResponseWriter
 
 	// Don't settle if response failed
 	if writer.statusCode >= 400 {
-		var cancelSettlement *x402.SettleResponse
-		if result.CancellationDispatcher != nil {
-			cancelSettlement = result.CancellationDispatcher.Cancel(x402.VerifiedPaymentCancelOptions{
+		headers := server.ResolveCancelledSettlement(
+			result.CancellationDispatcher,
+			x402.VerifiedPaymentCancelOptions{
 				Reason:         x402.CancellationReasonHandlerFailed,
 				ResponseStatus: writer.statusCode,
-			})
-		}
-		if headers := server.CreateFailurePathSettlementHeaders(
-			cancelSettlement,
+			},
 			result.BeforeHandlerSettlement,
 			result.PaymentPayload,
-			writer.Header().Get("Cache-Control"),
-		); headers != nil {
-			for key, value := range headers {
-				c.Header(key, value)
-			}
+			writer.Header(),
+		)
+		for key, value := range headers {
+			c.Header(key, value)
 		}
 		// Write captured response
 		c.Writer.WriteHeader(writer.statusCode)
@@ -504,7 +483,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 			handlePaymentError(c, settleResult.Response, config)
 		default:
 			// Fallback if Response is nil
-			c.JSON(http.StatusPaymentRequired, map[string]interface{}{})
+			c.JSON(http.StatusPaymentRequired, map[string]string{"error": x402.ErrCodeSettlementFailed})
 		}
 		return
 	}
@@ -552,9 +531,10 @@ func (w *responseCapture) WriteHeader(code int) {
 	w.writeHeaderLocked(code)
 }
 
-// writeHeaderLocked sets the status code (must be called with lock held)
+// writeHeaderLocked records the first positive status. Caller holds w.mu.
+// Gin passes -1 while rendering a redirect; storing it would settle a 200.
 func (w *responseCapture) writeHeaderLocked(code int) {
-	if !w.written {
+	if code > 0 && !w.written {
 		w.statusCode = code
 		w.written = true
 	}

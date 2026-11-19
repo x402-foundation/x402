@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	exactcasper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/client"
 	exactsvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
+	casperSigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -28,7 +31,7 @@ import (
  * (e.g., "eip155" before "solana").
  */
 
-func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, url string) error {
+func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, casperPrivateKey, url string) error {
 	fmt.Println("📦 Creating client with all available networks...\n")
 
 	// Create x402 client
@@ -54,6 +57,17 @@ func runAllNetworksExample(ctx context.Context, evmPrivateKey, svmPrivateKey, ur
 		client.Register("solana:*", exactsvm.NewExactSvmScheme(svmSigner))
 		client.Register("solana:*", uptosvm.NewUptoSvmScheme(svmSigner, nil))
 		fmt.Printf("✅ Registered SVM networks (solana:*) — exact + upto\n")
+	}
+
+	// Register Casper scheme if private key is provided
+	if casperPrivateKey != "" {
+		casperAlgo := os.Getenv("CASPER_PRIVATE_KEY_ALGORITHM")
+		casperSigner, err := casperSigners.NewClientSignerFromSecret(casperPrivateKey, casperAlgo)
+		if err != nil {
+			return fmt.Errorf("failed to create Casper signer: %w", err)
+		}
+		client.Register("casper:*", exactcasper.NewExactCasperScheme(casperSigner))
+		fmt.Printf("✅ Registered Casper networks (casper:*) — exact\n")
 	}
 
 	// Wrap HTTP client with payment handling

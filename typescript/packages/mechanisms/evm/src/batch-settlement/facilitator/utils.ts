@@ -1,22 +1,14 @@
 import { getAddress, hashTypedData, recoverAddress, isAddressEqual } from "viem";
-import { verifyTypedDataSignature } from "../../shared/verifySignature";
-import type { PaymentRequirements } from "@x402/core/types";
+import { verifyHashSignatureWithCode } from "../../shared/verifySignature";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
-import {
-  BATCH_SETTLEMENT_ADDRESS,
-  MIN_WITHDRAW_DELAY,
-  MAX_WITHDRAW_DELAY,
-  voucherTypes,
-} from "../constants";
+import { BATCH_SETTLEMENT_ADDRESS, voucherTypes } from "../constants";
 import { batchSettlementABI } from "../abi";
-import type {
-  BatchSettlementPaymentRequirementsExtra,
-  ChannelConfig,
-  ChannelState,
-} from "../types";
-import { computeChannelId, getBatchSettlementEip712Domain } from "../utils";
+import type { ChannelConfig, ChannelState } from "../types";
+import { getBatchSettlementEip712Domain, isContractRecoverableSignature } from "../utils";
 import * as Errors from "../errors";
+
+export { validateChannelConfig } from "../utils";
 
 /**
  * Normalises a {@link ChannelConfig} into the checksummed-address tuple expected by the
@@ -112,6 +104,7 @@ export async function verifyBatchSettlementVoucherTypedData(
     // on-chain x402BatchSettlement uses ECDSA.recoverCalldata — pure ecrecover,
     // no code check, no EIP-1271. Use recoverAddress directly so there is no
     // ambiguity: this path never issues an RPC call regardless of address state.
+    if (!isContractRecoverableSignature(params.signature)) return false;
     try {
       const digest = hashTypedData({
         domain,
@@ -134,63 +127,24 @@ export async function verifyBatchSettlementVoucherTypedData(
   // routes by signer.code.length (ECDSA for EOAs, strict EIP-1271 for contracts
   // including 7702-delegated EOAs). Mirror that exactly — no ECDSA fallback
   // for addresses with code.
-  return verifyTypedDataSignature(signer, {
-    address: getAddress(params.payer),
-    domain,
-    types: voucherTypes,
-    primaryType: "Voucher",
-    message,
-    signature: params.signature,
-  });
-}
-
-/**
- * Validates that a {@link ChannelConfig} is consistent with the claimed `channelId` and
- * the server's {@link PaymentRequirements}.
- *
- * @param config - The channel configuration from the payload.
- * @param channelId - The `channelId` claimed in the payload.
- * @param requirements - Server payment requirements to cross-check against.
- * @returns An error code string if validation fails, otherwise `undefined`.
- */
-export function validateChannelConfig(
-  config: ChannelConfig,
-  channelId: `0x${string}`,
-  requirements: PaymentRequirements,
-): string | undefined {
-  const computedId = computeChannelId(config, requirements.network);
-  if (computedId.toLowerCase() !== channelId.toLowerCase()) {
-    return Errors.ErrChannelIdMismatch;
+  let digest: `0x${string}`;
+  let code: `0x${string}` | undefined;
+  try {
+    digest = hashTypedData({ domain, types: voucherTypes, primaryType: "Voucher", message });
+    code = await signer.getCode({ address: getAddress(params.payer) });
+  } catch {
+    return false;
   }
-
-  if (getAddress(config.receiver) !== getAddress(requirements.payTo)) {
-    return Errors.ErrReceiverMismatch;
+  if ((!code || code === "0x") && !isContractRecoverableSignature(params.signature)) {
+    return false;
   }
-
-  const extra = requirements.extra as Partial<BatchSettlementPaymentRequirementsExtra> | undefined;
-  const requiredReceiverAuthorizer = extra?.receiverAuthorizer;
-
-  if (
-    !requiredReceiverAuthorizer ||
-    getAddress(requiredReceiverAuthorizer) === "0x0000000000000000000000000000000000000000" ||
-    getAddress(config.receiverAuthorizer) !== getAddress(requiredReceiverAuthorizer)
-  ) {
-    return Errors.ErrReceiverAuthorizerMismatch;
-  }
-
-  if (getAddress(config.token) !== getAddress(requirements.asset)) {
-    return Errors.ErrTokenMismatch;
-  }
-
-  if (extra?.withdrawDelay !== undefined && config.withdrawDelay !== Number(extra.withdrawDelay)) {
-    return Errors.ErrWithdrawDelayMismatch;
-  }
-
-  if (config.withdrawDelay < MIN_WITHDRAW_DELAY || config.withdrawDelay > MAX_WITHDRAW_DELAY) {
-    return Errors.ErrWithdrawDelayOutOfRange;
-  }
-
-  return undefined;
+  return verifyHashSignatureWithCode(
+    signer,
+    getAddress(params.payer),
+    code,
+    digest,
+    params.signature,
+  );
 }
 
 /**

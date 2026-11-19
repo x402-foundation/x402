@@ -134,6 +134,12 @@ export class ExactSvmScheme implements SchemeNetworkServer {
       // The facilitator provides its address as the fee payer for transaction fees.
       feePayer: supportedKind.extra?.feePayer,
     };
+    // Forward the facilitator's accepted transaction message versions so the
+    // client can build one it will sign. Absent means version 0 only.
+    if (supportedKind.extra && "transactionVersions" in supportedKind.extra) {
+      const versions = supportedKind.extra.transactionVersions;
+      extra.transactionVersions = Array.isArray(versions) ? [...versions] : versions;
+    }
 
     // When an RPC is configured, embed a fresh blockhash in the challenge so
     // the client can build its transaction without its own RPC round-trip and

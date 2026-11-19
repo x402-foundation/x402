@@ -653,6 +653,7 @@ async function settleVerifiedLifecycle(
     return {
       success: false,
       errorReason: verification.invalidReason ?? Errors.ErrVerificationFailed,
+      errorMessage: verification.invalidMessage,
       transaction: "",
       network: requirements.network,
       payer: verification.payer ?? wirePayload.paymentInfo.payer,

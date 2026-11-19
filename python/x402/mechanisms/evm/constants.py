@@ -320,12 +320,15 @@ X402_UPTO_PERMIT2_PROXY_SETTLE_WITH_PERMIT_ABI = [
 
 # Error codes
 ERR_ASSET_NOT_DEPLOYED_CONTRACT = "asset_not_deployed_contract"
+ERR_INVALID_PAYLOAD = "invalid_exact_evm_payload"
 ERR_INVALID_SIGNATURE = "invalid_exact_evm_payload_signature"
+ERR_INVALID_SIGNATURE_S = "invalid_exact_evm_non_canonical_signature"
 ERR_UNDEPLOYED_SMART_WALLET = "invalid_exact_evm_payload_undeployed_smart_wallet"
 ERR_SMART_WALLET_DEPLOYMENT_FAILED = "smart_wallet_deployment_failed"
 ERR_FACTORY_NOT_ALLOWED = "eip6492_factory_not_allowed"
 ERR_RECIPIENT_MISMATCH = "invalid_exact_evm_payload_recipient_mismatch"
 ERR_AUTHORIZATION_VALUE_MISMATCH = "invalid_exact_evm_payload_authorization_value_mismatch"
+ERR_INVALID_REQUIRED_AMOUNT = "invalid_exact_evm_required_amount"
 ERR_VALID_BEFORE_EXPIRED = "invalid_exact_evm_payload_authorization_valid_before"
 ERR_VALID_AFTER_FUTURE = "invalid_exact_evm_payload_authorization_valid_after"
 ERR_NONCE_ALREADY_USED = "invalid_exact_evm_nonce_already_used"
@@ -361,6 +364,8 @@ ERR_PERMIT2_INVALID_DESTINATION = "permit2_invalid_destination"
 ERR_PERMIT2_INVALID_OWNER = "permit2_invalid_owner"
 
 # Upto-specific error codes
+ERR_UPTO_INVALID_PAYLOAD = "invalid_upto_evm_payload"
+ERR_UPTO_INVALID_REQUIRED_AMOUNT = "invalid_upto_evm_required_amount"
 ERR_UPTO_SETTLEMENT_EXCEEDS_AMOUNT = "invalid_upto_evm_payload_settlement_exceeds_amount"
 ERR_UPTO_FACILITATOR_MISMATCH = "upto_facilitator_mismatch"
 ERR_UPTO_INVALID_SCHEME = "invalid_upto_evm_scheme"

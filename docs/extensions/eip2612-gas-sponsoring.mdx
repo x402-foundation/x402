@@ -79,14 +79,24 @@ Advertise support for this extension in your route configuration:
 
 The `ExactEvmScheme` handles EIP-2612 gas sponsoring automatically. When the server advertises this extension and the client's Permit2 allowance is insufficient, the scheme signs the EIP-2612 permit and includes it in the payment payload.
 
+Signing the EIP-2612 permit requires reading `allowance` and `nonces` from the chain. The scheme gets this capability from either:
+
+- A signer that includes `readContract` (e.g., `toClientEvmSigner(account, publicClient)`), or
+- An `rpcUrl` passed to `ExactEvmScheme` options
+
+If neither is provided and the server advertises this extension, the scheme logs a warning and skips the permit. A wallet with no Permit2 allowance will then receive a `412 permit2_allowance_required` error.
+
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
     import { ExactEvmScheme } from "@x402/evm/exact/client";
 
-    // readContract capability is required for EIP-2612 (to check allowance and nonce)
-    const scheme = new ExactEvmScheme(signer);
+    // Option 1: pass rpcUrl so the scheme can read the chain
+    const scheme = new ExactEvmScheme(signer, { rpcUrl: "https://mainnet.base.org" });
     client.register("eip155:*", scheme);
+
+    // Option 2: use a signer that already has readContract
+    // const scheme = new ExactEvmScheme(toClientEvmSigner(account, publicClient));
 
     // The scheme automatically signs an EIP-2612 permit when:
     // 1. The server advertises eip2612GasSponsoring
@@ -97,14 +107,27 @@ The `ExactEvmScheme` handles EIP-2612 gas sponsoring automatically. When the ser
   <Tab title="Go">
     ```go
     import (
-        evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+        evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
     )
 
-    scheme := evm.NewExactEvmScheme(signer)
+    // The signer must be able to read contracts (to check allowance and nonce).
+    // Use an RPC-backed signer or configure RPCURL in the scheme options.
+    signer, _ := evmsigners.NewClientSignerFromPrivateKeyWithClient(
+        os.Getenv("EVM_PRIVATE_KEY"),
+        "https://your-rpc.example",
+    )
+
+    scheme := exactevm.NewExactEvmScheme(signer, nil)
+    // Or configure RPC separately:
+    // scheme := exactevm.NewExactEvmScheme(signer, &exactevm.ExactEvmSchemeConfig{
+    //     RPCURL: "https://your-rpc.example",
+    // })
     client.Register("eip155:*", scheme)
 
-    // EIP-2612 permit signing is handled automatically
-    // when the server advertises the extension
+    // EIP-2612 permit signing is handled automatically when the server
+    // advertises the extension. If the signer lacks read-contract capability,
+    // the extension is skipped and a warning is logged once per network.
     ```
   </Tab>
   <Tab title="Python">

@@ -511,7 +511,7 @@ describe("processPriceToAtomicAmount", () => {
   it("should handle zero price", () => {
     const result = processPriceToAtomicAmount("$0", "base-sepolia");
     expect(result).toEqual({
-      error: expect.stringContaining("Number must be greater than or equal to 0.0001"),
+      error: expect.stringContaining("expected number to be >=0.0001"),
     });
   });
 });

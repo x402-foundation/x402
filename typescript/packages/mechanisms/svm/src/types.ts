@@ -37,8 +37,12 @@ export type UptoSvmPayloadV2 = {
   validAfter: number;
   /** Unique per-authorization identifier. */
   nonce: string;
-  /** Slot encoded in the open instruction and used as a channel PDA seed. */
-  openSlot: string;
+  /**
+   * Slot encoded in the open instruction and used as a channel PDA seed. The
+   * scheme types it as a JSON number; clients emit the decimal string, which
+   * stays exact above 2^53. Verifiers accept both.
+   */
+  openSlot: string | number;
   /** Channel PDA (base58). */
   channelId: string;
   /** Onchain escrow ceiling (base units); MUST equal `maxAmount`. */
@@ -76,7 +80,8 @@ export function isUptoSvmPayload(payload: Record<string, unknown>): payload is U
     typeof payload.channelId === "string" &&
     typeof payload.authorizedSigner === "string" &&
     typeof payload.openTransaction === "string" &&
-    typeof payload.openSlot === "string" &&
+    (typeof payload.openSlot === "string" ||
+      (Number.isSafeInteger(payload.openSlot) && (payload.openSlot as number) >= 0)) &&
     Number.isSafeInteger(payload.expiresAt) &&
     Number.isSafeInteger(payload.validAfter) &&
     typeof payload.nonce === "string" &&

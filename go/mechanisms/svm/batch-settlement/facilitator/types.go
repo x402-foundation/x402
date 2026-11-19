@@ -5,6 +5,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -86,6 +87,8 @@ type ValidatedDeposit struct {
 	Proof           batchsettlement.BatchProof
 	// ProofAmount is the signed cumulative for a client voucher, or the metered charge for server mode.
 	ProofAmount uint64
+	// Existing is the channel account read during validation, nil when it does not exist yet.
+	Existing *generated.Channel
 }
 
 // PreparedClaim is one claim whose channel, voucher, and fee payer are ready to redeem.
@@ -130,5 +133,6 @@ type ReceiverBindingHistoryReader interface {
 	GetTransaction(ctx context.Context, network, signature string) (string, error)
 }
 
-// OnDistributionConfirmed runs before a payout is marked complete. Implementations must deduplicate by transaction.
+// OnDistributionConfirmed runs before a payout is marked complete. It also runs for a cooperative seal or refund.
+// Implementations must deduplicate by transaction, including a repeat call after a crash before the recorded marker is saved.
 type OnDistributionConfirmed func(ctx context.Context, response *x402.SettleResponse, requirements types.PaymentRequirements) error

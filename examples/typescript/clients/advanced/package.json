@@ -21,6 +21,7 @@
     "@scure/base": "^1.2.6",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
+    "@x402/canton": "workspace:*",
     "@x402/cardano": "workspace:*",
     "@x402/casper": "workspace:*",
     "@x402/concordium": "workspace:*",
@@ -37,7 +38,7 @@
     "@concordium/web-sdk": "^12.0.0",
     "dotenv": "^16.4.7",
     "viem": "^2.48.11",
-    "@solana/kit": "^6.1.0",
+    "@solana/kit": "^8.5.0",
     "xrpl": "^4.6.0"
   },
   "devDependencies": {

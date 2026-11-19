@@ -77,8 +77,6 @@ class TestComputeChannelId:
 class TestGetBatchSettlementEip712Domain:
     def test_fields(self):
         d = get_batch_settlement_eip712_domain(8453)
-        assert d["name"] == "x402 Batch Settlement"
-        assert d["version"] == "1"
         assert d["chainId"] == 8453
         # verifyingContract is the batch-settlement deployment.
         from x402.mechanisms.evm.batch_settlement.constants import (

@@ -58,15 +58,23 @@
  *
  * ### For Idempotency Implementation
  *
+ * Do not use the `id` alone as the storage key. Bind it to a normalized
+ * fingerprint of the request, and reject reuse of the `id` with a different
+ * fingerprint (see "Request Binding" in specs/extensions/payment_identifier.md).
+ *
  * ```typescript
  * import { extractPaymentIdentifier } from '@x402/extensions/payment-identifier';
  *
  * // In your settle handler
  * const id = extractPaymentIdentifier(paymentPayload);
  * if (id) {
- *   const cached = await idempotencyStore.get(id);
- *   if (cached) {
- *     return cached; // Return cached response
+ *   const fingerprint = fingerprintOf(paymentPayload); // your normalized request fingerprint
+ *   const seen = await idempotencyStore.get(id);
+ *   if (seen) {
+ *     if (seen.fingerprint !== fingerprint) {
+ *       return conflict(); // same id, different request: 409 Conflict
+ *     }
+ *     return seen.response; // same id, same request: return the cached response
  *   }
  * }
  * ```

@@ -236,7 +236,7 @@ class TestHTTPIntegration:
         assert "PAYMENT-REQUIRED" in result.response.headers
         assert result.response.headers["Cache-Control"] == "no-store"
         assert result.response.is_html is False
-        assert result.response.body == {}
+        assert result.response.body == {"error": "Payment required"}
 
         # Client parses 402 and creates payment
         payment_required = components.http_client.get_payment_required_response(

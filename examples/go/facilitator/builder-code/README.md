@@ -4,7 +4,7 @@ Gin facilitator that verifies and settles payments on Base Sepolia and appends E
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - Dedicated EVM facilitator private key with Base Sepolia ETH for transaction fees
 
 ## Setup

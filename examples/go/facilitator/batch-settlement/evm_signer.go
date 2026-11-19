@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
+	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
 // facilitatorEvmSigner implements evmmech.FacilitatorEvmSigner.
@@ -212,6 +213,34 @@ func (s *facilitatorEvmSigner) GetBalance(ctx context.Context, address string, t
 
 func (s *facilitatorEvmSigner) GetCode(ctx context.Context, address string) ([]byte, error) {
 	return s.client.CodeAt(ctx, common.HexToAddress(address), nil)
+}
+
+func (s *facilitatorEvmSigner) TransactionInput(ctx context.Context, txHash string) ([]byte, error) {
+	tx, _, err := s.client.TransactionByHash(ctx, common.HexToHash(txHash))
+	if err != nil {
+		return nil, fmt.Errorf("transaction %s: %w", txHash, err)
+	}
+	if tx == nil {
+		return nil, fmt.Errorf("transaction %s not found", txHash)
+	}
+	return tx.Data(), nil
+}
+
+func (s *facilitatorEvmSigner) ReceiptLogs(ctx context.Context, txHash string) ([]batchsettlement.ReceiptLog, error) {
+	receipt, err := s.client.TransactionReceipt(ctx, common.HexToHash(txHash))
+	if err != nil {
+		return nil, fmt.Errorf("receipt %s: %w", txHash, err)
+	}
+	if receipt == nil {
+		return nil, fmt.Errorf("receipt %s not found", txHash)
+	}
+	out := make([]batchsettlement.ReceiptLog, len(receipt.Logs))
+	for i, log := range receipt.Logs {
+		topics := make([]common.Hash, len(log.Topics))
+		copy(topics, log.Topics)
+		out[i] = batchsettlement.ReceiptLog{Address: log.Address, Topics: topics, Data: log.Data}
+	}
+	return out, nil
 }
 
 func buildTypedData(

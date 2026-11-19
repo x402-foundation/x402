@@ -1,13 +1,88 @@
-import { Transaction, Address, Operation, xdr } from "@stellar/stellar-sdk";
+import { Transaction, Address, humanizeEvents, Operation, xdr } from "@stellar/stellar-sdk";
 import { Api, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+import { InsufficientBalanceError, SimulationFailedError, TrustlineMissingError } from "./errors";
+
+const TRUSTLINE_MISSING_MESSAGE = "trustline entry is missing for account";
+const INSUFFICIENT_BALANCE_MESSAGE = "resulting balance is not within the allowed range";
+
+/**
+ * Account and asset context for a Stellar transfer simulation.
+ */
+export type SimulationErrorContext = {
+  /** Account sending the payment. */
+  payer: string;
+  /** Account receiving the payment. */
+  payee: string;
+  /** Asset contract address. */
+  asset: string;
+};
+
+/**
+ * Finds the arguments embedded in a matching diagnostic error event.
+ *
+ * @param simulation - Failed simulation response
+ * @param message - Error message to match
+ * @returns The diagnostic event arguments, if available
+ */
+function getDiagnosticErrorArgs(
+  simulation: Api.SimulateTransactionErrorResponse,
+  message: string,
+): unknown[] | undefined {
+  const events = simulation.events ?? [];
+  for (let index = events.length - 1; index >= 0; index--) {
+    try {
+      const [event] = humanizeEvents([events[index]]);
+      if (event.type !== "diagnostic" || event.topics[0] !== "error") {
+        continue;
+      }
+
+      const args = event.data;
+      if (Array.isArray(args) && typeof args[0] === "string" && args[0].includes(message)) {
+        return args;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Resolves the payer whose balance fell below its allowed range.
+ *
+ * @param args - Balance error diagnostic arguments
+ * @param context - Payer and payee transfer context
+ * @returns The payer account for an insufficient balance failure
+ */
+function getInsufficientBalanceAccount(
+  args: unknown[] | undefined,
+  context: SimulationErrorContext,
+): string | undefined {
+  const [minBalance, resultingBalance] = args?.slice(1) ?? [];
+
+  if (
+    typeof minBalance === "bigint" &&
+    typeof resultingBalance === "bigint" &&
+    resultingBalance < minBalance
+  ) {
+    return context.payer;
+  }
+
+  return undefined;
+}
 
 /**
  * Handles the simulation result of a Stellar transaction.
  *
  * @param simulation - The simulation result to handle
+ * @param context - Payer, payee, and asset context for typed errors
  * @throws An error if the simulation result is of type "RESTORE" or "ERROR"
  */
-export function handleSimulationResult(simulation?: Api.SimulateTransactionResponse) {
+export function handleSimulationResult(
+  simulation?: Api.SimulateTransactionResponse,
+  context?: SimulationErrorContext,
+) {
   if (!simulation) {
     throw new Error("Simulation result is undefined");
   }
@@ -19,9 +94,26 @@ export function handleSimulationResult(simulation?: Api.SimulateTransactionRespo
   }
 
   if (Api.isSimulationError(simulation)) {
-    const msg = `Stellar simulation failed${simulation.error ? ` with error message: ${simulation.error}` : ""}`;
+    const rawError = simulation.error ?? "";
 
-    throw new Error(msg);
+    if (context) {
+      const diagnosticArgs = getDiagnosticErrorArgs(simulation, TRUSTLINE_MISSING_MESSAGE);
+      const trustlineAccount = diagnosticArgs?.[1];
+      if (
+        typeof trustlineAccount === "string" &&
+        (trustlineAccount === context.payer || trustlineAccount === context.payee)
+      ) {
+        throw new TrustlineMissingError(trustlineAccount, context.asset, rawError);
+      }
+
+      const balanceArgs = getDiagnosticErrorArgs(simulation, INSUFFICIENT_BALANCE_MESSAGE);
+      const account = getInsufficientBalanceAccount(balanceArgs, context);
+      if (account) {
+        throw new InsufficientBalanceError(account, context.asset, rawError);
+      }
+    }
+
+    throw new SimulationFailedError(rawError);
   }
 }
 
@@ -39,14 +131,14 @@ export function handleSimulationResult(simulation?: Api.SimulateTransactionRespo
 export function getAddressCredentials(
   credentials: xdr.SorobanCredentials,
 ): xdr.SorobanAddressCredentials | undefined {
-  const credentialsType = credentials.switch();
-  if (credentialsType === xdr.SorobanCredentialsType.sorobanCredentialsAddress()) {
-    return credentials.address();
+  switch (credentials.type) {
+    case "sorobanCredentialsAddress":
+      return credentials.address;
+    case "sorobanCredentialsAddressV2":
+      return credentials.addressV2;
+    default:
+      return undefined;
   }
-  if (credentialsType === xdr.SorobanCredentialsType.sorobanCredentialsAddressV2()) {
-    return credentials.addressV2();
-  }
-  return undefined;
 }
 
 /**
@@ -130,13 +222,13 @@ export function gatherAuthEntrySignatureStatus({
     // Handle address-based credentials, both legacy V1 and CAP-71 V2 (accepted
     // by the network from Protocol 28 onward). Source-account credentials are
     // skipped - these use the transaction source.
-    const addressCredentials = getAddressCredentials(entry.credentials());
+    const addressCredentials = getAddressCredentials(entry.credentials);
     if (addressCredentials) {
-      const address = Address.fromScAddress(addressCredentials.address()).toString();
-      const signature = addressCredentials.signature();
+      const address = Address.fromScAddress(addressCredentials.address).toString();
+      const signature = addressCredentials.signature;
 
       // Check if already signed (signature is not scvVoid)
-      const isSigned = signature.switch().name !== "scvVoid";
+      const isSigned = signature.type !== "scvVoid";
 
       if (isSigned) {
         alreadySigned.push(address);

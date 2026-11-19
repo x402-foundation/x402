@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { DEFAULT_ASSETS } from "../../../src/defaultAssets";
 import { UptoEvmScheme } from "../../../src/upto/server/scheme";
 import type { PaymentRequirements } from "@x402/core/types";
 import { convertToTokenAmount } from "@x402/core/utils";
@@ -11,14 +12,15 @@ describe("UptoEvmScheme (Server)", () => {
   describe("parsePrice", () => {
     describe("Base Sepolia network", () => {
       const network = "eip155:84532";
+      const asset = DEFAULT_ASSETS[network]![0]!;
 
       it("should parse dollar string prices", async () => {
         const result = await server.parsePrice("$0.10", network);
         expect(result.amount).toBe("100000");
-        expect(result.asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+        expect(result.asset).toBe(asset.asset);
         expect(result.extra).toEqual({
-          name: "USDC",
-          version: "2",
+          name: asset.name,
+          version: asset.version,
           assetTransferMethod: "permit2",
         });
       });
@@ -26,7 +28,7 @@ describe("UptoEvmScheme (Server)", () => {
       it("should parse simple number string prices", async () => {
         const result = await server.parsePrice("0.10", network);
         expect(result.amount).toBe("100000");
-        expect(result.asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+        expect(result.asset).toBe(asset.asset);
       });
 
       it("should parse number prices", async () => {
@@ -57,14 +59,15 @@ describe("UptoEvmScheme (Server)", () => {
 
     describe("Base mainnet network", () => {
       const network = "eip155:8453";
+      const asset = DEFAULT_ASSETS[network]![0]!;
 
-      it("should use Base mainnet USDC address with permit2", async () => {
+      it("should resolve the network default asset with permit2", async () => {
         const result = await server.parsePrice("1.00", network);
-        expect(result.asset).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+        expect(result.asset).toBe(asset.asset);
         expect(result.amount).toBe("1000000");
         expect(result.extra).toEqual({
-          name: "USD Coin",
-          version: "2",
+          name: asset.name,
+          version: asset.version,
           assetTransferMethod: "permit2",
         });
       });
@@ -72,14 +75,15 @@ describe("UptoEvmScheme (Server)", () => {
 
     describe("MegaETH network", () => {
       const network = "eip155:4326";
+      const asset = DEFAULT_ASSETS[network]![0]!;
 
-      it("should parse dollar string for 18-decimal token", async () => {
+      it("should parse dollar string for an 18-decimal token", async () => {
         const result = await server.parsePrice("$0.10", network);
-        expect(result.asset).toBe("0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7");
+        expect(result.asset).toBe(asset.asset);
         expect(result.amount).toBe("100000000000000000");
         expect(result.extra).toEqual({
-          name: "MegaUSD",
-          version: "1",
+          name: asset.name,
+          version: asset.version,
           assetTransferMethod: "permit2",
         });
       });
@@ -138,7 +142,7 @@ describe("UptoEvmScheme (Server)", () => {
         });
 
         const result = await customServer.parsePrice("1.00", "eip155:84532");
-        expect(result.asset).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+        expect(result.asset).toBe(DEFAULT_ASSETS["eip155:84532"]![0]!.asset);
       });
     });
 

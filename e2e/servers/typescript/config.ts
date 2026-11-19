@@ -19,6 +19,7 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { ExactConcordiumScheme } from "@x402/concordium/exact/server";
 import { ExactCardanoScheme } from "@x402/cardano/exact/server";
 import { toMasumiSellerSigner } from "@x402/cardano";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
   declareEip2612GasSponsoringExtension,
@@ -80,6 +81,9 @@ async function registerFamilySchemes(
     case "avm":
       server.register(pattern, new ExactAvmScheme());
       return;
+    case "canton":
+      server.register(pattern, new ExactCantonScheme());
+      return;
     case "ccd":
       server.register(pattern, new ExactConcordiumScheme());
       return;
@@ -99,13 +103,48 @@ async function registerFamilySchemes(
     case "evm": {
       server.register(pattern, new ExactEvmScheme());
       server.register(pattern, new UptoEvmScheme());
+      const payTo = getServerAddress(cfg, "evm") as `0x${string}`;
+      const voucherStoreModeRaw =
+        process.env.EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE?.trim().toLowerCase() ||
+        (process.env.E2E_BATCH_SERVER_ROLE?.trim().toLowerCase() === 'managed-batch'
+          ? 'facilitator'
+          : 'self');
+      if (voucherStoreModeRaw === 'facilitator') {
+        if (process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY?.trim()) {
+          console.error(
+            'EVM_BATCH_SETTLEMENT_VOUCHER_STORE_MODE=facilitator cannot be combined with SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY',
+          );
+          process.exit(1);
+        }
+        const refundAuthorizerPrivateKey = process.env
+          .SERVER_EVM_BATCH_SETTLEMENT_REFUND_AUTHORIZER_PRIVATE_KEY as `0x${string}` | undefined;
+        const refundAuthorizerSigner = refundAuthorizerPrivateKey?.trim()
+          ? privateKeyToAccount(refundAuthorizerPrivateKey)
+          : undefined;
+        if (refundAuthorizerSigner) {
+          console.info(
+            `Batch-settlement refund authorizer (facilitator-managed): ${refundAuthorizerSigner.address}`,
+          );
+        } else {
+          console.info('Batch-settlement refund authorizer: facilitator delegatedRefund (no local signer, 402 omits refundAuthorizer)');
+        }
+        console.info('Batch-settlement voucher custody: facilitator-managed (pass-through verify/settle)');
+        server.register(
+          pattern,
+          new BatchSettlementEvmScheme(payTo, {
+            voucherStoreMode: 'facilitator',
+            ...(refundAuthorizerSigner ? { refundAuthorizerSigner } : {}),
+            enforceMinDeposit: false,
+          }),
+        );
+        return;
+      }
       const receiverAuthorizerPrivateKey = process.env.SERVER_EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as
         | `0x${string}`
         | undefined;
       const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
         ? privateKeyToAccount(receiverAuthorizerPrivateKey)
         : undefined;
-      const payTo = getServerAddress(cfg, "evm") as `0x${string}`;
       server.register(
         pattern,
         new BatchSettlementEvmScheme(payTo, {

@@ -7,10 +7,6 @@
  */
 
 import {
-  getSetComputeUnitLimitInstruction,
-  getSetComputeUnitPriceInstruction,
-} from "@solana-program/compute-budget";
-import {
   AccountRole,
   appendTransactionMessageInstructions,
   type Address,
@@ -45,6 +41,19 @@ import {
   MAX_MEMO_BYTES,
   MEMO_PROGRAM_ADDRESS,
 } from "../constants";
+import { ErrUnsupportedTransactionVersion } from "../exact/facilitator/errors";
+import {
+  applyTransactionV1Config,
+  type BuildableTransactionVersion,
+  checkTransactionV1Budget,
+  computeBudgetInstructions,
+  getCompiledInstructions,
+  maxTransactionSize,
+  readTransactionV1Config,
+  transactionSizeExceeded,
+  type TransactionV1Config,
+} from "../transactionV1";
+import { isAcceptedTransactionVersion } from "../utils";
 import {
   getOpenInstruction,
   getOpenInstructionDataDecoder,
@@ -75,8 +84,25 @@ export const OPEN_DEFAULT_COMPUTE_UNIT_LIMIT = 200_000;
 const OPEN_MAX_LIGHTHOUSE_INSTRUCTIONS = 3;
 /** Max optional suffix length after `open` (3 Lighthouse + 1 Memo), plus one binding memo when expected. */
 const OPEN_MAX_OPTIONAL_SUFFIX = 4;
-/** Solana packet limit for a serialized transaction. */
-const MAX_TRANSACTION_BYTES = 1232;
+/**
+ * Throw when a built transaction exceeds its version's serialized size limit
+ * (1232 bytes for legacy and version 0, 4096 bytes for version 1).
+ *
+ * @param label - Transaction kind, for the error message
+ * @param transaction - The base64 wire transaction
+ * @param version - Its message version
+ */
+export function assertWithinSizeLimit(
+  label: string,
+  transaction: string,
+  version: number | string,
+): void {
+  const size = getBase64Codec().encode(transaction).byteLength;
+  const limit = maxTransactionSize(version);
+  if (size > limit) {
+    throw new Error(`${label} transaction is ${size} bytes, above the ${limit}-byte packet limit`);
+  }
+}
 
 /**
  * Slot freshness / reclaim gate window for payment-channel PDAs.
@@ -154,6 +180,14 @@ export interface BuildOpenArgs {
    * facilitators may enforce a stricter `maxPriorityFeeMicroLamports`.
    */
   computeUnitPriceMicroLamports?: number | undefined;
+  /**
+   * Transaction message version to build, resolved from the challenge's
+   * `extra.transactionVersions` via `resolveTransactionVersion`. Version 1
+   * carries the compute budget in the message config instead of a
+   * ComputeBudget prefix, and requires a positive `computeUnitLimit`.
+   * Defaults to `0`.
+   */
+  transactionVersion?: BuildableTransactionVersion | undefined;
 }
 
 /** Result of {@link buildOpenPaymentChannelTransaction}. */
@@ -183,6 +217,8 @@ export interface BuildTopUpArgs {
   computeUnitLimit?: number | undefined;
   computeUnitPriceMicroLamports?: number | undefined;
   programId?: string | undefined;
+  /** Transaction message version to build; see {@link BuildOpenArgs.transactionVersion}. */
+  transactionVersion?: BuildableTransactionVersion | undefined;
 }
 
 /** Result of {@link buildTopUpPaymentChannelTransaction}. */
@@ -253,16 +289,12 @@ export async function buildTopUpPaymentChannelTransaction(
   const memoData = new TextEncoder().encode(memo);
   if (memoData.byteLength > MAX_MEMO_BYTES)
     throw new Error(`extra.memo exceeds maximum ${MAX_MEMO_BYTES} bytes`);
-  const computeBudgetIxs = [
-    ...(computeUnitLimit > 0
-      ? [getSetComputeUnitLimitInstruction({ units: computeUnitLimit })]
-      : []),
-    ...(computeUnitPrice > 0
-      ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
-      : []),
-  ];
+  const version = args.transactionVersion ?? 0;
+  const budget = { computeUnitLimit, computeUnitPriceMicroLamports: computeUnitPrice };
+  const computeBudgetIxs = computeBudgetInstructions(version, budget);
   const message = pipe(
-    createTransactionMessage({ version: 0 }),
+    createTransactionMessage({ version }),
+    msg => applyTransactionV1Config(version, budget, msg),
     msg => setTransactionMessageFeePayer(address(args.feePayer), msg),
     msg =>
       setTransactionMessageLifetimeUsingBlockhash(
@@ -286,12 +318,14 @@ export async function buildTopUpPaymentChannelTransaction(
         msg,
       ),
   );
+  const transaction = getBase64EncodedWireTransaction(
+    await partiallySignTransactionMessageWithSigners(message),
+  );
+  assertWithinSizeLimit("top-up", transaction, version);
   return {
     amount: args.amount,
     channelId: args.channelId,
-    transaction: getBase64EncodedWireTransaction(
-      await partiallySignTransactionMessageWithSigners(message),
-    ),
+    transaction,
   };
 }
 
@@ -489,17 +523,14 @@ export async function buildOpenPaymentChannelTransaction(args: BuildOpenArgs): P
   }
   // Spec layout: optional ComputeBudget prefix (SetComputeUnitLimit MUST
   // precede SetComputeUnitPrice) → exactly one open → optional Memo suffix.
-  const computeBudgetIxs = [
-    ...(computeUnitLimit > 0
-      ? [getSetComputeUnitLimitInstruction({ units: computeUnitLimit })]
-      : []),
-    ...(computeUnitPrice > 0
-      ? [getSetComputeUnitPriceInstruction({ microLamports: computeUnitPrice })]
-      : []),
-  ];
+  // Version 1 has no prefix; its budget lives in the message config.
+  const version = args.transactionVersion ?? 0;
+  const budget = { computeUnitLimit, computeUnitPriceMicroLamports: computeUnitPrice };
+  const computeBudgetIxs = computeBudgetInstructions(version, budget);
 
   const message = pipe(
-    createTransactionMessage({ version: 0 }),
+    createTransactionMessage({ version }),
+    msg => applyTransactionV1Config(version, budget, msg),
     msg => setTransactionMessageFeePayer(feePayer, msg),
     msg =>
       setTransactionMessageLifetimeUsingBlockhash(
@@ -514,12 +545,7 @@ export async function buildOpenPaymentChannelTransaction(args: BuildOpenArgs): P
   );
   const signed = await partiallySignTransactionMessageWithSigners(message);
   const transaction = getBase64EncodedWireTransaction(signed);
-  const size = getBase64Codec().encode(transaction).byteLength;
-  if (size > MAX_TRANSACTION_BYTES) {
-    throw new Error(
-      `open transaction is ${size} bytes, above the ${MAX_TRANSACTION_BYTES}-byte packet limit`,
-    );
-  }
+  assertWithinSizeLimit("open", transaction, version);
 
   return {
     channelId,
@@ -586,6 +612,12 @@ export interface VerifyOpenExpected {
    * check still applies).
    */
   maxRequiredSignatures?: number | undefined;
+  /**
+   * Transaction message versions the facilitator accepts. Any other version is
+   * rejected before any instruction is inspected; legacy is accepted exactly
+   * when version 0 is. Unset accepts `[0, 1]`.
+   */
+  acceptedTransactionVersions?: readonly number[] | undefined;
 }
 
 /** Expected bindings for a canonical six-account `top_up` transaction. */
@@ -600,6 +632,8 @@ export interface VerifyTopUpExpected {
   programId?: string | undefined;
   maxComputeUnits?: number | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
+  /** As {@link VerifyOpenExpected.acceptedTransactionVersions}. */
+  acceptedTransactionVersions?: readonly number[] | undefined;
 }
 
 /** Decode and validate the canonical top-up transaction layout and bindings. */
@@ -608,9 +642,21 @@ export async function verifyTopUpTransaction(
   expected: VerifyTopUpExpected,
 ): Promise<void> {
   const decoded = getTransactionDecoder().decode(getBase64Codec().encode(transactionBase64));
-  const message = getCompiledTransactionMessageDecoder().decode(
-    decoded.messageBytes,
-  ) as unknown as CompiledOpenMessage;
+  const compiledMessage = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+  if (
+    !isAcceptedTransactionVersion(compiledMessage.version, expected.acceptedTransactionVersions)
+  ) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: verifyTopUpTransaction: transaction message version ${String(compiledMessage.version)} is not accepted; accepted versions: ${acceptedVersionsLabel(expected.acceptedTransactionVersions)}`,
+    );
+  }
+  const oversized = transactionSizeExceeded(transactionBase64, compiledMessage.version);
+  if (oversized) {
+    throw new Error(
+      `verifyTopUpTransaction: transaction is ${oversized.size} bytes, above the ${oversized.limit}-byte limit for version ${String(compiledMessage.version)}`,
+    );
+  }
+  const message = toCompiledOpenMessage(compiledMessage);
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error("verifyTopUpTransaction: address-lookup tables are not permitted");
   }
@@ -628,6 +674,7 @@ export async function verifyTopUpTransaction(
         MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
       ),
       expectedMemo: expected.memo,
+      v1Config: transactionV1ConfigOf(compiledMessage),
     },
     TOP_UP_DISCRIMINATOR,
     "top_up",
@@ -716,6 +763,7 @@ export interface VerifyOpenResult {
 
 type CompiledOpenMessage = {
   addressTableLookups?: readonly unknown[];
+  version: number | string;
   header: {
     numReadonlyNonSignerAccounts: number;
     numReadonlySignerAccounts: number;
@@ -753,9 +801,8 @@ export async function verifyOpenTransaction(
 
   const txBytes = getBase64Codec().encode(transactionBase64);
   const decoded = getTransactionDecoder().decode(txBytes);
-  const message = getCompiledTransactionMessageDecoder().decode(
-    decoded.messageBytes,
-  ) as unknown as CompiledOpenMessage;
+  const compiledMessage = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+  const message = toCompiledOpenMessage(compiledMessage);
 
   // The fee payer co-signs this client-supplied transaction, so a malicious
   // client could otherwise smuggle a fee-payer-authorized instruction (e.g.
@@ -766,6 +813,21 @@ export async function verifyOpenTransaction(
   //   2. Allow only the spec's top-level layout: optional ComputeBudget prefix,
   //      exactly one payment-channels `open`, optional Lighthouse/Memo suffix.
   //      Wallets like Phantom/Solflare inject Lighthouse around the client open.
+  // Every check below reads the compute budget from where the message version
+  // keeps it: the ComputeBudget prefix on legacy and version 0, the message
+  // config on version 1. A version this verifier does not model would pass
+  // those checks vacuously, so reject it first.
+  if (!isAcceptedTransactionVersion(message.version, expected.acceptedTransactionVersions)) {
+    throw new Error(
+      `${ErrUnsupportedTransactionVersion}: verifyOpenTransaction: transaction message version ${String(message.version)} is not accepted; accepted versions: ${acceptedVersionsLabel(expected.acceptedTransactionVersions)}`,
+    );
+  }
+  const oversized = transactionSizeExceeded(transactionBase64, message.version);
+  if (oversized) {
+    throw new Error(
+      `verifyOpenTransaction: transaction is ${oversized.size} bytes, above the ${oversized.limit}-byte limit for version ${String(message.version)}`,
+    );
+  }
   if (message.addressTableLookups && message.addressTableLookups.length > 0) {
     throw new Error(
       "verifyOpenTransaction: address-lookup tables are not permitted in an open transaction — all accounts must be static so the fee-payer guard can validate them",
@@ -786,6 +848,7 @@ export async function verifyOpenTransaction(
     maxPriorityFeeMicroLamports,
     expectedMemo: expected.memo,
     expectedBindingMemo: expected.expectedBindingMemo,
+    v1Config: transactionV1ConfigOf(compiledMessage),
   });
 
   // Required-signer set must equal the distinct addresses in
@@ -966,7 +1029,14 @@ export async function verifyOpenTransaction(
     }
   }
 
-  const openData = getOpenInstructionDataDecoder().decode(openIx.data);
+  // `read` rather than `decode`: the decoder stops at the end of the open
+  // args, so bytes past them would otherwise be signed without being read.
+  const [openData, openDataEnd] = getOpenInstructionDataDecoder().read(openIx.data, 0);
+  if (openDataEnd !== openIx.data.length) {
+    throw new Error(
+      `verifyOpenTransaction: open instruction data has ${openIx.data.length - openDataEnd} trailing bytes after the open args`,
+    );
+  }
   const { deposit, gracePeriod, openSlot, recipients, salt } = openData.openArgs;
 
   if (deposit === 0n) throw new Error("verifyOpenTransaction: deposit must be greater than zero");
@@ -1056,7 +1126,34 @@ type OpenLayoutLimits = {
   maxPriorityFeeMicroLamports: number;
   expectedMemo?: string | undefined;
   expectedBindingMemo?: string | undefined;
+  /** The message config of a version-1 transaction, which has no ComputeBudget prefix. */
+  v1Config?: TransactionV1Config | undefined;
 };
+
+/**
+ * View a compiled message with an `instructions` array on every version.
+ *
+ * @param compiled - A compiled transaction message
+ * @returns The message, with version-1 instruction headers and payloads joined
+ */
+function toCompiledOpenMessage(compiled: unknown): CompiledOpenMessage {
+  return {
+    ...(compiled as CompiledOpenMessage),
+    instructions: getCompiledInstructions(compiled),
+  };
+}
+
+/**
+ * The config of a version-1 message, or undefined for legacy and version 0.
+ *
+ * @param compiled - A compiled transaction message
+ * @returns Its version-1 config, if any
+ */
+function transactionV1ConfigOf(compiled: unknown): TransactionV1Config | undefined {
+  return (compiled as { version: unknown }).version === 1
+    ? readTransactionV1Config(compiled)
+    : undefined;
+}
 
 /**
  * Locate the canonical payment-channels `open` in a compiled message and enforce
@@ -1080,6 +1177,22 @@ function findCanonicalOpenInstruction(
   const { instructions, staticAccounts } = message;
   if (instructions.length === 0) {
     throw new Error("verifyOpenTransaction: no payment-channels open instruction found");
+  }
+
+  // Version 1 carries its budget in the message config: check it there, and
+  // reject any ComputeBudget instruction, so the prefix scan below finds none.
+  if (limits.v1Config) {
+    const violation = checkTransactionV1Budget(
+      limits.v1Config,
+      instructions.map(ix => staticAccounts[ix.programAddressIndex] ?? ""),
+      {
+        maxComputeUnits: limits.maxComputeUnits,
+        maxPriceMicroLamports: limits.maxPriorityFeeMicroLamports,
+      },
+    );
+    if (violation) {
+      throw new Error(`verifyOpenTransaction: transaction v1 config rejected (${violation})`);
+    }
   }
 
   let i = 0;
@@ -1197,23 +1310,10 @@ function findCanonicalOpenInstruction(
     i += 1;
   }
 
-  let otherMemos = memoDatas;
-  if (limits.expectedBindingMemo !== undefined) {
-    const expectedBinding = limits.expectedBindingMemo;
-    const prefixEnd = expectedBinding.lastIndexOf(":");
-    const prefix = prefixEnd === -1 ? expectedBinding : expectedBinding.slice(0, prefixEnd + 1);
-    const decode = (data: Uint8Array) => new TextDecoder().decode(data);
-    const exact = memoDatas.filter(data => decode(data) === expectedBinding).length;
-    // Any other memo under the same prefix is a second binding, so recovery
-    // would not know which key the payer committed to.
-    const prefixed = memoDatas.filter(data => decode(data).startsWith(prefix)).length;
-    if (exact !== 1 || prefixed !== 1) {
-      throw new Error(
-        `verifyOpenTransaction: expected exactly one Memo instruction matching the receiver binding, found ${exact === 1 ? prefixed : exact}`,
-      );
-    }
-    otherMemos = memoDatas.filter(data => !decode(data).startsWith(prefix));
-  }
+  const otherMemos =
+    limits.expectedBindingMemo === undefined
+      ? memoDatas
+      : withoutReceiverBinding(memoDatas, limits.expectedBindingMemo);
 
   if (limits.expectedMemo !== undefined) {
     if (otherMemos.length !== 1) {
@@ -1322,6 +1422,17 @@ export function parseU64(value: bigint | number | string, name: string): bigint 
 }
 
 /**
+ * Describe an accepted-version set for an error message.
+ *
+ * @param accepted - The configured accepted versions, or undefined for the default
+ * @returns The versions, with legacy named where version 0 admits it
+ */
+function acceptedVersionsLabel(accepted: readonly number[] | undefined): string {
+  const versions = accepted ?? [0, 1];
+  return [...(versions.includes(0) ? ["legacy"] : []), ...versions.map(String)].join(", ");
+}
+
+/**
  * Generate a random u64 salt.
  *
  * @returns A random u64 bigint
@@ -1330,4 +1441,33 @@ function randomU64(): bigint {
   const bytes = new Uint8Array(8);
   globalThis.crypto.getRandomValues(bytes);
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0, true);
+}
+
+/**
+ * Checks the open carries exactly one receiver-binding Memo, equal to the
+ * expected one, and returns the other Memos.
+ *
+ * @param memoDatas - Data of every Memo instruction after `open`
+ * @param expectedBinding - The binding Memo the facilitator's key produces
+ * @returns The Memos outside the binding prefix
+ */
+function withoutReceiverBinding(memoDatas: Uint8Array[], expectedBinding: string): Uint8Array[] {
+  const prefixEnd = expectedBinding.lastIndexOf(":");
+  const prefix = prefixEnd === -1 ? expectedBinding : expectedBinding.slice(0, prefixEnd + 1);
+  const decode = (data: Uint8Array) => new TextDecoder().decode(data);
+  const exact = memoDatas.filter(data => decode(data) === expectedBinding).length;
+  // Any other memo under the same prefix is a second binding, so recovery
+  // would not know which key the payer committed to.
+  const prefixed = memoDatas.filter(data => decode(data).startsWith(prefix)).length;
+  if (exact === 0 && prefixed > 0) {
+    throw new Error(
+      "verifyOpenTransaction: the receiver binding Memo names another receiver authorizer",
+    );
+  }
+  if (exact !== 1 || prefixed !== 1) {
+    throw new Error(
+      `verifyOpenTransaction: expected exactly one receiver-binding Memo, found ${exact === 1 ? prefixed : exact}`,
+    );
+  }
+  return memoDatas.filter(data => !decode(data).startsWith(prefix));
 }

@@ -4,7 +4,7 @@ Example client for the [builder-code server](../../servers/builder-code/). Makes
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.26.10 or higher
 - Running [builder-code server](../../servers/builder-code/) and [builder-code facilitator](../../facilitator/builder-code/)
 - EVM private key funded on Base Sepolia
 

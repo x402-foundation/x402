@@ -2,6 +2,8 @@ package facilitator
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"math/big"
 	"strings"
 	"sync"
@@ -9,7 +11,9 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -305,6 +309,114 @@ func TestVerifyEIP3009_AssetContractCheckIsCachedButPayerCodeIsNot(t *testing.T)
 	if got := signer.getCodeCount(roundTripPayer); got != 3 {
 		t.Fatalf("expected one payer eth_getCode per verify (never cached), got %d calls", got)
 	}
+}
+
+func eip3009SigWithS(s *big.Int) string {
+	sig := make([]byte, 65)
+	s.FillBytes(sig[32:64])
+	sig[64] = 27
+	return "0x" + hex.EncodeToString(sig)
+}
+
+func eoaEIP3009Payload(signature string) (types.PaymentPayload, types.PaymentRequirements) {
+	payload := &evm.ExactEIP3009Payload{
+		Signature: signature,
+		Authorization: evm.ExactEIP3009Authorization{
+			From:        roundTripPayer,
+			To:          roundTripPayTo,
+			Value:       "1000000",
+			ValidAfter:  "0",
+			ValidBefore: "99999999999",
+			Nonce:       "0x" + strings.Repeat("00", 32),
+		},
+	}
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:84532",
+		Amount:  "1000000",
+		Asset:   roundTripAsset,
+		PayTo:   roundTripPayTo,
+		Extra:   map[string]interface{}{"name": "USDC", "version": "2"},
+	}
+	return types.PaymentPayload{X402Version: 2, Payload: payload.ToMap(), Accepted: requirements}, requirements
+}
+
+func assertPayerGetCodeCount(t *testing.T, signer *roundTripSigner, want int) {
+	t.Helper()
+	if got := signer.getCodeCount(roundTripPayer); got != want {
+		t.Fatalf("payer eth_getCode calls = %d, want %d", got, want)
+	}
+}
+
+func TestVerifyEIP3009_PayerGetCodeOnce(t *testing.T) {
+	halfN := new(big.Int).Rsh(crypto.S256().Params().N, 1)
+	highS := new(big.Int).Add(new(big.Int).Set(halfN), big.NewInt(1))
+	assetCode := map[string][]byte{strings.ToLower(roundTripAsset): {0x60, 0x60}}
+
+	t.Run("high-s eoa", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+		payload, requirements := eoaEIP3009Payload(eip3009SigWithS(highS))
+		signer := newRoundTripSigner(assetCode)
+		scheme := NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(context.Background(), payload, requirements, nil)
+		var ve *x402.VerifyError
+		if !errors.As(err, &ve) || ve.InvalidReason != ErrInvalidSignatureS {
+			t.Fatalf("err = %v, want %s", err, ErrInvalidSignatureS)
+		}
+		assertPayerGetCodeCount(t, signer, 1)
+	})
+
+	t.Run("low-s eoa", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+		payload, requirements := eoaEIP3009Payload(eip3009SigWithS(halfN))
+		signer := newRoundTripSigner(assetCode)
+		scheme := NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(context.Background(), payload, requirements, nil)
+		var ve *x402.VerifyError
+		if !errors.As(err, &ve) || ve.InvalidReason == ErrInvalidSignatureS {
+			t.Fatalf("err = %v, want a non-canonical rejection to be skipped", err)
+		}
+		assertPayerGetCodeCount(t, signer, 1)
+	})
+
+	t.Run("high-s deployed wallet", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+		payload, requirements := eoaEIP3009Payload(eip3009SigWithS(highS))
+		signer := newRoundTripSigner(map[string][]byte{
+			strings.ToLower(roundTripAsset): {0x60, 0x60},
+			strings.ToLower(roundTripPayer): {0x60, 0x80},
+		})
+		scheme := NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(context.Background(), payload, requirements, nil)
+		var ve *x402.VerifyError
+		if errors.As(err, &ve) && ve.InvalidReason == ErrInvalidSignatureS {
+			t.Fatal("deployed wallet high-s signature was rejected")
+		}
+		assertPayerGetCodeCount(t, signer, 1)
+	})
+
+	t.Run("erc6492 wrapper", func(t *testing.T) {
+		evm.ResetAssetContractCache()
+		payload, requirements := counterfactualErc6492Payload(t)
+		payer := payload.Payload["authorization"].(map[string]interface{})["from"].(string)
+		signer := newRoundTripSigner(map[string][]byte{
+			strings.ToLower(requirements.Asset): {0x60, 0x60},
+			strings.ToLower(payer):              {},
+		})
+		scheme := NewExactEvmScheme(signer, nil)
+
+		_, err := scheme.Verify(context.Background(), payload, requirements, nil)
+		var ve *x402.VerifyError
+		if !errors.As(err, &ve) || ve.InvalidReason == ErrInvalidSignatureS {
+			t.Fatalf("err = %v, want the wrapper to skip the high-s gate", err)
+		}
+		if got := signer.getCodeCount(payer); got != 1 {
+			t.Fatalf("payer eth_getCode calls = %d, want 1", got)
+		}
+	})
 }
 
 // The same address can hold bytecode on one chain and nothing on another, so a hit on one

@@ -259,6 +259,9 @@ func VerifyBatchedVoucherTypedData(
 	// On-chain x402BatchSettlement uses ECDSA.recoverCalldata for the payerAuthorizer
 	// path regardless of code at that address — mirror that exactly.
 	if payerAuthorizer != zeroAddress && payerAuthorizer != "" {
+		if !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+			return false, nil
+		}
 		return evm.VerifyEOATypedData(
 			payerAuthorizer,
 			domain,
@@ -271,16 +274,18 @@ func VerifyBatchedVoucherTypedData(
 
 	// payerAuthorizer == 0: on-chain uses OZ SignatureChecker.isValidSignatureNow(payer, …)
 	// which is code-routed. Use the strict primitive to match that.
-	return evm.VerifyTypedDataStrict(
-		ctx,
-		signer,
-		payer,
-		domain,
-		batchsettlement.VoucherTypes,
-		"Voucher",
-		message,
-		sigBytes,
-	)
+	digest, err := evm.HashEIP712TypedData(domain, batchsettlement.VoucherTypes, "Voucher", message)
+	if err != nil {
+		return false, err
+	}
+	code, err := signer.GetCode(ctx, payer)
+	if err != nil {
+		return false, fmt.Errorf("GetCode failed: %w", err)
+	}
+	if len(code) == 0 && !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+		return false, nil
+	}
+	return evm.VerifySignatureStrictWithCode(ctx, signer, payer, digest, sigBytes, code)
 }
 
 // channelStateFields builds the shared field set used by both verify and
