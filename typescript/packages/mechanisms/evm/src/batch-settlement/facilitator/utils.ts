@@ -117,11 +117,8 @@ export async function verifyBatchSettlementVoucherTypedData(
     }
   }
 
-  // payerAuthorizer == 0 path: x402BatchSettlement._processVoucherClaim falls
-  // back to OpenZeppelin's SignatureChecker.isValidSignatureNow(payer, …) which
-  // routes by signer.code.length (ECDSA for EOAs, strict EIP-1271 for contracts
-  // including 7702-delegated EOAs). Mirror that exactly — no ECDSA fallback
-  // for addresses with code.
+  // A zero payerAuthorizer uses SignatureChecker: ECDSA with no code, EIP-1271 with code (including 7702).
+  // A payer with code never falls back to ECDSA.
   let digest: `0x${string}`;
   let code: `0x${string}` | undefined;
   try {

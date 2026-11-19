@@ -208,7 +208,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Settles a payment by submitting the transaction on-chain.
+   * Settles a payment by submitting the transaction onchain.
    *
    * @param payload - The payment payload to settle
    * @param requirements - The payment requirements
@@ -271,8 +271,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       }
       const facilitatorAccount = await server.getAccount(signer.address);
 
-      // SDK v16: `fee` is the inclusion buffer only; build() adds sorobanData.resourceFee()
-      // from the settle-time simulation, so tx.fee = inclusionFeeStroops + minResourceFee.
+      // `fee` is the inclusion buffer. build() adds sorobanData.resourceFee from the settle simulation.
       const rebuiltTx = new TransactionBuilder(facilitatorAccount, {
         fee: String(this.inclusionFeeStroops),
         networkPassphrase,
@@ -659,12 +658,10 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       amount: bigint;
     }> = [];
 
-    // Parse events into
     for (const diagnosticEvent of events) {
       try {
         const event = diagnosticEvent.event;
 
-        // Skip non-contract events
         if (event.type.name !== "contract") {
           continue;
         }
@@ -700,7 +697,6 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
           );
         }
 
-        // Extract from, to, and amount
         const from = scValToNative(topics[1]) as string;
         const to = scValToNative(topics[2]) as string;
         const amount = scValToNative(body.data) as bigint;
@@ -716,7 +712,6 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       }
     }
 
-    // If no transfer events are present, reject.
     if (transferEvents.length === 0) {
       return invalidVerifyResponse("invalid_exact_stellar_payload_no_transfer_events", fromAddress);
     }
@@ -727,7 +722,6 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
 
     const transferEvent = transferEvents[0];
 
-    // Validate the transfer matches the expected sender, recipient, and amount
     if (transferEvent.from !== fromAddress) {
       return invalidVerifyResponse("invalid_exact_stellar_payload_event_wrong_from", fromAddress);
     }
@@ -767,9 +761,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
     }
 
     for (const auth of invokeOp.auth) {
-      // Only address-based credentials are allowed: legacy V1 or CAP-71 V2,
-      // which the network accepts from Protocol 28 onward. Source-account and
-      // delegated credentials are rejected.
+      // Only V1 and CAP-71 V2 address credentials. Source-account and delegated arms are rejected.
       const addressCredentials = getAddressCredentials(auth.credentials);
       if (!addressCredentials) {
         return invalidVerifyResponse(
