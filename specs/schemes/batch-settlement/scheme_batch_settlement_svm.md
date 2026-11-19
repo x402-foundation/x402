@@ -1105,7 +1105,10 @@ is the channel's confirmed onchain state:
 the deposit, `totalClaimed` is `settled`, and `payoutWatermark` is
 `payout_watermark`. On a successful settle the entries describe the channels
 after the transaction: `payoutWatermark` equals `totalClaimed`, and a sealed
-channel is reported as `distributed`.
+channel is reported as `distributed`. A settle answered from a remembered
+broadcast (section 6) reports the channels as read after its recovery instead:
+a claim that landed since may have advanced `totalClaimed` past
+`payoutWatermark`, and the unpaid difference stays payable.
 
 A server MUST NOT require any of these fields. It adopts `extra.accepts[]` or
 `extra.channelStates[]` only if the response is bound to the requested network,
@@ -2002,16 +2005,22 @@ only for `settlement_pending`: a retry of a completed claim, `seal`, refund, or
 `distribute` MUST fail rather than be answered from channel status. A remembered
 broadcast whose blockhash is no longer valid and that the network has no record
 of MUST be dropped, so a retry broadcasts afresh instead of staying
-`settlement_pending`. A retry of a `seal` or cooperative refund whose broadcast timed
-out and has since landed MUST be answered from its remembered broadcast, with the
-payout and refund read from the confirmed transaction, before the channel's
-status is read: the channel no longer has the status a new close needs, but the
-retry is not a new close. A
-retry of a deposit whose `open` timed out and has since
-landed MUST be answered only from its remembered broadcast, once, and only for
-the caller that opened a delegated channel, and fails closed when the facilitator
-holds no row for that channel naming the caller; without a remembered broadcast
-it is judged as a `top_up`. A facilitator that exposes a payout hook MUST instead keep the
+`settlement_pending`. A retry of a `seal` or cooperative refund whose broadcast
+timed out and has since landed MUST be answered from its remembered broadcast,
+with the payout and refund read from the confirmed transaction, before the
+channel's status is read: the channel no longer has the status a new close
+needs, but the retry is not a new close. Once a remembered transaction is
+confirmed, a channel read that fails or lags MUST NOT keep the retry
+`settlement_pending`; a recovered `distribute` then omits
+`extra.channelStates[]`. A confirmed transaction whose payout cannot be
+attributed is answered with
+`invalid_batch_settlement_svm_payout_attribution_ambiguous` and its signature,
+and its remembered broadcast is dropped. A retry of a deposit whose `open` timed
+out and has since landed MUST be answered only from its remembered broadcast,
+once, and only for the caller that opened a delegated channel, and fails closed
+when the facilitator holds no row for that channel naming the caller; without a
+remembered broadcast it is judged as a `top_up`. A facilitator that exposes a
+payout hook MUST instead keep the
 confirmed payout record, from the moment it observes the confirmation, until
 the hook has run, and delete it then. A `/settle` retry that finds the record
 finishes the hook, deletes the record, and returns the payout; if the hook or the
@@ -2086,10 +2095,11 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - `invalid_batch_settlement_svm_refund_transaction` - refund transaction is not
   a valid payer-signed `request_close` for the derived channel or contains an
   unauthorized instruction.
-- `invalid_batch_settlement_svm_payout_attribution_ambiguous` - a `settle`
-  transaction confirmed, but the receiver's token-balance delta cannot be
-  attributed to the batch because a sealed payout in the same transaction
-  returned escrow to a payer or treasury that aliases `payTo`. The facilitator
+- `invalid_batch_settlement_svm_payout_attribution_ambiguous` - a `settle`,
+  `seal`, or cooperative refund transaction confirmed, but the receiver's
+  token-balance delta cannot be attributed: a payer or treasury that received
+  escrow in the same transaction aliases `payTo`, or the confirmed transaction
+  does not carry the token balances the payout is read from. The facilitator
   returns the confirmed signature with this reason instead of an `amount`;
   the server reconciles as in section 4.4.
 - `invalid_batch_settlement_svm_operation_ceiling_changed` - a server-mode

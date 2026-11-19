@@ -39,6 +39,9 @@ type PreparedRefund struct {
 	ChannelID    string
 	Terms        BatchTerms
 	RequestClose string
+	// Cumulative is the refund voucher's amount. PrepareRefund does not read the
+	// channel, so the caller checks it against the channel it reads.
+	Cumulative uint64
 	// Binding is the channel binding PrepareRefund read, so the cooperative
 	// close does not read the channel row again. Nil means unread.
 	Binding *ChannelBinding
@@ -164,6 +167,12 @@ func settleSeal(
 	if err != nil {
 		return nil, err
 	}
+	if intent == CloseIntentRefund && generated.ChannelStatus(channel.Status) == generated.ChannelStatus_Closing {
+		if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Closing}); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%s: %s is already closing", batchsettlement.ErrCloseState, channelID)
+	}
 	if generated.ChannelStatus(channel.Status) != required {
 		if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, allChannelStatuses); err != nil {
 			return nil, err
@@ -177,6 +186,11 @@ func settleSeal(
 	}
 	if intent == CloseIntentSeal && deps.NowSeconds() >= channel.ClosureStartedAt+int64(channel.GracePeriod) {
 		return nil, fmt.Errorf("%s: grace period elapsed; the permissionless seal path applies", batchsettlement.ErrCloseState)
+	}
+	if intent == CloseIntentRefund {
+		if err := AssertRefundVoucher(channel, cumulative); err != nil {
+			return nil, err
+		}
 	}
 	settled := channel.Settlement.Settled
 	if cumulative < settled {
@@ -290,6 +304,13 @@ func (r closeRun) recoverPending(ctx context.Context, payer string) (*x402.Settl
 		return recovered.Response, true, nil
 	}
 	attribution, err := r.deps.AttributeClose(ctx, recovered.Signature, r.requirements, r.terms, payer)
+	var deposit uint64
+	if err == nil {
+		var ok bool
+		if deposit, ok = batchsettlement.AddU64(r.cumulative, attribution.RefundedToPayer); !ok {
+			err = unattributable(errors.New("close attribution overflows the deposit"))
+		}
+	}
 	if err != nil {
 		var ambiguous *PayoutAttributionAmbiguousError
 		if !errors.As(err, &ambiguous) {
@@ -299,17 +320,15 @@ func (r closeRun) recoverPending(ctx context.Context, payer string) (*x402.Settl
 		_ = r.deps.PendingStore.Delete(ctx, r.key)
 		return SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, payer, err.Error(), recovered.Signature), true, nil
 	}
-	deposit, ok := batchsettlement.AddU64(r.cumulative, attribution.RefundedToPayer)
-	if !ok {
-		return SettlementPending(network, payer, recovered.Signature, "close attribution overflows the deposit"), true, nil
-	}
 	amounts := closeAmounts{Paid: attribution.PaidToReceiver, Deposit: deposit, Cumulative: r.cumulative}
 	return r.finish(ctx, amounts.response(r.channelID, payer, network, recovered.Signature, r.intent), true), true, nil
 }
 
 // finish delivers a close that confirmed onchain. fromPending means the close was
 // recovered from its pending record, which finish then deletes once nothing else
-// holds the close's outcome.
+// holds the close's outcome. A fresh close is answered once its closed state is
+// visible; a recovered one confirmed earlier, so a channel read that fails or lags
+// does not hold it back.
 func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromPending bool) *x402.SettleResponse {
 	deps := r.deps
 	network, payer, signature := sealed.Network, sealed.Payer, sealed.Transaction
@@ -331,6 +350,19 @@ func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromP
 		}
 		return nil
 	}
+	visible := func() error {
+		if fromPending {
+			return nil
+		}
+		observed, err := deps.ReadChannel(ctx, r.requirements.Network, r.channelID)
+		if err != nil {
+			return err
+		}
+		if observed != nil && generated.ChannelStatus(observed.Status) == r.required {
+			return fmt.Errorf("%s confirmed but the sealed state is not visible yet", r.intent)
+		}
+		return nil
+	}
 	if deps.OnDistributionConfirmed != nil {
 		// The payout record outlives the pending one, so only the hook is left to run.
 		if err := storePayoutResult(ctx, deps.PendingStore, r.key, sealed); err != nil {
@@ -339,21 +371,13 @@ func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromP
 		if pending := forgetPending(); pending != nil {
 			return pending
 		}
-		observed, err := deps.ReadChannel(ctx, r.requirements.Network, r.channelID)
-		if err != nil {
+		if err := visible(); err != nil {
 			return SettlementPending(network, payer, signature, err.Error())
-		}
-		if observed != nil && generated.ChannelStatus(observed.Status) == r.required {
-			return SettlementPending(network, payer, signature, string(r.intent)+" confirmed but the sealed state is not visible yet")
 		}
 		return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, r.key, sealed, r.requirements, r.intent)
 	}
-	observed, err := deps.ReadChannel(ctx, r.requirements.Network, r.channelID)
-	if err != nil {
+	if err := visible(); err != nil {
 		return unfinished(err)
-	}
-	if observed != nil && generated.ChannelStatus(observed.Status) == r.required {
-		return unfinished(fmt.Errorf("%s confirmed but the sealed state is not visible yet", r.intent))
 	}
 	if pending := forgetPending(); pending != nil {
 		return pending
@@ -416,13 +440,6 @@ func PrepareRefund(
 	if err != nil {
 		return PreparedRefund{}, err
 	}
-	channel, err := deps.ReadChannel(ctx, requirements.Network, channelID)
-	if err != nil {
-		return PreparedRefund{}, err
-	}
-	if channel != nil && (cumulative < channel.Settlement.Settled || cumulative > channel.Deposit) {
-		return PreparedRefund{}, fmt.Errorf("%s: refund voucher must lie within settled and deposit", batchsettlement.ErrCloseState)
-	}
 	binding, err := deps.ReadBinding(ctx, requirements.Network, channelID)
 	if err != nil {
 		return PreparedRefund{}, err
@@ -433,7 +450,7 @@ func PrepareRefund(
 			return PreparedRefund{}, err
 		}
 		_ = facilitatorContext
-		return PreparedRefund{ChannelID: channelID, Terms: terms, Binding: &binding}, nil
+		return PreparedRefund{ChannelID: channelID, Terms: terms, Cumulative: cumulative, Binding: &binding}, nil
 	}
 	if payload.Transaction == "" {
 		return PreparedRefund{}, fmt.Errorf("%s: resend the refund with a payer-signed request_close transaction", batchsettlement.ErrReceiverBindingUnavailable)
@@ -465,7 +482,15 @@ func PrepareRefund(
 		}
 		return PreparedRefund{}, fmt.Errorf("%s: %s", batchsettlement.ErrRefundTransaction, err.Error())
 	}
-	return PreparedRefund{ChannelID: channelID, Terms: terms, RequestClose: payload.Transaction}, nil
+	return PreparedRefund{ChannelID: channelID, Terms: terms, RequestClose: payload.Transaction, Cumulative: cumulative}, nil
+}
+
+// AssertRefundVoucher rejects a refund voucher outside the channel's settled and deposit amounts.
+func AssertRefundVoucher(channel *generated.Channel, cumulative uint64) error {
+	if cumulative < channel.Settlement.Settled || cumulative > channel.Deposit {
+		return fmt.Errorf("%s: refund voucher must lie within settled and deposit", batchsettlement.ErrCloseState)
+	}
+	return nil
 }
 
 // ValidateRefund verifies a refund against the channel's current onchain state.
@@ -491,6 +516,9 @@ func ValidateRefund(
 	if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, prepared.Terms, requirements, refundableStatuses); err != nil {
 		return nil, "", BatchTerms{}, err
 	}
+	if err := AssertRefundVoucher(channel, prepared.Cumulative); err != nil {
+		return nil, "", BatchTerms{}, err
+	}
 	return channel, prepared.ChannelID, prepared.Terms, nil
 }
 
@@ -503,16 +531,6 @@ func SettleCooperativeRefund(
 	prepared PreparedRefund,
 	facilitatorContext any,
 ) (*x402.SettleResponse, error) {
-	current, err := deps.ReadChannel(ctx, requirements.Network, prepared.ChannelID)
-	if err != nil {
-		return nil, err
-	}
-	if current != nil && generated.ChannelStatus(current.Status) == generated.ChannelStatus_Closing {
-		if err := deps.AssertClaimChannel(current, payload.ChannelConfig, prepared.Terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Closing}); err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%s: %s is already closing", batchsettlement.ErrCloseState, prepared.ChannelID)
-	}
 	seal := batchsettlement.BatchSealPayload{
 		Type:               batchsettlement.PayloadTypeSeal,
 		ChannelID:          prepared.ChannelID,

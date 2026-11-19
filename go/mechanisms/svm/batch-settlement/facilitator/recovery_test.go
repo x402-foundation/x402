@@ -443,7 +443,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 			ChannelID: channelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "3000", PayoutWatermark: "1000",
 		}}, response.Extra[batchsettlement.ExtraChannelStates], "the unpaid 2000 must stay unpaid in the reported state")
 
-		t.Run("stays pending when the channel cannot be read after the recovery", func(t *testing.T) {
+		t.Run("answers without channel states when the channel cannot be read after the recovery", func(t *testing.T) {
 			require.NoError(t, store.Set(context.Background(), key, tx))
 			var reads atomic.Int32
 			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
@@ -454,14 +454,15 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 				}
 				return nil, errors.New("rpc unavailable")
 			}
-			pending, err := scheme.settleDistributions(context.Background(), payload, requirements)
+			recovered, err := scheme.settleDistributions(context.Background(), payload, requirements)
 			require.NoError(t, err)
-			require.False(t, pending.Success)
-			require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
-			require.Equal(t, tx, pending.Transaction)
+			require.True(t, recovered.Success)
+			require.Equal(t, "1000", recovered.Amount)
+			require.Equal(t, tx, recovered.Transaction)
+			require.NotContains(t, recovered.Extra, batchsettlement.ExtraChannelStates, "the pre-recovery read cannot describe the recovered sweep")
 			_, ok, err := store.Get(context.Background(), key)
 			require.NoError(t, err)
-			require.True(t, ok, "the pending record is kept for the retry")
+			require.False(t, ok, "the confirmed sweep is not retried")
 		})
 	})
 
@@ -475,22 +476,24 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		balance := func(index int, owner, amount string) svm.FacilitatorTokenBalance {
 			return svm.FacilitatorTokenBalance{AccountIndex: index, Mint: mint, Owner: owner, UITokenAmount: svm.FacilitatorTokenAmount{Amount: amount}}
 		}
+		evidence := &svm.FacilitatorConfirmedTransaction{
+			Slot:        100,
+			AccountKeys: []string{receiverATA.String(), payerATA.String()},
+			Meta: &svm.FacilitatorConfirmedMeta{
+				PreTokenBalances:  []svm.FacilitatorTokenBalance{balance(0, receiver, "200"), balance(1, payer.PublicKey().String(), "50")},
+				PostTokenBalances: []svm.FacilitatorTokenBalance{balance(0, receiver, "2700"), balance(1, payer.PublicKey().String(), "7050")},
+			},
+		}
 		inner := newScriptedSigner(t, 1)
 		inner.keys[0] = feePayer
 		signer := &capabilitySigner{
 			scriptedSigner: inner,
 			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
-				return &svm.FacilitatorConfirmedTransaction{
-					Slot:        100,
-					AccountKeys: []string{receiverATA.String(), payerATA.String()},
-					Meta: &svm.FacilitatorConfirmedMeta{
-						PreTokenBalances:  []svm.FacilitatorTokenBalance{balance(0, receiver, "200"), balance(1, payer.PublicKey().String(), "50")},
-						PostTokenBalances: []svm.FacilitatorTokenBalance{balance(0, receiver, "2700"), balance(1, payer.PublicKey().String(), "7050")},
-					},
-				}, nil
+				return evidence, nil
 			},
 		}
 		scheme := newScheme(t, signer, x402.NewInMemoryPendingSettlementStore(), nil)
+		scheme.hooks.waitForChannelRead = func(int) error { return nil }
 		attribution, err := scheme.attributeClose(context.Background(), tx, requirements, terms, payer.PublicKey().String())
 		require.NoError(t, err)
 		require.Equal(t, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: 7_000}, attribution)
@@ -500,6 +503,49 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		_, err = scheme.attributeClose(context.Background(), tx, own, terms, payer.PublicKey().String())
 		var ambiguous *PayoutAttributionAmbiguousError
 		require.ErrorAs(t, err, &ambiguous, "a receiver that is also the payer shares its token account")
+
+		evidence.AccountKeys = []string{receiverATA.String()}
+		_, err = scheme.attributeClose(context.Background(), tx, requirements, terms, payer.PublicKey().String())
+		require.ErrorAs(t, err, &ambiguous, "no retry adds the payer's token account to a confirmed transaction")
+		require.ErrorContains(t, err, "payer refund")
+
+		evidence.Meta = nil
+		_, err = scheme.attributeClose(context.Background(), tx, requirements, terms, payer.PublicKey().String())
+		require.Error(t, err)
+		require.False(t, errors.As(err, &ambiguous), "metadata that is not visible yet may still appear")
+	})
+
+	t.Run("fails a recovered sweep whose confirmed transaction does not carry the recipient's balance", func(t *testing.T) {
+		payload := batchsettlement.BatchSettlePayload{
+			Type:     batchsettlement.PayloadTypeSettle,
+			Channels: []batchsettlement.BatchSettleChannel{{ChannelID: channelID, ChannelConfig: channelConfig}},
+		}
+		key := "batch:distribute:" + network + ":" + channelID
+		store := x402.NewInMemoryPendingSettlementStore()
+		require.NoError(t, store.Set(context.Background(), key, tx))
+		evidence := payoutEvidence(t, "200", "1200")
+		evidence.AccountKeys[0] = feePayer.String()
+		inner := newScriptedSigner(t, 1)
+		inner.keys[0] = feePayer
+		signer := &capabilitySigner{
+			scriptedSigner: inner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return evidence, nil
+			},
+		}
+		scheme := newScheme(t, signer, store, nil)
+		configure(scheme)
+		scheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+			return durableResult{}, errors.New("should not submit")
+		}
+		response, err := scheme.settleDistributions(context.Background(), payload, requirements)
+		require.NoError(t, err)
+		require.False(t, response.Success)
+		require.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, response.ErrorReason)
+		require.Equal(t, tx, response.Transaction)
+		_, ok, err := store.Get(context.Background(), key)
+		require.NoError(t, err)
+		require.False(t, ok, "an unattributable sweep is not retried forever")
 	})
 
 	t.Run("recovers the actual payout after a lost response and restart without changing the request", func(t *testing.T) {

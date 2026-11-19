@@ -109,10 +109,28 @@ func (f *BatchSvmScheme) expiredWithoutLanding(ctx context.Context, signature so
 	return err == nil && confirmed == nil
 }
 
-// PayoutAttributionAmbiguousError means a confirmed sweep cannot be attributed
-// because the merchant recipient is also the refund or treasury beneficiary.
-type PayoutAttributionAmbiguousError struct{}
+// PayoutAttributionAmbiguousError means a confirmed transaction's payout cannot be
+// attributed: the merchant recipient is also the refund or treasury beneficiary, or
+// (with Cause set) the visible transaction does not carry the balances the payout is
+// read from. No retry can change either, so the outcome is terminal.
+type PayoutAttributionAmbiguousError struct {
+	Cause error
+}
 
 func (e *PayoutAttributionAmbiguousError) Error() string {
+	if e.Cause != nil {
+		return "confirmed payout cannot be attributed: " + e.Cause.Error()
+	}
 	return "closed-channel payout shares its recipient with refund or treasury; transfer attribution is ambiguous"
+}
+
+func (e *PayoutAttributionAmbiguousError) Unwrap() error { return e.Cause }
+
+// unattributable marks an error read from a visible confirmed transaction as terminal.
+func unattributable(err error) error {
+	var ambiguous *PayoutAttributionAmbiguousError
+	if errors.As(err, &ambiguous) {
+		return err
+	}
+	return &PayoutAttributionAmbiguousError{Cause: err}
 }

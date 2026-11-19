@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"sync"
 	"testing"
@@ -681,6 +682,10 @@ func TestBatchSettlementSeal(t *testing.T) {
 				fixture.scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
 					return durableResult{OK: true, Signature: signature}, nil
 				}
+				// A lagging read that still shows the pre-close status does not hold back a confirmed close.
+				fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+					return channel, nil
+				}
 				recovered := settle(t, fixture.scheme, payload)
 				assert.True(t, recovered.Success, "a retry reconciles the remembered broadcast instead of failing with close_state")
 				assert.Equal(t, amount, recovered.Amount)
@@ -707,7 +712,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 	}
 
 	for _, intent := range []CloseIntent{CloseIntentSeal, CloseIntentRefund} {
-		t.Run(fmt.Sprintf("keeps a hookless %s pending when its closed state is not visible yet, and answers the retry", intent), func(t *testing.T) {
+		t.Run(fmt.Sprintf("keeps a hookless %s pending when its closed state is not visible yet, and answers the retry even when the channel cannot be read", intent), func(t *testing.T) {
 			channel, payload, amount := live(nil), any(sealPayload(t, 3_000)), "2500"
 			if intent == CloseIntentRefund {
 				channel, payload, amount = openLive, refundPayload(t, 3_000), "7000"
@@ -733,7 +738,9 @@ func TestBatchSettlementSeal(t *testing.T) {
 			fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
 				return sealedAt3000(), nil
 			}
-			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return nil, errors.New("rpc unavailable")
+			}
 			fixture.scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
 				return durableResult{OK: true, Signature: signature}, nil
 			}
@@ -799,6 +806,15 @@ func TestBatchSettlementSeal(t *testing.T) {
 		_, stored, err = fixture.scheme.pendingStore.Get(ctx, key)
 		require.NoError(t, err)
 		assert.False(t, stored, "an unattributable close is not retried forever")
+
+		require.NoError(t, fixture.scheme.pendingStore.Set(ctx, key, signature))
+		attributing(fixture, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: math.MaxUint64}, nil)
+		overflow := settleThrown(t, fixture.scheme, sealPayload(t, 3_000))
+		assert.Equal(t, batchsettlement.ErrPayoutAttributionAmbiguous, overflow.ErrorReason)
+		assert.Equal(t, signature, overflow.Transaction)
+		_, stored, err = fixture.scheme.pendingStore.Get(ctx, key)
+		require.NoError(t, err)
+		assert.False(t, stored, "an attribution that overflows the deposit is not retried forever")
 	})
 
 	t.Run("keeps a legacy refund result pending when the merchant credit was not stored", func(t *testing.T) {

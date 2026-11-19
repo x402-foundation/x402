@@ -1570,7 +1570,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			return deps
 		}
 		closing, err := scheme.settleRefund(ctx, refund, req, nil)
-		require.ErrorContains(t, err, batchsettlement.ErrCloseState)
+		require.ErrorContains(t, err, batchsettlement.ErrReceiverBindingUnavailable, "an unauthenticated refund does not learn that the channel is closing")
 		require.Nil(t, closing)
 
 		require.NoError(t, storage.Delete(ctx, network, channelID))
