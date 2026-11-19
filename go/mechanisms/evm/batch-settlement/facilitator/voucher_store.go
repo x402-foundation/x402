@@ -823,7 +823,11 @@ func verifyRefundAuthorizerSignature(signature, refundAuthorizer, channelId, amo
 	if err != nil {
 		return false
 	}
-	ok, err = evm.VerifyEOASignature(hash, common.FromHex(signature), common.HexToAddress(refundAuthorizer))
+	sigBytes := common.FromHex(signature)
+	if !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+		return false
+	}
+	ok, err = evm.VerifyEOASignature(hash, sigBytes, common.HexToAddress(refundAuthorizer))
 	return err == nil && ok
 }
 

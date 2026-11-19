@@ -2,10 +2,14 @@ package client
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
 	"errors"
 	"math/big"
 	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -1513,6 +1517,129 @@ func TestProcessCorrective_RecoverFromSignatureChargedBeyondSigned(t *testing.T)
 	if ok {
 		t.Fatal("charged > signed should refuse")
 	}
+}
+
+func TestProcessCorrective_RejectsContractRejectedSignatureForms(t *testing.T) {
+	key, err := crypto.HexToECDSA("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	req := defaultRequirements()
+	probe := NewBatchSettlementEvmScheme(&readSigner{
+		mockSigner: &mockSigner{address: addr},
+		readResult: []interface{}{big.NewInt(10000), big.NewInt(0)},
+	}, nil)
+	channelId := localChannelId(t, probe, req)
+	canonical := signRecoveryVoucher(t, key, channelId, "2000", testNetwork)
+
+	cases := []struct {
+		name string
+		sig  string
+		want bool
+	}{
+		{name: "canonical", sig: canonical, want: true},
+		{name: "high-s", sig: highSSignature(canonical), want: false},
+		{name: "v=0/1", sig: yParitySignature(canonical), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := NewInMemoryClientChannelStorage()
+			signer := &readSigner{
+				mockSigner: &mockSigner{address: addr},
+				readResult: []interface{}{big.NewInt(10000), big.NewInt(0)},
+			}
+			scheme := NewBatchSettlementEvmScheme(signer, &BatchSettlementEvmSchemeOptions{Storage: storage})
+			gotReq := defaultRequirements()
+			gotReq.Extra["channelState"] = map[string]interface{}{"chargedCumulativeAmount": "1000"}
+			gotReq.Extra["voucherState"] = map[string]interface{}{
+				"signedMaxClaimable": "2000",
+				"signature":          tc.sig,
+			}
+			ok, recErr := scheme.ProcessCorrectivePaymentRequired(
+				context.Background(),
+				batchsettlement.ErrCumulativeAmountMismatch,
+				[]types.PaymentRequirements{gotReq},
+			)
+			if recErr != nil || ok != tc.want {
+				t.Fatalf("got (%v, %v), want ok=%v", ok, recErr, tc.want)
+			}
+			stored, storeErr := storage.Get(channelId)
+			if storeErr != nil {
+				t.Fatal(storeErr)
+			}
+			if tc.want {
+				if stored == nil || stored.Signature != tc.sig || stored.ChargedCumulativeAmount != "1000" {
+					t.Fatalf("stored %+v", stored)
+				}
+				return
+			}
+			if stored != nil {
+				t.Fatalf("rejected signature was stored: %+v", stored)
+			}
+		})
+	}
+}
+
+func signRecoveryVoucher(t *testing.T, key *ecdsa.PrivateKey, channelId, amount, network string) string {
+	t.Helper()
+	chainID, err := evm.GetEvmChainId(network)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxClaimable, ok := new(big.Int).SetString(amount, 10)
+	if !ok {
+		t.Fatalf("amount %s", amount)
+	}
+	channelIdBytes, err := evm.HexToBytes(channelId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := evm.HashEIP712TypedData(
+		batchsettlement.GetBatchSettlementEip712Domain(chainID),
+		batchsettlement.VoucherTypes,
+		"Voucher",
+		map[string]interface{}{
+			"channelId":          channelIdBytes,
+			"maxClaimableAmount": maxClaimable,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := crypto.Sign(hash[:], key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig[64] += 27
+	return "0x" + hex.EncodeToString(sig)
+}
+
+func highSSignature(sig string) string {
+	raw := append([]byte(nil), mustSigBytes(sig)...)
+	s := new(big.Int).SetBytes(raw[32:64])
+	s.Sub(crypto.S256().Params().N, s)
+	s.FillBytes(raw[32:64])
+	if raw[64] == 27 {
+		raw[64] = 28
+	} else {
+		raw[64] = 27
+	}
+	return "0x" + hex.EncodeToString(raw)
+}
+
+func yParitySignature(sig string) string {
+	raw := append([]byte(nil), mustSigBytes(sig)...)
+	raw[64] -= 27
+	return "0x" + hex.EncodeToString(raw)
+}
+
+func mustSigBytes(sig string) []byte {
+	raw, err := hex.DecodeString(strings.TrimPrefix(sig, "0x"))
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 func TestProcessCorrective_RecoverFromSignatureNoReadCapability(t *testing.T) {

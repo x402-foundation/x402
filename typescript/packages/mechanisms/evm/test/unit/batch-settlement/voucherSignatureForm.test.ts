@@ -1,3 +1,4 @@
+import type { PaymentRequirements } from "@x402/core/types";
 import { describe, it, expect, vi, beforeEach, type MockedFunction } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -10,9 +11,11 @@ import { multicall } from "../../../src/multicall";
 import { verifyBatchSettlementVoucherTypedData } from "../../../src/batch-settlement/facilitator/utils";
 import { verifyVoucher } from "../../../src/batch-settlement/facilitator/voucher";
 import { computeChannelId, verifyEoaVoucherSignature } from "../../../src/batch-settlement/utils";
+import { recoverFromSignature } from "../../../src/batch-settlement/client/recovery";
+import { InMemoryClientChannelStorage } from "../../../src/batch-settlement/client/storage";
 import { signVoucher } from "../../../src/batch-settlement/client/voucher";
 import type { ChannelConfig } from "../../../src/batch-settlement/types";
-import type { FacilitatorEvmSigner } from "../../../src/signer";
+import type { ClientEvmSigner, FacilitatorEvmSigner } from "../../../src/signer";
 
 const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 const NETWORK = "eip155:84532";
@@ -196,6 +199,48 @@ describe("batch-settlement voucher signature form vs x402BatchSettlement (OZ ECD
       functionName: "isValidSignature",
       args: [expect.any(String), "0xabcd"],
     });
+  });
+
+  async function recoverStored(signature: `0x${string}`): Promise<{
+    ok: boolean;
+    stored: string | undefined;
+  }> {
+    const storage = new InMemoryClientChannelStorage();
+    const signer: ClientEvmSigner = {
+      address: payer.address,
+      signTypedData: message => payer.signTypedData(message),
+      readContract: vi.fn().mockResolvedValue([5000n, 0n]),
+    };
+    const accept = {
+      scheme: "batch-settlement",
+      network: NETWORK,
+      amount: "1000",
+      asset: config.token,
+      payTo: config.receiver,
+      maxTimeoutSeconds: 3600,
+      extra: { receiverAuthorizer: config.receiverAuthorizer, withdrawDelay: 900 },
+    } as PaymentRequirements;
+    const ok = await recoverFromSignature(
+      { signer, storage, salt: config.salt },
+      accept,
+      { chargedCumulativeAmount: "1000" },
+      { signedMaxClaimable: "2000", signature },
+    );
+    return { ok, stored: (await storage.get(channelId))?.signature };
+  }
+
+  it.each([
+    ["high-s", toHighS],
+    ["v in {0,1}", toYParityV],
+  ] as const)(
+    "client recovery rejects a %s voucher signature and does not store it",
+    async (_name, form) => {
+      expect(await recoverStored(form(canonical))).toEqual({ ok: false, stored: undefined });
+    },
+  );
+
+  it("client recovery still stores a canonical voucher signature", async () => {
+    expect(await recoverStored(canonical)).toEqual({ ok: true, stored: canonical });
   });
 
   it("still accepts the canonical signature", async () => {
