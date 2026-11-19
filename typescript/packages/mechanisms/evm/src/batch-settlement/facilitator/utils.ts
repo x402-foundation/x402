@@ -1,5 +1,5 @@
-import { getAddress, hashTypedData, recoverAddress, isAddressEqual } from "viem";
-import { verifyHashSignatureWithCode } from "../../shared/verifySignature";
+import { getAddress, hashTypedData } from "viem";
+import { verifyECDSA, verifyHashSignatureWithCode } from "../../shared/verifySignature";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
 import { BATCH_SETTLEMENT_ADDRESS, voucherTypes } from "../constants";
@@ -101,9 +101,8 @@ export async function verifyBatchSettlementVoucherTypedData(
   const zeroAddress = "0x0000000000000000000000000000000000000000";
 
   if (params.payerAuthorizer !== zeroAddress) {
-    // on-chain x402BatchSettlement uses ECDSA.recoverCalldata — pure ecrecover,
-    // no code check, no EIP-1271. Use recoverAddress directly so there is no
-    // ambiguity: this path never issues an RPC call regardless of address state.
+    // x402BatchSettlement uses ECDSA.recoverCalldata: pure ecrecover, no code check,
+    // no EIP-1271. verifyECDSA matches that and never issues an RPC.
     if (!isContractRecoverableSignature(params.signature)) return false;
     try {
       const digest = hashTypedData({
@@ -112,11 +111,7 @@ export async function verifyBatchSettlementVoucherTypedData(
         primaryType: "Voucher",
         message,
       });
-      const recovered = await recoverAddress({
-        hash: digest,
-        signature: params.signature as `0x${string}`,
-      });
-      return isAddressEqual(recovered, getAddress(params.payerAuthorizer));
+      return await verifyECDSA(getAddress(params.payerAuthorizer), digest, params.signature);
     } catch {
       return false;
     }

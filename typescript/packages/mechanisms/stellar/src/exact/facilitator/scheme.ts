@@ -482,14 +482,13 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       // Step 5: Validate contract address and function name
       const invokeContractArgs = func.invokeContract;
       const contractAddress = Address.fromScAddress(invokeContractArgs.contractAddress).toString();
-      const functionName = invokeContractArgs.functionName.toString();
 
       const args = invokeContractArgs.args;
       if (contractAddress !== requirements.asset) {
         return { response: invalidVerifyResponse("invalid_exact_stellar_payload_wrong_asset") };
       }
 
-      if (functionName !== "transfer" || args.length !== 3) {
+      if (invokeContractArgs.functionName.toString() !== "transfer" || args.length !== 3) {
         return {
           response: invalidVerifyResponse("invalid_exact_stellar_payload_wrong_function_name"),
         };
@@ -673,24 +672,12 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
         const body = event.body.v0;
         const topics = body.topics;
 
-        // Check if this is a transfer event (first topic is "transfer" symbol)
-        if (topics.length < 3) {
-          return invalidVerifyResponse(
-            "invalid_exact_stellar_payload_event_not_transfer",
-            fromAddress,
-          );
-        }
-
         const topic = topics[0];
-        if (topic.type !== "scvSymbol") {
-          return invalidVerifyResponse(
-            "invalid_exact_stellar_payload_event_not_transfer",
-            fromAddress,
-          );
-        }
-
-        const symbol = topic.sym.toString();
-        if (symbol !== "transfer") {
+        if (
+          topics.length < 3 ||
+          topic.type !== "scvSymbol" ||
+          topic.sym.toString() !== "transfer"
+        ) {
           return invalidVerifyResponse(
             "invalid_exact_stellar_payload_event_not_transfer",
             fromAddress,
@@ -811,8 +798,7 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
       }
 
       // No sub-invocations allowed
-      const rootInvocation = auth.rootInvocation;
-      if (rootInvocation.subInvocations.length > 0) {
+      if (auth.rootInvocation.subInvocations.length > 0) {
         return invalidVerifyResponse(
           "invalid_exact_stellar_payload_has_subinvocations",
           fromAddress,

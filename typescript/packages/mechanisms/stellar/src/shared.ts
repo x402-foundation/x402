@@ -227,10 +227,7 @@ export function gatherAuthEntrySignatureStatus({
       const address = Address.fromScAddress(addressCredentials.address).toString();
       const signature = addressCredentials.signature;
 
-      // Check if already signed (signature is not scvVoid)
-      const isSigned = signature.type !== "scvVoid";
-
-      if (isSigned) {
+      if (signature.type !== "scvVoid") {
         alreadySigned.push(address);
       } else {
         pendingSignature.push(address);

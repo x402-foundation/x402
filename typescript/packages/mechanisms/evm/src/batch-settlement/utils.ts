@@ -1,14 +1,4 @@
-import {
-  concat,
-  getAddress,
-  hashTypedData,
-  isAddressEqual,
-  isHex,
-  padHex,
-  recoverAddress,
-  slice,
-  toHex,
-} from "viem";
+import { concat, getAddress, hashTypedData, isHex, padHex, slice, toHex } from "viem";
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import {
   BATCH_SETTLEMENT_ADDRESS,
@@ -25,7 +15,7 @@ import type {
   ChannelConfig,
 } from "./types";
 import { getEvmChainId } from "../utils";
-import { isCanonicalEcdsaSignature } from "../shared/verifySignature";
+import { isCanonicalEcdsaSignature, verifyECDSA } from "../shared/verifySignature";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -240,11 +230,11 @@ export async function verifyEoaVoucherSignature(
         maxClaimableAmount: BigInt(raw.voucher.maxClaimableAmount),
       },
     });
-    const recovered = await recoverAddress({
-      hash: digest,
-      signature: raw.voucher.signature,
-    });
-    return isAddressEqual(recovered, getAddress(raw.channelConfig.payerAuthorizer));
+    return verifyECDSA(
+      getAddress(raw.channelConfig.payerAuthorizer),
+      digest,
+      raw.voucher.signature,
+    );
   } catch {
     return false;
   }
