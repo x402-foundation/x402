@@ -354,11 +354,7 @@ class FacilitatorWeb3Signer:
         return self._chain_id
 
     def _reserve_nonce(self) -> int:
-        """Reserve the next pending nonce for this process.
-
-        Every call must be paired with `_release_nonce`, which `_reserved_nonce`
-        does.
-        """
+        """Reserve the next pending nonce. Pair this call with `_release_nonce`."""
         with self._nonce_lock:
             pending = self._w3.eth.get_transaction_count(
                 self._account.address,
@@ -372,14 +368,9 @@ class FacilitatorWeb3Signer:
             return nonce
 
     def _release_nonce(self, *, failed: bool) -> None:
-        """Finish a nonce reservation.
+        """On failure, clear the local nonce only when nothing is still reserved.
 
-        A transaction that never reached the node leaves the local counter one
-        ahead of the chain, which would queue every later transaction behind the
-        missing nonce. After a failure the counter is dropped so the next
-        reservation starts again from the node's pending count. That happens
-        only once no other reservation is in flight: dropping it earlier would
-        let the next transaction reuse a nonce that is reserved but not yet sent.
+        Clearing earlier reuses an unsent nonce. Leaving a gap stalls later transactions.
         """
         with self._nonce_lock:
             self._nonce_inflight -= 1
@@ -391,7 +382,7 @@ class FacilitatorWeb3Signer:
 
     @contextmanager
     def _reserved_nonce(self) -> Iterator[int]:
-        """Reserve a nonce, releasing it if the transaction is not accepted."""
+        """Reserve a nonce and finish that reservation when the block exits."""
         nonce = self._reserve_nonce()
         try:
             yield nonce

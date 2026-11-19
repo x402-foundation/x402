@@ -64,10 +64,7 @@ def channel_id_binding_error(
 
 
 def is_contract_recoverable_signature(signature: bytes) -> bool:
-    """Return whether x402BatchSettlement's OpenZeppelin ECDSA recovery accepts signature.
-
-    It requires 65 bytes, a low s value and v of 27 or 28.
-    """
+    """Whether x402BatchSettlement's ECDSA recovery accepts this signature."""
     return (
         len(signature) == 65
         and int.from_bytes(signature[32:64], "big") <= SECPK1_N // 2
