@@ -1,0 +1,1 @@
+The Flask middleware now closes the protected route's response after buffering it on paid routes, as PEP 3333 requires. Callbacks registered with `response.call_on_close` now run, and files served with `send_file` are closed, as they already are on unprotected routes.
