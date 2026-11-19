@@ -51,6 +51,8 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
 
   private readonly settlementCache: SettlementCache;
   private readonly maxSponsoredGas: bigint;
+  /** Latest final block height read by verify(); used to evict expired cache entries (§10). */
+  private lastFinalBlockHeight: bigint | undefined;
 
   /**
    * Creates an ExactNearScheme.
@@ -213,6 +215,7 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
         return this.invalid(heightResult.reason, payer);
       }
       const currentHeight = heightResult.value;
+      this.lastFinalBlockHeight = currentHeight;
 
       const timeoutBlocks = computeTimeoutBlocks(maxTimeoutSeconds);
       const remainingBlocks = delegate.maxBlockHeight - currentHeight;
@@ -351,6 +354,13 @@ export class ExactNearScheme implements SchemeNetworkFacilitator {
         verified.payer,
         verified.invalidMessage,
       );
+    }
+
+    // §10 eviction trigger: an entry whose max_block_height is below the final height can no
+    // longer land. A height from an earlier verify() is still a lower bound, so this never evicts
+    // a live entry.
+    if (this.lastFinalBlockHeight !== undefined) {
+      this.settlementCache.evictExpired(this.lastFinalBlockHeight);
     }
 
     const relayerId = this.signer.getRelayerIds()[0];

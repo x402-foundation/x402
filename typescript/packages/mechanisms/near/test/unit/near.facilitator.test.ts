@@ -390,4 +390,18 @@ describe("near facilitator settle", () => {
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe("duplicate_settlement");
   });
+
+  it("evicts cache entries whose delegate window has passed (spec §10)", async () => {
+    const requirements = makeRequirements();
+    const { b64 } = await buildSignedDelegateB64();
+    const cache = new SettlementCache();
+    const scheme = new ExactNearScheme(mockFacilitatorSigner({ blockHeight: 1000n }), cache);
+
+    // Delegate with max_block_height 999 cannot land at final height 1000.
+    cache.isDuplicate(settlementCacheKey("expired-delegate"), 999n);
+
+    const result = await scheme.settle(makePayload(b64, requirements), requirements);
+    expect(result.success).toBe(true);
+    expect(cache.isDuplicate(settlementCacheKey("expired-delegate"), 999n)).toBe(false);
+  });
 });
