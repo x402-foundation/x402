@@ -989,7 +989,15 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
     )
 
     scheme := batchfacilitator.NewBatchSvmScheme(context.Background(), svmSigner, &batchfacilitator.Config{
-        // ChannelStorage defaults to in-memory; inject a durable store for production
+        // ChannelStorage defaults to in-memory; inject a durable store for production.
+        // Optional: pending settlement store. Remembers a broadcast whose confirmation
+        // was not observed so a retry reconciles it instead of sending again.
+        // Defaults to a process-local store that keeps entries for 24 hours.
+        // PendingSettlementStore: myPendingStore,
+        // Optional: duplicate settlement store. Rejects concurrent settles of one
+        // operation across workers. Share a networked store across facilitator replicas.
+        // Defaults to svm.NewInMemoryDuplicateSettlementStore().
+        // DuplicateSettlementStore: myDuplicateStore,
         // Optional: accepted transaction versions (default [0, 1]).
         // Pass []int{0} to reject version-1 client transactions.
         // TransactionVersions: []int{0, 1},
