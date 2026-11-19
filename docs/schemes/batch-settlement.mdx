@@ -846,6 +846,10 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
 
+<Callout type="warning">
+`BatchChannelManager` reads the chain only through a configured `RPCURL`, `ReadSettledWatermark`, or `ReadPayoutWatermark`. It does not fall back to a public RPC endpoint. Set `RPCURL` if your deployment previously relied on that fallback.
+</Callout>
+
 #### Client Setup (SVM)
 
 Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel on first use and attaches the correct payload per mode:
