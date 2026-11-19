@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 try:
     from solders.hash import Hash, ParseHashError
-    from solders.instruction import Instruction
+    from solders.instruction import CompiledInstruction, Instruction
     from solders.keypair import Keypair
     from solders.message import (
         Message,
@@ -518,6 +518,9 @@ def exact_budget_prefix_length(message: Message | MessageV0 | MessageV1) -> int:
 def check_exact_budget(
     message: Message | MessageV0 | MessageV1,
     max_compute_unit_price_micro_lamports: int = MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+    *,
+    max_compute_units: int | None = None,
+    instructions: Sequence[CompiledInstruction] | None = None,
 ) -> str | None:
     """Check an exact payment's compute budget, whatever its instruction count.
 
@@ -527,11 +530,13 @@ def check_exact_budget(
     Args:
         message: Decoded message of an accepted version.
         max_compute_unit_price_micro_lamports: Price cap in microlamports per CU.
+        max_compute_units: Optional sponsor compute-unit ceiling.
+        instructions: Guard-filtered protocol instructions, when already classified.
 
     Returns:
         The invalid reason, or None when the budget is within policy.
     """
-    instructions = message.instructions
+    instructions = message.instructions if instructions is None else instructions
     static_accounts = list(message.account_keys)
     compute_budget_program = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
 
@@ -540,17 +545,26 @@ def check_exact_budget(
             static_accounts[ix.program_id_index] == compute_budget_program for ix in instructions
         ):
             return ERR_V1_COMPUTE_BUDGET_INSTRUCTION
-        return check_transaction_v1_config(message.config, max_compute_unit_price_micro_lamports)
+        return check_transaction_v1_config(
+            message.config, max_compute_unit_price_micro_lamports, max_compute_units
+        )
 
+    if len(instructions) < 2:
+        return ERR_INVALID_COMPUTE_LIMIT
     cu_limit_ix = instructions[0]
     cu_limit_data = bytes(cu_limit_ix.data)
     if (
         static_accounts[cu_limit_ix.program_id_index] != compute_budget_program
-        or len(cu_limit_data) < 1
+        or len(cu_limit_data) < 5
         or cu_limit_data[0] != 2  # SetComputeUnitLimit discriminator
     ):
         return ERR_INVALID_COMPUTE_LIMIT
 
+    if (
+        max_compute_units is not None
+        and int.from_bytes(cu_limit_data[1:5], "little") > max_compute_units
+    ):
+        return ERR_COMPUTE_LIMIT_TOO_HIGH
     cu_price_ix = instructions[1]
     cu_price_data = bytes(cu_price_ix.data)
     if (

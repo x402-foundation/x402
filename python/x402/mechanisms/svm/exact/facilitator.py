@@ -22,9 +22,11 @@ from ....schemas import (
     VerifyResponse,
 )
 from ..constants import (
+    DEFAULT_MAX_COMPUTE_UNITS,
     ERR_ALT_RESOLUTION_NOT_AVAILABLE,
     ERR_AMOUNT_INSUFFICIENT,
     ERR_AMOUNT_MISMATCH,
+    ERR_COMPUTE_LIMIT_TOO_HIGH,
     ERR_DUPLICATE_SETTLEMENT,
     ERR_FEE_PAYER_MISSING,
     ERR_FEE_PAYER_NOT_MANAGED,
@@ -77,7 +79,12 @@ from ..utils import (
     transaction_size_exceeded,
     validate_svm_address,
 )
-from .instruction_layout import InstructionTuple, LayoutError, resolve_protocol_layout
+from .instruction_layout import (
+    InstructionTuple,
+    LayoutError,
+    resolve_protocol_layout,
+    strip_assertion_guards,
+)
 from .splits import (
     InstructionView,
     PaymentLeg,
@@ -86,6 +93,7 @@ from .splits import (
     assert_fee_payer_isolated_with_ata_creation,
     assert_within_capabilities,
     is_ata_program_instruction,
+    is_valid_split_address,
     parse_payment_legs,
     uses_split_terms,
 )
@@ -138,6 +146,7 @@ class ExactSvmScheme:
         postflight_instruction_allowlist: list[InstructionTuple] | None = None,
         max_splits: int = 0,
         ata_creation_sponsored: bool = False,
+        max_compute_units: int = DEFAULT_MAX_COMPUTE_UNITS,
     ):
         """Create ExactSvmScheme facilitator.
 
@@ -154,6 +163,7 @@ class ExactSvmScheme:
                 is accepted exactly when 0 is. Narrow it to ``[0]`` for a sponsor
                 whose signer or RPC does not yet handle version 1. Defaults to
                 ``[0, 1]``.
+            max_compute_units: Sponsor compute-unit ceiling, default 400,000, for both static paths.
             max_splits: Maximum number of ``extra.splits`` entries accepted
                 (scheme_exact_svm.md §5), 0-8. Advertised as ``maxSplits`` in
                 ``/supported``; requirements with more splits are rejected with
@@ -189,6 +199,13 @@ class ExactSvmScheme:
             raise ValueError(
                 f"max_splits must be an integer from 0 to {MAX_SPLITS}, received {max_splits!r}"
             )
+        if (
+            isinstance(max_compute_units, bool)
+            or not isinstance(max_compute_units, int)
+            or max_compute_units < 1
+        ):
+            raise ValueError("max_compute_units must be a positive integer")
+        self._max_compute_units = max_compute_units
         self._max_splits = max_splits
         self._ata_creation_sponsored = ata_creation_sponsored is True
         self._signer = signer
@@ -350,6 +367,9 @@ class ExactSvmScheme:
                 is_valid=False, invalid_reason=ERR_TRANSACTION_SIZE_EXCEEDED, payer=""
             )
 
+        if not is_valid_split_address(requirements.pay_to):
+            return VerifyResponse(is_valid=False, invalid_reason=ERR_RECIPIENT_MISMATCH, payer="")
+
         if legs is not None:
             return self._verify_static_split_path(
                 tx, svm_payload.transaction, requirements, signer_addresses, legs, fee_payer_str
@@ -381,7 +401,7 @@ class ExactSvmScheme:
 
         if version == 1:
             budget_error = check_transaction_v1_config(
-                message.config, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS
+                message.config, MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS, self._max_compute_units
             )
             if budget_error:
                 return VerifyResponse(is_valid=False, invalid_reason=budget_error, payer="")
@@ -394,6 +414,11 @@ class ExactSvmScheme:
             if len(cu_limit_data) < 5:  # discriminator + u32 units
                 return VerifyResponse(
                     is_valid=False, invalid_reason=ERR_INVALID_COMPUTE_LIMIT, payer=""
+                )
+
+            if int.from_bytes(cu_limit_data[1:5], "little") > self._max_compute_units:
+                return VerifyResponse(
+                    is_valid=False, invalid_reason=ERR_COMPUTE_LIMIT_TOO_HIGH, payer=""
                 )
 
             cu_price_data = bytes(partitioned.compute_price_ix.data)
@@ -545,7 +570,7 @@ class ExactSvmScheme:
         (version 1 carries its budget in the message config instead), ``K``
         fee-payer-funded CreateIdempotent for marked recipients, one
         TransferChecked for the primary remainder, one per split in
-        ``extra.splits`` order, then up to four Lighthouse / Memo instructions. There is no simulation-based
+        ``extra.splits`` order, then optional Memo instructions, with assertion guards anywhere. There is no simulation-based
         fallback in this SDK, so any layout failure is a rejection.
         """
         network = str(requirements.network)
@@ -560,9 +585,17 @@ class ExactSvmScheme:
         # isolation check must see every account (§2.1.2).
         if getattr(message, "address_table_lookups", None):
             return fail(ERR_ALT_RESOLUTION_NOT_AVAILABLE)
+        try:
+            protocol = strip_assertion_guards(
+                list(message.account_keys),
+                list(message.instructions),
+                Pubkey.from_string(fee_payer),
+            )
+        except LayoutError as error:
+            return fail(error.reason)
         static_accounts = [str(key) for key in message.account_keys]
         instructions: list[InstructionView] = []
-        for ix in message.instructions:
+        for ix in protocol:
             indexes = [ix.program_id_index, *ix.accounts]
             if any(i >= len(static_accounts) for i in indexes):
                 return fail(ERR_TRANSACTION_DECODE_FAILED)
@@ -582,10 +615,12 @@ class ExactSvmScheme:
             create_count += 1
         first_transfer = prefix_length + create_count
         first_optional = first_transfer + len(legs)
-        if len(instructions) < first_optional or len(instructions) > first_optional + 4:
+        if len(instructions) < first_optional:
             return fail(ERR_INVALID_INSTRUCTION_COUNT)
 
-        compute_budget_error = check_exact_budget(message)
+        compute_budget_error = check_exact_budget(
+            message, max_compute_units=self._max_compute_units, instructions=protocol
+        )
         if compute_budget_error:
             return fail(compute_budget_error)
 

@@ -73,7 +73,11 @@ import {
   type TransferCheckedInfo,
 } from "./smartWalletVerification";
 import { verifyRequiredSignatures } from "./signatureVerification";
-import { resolveProtocolLayout, type InstructionTuple } from "./instructionLayout";
+import {
+  resolveProtocolLayout,
+  stripAssertionGuards,
+  type InstructionTuple,
+} from "./instructionLayout";
 import {
   assertFeePayerIsolatedWithAtaCreation,
   assertWithinCapabilities,
@@ -1568,8 +1572,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
    * version 0 a compute limit + compute price prefix (version 1 carries its
    * budget in the message config instead), `K` fee-payer-funded
    * CreateIdempotent for marked recipients, one TransferChecked for the
-   * primary remainder, one per split in `extra.splits` order, then up to four
-   * Lighthouse / Memo instructions.
+   * primary remainder, one per split in `extra.splits` order, then optional Memo instructions, with assertion guards anywhere.
    *
    * @param compiled - Compiled message, whose version selects the layout and budget checks
    * @param decompiled - Pre-decompiled message (lookups already resolved)
@@ -1626,7 +1629,14 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     signerAddresses: string[],
     legs: readonly PaymentLeg[],
   ): Promise<VerifyResponse> {
-    const instructions = decompiled.instructions ?? [];
+    const protocol = stripAssertionGuards(
+      decompiled.instructions ?? [],
+      requirements.extra.feePayer as string,
+    );
+    if ("errorReason" in protocol) {
+      return { isValid: false, invalidReason: protocol.errorReason, payer: "" };
+    }
+    const instructions = protocol;
     const fail = (invalidReason: string, payer = "", invalidMessage?: string): VerifyResponse => ({
       isValid: false,
       invalidReason,
@@ -1650,7 +1660,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     }
     const firstTransfer = prefixLength + createCount;
     const firstOptional = firstTransfer + legs.length;
-    if (instructions.length < firstOptional || instructions.length > firstOptional + 4) {
+    if (instructions.length < firstOptional) {
       return fail(Errors.ErrTransactionInstructionsLength);
     }
 

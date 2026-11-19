@@ -122,6 +122,8 @@ def parse_payment_legs(requirements: PaymentRequirements) -> list[PaymentLeg]:
     Raises:
         SplitsError: When the requirements violate §5.1 or §5.2.
     """
+    if not is_valid_split_address(requirements.pay_to):
+        raise SplitsError(ERR_SPLITS_INVALID, "payTo is not a valid address")
     extra = requirements.extra or {}
     raw_splits = extra.get("splits")
     if raw_splits is None:

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ....schemas.helpers import matches_network_pattern
-from ..constants import V1_NETWORKS, V1_TO_V2_NETWORK_MAP
+from ..constants import DEFAULT_MAX_COMPUTE_UNITS, V1_NETWORKS, V1_TO_V2_NETWORK_MAP
 
 if TYPE_CHECKING:
     from x402 import (
@@ -125,6 +125,7 @@ def register_exact_svm_facilitator(
     max_splits: int = 0,
     ata_creation_sponsored: bool = False,
     transaction_versions: Sequence[int] | None = None,
+    max_compute_units: int = DEFAULT_MAX_COMPUTE_UNITS,
 ) -> FacilitatorT:
     """Register SVM exact payment schemes to x402Facilitator.
 
@@ -139,6 +140,7 @@ def register_exact_svm_facilitator(
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
         networks: Network(s) to register.
+        max_compute_units: Compute-unit ceiling for V2 verification, default 400,000.
         max_splits: Maximum ``extra.splits`` entries the V2 scheme accepts (0-8).
         ata_creation_sponsored: Whether the V2 scheme's fee payer funds ATA
             creation for recipients marked ``ataCreationRequired``. Owners can
@@ -164,6 +166,7 @@ def register_exact_svm_facilitator(
         max_splits=max_splits,
         ata_creation_sponsored=ata_creation_sponsored,
         transaction_versions=transaction_versions,
+        max_compute_units=max_compute_units,
     )
 
     if isinstance(networks, str):

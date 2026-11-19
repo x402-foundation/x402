@@ -409,7 +409,7 @@ func TestSplits_Path1RejectsFeePayerOutsideCreateIdempotent(t *testing.T) {
 	lighthouse := solana.NewInstruction(
 		solana.MustPublicKeyFromBase58(svm.LighthouseProgramAddress),
 		solana.AccountMetaSlice{solana.NewAccountMeta(p.feePayer, false, false)},
-		[]byte{1},
+		[]byte{2},
 	)
 	encoded, _ := p.buildTx(t, []solana.Instruction{
 		p.transfer(t, p.merchant, 1_000_000),
@@ -419,7 +419,7 @@ func TestSplits_Path1RejectsFeePayerOutsideCreateIdempotent(t *testing.T) {
 	})
 	resp, err := NewExactSvmScheme(p.signer(), &Config{MaxSplits: 8}).
 		Verify(context.Background(), splitPayment(req, encoded), req, nil)
-	assert.Contains(t, splitVerifyReason(t, resp, err), ErrSmartWalletFeePayerNotIsolated)
+	assert.Contains(t, splitVerifyReason(t, resp, err), ErrFeePayerTransferringFunds)
 }
 
 func TestSplits_Path1EnforcesSellerMemo(t *testing.T) {
@@ -946,4 +946,39 @@ func TestSplits_PendingReconciliationResolvesLookupTable(t *testing.T) {
 	assert.True(t, resp.Success)
 	assert.Zero(t, signer.simulateCalls)
 	assert.Zero(t, signer.sendCalls)
+}
+
+func TestSplits_AssertionGuardsShareSinglePayeePolicy(t *testing.T) {
+	p := newSplitParties(t)
+	req := p.requirements(nil)
+	guard := func(data []byte) solana.Instruction {
+		return solana.NewInstruction(solana.MustPublicKeyFromBase58(svm.LighthouseProgramAddress), nil, data)
+	}
+	ixs := []solana.Instruction{guard([]byte{2}), p.transfer(t, p.merchant, 1_000_000), guard([]byte{17}), p.transfer(t, p.platform, 40_000), guard([]byte{2}), p.transfer(t, p.referrer, 10_000)}
+	for i := 0; i < 6; i++ {
+		ixs = append(ixs, guard([]byte{2}))
+	}
+	encoded, tx := p.buildTx(t, ixs)
+	scheme := NewExactSvmScheme(p.signer(), &Config{MaxSplits: 8})
+	response, err := scheme.Verify(context.Background(), splitPayment(req, encoded), req, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
+	for _, version := range []solana.MessageVersion{solana.MessageVersionV0, solana.MessageVersionV1} {
+		tx.Message.SetVersion(version)
+		if version == solana.MessageVersionV1 {
+			tx.Message.Instructions = tx.Message.Instructions[2:]
+			tx.Message.TransactionConfig = v1ExactConfig().WithComputeUnitLimit(60_000)
+		}
+		signTransaction(t, tx, p.payer)
+		encoded, err := svm.EncodeTransaction(tx)
+		require.NoError(t, err)
+		response, err := scheme.Verify(context.Background(), splitPayment(req, encoded), req, nil)
+		require.NoError(t, err)
+		assert.True(t, response.IsValid)
+	}
+	for _, data := range [][]byte{nil, {0}, {1}, {18}, {255}} {
+		encoded, _ := p.buildTx(t, []solana.Instruction{p.transfer(t, p.merchant, 1_000_000), p.transfer(t, p.platform, 40_000), p.transfer(t, p.referrer, 10_000), guard(data)})
+		response, err := scheme.Verify(context.Background(), splitPayment(req, encoded), req, nil)
+		assert.Equal(t, ErrInvalidLighthouseInstruction, splitVerifyReason(t, response, err))
+	}
 }

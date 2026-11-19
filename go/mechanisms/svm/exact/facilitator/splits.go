@@ -207,8 +207,7 @@ func verifyExpectedMemo(tx *solana.Transaction, optional []solana.CompiledInstru
 // version 0 a compute limit + compute price prefix (version 1 carries its
 // budget in the message config instead), K fee-payer-funded CreateIdempotent
 // for marked recipients, one TransferChecked for the primary remainder, one
-// per split in extra.splits order, then up to four Lighthouse / Memo
-// instructions.
+// per split in extra.splits order, then optional Memo instructions; assertion guards may appear anywhere.
 func (f *ExactSvmScheme) verifyStaticSplitPath(
 	ctx context.Context,
 	tx *solana.Transaction,
@@ -233,7 +232,14 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 	signerAddressStrs []string,
 	legs []svm.PaymentLeg,
 ) (string, error) {
-	instructions := tx.Message.Instructions
+	feePayer, err := solana.PublicKeyFromBase58(requirements.Extra["feePayer"].(string))
+	if err != nil {
+		return "", x402.NewVerifyError(ErrInvalidFeePayer, "", err.Error())
+	}
+	instructions, err := stripAssertionGuards(tx, tx.Message.Instructions, feePayer)
+	if err != nil {
+		return "", x402.NewVerifyError(err.Error(), "", err.Error())
+	}
 	isAtaProgram := func(ix solana.CompiledInstruction) bool {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
 		return err == nil && programID.Equals(solana.SPLAssociatedTokenAccountProgramID)
@@ -246,9 +252,9 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 	}
 	firstTransfer := prefixLength + createCount
 	firstOptional := firstTransfer + len(legs)
-	if len(instructions) < firstOptional || len(instructions) > firstOptional+4 {
+	if len(instructions) < firstOptional {
 		return "", x402.NewVerifyError(ErrTransactionInstructionsLength, "",
-			fmt.Sprintf("transaction instructions length mismatch: %d not in [%d, %d]", len(instructions), firstOptional, firstOptional+4))
+			fmt.Sprintf("transaction has %d protocol instructions; expected at least %d", len(instructions), firstOptional))
 	}
 
 	if prefixLength == 0 {
@@ -335,10 +341,6 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 
 	// Fee payer isolation with the bounded CreateIdempotent exception
 	// (§2.1.1); this also validates every creation against §5.4.
-	feePayer, err := solana.PublicKeyFromBase58(requirements.Extra["feePayer"].(string))
-	if err != nil {
-		return "", x402.NewVerifyError(ErrInvalidFeePayer, payer, err.Error())
-	}
 	if err := assertFeePayerIsolatedWithAtaCreation(tx, feePayer, asset, markedOwners(legs), tokenProgram); err != nil {
 		return "", splitVerifyError(err, payer)
 	}

@@ -11,7 +11,7 @@ import pytest
 from solders.hash import Hash
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
-from solders.message import MessageV0, MessageV1
+from solders.message import MessageV0, MessageV1, TransactionConfig, to_bytes_versioned
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 from solders.transaction import VersionedTransaction
@@ -19,8 +19,10 @@ from solders.transaction import VersionedTransaction
 from x402.mechanisms.svm import (
     ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
     ERR_AMOUNT_MISMATCH,
+    ERR_COMPUTE_LIMIT_TOO_HIGH,
     ERR_FEE_PAYER_TRANSFERRING,
     ERR_INVALID_INSTRUCTION_COUNT,
+    ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
     ERR_MEMO_MISMATCH,
     ERR_NO_TRANSFER_INSTRUCTION,
     ERR_RECIPIENT_MISMATCH,
@@ -32,6 +34,7 @@ from x402.mechanisms.svm import (
     ERR_SPLIT_REMAINDER_NOT_POSITIVE,
     ERR_SPLITS_INVALID,
     ERR_UNKNOWN_OPTIONAL_INSTRUCTION,
+    LIGHTHOUSE_PROGRAM_ADDRESS,
     MEMO_PROGRAM_ADDRESS,
     SOLANA_DEVNET_CAIP2,
     TOKEN_2022_PROGRAM_ADDRESS,
@@ -208,23 +211,40 @@ def memo(text: str, accounts: list[AccountMeta] | None = None) -> Instruction:
 
 
 def build_transaction(
-    p: Parties, instructions: list[Instruction], signers: list[Keypair] | None = None
+    p: Parties,
+    instructions: list[Instruction],
+    signers: list[Keypair] | None = None,
+    *,
+    version: int = 0,
+    compute_units: int = 60_000,
 ) -> str:
     """Compile and sign a v0 transaction; the fee payer slot stays unsigned."""
     compute_budget = Pubkey.from_string(COMPUTE_BUDGET_PROGRAM_ADDRESS)
-    message = MessageV0.try_compile(
-        payer=p.fee_payer.pubkey(),
-        instructions=[
-            Instruction(compute_budget, bytes([2]) + (60_000).to_bytes(4, "little"), []),
-            Instruction(compute_budget, bytes([3]) + (1).to_bytes(8, "little"), []),
-            *instructions,
-        ],
-        address_lookup_table_accounts=[],
-        recent_blockhash=Hash.from_string(BLOCKHASH),
-    )
+    if version == 1:
+        message = MessageV1.try_compile(
+            p.fee_payer.pubkey(),
+            instructions,
+            Hash.from_string(BLOCKHASH),
+            TransactionConfig(
+                compute_unit_limit=compute_units,
+                priority_fee=1,
+                loaded_accounts_data_size_limit=4 * 1024 * 1024,
+            ),
+        )
+    else:
+        message = MessageV0.try_compile(
+            payer=p.fee_payer.pubkey(),
+            instructions=[
+                Instruction(compute_budget, bytes([2]) + compute_units.to_bytes(4, "little"), []),
+                Instruction(compute_budget, bytes([3]) + (1).to_bytes(8, "little"), []),
+                *instructions,
+            ],
+            address_lookup_table_accounts=[],
+            recent_blockhash=Hash.from_string(BLOCKHASH),
+        )
     signers = signers or [p.payer]
     by_key = {kp.pubkey(): kp for kp in signers}
-    message_bytes = bytes([0x80]) + bytes(message)
+    message_bytes = to_bytes_versioned(message)
     signatures = [
         by_key[key].sign_message(message_bytes) if key in by_key else Signature.default()
         for key in message.account_keys[: message.header.num_required_signatures]
@@ -674,7 +694,7 @@ class TestFacilitatorWithSplits:
             scheme.verify(payment(req, overpaid_primary), req).invalid_reason == ERR_AMOUNT_MISMATCH
         )
 
-    def test_rejects_a_missing_leg_or_too_many_trailing_instructions(self, p):
+    def test_rejects_a_missing_leg_and_accepts_unconstrained_memos(self, p):
         req = requirements(p)
         scheme = facilitator(p, max_splits=8)
         missing = build_transaction(
@@ -685,10 +705,7 @@ class TestFacilitatorWithSplits:
             == ERR_INVALID_INSTRUCTION_COUNT
         )
         too_many = build_transaction(p, [*standard_legs(p), *(memo(str(i)) for i in range(5))])
-        assert (
-            scheme.verify(payment(req, too_many), req).invalid_reason
-            == ERR_INVALID_INSTRUCTION_COUNT
-        )
+        assert scheme.verify(payment(req, too_many), req).is_valid
         four = build_transaction(p, [*standard_legs(p), *(memo(str(i)) for i in range(4))])
         assert scheme.verify(payment(req, four), req).is_valid
 
@@ -884,3 +901,74 @@ class TestServerWithSplits:
         server = ExactSvmServerScheme()
         enhanced = server.enhance_payment_requirements(requirements(p, splits=[]), self.kind(p), [])
         assert enhanced.extra["feePayer"] == addr(p.fee_payer)
+
+
+@pytest.mark.parametrize("version", [0, 1])
+def test_split_assertion_guards_allow_interleaving_and_more_than_four(p, version):
+    guard = Instruction(Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS), bytes([2]), [])
+    legs = standard_legs(p)
+    tx = build_transaction(
+        p, [guard, legs[0], guard, legs[1], guard, legs[2], *([guard] * 6)], version=version
+    )
+    req = requirements(p)
+    result = facilitator(p, max_splits=8).verify(payment(req, tx), req)
+    assert result.is_valid, result.invalid_reason
+
+
+@pytest.mark.parametrize("data", [b"", bytes([0]), bytes([1]), bytes([18]), bytes([255])])
+def test_split_rejects_non_assertion_lighthouse_payload(p, data):
+    guard = Instruction(Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS), data, [])
+    req = requirements(p)
+    tx = build_transaction(p, [*standard_legs(p), guard])
+    result = facilitator(p, max_splits=8).verify(payment(req, tx), req)
+    assert not result.is_valid
+    assert result.invalid_reason == ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+
+
+@pytest.mark.parametrize("version", [0, 1])
+@pytest.mark.parametrize("split", [False, True])
+def test_facilitator_caps_compute_units_on_both_static_paths(p, version, split):
+    req = requirements(p) if split else requirements(p, splits=[])
+    legs = standard_legs(p) if split else [transfer(p, p.merchant, 1_050_000)]
+    scheme = facilitator(p, max_splits=8)
+    for units, valid in [(400_000, True), (400_001, False)]:
+        tx = build_transaction(p, legs, version=version, compute_units=units)
+        result = scheme.verify(payment(req, tx), req)
+        assert result.is_valid is valid
+        if not valid:
+            assert result.invalid_reason == ERR_COMPUTE_LIMIT_TOO_HIGH
+    tx = build_transaction(p, legs, version=version, compute_units=400_001)
+    assert (
+        facilitator(p, max_splits=8, max_compute_units=500_000)
+        .verify(payment(req, tx), req)
+        .is_valid
+    )
+
+
+@pytest.mark.parametrize("bad_address", ["not-base58", "1" * 31, "1" * 33])
+@pytest.mark.parametrize("split", [False, True])
+def test_malformed_primary_returns_invalid_instead_of_raising(p, bad_address, split):
+    req = requirements(p) if split else requirements(p, splits=[])
+    tx = client_payload(p, req)
+    malformed = req.model_copy(update={"pay_to": bad_address})
+    result = facilitator(p, max_splits=8).verify(payment(malformed, tx), malformed)
+    assert not result.is_valid
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_facilitator_compute_ceiling_cannot_be_disabled_by_invalid_configuration(p, limit):
+    with pytest.raises(ValueError, match="max_compute_units"):
+        facilitator(p, max_compute_units=limit)
+
+
+def test_split_lighthouse_guard_must_isolate_fee_payer(p):
+    req = requirements(p)
+    guard = Instruction(
+        Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS),
+        bytes([2]),
+        [AccountMeta(p.fee_payer.pubkey(), False, False)],
+    )
+    tx = build_transaction(p, [*standard_legs(p), guard])
+    result = facilitator(p, max_splits=8).verify(payment(req, tx), req)
+    assert not result.is_valid
+    assert result.invalid_reason == ERR_FEE_PAYER_TRANSFERRING

@@ -33,7 +33,11 @@ import {
   type KeyPairSigner,
 } from "@solana/kit";
 import { InMemoryPendingSettlementStore } from "@x402/core/facilitator";
-import { readTransactionV1Config } from "../../src/transactionV1";
+import {
+  applyTransactionV1Config,
+  computeBudgetInstructions,
+  readTransactionV1Config,
+} from "../../src/transactionV1";
 import { decodeTransactionFromPayload, transactionMessageHash } from "../../src/utils";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { ExactSvmScheme as ExactSvmClient } from "../../src/exact/client/scheme";
@@ -54,6 +58,7 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
   MEMO_PROGRAM_ADDRESS,
+  LIGHTHOUSE_PROGRAM_ADDRESS,
   SOLANA_DEVNET_CAIP2,
   TOKEN_2022_PROGRAM_ADDRESS,
   TOKEN_PROGRAM_ADDRESS,
@@ -1372,4 +1377,82 @@ describe("split rule edges", () => {
     ).toEqual({ verified: false, method: "unverified" });
     expect(await run(async () => null, 0n)).toEqual({ verified: false, method: "unverified" });
   });
+});
+
+describe("split assertion guard policy", () => {
+  async function guardedTransaction(p: Parties, version: 0 | 1, tailData: Uint8Array) {
+    const guard: Instruction = {
+      programAddress: LIGHTHOUSE_PROGRAM_ADDRESS as Address,
+      data: new Uint8Array([2]),
+    };
+    const tail: Instruction = { ...guard, data: tailData };
+    const budget = { computeUnitLimit: 60_000, computeUnitPriceMicroLamports: 1 };
+    const transfers = await Promise.all([
+      transfer(p, p.merchant.address, 1_000_000n),
+      transfer(p, p.platform.address, 40_000n),
+      transfer(p, p.referrer.address, 10_000n),
+    ]);
+    const message = pipe(
+      createTransactionMessage({ version }),
+      m => applyTransactionV1Config(version, budget, m),
+      m => setTransactionMessageFeePayer(p.feePayer.address, m),
+      m =>
+        appendTransactionMessageInstructions(
+          [
+            guard,
+            ...computeBudgetInstructions(version, budget),
+            transfers[0],
+            guard,
+            transfers[1],
+            guard,
+            transfers[2],
+            ...Array.from({ length: 6 }, () => tail),
+          ],
+          m,
+        ),
+      m =>
+        setTransactionMessageLifetimeUsingBlockhash(
+          { blockhash: BLOCKHASH as Blockhash, lastValidBlockHeight: 1n },
+          m,
+        ),
+    );
+    return getBase64EncodedWireTransaction(
+      await partiallySignTransactionMessageWithSigners(message),
+    );
+  }
+  it.each([0, 1] as const)(
+    "accepts interleaved assertion guards without a trailing count cap (v%s)",
+    async version => {
+      const p = await parties();
+      const req = requirements(p);
+      const tx = await guardedTransaction(p, version, new Uint8Array([17]));
+      const result = await new ExactSvmFacilitator(
+        facilitatorSigner(p.feePayer.address),
+        undefined,
+        { maxSplits: 8 },
+      ).verify(payment(req, tx), req);
+      expect(result).toMatchObject({ isValid: true });
+    },
+  );
+  it.each([[[]], [[0]], [[1]], [[18]], [[255]]])(
+    "rejects a Lighthouse non-assertion payload %j",
+    async data => {
+      const p = await parties();
+      const req = requirements(p);
+      const tx = await guardedTransaction(p, 0, new Uint8Array(data));
+      expect(
+        await new ExactSvmFacilitator(facilitatorSigner(p.feePayer.address), undefined, {
+          maxSplits: 8,
+          enableSmartWalletVerification: true,
+        }).verify(payment(req, tx), req),
+      ).toMatchObject({ isValid: false, invalidReason: Errors.ErrInvalidLighthouseInstruction });
+    },
+  );
+  it.each(["not-base58", "1".repeat(31), "1".repeat(33)])(
+    "rejects malformed primary %s before deriving an ATA",
+    async payTo => {
+      const p = await parties();
+      expect(() => parsePaymentLegs({ ...requirements(p), payTo })).toThrow(SplitsError);
+    },
+  );
 });

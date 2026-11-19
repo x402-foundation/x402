@@ -121,6 +121,9 @@ function parseAmount(value: unknown, field: string): bigint {
  * @throws SplitsError when the requirements violate §5.1 or §5.2
  */
 export function parsePaymentLegs(requirements: PaymentRequirements): PaymentLeg[] {
+  if (!validateSvmAddress(requirements.payTo)) {
+    throw new SplitsError(Errors.ErrSplitsInvalid, "payTo is not a valid address");
+  }
   const extra = requirements.extra ?? {};
   const rawSplits = extra.splits ?? [];
   if (!Array.isArray(rawSplits)) {
