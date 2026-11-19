@@ -6,6 +6,8 @@ import org.x402.client.VerificationResponse;
 import org.x402.model.Authorization;
 import org.x402.model.ExactSchemePayload;
 import org.x402.model.PaymentPayload;
+import org.x402.util.Json;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
@@ -13,6 +15,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -20,9 +24,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 class PaymentFilterTest {
@@ -637,5 +644,90 @@ class PaymentFilterTest {
         
         // Verify error message is written to response
         verify(resp).getWriter();
+    }
+
+    /* ------------ spec-conformant exact payload reaches the facilitator --- */
+    @Test
+    void specConformantExactPayloadIsVerified() throws Exception {
+        when(req.getRequestURI()).thenReturn("/private");
+
+        // The exact-scheme EVM payload as defined in specs/schemes/exact/scheme_exact_evm.md and
+        // as produced by the TypeScript, Python and Go clients: {signature, authorization} only.
+        // There is no "resource" key - the resource lives in PaymentRequirements.
+        String json = "{\"x402Version\":1,\"scheme\":\"exact\",\"network\":\"base-sepolia\","
+                + "\"payload\":{\"signature\":\"0x2d6a7588\","
+                + "\"authorization\":{\"from\":\"0x857b06519E91e3A54538791bDbb0E22373e36b66\","
+                + "\"to\":\"0xReceiver\",\"value\":\"10\",\"validAfter\":\"0\","
+                + "\"validBefore\":\"9999999999\",\"nonce\":\"0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f13480\"}}}";
+        String header = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+        when(req.getHeader("X-PAYMENT")).thenReturn(header);
+
+        VerificationResponse vr = new VerificationResponse();
+        vr.isValid = true;
+        when(fac.verify(eq(header), any())).thenReturn(vr);
+        when(resp.getStatus()).thenReturn(HttpServletResponse.SC_OK);
+        SettlementResponse sr = new SettlementResponse();
+        sr.success = true;
+        sr.txHash = "0xabc";
+        sr.networkId = "base-sepolia";
+        when(fac.settle(eq(header), any())).thenReturn(sr);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp, never()).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(fac).verify(eq(header), any());
+        verify(chain).doFilter(eq(req), any(HttpServletResponse.class));
+    }
+
+    /* ------------ well-formed base64 carrying a bad body => 402 ----------- */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "e30=",      // {}
+        "bnVsbA==",  // null
+        "eHl6",      // xyz (not JSON)
+        "W10=",      // []
+        "eyJwYXlsb2FkIjoieCJ9" // {"payload":"x"}
+    })
+    void malformedHeaderBodyReturns402(String header) throws Exception {
+        when(req.getRequestURI()).thenReturn("/private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(header);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        PrintWriter out = new PrintWriter(body, true);
+        when(resp.getWriter()).thenReturn(out);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp, never()).setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+        verifyNoInteractions(fac);
+        out.flush();
+        JsonNode node = Json.MAPPER.readTree(body.toString(StandardCharsets.UTF_8));
+        assertEquals("malformed X-PAYMENT header", node.path("error").asText());
+    }
+
+    /* ------------ facilitator IOException body is valid JSON -------------- */
+    @Test
+    void facilitatorIOExceptionBodyIsValidJson() throws Exception {
+        when(req.getRequestURI()).thenReturn("/private");
+        PaymentPayload p = new PaymentPayload();
+        p.x402Version = 1;
+        p.scheme = "exact";
+        p.network = "base-sepolia";
+        p.payload = Map.of("resource", "/private");
+        String header = p.toHeader();
+        when(req.getHeader("X-PAYMENT")).thenReturn(header);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        PrintWriter out = new PrintWriter(body, true);
+        when(resp.getWriter()).thenReturn(out);
+        when(fac.verify(any(), any())).thenThrow(new IOException("upstream said \"no\"\nretry later"));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        out.flush();
+        JsonNode node = Json.MAPPER.readTree(body.toString(StandardCharsets.UTF_8));
+        assertTrue(node.path("error").asText().startsWith("Payment verification failed"),
+                "unexpected error body: " + node);
     }
 }

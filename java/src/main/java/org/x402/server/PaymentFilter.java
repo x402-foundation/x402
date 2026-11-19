@@ -99,42 +99,37 @@ public class PaymentFilter implements Filter {
             return;
         }
 
-        VerificationResponse vr;
         PaymentPayload payload;
         try {
             payload = PaymentPayload.fromHeader(header);
-
-            // simple sanity: resource must match the URL path
-            if (!Objects.equals(payload.payload.get("resource"), path)) {
-                respond402(response, path, "resource mismatch");
-                return;
-            }
-
-            vr = facilitator.verify(header, buildRequirements(path));
-        } catch (IllegalArgumentException ex) {
-            // Malformed payment header - client error
+        } catch (IllegalArgumentException | IOException ex) {
+            // Not base64, not JSON, or JSON of the wrong shape - client error
             respond402(response, path, "malformed X-PAYMENT header");
             return;
+        }
+        if (payload == null || payload.payload == null) {
+            respond402(response, path, "malformed X-PAYMENT header");
+            return;
+        }
+
+        // Optional sanity check: the spec-defined exact-scheme payload ({signature, authorization})
+        // carries no resource, so only reject a payload that names a different one.
+        Object claimedResource = payload.payload.get("resource");
+        if (claimedResource != null && !claimedResource.equals(path)) {
+            respond402(response, path, "resource mismatch");
+            return;
+        }
+
+        VerificationResponse vr;
+        try {
+            vr = facilitator.verify(header, buildRequirements(path));
         } catch (IOException ex) {
             // Network/communication error with facilitator - server error
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.setContentType("application/json");
-            try {
-                response.getWriter().write("{\"error\":\"Payment verification failed: " + ex.getMessage() + "\"}");
-            } catch (IOException writeEx) {
-                // If we can't write the response, at least set the status
-                System.err.println("Failed to write error response: " + writeEx.getMessage());
-            }
+            writeJsonError(response, "Payment verification failed: " + ex.getMessage());
             return;
         } catch (Exception ex) {
             // Other unexpected errors - server error
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.setContentType("application/json");
-            try {
-                response.getWriter().write("{\"error\":\"Internal server error during payment verification\"}");
-            } catch (IOException writeEx) {
-                System.err.println("Failed to write error response: " + writeEx.getMessage());
-            }
+            writeJsonError(response, "Internal server error during payment verification");
             return;
         }
 
@@ -200,6 +195,18 @@ public class PaymentFilter implements Filter {
             // return 402 (response is still uncommitted, same as the settlement-failed case).
             respond402(response, path, "settlement error: " + ex.getMessage());
             return;
+        }
+    }
+
+    /** Sends a 500 whose body is a JSON object with the given (properly escaped) error message. */
+    private static void writeJsonError(HttpServletResponse response, String message) {
+        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        response.setContentType("application/json");
+        try {
+            response.getWriter().write(Json.MAPPER.writeValueAsString(Map.of("error", message)));
+        } catch (IOException writeEx) {
+            // If we can't write the response, at least the status is set
+            System.err.println("Failed to write error response: " + writeEx.getMessage());
         }
     }
 
