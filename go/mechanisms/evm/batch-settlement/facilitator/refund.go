@@ -158,7 +158,6 @@ func executeRefundWithSignature(
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "", err.Error())
 		}
-		// Resolve claim authorizer signature — auto-sign if absent
 		var claimSig []byte
 		if payload.ClaimAuthorizerSignature != "" {
 			claimSig, err = evm.HexToBytes(payload.ClaimAuthorizerSignature)

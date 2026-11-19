@@ -5,19 +5,11 @@ import (
 	"testing"
 )
 
-// TestSIWEMessageChecksumsAddress asserts that the SIWE message built from a
-// payload carrying a non-EIP-55 (lowercase) address renders the EIP-55
-// checksummed address on the account line, matching the TypeScript
-// implementation (@signinwithethereum/siwe) and the EIP-4361 requirement that
-// the address be "conformant to capitalization encoded checksum specified in
-// EIP-55". Without this, a signature produced by a TS client (whose library
-// always checksums) is rebuilt by this Go facilitator with a lowercase address
-// line and rejected, breaking cross-implementation SIWX interop.
 func TestSIWEMessageChecksumsAddress(t *testing.T) {
 	const checksummed = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 	payload := Payload{
 		Domain:   "api.example.com",
-		Address:  strings.ToLower(checksummed), // schema accepts non-checksummed
+		Address:  strings.ToLower(checksummed),
 		URI:      "https://api.example.com/data",
 		Version:  "1",
 		ChainID:  "eip155:8453",
