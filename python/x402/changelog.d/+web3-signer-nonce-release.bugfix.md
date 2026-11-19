@@ -1,0 +1,1 @@
+Fixed `FacilitatorWeb3Signer` queuing every later transaction behind a missing nonce after one send failed. The nonce is now given back when building, signing or sending a transaction fails, and the next transaction starts again from the node's pending count once no other send is in flight.
