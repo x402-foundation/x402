@@ -175,11 +175,9 @@ class TestFacilitatorWeb3Signer:
 
     @staticmethod
     def _signer_with_fake_node():
-        """Build a signer whose node tracks accepted nonces like a mempool.
+        """Pending count is the first missing accepted nonce.
 
-        `get_transaction_count("pending")` is the length of the contiguous run
-        of accepted nonces from zero, so a transaction signed with a nonce past
-        a gap is accepted but queued, as on a real node.
+        A nonce past a gap is stored, and the count stays at the gap.
         """
         signer = FacilitatorWeb3Signer(
             private_key=Account.create().key.hex(),
@@ -261,8 +259,7 @@ class TestFacilitatorWeb3Signer:
             assert (first, third) == (0, 2)
             node.accepted.update({first, third})
 
-        # Everything has settled: the next nonce comes from the node again and
-        # fills the gap left by the failed nonce.
+        # Both reservations are finished, so the next nonce is the gap at 1.
         with signer._reserved_nonce() as fourth:
             pass
         assert fourth == 1

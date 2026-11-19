@@ -135,7 +135,7 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDs",
             "asset_transfer_method": "permit2",
         },
-    ],  # Arbitrum One USDC, Sperax USD (Permit2; no EIP-3009 or working EIP-2612)
+    ],  # Arbitrum One USDC; Sperax USD is Permit2 only (no EIP-3009, permit does not set allowances)
     "eip155:421614": [
         {
             "asset": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",

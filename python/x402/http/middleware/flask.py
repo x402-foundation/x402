@@ -458,9 +458,8 @@ class PaymentMiddleware:
                         for chunk in app_iter:
                             body_chunks.append(chunk)
                     finally:
-                        # The buffered body is sent from a new iterable, so the
-                        # server never sees this one. PEP 3333 requires close(),
-                        # which runs call_on_close callbacks and closes send_file.
+                        # The server iterates a new body, never this one, so it never calls close().
+                        # close() runs call_on_close callbacks and closes send_file.
                         close = getattr(app_iter, "close", None)
                         if callable(close):
                             close()
