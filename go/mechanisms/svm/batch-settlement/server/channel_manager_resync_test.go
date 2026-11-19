@@ -58,7 +58,7 @@ func claimsOf(recorder *payloadRecorder) [][]string {
 func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 	receiverAuthorizer := newTestSigner(t)
 
-	t.Run("infers confirmed state from what it submitted when no reader is configured", func(t *testing.T) {
+	t.Run("infers a confirmed claim but not a distribute's payout when no reader is configured", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()
 		require.NoError(t, store.Put(newChannel("chan-a")))
 		options := managerOptions(store, receiverAuthorizer, recordingSettler(func(payload any) *x402.SettleResponse {
@@ -73,11 +73,40 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
 		assert.Empty(t, *errors)
-		assert.Equal(t, server.RedemptionResult{Claimed: []string{"chan-a"}, Distributed: []string{"chan-a"}, Sealed: []string{}}, result)
+		assert.Equal(t, server.RedemptionResult{Claimed: []string{"chan-a"}, Distributed: []string{}, Sealed: []string{}}, result)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3000), stored.Settled)
-		assert.Equal(t, uint64(3000), stored.PayoutWatermark)
+		assert.Zero(t, stored.PayoutWatermark, "the payout stays payable until the facilitator or a reader reports it")
+	})
+
+	t.Run("keeps an unpaid balance payable when a recovered distribute answers without channel states", func(t *testing.T) {
+		// An earlier sweep paid through 1700; a later claim advanced settled to 2200.
+		store := server.NewMemoryChannelStore()
+		channel := newChannel("chan-a")
+		channel.Settled = 2200
+		channel.PayoutWatermark = 1000
+		channel.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(channel))
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			_, channels := redemptionFacts(payload)
+			response := okResponse()
+			response.Extra = map[string]any{"channels": channels}
+			return response
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, result.Distributed)
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1000), stored.PayoutWatermark, "the server does not credit 2200 the recovered sweep never paid")
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{batchsettlement.PayloadTypeSettle, batchsettlement.PayloadTypeSettle}, payloadTypes(recorder.submitted), "the next pass sweeps again")
 	})
 
 	t.Run("adopts the facilitator's channel states on a successful distribute", func(t *testing.T) {
@@ -153,7 +182,9 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 				return resyncFailure(batchsettlement.ErrCumulativeAmountMismatch,
 					channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 4000, 0))
 			}
-			return boundDistribute(payload)
+			response := withChannelStates(okResponse(), channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 4000, 4000))
+			response.Extra["channels"] = []any{"chan-a"}
+			return response
 		})
 		var claims []server.ClaimResult
 		options := managerOptions(store, receiverAuthorizer, recorder.settle)

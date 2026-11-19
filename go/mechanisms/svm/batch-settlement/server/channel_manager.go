@@ -54,7 +54,8 @@ type WatermarkReader func(ctx context.Context, channelID string) (amount uint64,
 // BatchChannelManagerConfig configures autonomous redemption.
 //
 // Channel state comes from the facilitator's responses (`extra.channelStates`)
-// or is inferred from what the manager submitted. The chain is read only
+// or is inferred from what the manager submitted, except a distribute's payout
+// watermark, which is never inferred. The chain is read only
 // through ReadSettledWatermark, ReadPayoutWatermark, or RPCURL, never through
 // an implicit public RPC.
 type BatchChannelManagerConfig struct {
@@ -459,7 +460,7 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 			return nil, err
 		}
 		if !response.Success {
-			if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response, false)) > 0 {
+			if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response)) > 0 {
 				continue
 			}
 			m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
@@ -473,7 +474,7 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 			m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
 			continue
 		}
-		paidOut := m.recordPayouts(ctx, batch, response, true)
+		paidOut := m.recordPayouts(ctx, batch, response)
 		distributed = append(distributed, paidOut...)
 		if len(paidOut) > 0 && m.config.OnSettle != nil {
 			m.config.OnSettle(SettleResult{Transaction: response.Transaction})
@@ -482,15 +483,15 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 	return distributed, nil
 }
 
-// recordPayouts's infer is set only by a confirmed distribute, which may fall
-// back to the settled value it pays out to. A rejection that found the work
-// already onchain does not infer, and its returned channels are resynced rather
-// than newly paid.
-func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, response *x402.SettleResponse, infer bool) []string {
+// recordPayouts records the confirmed payout watermarks of batch and returns the
+// channels paid up to their settled value. A confirmed distribute may answer for
+// an earlier sweep that a later claim has passed, so it never stands in for the
+// payout watermark: a channel without one stays payable for the next pass.
+func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, response *x402.SettleResponse) []string {
 	states := m.adoptChannelStates(response, batch)
 	var covered []string
 	for _, channel := range batch {
-		observed, ok := m.observePayout(ctx, channel, states, infer)
+		observed, ok := m.observePayout(ctx, channel, states)
 		if !ok {
 			continue
 		}
@@ -506,9 +507,8 @@ func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []Channel
 }
 
 // observePayout is a channel's confirmed payout watermark: the facilitator's
-// state, else a configured reader, else (infer) the settled value a confirmed
-// distribute pays out to.
-func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel, infer bool) (observedChannel, bool) {
+// state, else a configured reader.
+func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel) (observedChannel, bool) {
 	if state, ok := states[channel.ChannelID]; ok {
 		return state, true
 	}
@@ -524,7 +524,7 @@ func (m *BatchChannelManager) observePayout(ctx context.Context, channel Channel
 		}
 		return observedChannel{payout: paid}, true
 	}
-	return observedChannel{payout: channel.Settled}, infer
+	return observedChannel{}, false
 }
 
 // observeSettled is a channel's confirmed settled watermark from the

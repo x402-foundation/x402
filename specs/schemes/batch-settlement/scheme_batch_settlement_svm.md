@@ -1116,8 +1116,10 @@ the entries name exactly the channels it submitted with no duplicates, and
 every entry satisfies `payoutWatermark <= totalClaimed <= balance`; otherwise it
 ignores the field. When the fields are absent or ignored, the server MAY infer
 the confirmed state from the values it submitted: a confirmed claim advanced
-`settled` to each voucher's `maxClaimableAmount`, and a confirmed settle
-advanced `payout_watermark` to `settled`. It MAY instead read the channel
+`settled` to each voucher's `maxClaimableAmount`. It MUST NOT infer that a
+confirmed settle advanced `payout_watermark` to `settled`, since the settle may
+be answered from a remembered broadcast that a later claim has passed; it leaves
+the channel payable for its next settle instead. It MAY instead read the channel
 account, but only through a reader it was explicitly configured with. A server
 MUST NOT fall back to an implicit public RPC endpoint. When a rejection carries
 no usable state and no reader is configured, the server reports the failure and
