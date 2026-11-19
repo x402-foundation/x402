@@ -13,6 +13,7 @@ import {
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  registerBazaar,
   PaymentCancellationDispatcher,
   CompletedSettlement,
   withPrivateCacheControl,
@@ -299,24 +300,9 @@ export function paymentMiddlewareFromHTTPServer(
     syncFacilitatorOnStart,
   );
 
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import("@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import("@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = checkIfBazaarNeeded(httpServer.routes)
+    ? registerBazaar(httpServer, () => import("@x402/extensions/bazaar"))
+    : null;
 
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     // find-my-way 9.5-9.8 and 9.9+ (both allowed by fastify ^5) resolve absolute-form and other

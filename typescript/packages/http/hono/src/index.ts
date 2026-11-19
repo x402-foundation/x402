@@ -12,6 +12,7 @@ import {
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
+  registerBazaar,
   withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
@@ -135,24 +136,9 @@ export function paymentMiddlewareFromHTTPServer(
     syncFacilitatorOnStart,
   );
 
-  let bazaarPromise: Promise<void> | null = null;
-  if (checkIfBazaarNeeded(httpServer.routes)) {
-    if (!httpServer.server.hasExtension("bazaar")) {
-      bazaarPromise = import("@x402/extensions/bazaar").then(
-        ({ bazaarResourceServerExtension }) => {
-          httpServer.server.registerExtension(bazaarResourceServerExtension);
-        },
-      );
-    }
-    bazaarPromise = (bazaarPromise ?? Promise.resolve())
-      .then(() => import("@x402/extensions/bazaar"))
-      .then(({ validateBazaarRouteExtensions }) => {
-        validateBazaarRouteExtensions(httpServer.routes);
-      })
-      .catch(err => {
-        console.error("Failed to load bazaar extension:", err);
-      });
-  }
+  let bazaarPromise = checkIfBazaarNeeded(httpServer.routes)
+    ? registerBazaar(httpServer, () => import("@x402/extensions/bazaar"))
+    : null;
 
   return async (c: Context, next: () => Promise<void>) => {
     // Create adapter and context
