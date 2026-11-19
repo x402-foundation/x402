@@ -418,10 +418,8 @@ describe.skipIf(missingEnvVars)("Stellar Integration Tests", () => {
           `credential arm: ${credentialType}\n`,
       );
 
-      // stellar-sdk 17 asks simulation for V2 (CAP-71) entries by default, but
-      // an RPC that ignores `useUpgradedAuth` still returns the legacy arm. The
-      // point of this assertion is that whichever arm comes back is
-      // address-based and the shared helper reads it.
+      // Simulation may return the V2 arm or, if the RPC ignores the upgrade flag, the V1 arm.
+      // Either address-credential arm must be readable here.
       expect(["sorobanCredentialsAddress", "sorobanCredentialsAddressV2"]).toContain(
         credentialType,
       );

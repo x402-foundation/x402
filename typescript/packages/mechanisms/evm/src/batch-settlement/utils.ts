@@ -1,14 +1,4 @@
-import {
-  concat,
-  getAddress,
-  hashTypedData,
-  isAddressEqual,
-  isHex,
-  padHex,
-  recoverAddress,
-  slice,
-  toHex,
-} from "viem";
+import { concat, getAddress, hashTypedData, isHex, padHex, slice, toHex } from "viem";
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import {
   BATCH_SETTLEMENT_ADDRESS,
@@ -25,7 +15,7 @@ import type {
   ChannelConfig,
 } from "./types";
 import { getEvmChainId } from "../utils";
-import { isCanonicalEcdsaSignature } from "../shared/verifySignature";
+import { isCanonicalEcdsaSignature, verifyECDSA } from "../shared/verifySignature";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -203,11 +193,10 @@ export function unpackRefundAuthorizer(salt: `0x${string}`): `0x${string}` {
 }
 
 /**
- * Whether x402BatchSettlement can recover `signature`: OpenZeppelin ECDSA accepts only a
- * 65-byte low-s signature with `v` of 27 or 28.
+ * x402BatchSettlement recovers only a 65-byte low-s signature with `v` of 27 or 28.
  *
- * @param signature - The r || s || v signature to inspect.
- * @returns True when the contract's ECDSA recovery accepts the signature form.
+ * @param signature - r || s || v bytes to inspect
+ * @returns Whether contract ECDSA recovery accepts this form
  */
 export function isContractRecoverableSignature(signature: `0x${string}`): boolean {
   if (!isHex(signature) || signature.length !== 132 || !isCanonicalEcdsaSignature(signature)) {
@@ -240,11 +229,11 @@ export async function verifyEoaVoucherSignature(
         maxClaimableAmount: BigInt(raw.voucher.maxClaimableAmount),
       },
     });
-    const recovered = await recoverAddress({
-      hash: digest,
-      signature: raw.voucher.signature,
-    });
-    return isAddressEqual(recovered, getAddress(raw.channelConfig.payerAuthorizer));
+    return verifyECDSA(
+      getAddress(raw.channelConfig.payerAuthorizer),
+      digest,
+      raw.voucher.signature,
+    );
   } catch {
     return false;
   }
