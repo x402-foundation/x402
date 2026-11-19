@@ -176,9 +176,10 @@ export function createFacilitatorNearSigner(
   }));
   const relayerById = new Map(relayers.map(relayer => [relayer.accountId, relayer]));
 
-  // A relayer's access-key nonce is read from final state and only advances once its
-  // transaction reaches FINAL. Submissions on one relayer therefore run one at a time;
-  // otherwise two concurrent settlements would both sign the same nonce.
+  // A relayer's access-key nonce advances when its transaction is included, but it is
+  // read here at `final` finality, so a new submission only sees the new nonce once the
+  // previous transaction is final. Submissions on one relayer therefore run one at a
+  // time; otherwise two concurrent settlements would both sign the same nonce.
   const relayerQueues = new Map<string, Promise<unknown>>();
   const serializeByRelayer = <T>(relayerId: string, task: () => Promise<T>): Promise<T> => {
     const run = (relayerQueues.get(relayerId) ?? Promise.resolve()).then(task);
@@ -272,7 +273,7 @@ export function createFacilitatorNearSigner(
         // Decode the client SignedDelegate to wrap it and to address the outer
         // transaction to the delegate sender (NEP-366).
         const decoded = deserialize(SCHEMA.SignedDelegate, fromBase64(signedDelegateAction)) as {
-          delegateAction: { receiverId: string; senderId: string };
+          delegateAction: { receiverId: string; senderId: string; maxBlockHeight: bigint };
         } & SignedDelegate;
         const tokenContractId = decoded.delegateAction.receiverId;
         const senderId = decoded.delegateAction.senderId;
@@ -282,6 +283,13 @@ export function createFacilitatorNearSigner(
           provider.viewAccessKey(relayer.accountId, publicKey, { finality: "final" }),
           provider.block({ finality: "final" }),
         ]);
+
+        // A settlement can wait in the queue behind slower ones. If the delegate action
+        // has expired meanwhile, sending it would only cost the relayer gas for a
+        // DelegateActionExpired failure. Same boundary as verification (§5).
+        if (BigInt(decoded.delegateAction.maxBlockHeight) <= BigInt(block.header.height)) {
+          throw new Error("delegate_action_expired");
+        }
 
         const delegateActionWrapper: Action = actionCreators.signedDelegate(decoded);
         const transaction = createTransaction(

@@ -434,6 +434,42 @@ describe("createFacilitatorNearSigner", () => {
       expect(sentNonces).toEqual([1n, 2n]);
     });
 
+    it("does not send a delegate action that expired while queued", async () => {
+      const signer = createFacilitatorNearSigner({
+        relayers: [{ accountId: relayerId, secretKey: relayerKey.toString() as KeyPairString }],
+      });
+      // The final block (1000) has reached the delegate's max_block_height.
+      const expired = await buildSignedDelegateB64({ maxBlockHeight: 1000n });
+
+      await expect(
+        signer.submitSignedDelegateAction({
+          network: FIXTURE.network,
+          relayerId,
+          signedDelegateAction: expired.b64,
+        }),
+      ).rejects.toThrow("delegate_action_expired");
+      expect(mockProvider.sendTransactionUntil).not.toHaveBeenCalled();
+    });
+
+    it("still sends a delegate action that expires after the final block", async () => {
+      const signer = createFacilitatorNearSigner({
+        relayers: [{ accountId: relayerId, secretKey: relayerKey.toString() as KeyPairString }],
+      });
+      const live = await buildSignedDelegateB64({ maxBlockHeight: 1001n });
+      mockProvider.sendTransactionUntil.mockResolvedValueOnce({
+        transaction_outcome: { id: "TX1" },
+        ...finalOutcome,
+      });
+
+      await expect(
+        signer.submitSignedDelegateAction({
+          network: FIXTURE.network,
+          relayerId,
+          signedDelegateAction: live.b64,
+        }),
+      ).resolves.toMatchObject({ transaction: "TX1", innerReceipt: { kind: "success" } });
+    });
+
     it("keeps later submissions moving after an earlier one is rejected", async () => {
       const signer = createFacilitatorNearSigner({
         relayers: [{ accountId: relayerId, secretKey: relayerKey.toString() as KeyPairString }],
