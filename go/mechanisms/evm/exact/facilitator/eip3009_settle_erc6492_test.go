@@ -118,8 +118,11 @@ func TestSettleEIP3009_PostDeployTransferRevertClassified(t *testing.T) {
 	if !errors.As(err, &se) {
 		t.Fatalf("expected *x402.SettleError, got %T: %v", err, err)
 	}
-	if se.ErrorReason != ErrInvalidSignature {
-		t.Fatalf("expected reason %q, got %q", ErrInvalidSignature, se.ErrorReason)
+	// The x402 v2 specification lists invalid_exact_evm_payload_signature for an invalid
+	// signature, and the Python facilitator reports it.
+	const specReason = "invalid_exact_evm_payload_signature"
+	if se.ErrorReason != specReason {
+		t.Fatalf("expected reason %q, got %q", specReason, se.ErrorReason)
 	}
 }
 

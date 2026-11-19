@@ -81,7 +81,8 @@ describe("verify: EIP-3009 simulation failure reason", () => {
     );
 
     expect(reason).not.toBe(Errors.ErrEip3009SimulationFailed);
-    expect(reason).toBe(Errors.ErrInvalidSignature);
+    // The v2 specification lists this reason for an invalid signature; Python reports it too.
+    expect(reason).toBe("invalid_exact_evm_payload_signature");
   });
 
   // A transport failure says nothing about the payload, so the retryable code stays correct — and
