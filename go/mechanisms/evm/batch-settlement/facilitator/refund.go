@@ -161,7 +161,6 @@ func executeRefundWithSignature(
 		// Resolve claim authorizer signature — auto-sign if absent
 		var claimSig []byte
 		if payload.ClaimAuthorizerSignature != "" {
-			var err error
 			claimSig, err = evm.HexToBytes(payload.ClaimAuthorizerSignature)
 			if err != nil {
 				return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
@@ -172,7 +171,6 @@ func executeRefundWithSignature(
 				return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
 					"no claim authorizer signature in payload and no authorizer signer configured")
 			}
-			var err error
 			claimSig, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
 			if err != nil {
 				return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
