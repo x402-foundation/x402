@@ -13,8 +13,6 @@ import (
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
-// Vectors: TS client signVoucher on eip155:84532; high-s and v=0/1 are the same signature
-// rewritten. x402BatchSettlement.claim reverts on both (ECDSAInvalidSignatureS / ECDSAInvalidSignature).
 func TestVerifyBatchedVoucherTypedDataRejectsUnrecoverableForms(t *testing.T) {
 	const (
 		payer     = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
