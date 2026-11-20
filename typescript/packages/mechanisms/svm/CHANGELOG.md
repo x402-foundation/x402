@@ -1,5 +1,13 @@
 # @x402/svm Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- [85ba7be](https://github.com/x402-foundation/x402/commit/85ba7be): Added an optional `beforeCloseOrDistribute` hook to the SVM payment-channel `RentCleanupOptions`, shared by the `upto` and batch-settlement rent cleanup managers. It runs with the channel's `channelId`, `payer`, `payTo` and `action` after the `maxClosesPerRun` and stored-`payTo` checks and before anything is signed; throwing skips the channel, reports the error through `onError`, and leaves the close slot unused so the channel is retried on the next pass. Reclaim never calls it, and omitting the hook leaves every due channel eligible. This matches the Go SDK's `BeforeCloseOrDistribute`. ([#4257](https://github.com/x402-foundation/x402/pull/4257)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/core@2.32.0
+
 ## 2.31.0
 
 ### Minor Changes
