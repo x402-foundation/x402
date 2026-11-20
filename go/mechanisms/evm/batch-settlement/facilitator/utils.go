@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -205,6 +206,11 @@ func ValidateChannelConfig(
 		switch v := requirements.Extra["withdrawDelay"].(type) {
 		case float64:
 			expectedDelay = int(v)
+		case json.Number:
+			parsed, err := v.Float64()
+			if err == nil {
+				expectedDelay = int(parsed)
+			}
 		case int:
 			expectedDelay = v
 		case int64:

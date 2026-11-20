@@ -2,6 +2,7 @@ package batchsettlement
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 )
@@ -330,6 +331,12 @@ func ChannelConfigFromMap(data map[string]interface{}) (ChannelConfig, error) {
 	switch v := data["withdrawDelay"].(type) {
 	case float64:
 		config.WithdrawDelay = int(v)
+	case json.Number:
+		parsed, err := v.Float64()
+		if err != nil {
+			return config, fmt.Errorf("missing or invalid channelConfig.withdrawDelay")
+		}
+		config.WithdrawDelay = int(parsed)
 	case int:
 		config.WithdrawDelay = v
 	case int64:
@@ -718,7 +725,7 @@ func writePendingFields(result map[string]interface{}, pendingId string, cancel 
 	}
 }
 
-// ExtraInt reads a JSON number stored as int, int64, or float64.
+// ExtraInt reads a JSON number stored as int, int64, float64, or json.Number.
 func ExtraInt(v interface{}) (int, bool) {
 	switch n := v.(type) {
 	case int:
@@ -727,6 +734,12 @@ func ExtraInt(v interface{}) (int, bool) {
 		return int(n), true
 	case float64:
 		return int(n), true
+	case json.Number:
+		parsed, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
 	default:
 		return 0, false
 	}
@@ -823,6 +836,11 @@ func ChannelStateRequirementsFromMap(data map[string]interface{}) *BatchSettleme
 	switch v := data["withdrawRequestedAt"].(type) {
 	case float64:
 		cs.WithdrawRequestedAt = int(v)
+	case json.Number:
+		parsed, err := v.Float64()
+		if err == nil {
+			cs.WithdrawRequestedAt = int(parsed)
+		}
 	case int:
 		cs.WithdrawRequestedAt = v
 	case int64:
