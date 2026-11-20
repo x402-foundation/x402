@@ -35,7 +35,7 @@ CBOR transaction decoding in the facilitator uses Intersect's [Evolution SDK](ht
 
 ## Reference signers
 
-The client and facilitator schemes are signer-agnostic (e.g. a browser wallet can implement `ClientCardanoSigner` via CIP-30). For server-side keys, the package ships reference signers built on the Evolution SDK — `toClientCardanoSigner` builds, signs, and returns the payment transaction; `toFacilitatorCardanoSigner` performs chain lookups and submission.
+The client and facilitator schemes are signer-agnostic. For server-side keys, the package ships reference signers built on the Evolution SDK — `toClientCardanoSigner` builds, signs, and returns the payment transaction; `toFacilitatorCardanoSigner` performs chain lookups and submission.
 
 ```typescript
 import { toClientCardanoSigner, toFacilitatorCardanoSigner } from "@x402/cardano";
@@ -60,6 +60,18 @@ facilitator.register("cardano:preprod", new ExactCardanoFacilitator(facilitatorS
 ```
 
 The facilitator only broadcasts the client's signed transaction, so its `mnemonic` is **optional** — omit it to run provider-only (no funds, no signer); when supplied it is used only to expose an address in the `/supported` response. The reference signer also implements the optional `evaluateTransaction` script dry-run and `getProtocolParameters`. A Koios provider (`{ koios: { baseUrl, token? } }`) may be used instead of Blockfrost; without Blockfrost the signer has no `getTransactionEvidence`, so `/supported` advertises an `l1Confirmations` maximum of `0` and the facilitator can only settle `0` (with the default `awaitConfirmation: true`, which the signer then requires, and a `provider.requestTimeoutMs` long enough to cover block inclusion, since that wait is bounded by it) or `-1`. Routes served by such a facilitator must set `extra.confirmationPolicy` explicitly — the spec default of `1` lies outside the advertised range, and the server scheme refuses to build the 402. `provider.requestTimeoutMs` bounds every reference-signer provider query, build, submission, evaluation and confirmation wait; it defaults to 10 seconds.
+
+## Browser wallets (CIP-30)
+
+`createCip30ClientCardanoSigner` turns a CIP-30 wallet API (the result of `window.cardano.<wallet>.enable()`) into a `ClientCardanoSigner`. It pays the default transfer method only, builds from the wallet's own UTXOs and the protocol parameters the caller supplies (no chain provider is contacted), checks the built transaction is exactly the requested payment plus change before asking the wallet to sign, and never broadcasts. It needs a route `maxTimeoutSeconds` of at least `CIP30_MIN_WINDOW_SECONDS` (240). Refusals throw a `Cip30SignerError` with a stable `code` (for example `wallet_declined` or `fee_drain`). `@x402/paywall/cardano` uses it for its browser paywall.
+
+```typescript
+import { createCip30ClientCardanoSigner } from "@x402/cardano";
+
+const api = await window.cardano.lace.enable();
+const signer = await createCip30ClientCardanoSigner(api, { network: "cardano:preprod", protocolParameters });
+client.register("cardano:*", new ExactCardanoClient(signer));
+```
 
 ## Testnet funds
 

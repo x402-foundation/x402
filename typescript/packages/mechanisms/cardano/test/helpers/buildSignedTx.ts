@@ -56,7 +56,7 @@ export function getFixtureInputSnapshot(ref: string): CardanoUtxoSnapshot | unde
  * @param value - Evolution SDK value.
  * @returns Canonical native-asset map.
  */
-function snapshotAssets(value: Assets.Assets): Record<string, bigint> {
+export function snapshotAssets(value: Assets.Assets): Record<string, bigint> {
   const result: Record<string, bigint> = {};
   if (value.multiAsset) {
     for (const [policyId, innerMap] of value.multiAsset.map) {
@@ -74,7 +74,7 @@ function snapshotAssets(value: Assets.Assets): Record<string, bigint> {
  * Minimal protocol parameters sufficient for an offline fee calculation. These
  * are static fixtures, NOT fetched from chain.
  */
-const OFFLINE_PROTOCOL_PARAMETERS = {
+export const OFFLINE_PROTOCOL_PARAMETERS = {
   minFeeA: 44,
   minFeeB: 155381,
   maxTxSize: 16384,

@@ -1,0 +1,497 @@
+/* Cardano paywall. Brand: blue #0033AD, paper #F8F8F5, Chivo (cardano.org/brand-assets).
+   Loaded after ../styles.css and only into the Cardano template. */
+
+@font-face {
+  font-family: "Chivo";
+  src: url("./assets/chivo-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --cdn-blue: #0033ad;
+  --cdn-blue-hover: #00288a;
+  --cdn-blue-deep: #001a63;
+  --cdn-paper: #f8f8f5;
+  --cdn-surface: #ffffff;
+  --cdn-ink: #0b1430;
+  --cdn-muted: #5b6480;
+  --cdn-line: #e3e6ef;
+  --cdn-soft: #f2f4fa;
+  --cdn-focus: rgba(0, 51, 173, 0.28);
+  --cdn-warn-bg: #fff6e0;
+  --cdn-warn-ink: #7a4a00;
+  --cdn-error-bg: #fdecec;
+  --cdn-error-ink: #9b1c1c;
+  --cdn-ok: #0f7a4f;
+  --cdn-testnet: #f2a10c;
+  --cdn-mainnet: #2fbf71;
+  --cdn-shadow: 0 1px 2px rgba(11, 20, 48, 0.06), 0 12px 32px rgba(0, 51, 173, 0.1);
+  --cdn-font: "Chivo", Arial, sans-serif;
+  --cdn-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cdn-paper: #070b18;
+    --cdn-surface: #0f1630;
+    --cdn-ink: #eef1fa;
+    --cdn-muted: #9aa5c6;
+    --cdn-line: #222c4d;
+    --cdn-soft: #151e3d;
+    --cdn-focus: rgba(122, 156, 255, 0.4);
+    --cdn-warn-bg: #2d2410;
+    --cdn-warn-ink: #f4cf86;
+    --cdn-error-bg: #33161a;
+    --cdn-error-ink: #ffaaa6;
+    --cdn-ok: #5fd39a;
+    --cdn-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--cdn-paper);
+  color: var(--cdn-ink);
+  font-family: var(--cdn-font);
+}
+
+.cdn {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 16px;
+  background:
+    radial-gradient(1200px 420px at 50% -120px, rgba(0, 51, 173, 0.14), transparent 70%),
+    var(--cdn-paper);
+}
+
+.cdn-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 30rem;
+  background: var(--cdn-surface);
+  border: 1px solid var(--cdn-line);
+  border-radius: 20px;
+  box-shadow: var(--cdn-shadow);
+  overflow: hidden;
+}
+
+/* Header: official white horizontal logo on Cardano blue. */
+.cdn-hero {
+  position: relative;
+  padding: 1.75rem 1.75rem 1.5rem;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 92% 18%, rgba(255, 255, 255, 0.16) 0 2px, transparent 3px) 0 0 / 22px
+      22px,
+    linear-gradient(135deg, #0033ad 0%, #0a3fc4 55%, var(--cdn-blue-deep) 100%);
+}
+
+.cdn-hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+.cdn-logo {
+  display: block;
+  height: 30px;
+  width: auto;
+  min-width: 120px;
+}
+
+.cdn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  white-space: nowrap;
+}
+
+.cdn-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cdn-mainnet);
+}
+
+.cdn-pill.testnet::before {
+  background: var(--cdn-testnet);
+}
+
+.cdn-eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.cdn-amount {
+  margin: 0.35rem 0 0;
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.cdn-amount span {
+  margin-left: 0.4rem;
+  font-size: 1.15rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.cdn-desc {
+  margin: 0.6rem 0 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.cdn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem 1.75rem 1.25rem;
+}
+
+.cdn-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.9rem 1.75rem;
+  border-top: 1px solid var(--cdn-line);
+  background: var(--cdn-soft);
+  font-size: 0.8rem;
+  color: var(--cdn-muted);
+}
+
+.cdn-foot a {
+  color: var(--cdn-blue);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.cdn-foot a:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cdn-foot a {
+    color: #8fb0ff;
+  }
+}
+
+/* Payment details (shared class names, restyled for this page). */
+.cdn .payment-details {
+  display: grid;
+  gap: 0;
+  padding: 0.25rem 1rem;
+  border: 1px solid var(--cdn-line);
+  border-radius: 14px;
+  background: var(--cdn-surface);
+}
+
+.cdn .payment-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--cdn-line);
+  font-size: 0.92rem;
+}
+
+.cdn .payment-row:last-child {
+  border-bottom: 0;
+}
+
+.cdn .payment-label {
+  color: var(--cdn-muted);
+}
+
+.cdn .payment-value a {
+  color: var(--cdn-blue);
+}
+
+.cdn .payment-value {
+  font-weight: 700;
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.cdn .balance-button {
+  min-width: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--cdn-blue);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cdn .balance-button {
+    color: #8fb0ff;
+  }
+}
+
+.cdn .status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--cdn-muted);
+  text-align: center;
+}
+
+/* Buttons. */
+.cdn .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-family: var(--cdn-font);
+  font-size: 1rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.cdn .button:focus-visible,
+.cardano-wallet:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--cdn-focus);
+}
+
+.cdn .button-primary {
+  background: var(--cdn-blue);
+  color: #ffffff;
+}
+
+.cdn .button-primary:hover:not(:disabled) {
+  background: var(--cdn-blue-hover);
+}
+
+.cdn .button-secondary {
+  background: var(--cdn-surface);
+  color: var(--cdn-ink);
+  border-color: var(--cdn-line);
+}
+
+.cdn .button-secondary:hover:not(:disabled) {
+  background: var(--cdn-soft);
+}
+
+.cdn .button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cdn .spinner > div {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+}
+
+/* Wallet picker. */
+.cardano-wallets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.cardano-wallet {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--cdn-line);
+  border-radius: 12px;
+  background: var(--cdn-surface);
+  font: inherit;
+  font-weight: 700;
+  color: var(--cdn-ink);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  transition:
+    border-color 150ms,
+    box-shadow 150ms,
+    background-color 150ms;
+}
+
+.cardano-wallet:hover {
+  background: var(--cdn-soft);
+}
+
+.cardano-wallet[aria-pressed="true"] {
+  border-color: var(--cdn-blue);
+  box-shadow: 0 0 0 3px var(--cdn-focus);
+}
+
+.cardano-wallet img {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex: none;
+}
+
+.cardano-wallet span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Notices, steps, misc. */
+.cardano-notice {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+}
+
+.cardano-notice.warn {
+  background: var(--cdn-warn-bg);
+  color: var(--cdn-warn-ink);
+}
+
+.cardano-notice.error {
+  background: var(--cdn-error-bg);
+  color: var(--cdn-error-ink);
+}
+
+.cardano-notice a {
+  color: inherit;
+  font-weight: 700;
+}
+
+.cardano-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  display: grid;
+  gap: 0.45rem;
+  text-align: left;
+  font-size: 0.88rem;
+  color: var(--cdn-muted);
+  border: 1px dashed var(--cdn-line);
+  border-radius: 12px;
+}
+
+.cardano-steps li::before {
+  content: "○";
+  display: inline-block;
+  width: 1.3rem;
+}
+
+.cardano-steps li.done {
+  color: var(--cdn-ok);
+}
+
+.cardano-steps li.done::before {
+  content: "✓";
+}
+
+.cardano-steps li.now {
+  color: var(--cdn-ink);
+  font-weight: 700;
+}
+
+.cardano-steps li.now::before {
+  content: "●";
+  color: var(--cdn-blue);
+}
+
+.cardano-mono {
+  font-family: var(--cdn-mono);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.cardano-cta {
+  display: grid;
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.cardano-ack {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  font-size: 0.85rem;
+  text-align: left;
+  color: var(--cdn-muted);
+}
+
+.cardano-ack input {
+  margin-top: 0.2rem;
+  accent-color: var(--cdn-blue);
+}
+
+.cdn-preparing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  color: var(--cdn-muted);
+}
+
+.cdn-preparing .spinner > div {
+  border-color: var(--cdn-line);
+  border-top-color: var(--cdn-blue);
+}
+
+@media (max-width: 420px) {
+  .cdn {
+    padding: 1rem 12px;
+  }
+  .cdn-hero,
+  .cdn-body,
+  .cdn-foot {
+    padding-left: 1.15rem;
+    padding-right: 1.15rem;
+  }
+  .cdn-amount {
+    font-size: 2.1rem;
+  }
+  .cardano-wallets {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cdn .button,
+  .cardano-wallet {
+    transition: none;
+  }
+}
