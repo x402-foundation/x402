@@ -1,0 +1,9 @@
+{
+  "title": "Real-world instance, not a hypothetical: @x402/mcp builds resource.url from the tool name alone",
+  "provenance": "@x402/mcp 2.30.0 dist/esm/index.mjs line 92: return `mcp://tool/${toolName}`. This is the ONLY resource.url @x402/mcp ever produces for a paid tool call; there is no code path that derives it from the tool's arguments. tokenizen/packages/capacity-attest depends on @x402/mcp and is therefore structurally in this case for every paid MCP tool it exposes.",
+  "limits": "Confirms the resource.url collapse for @x402/mcp specifically. Does not by itself establish whether capacity-attest has an independent, out-of-band check that catches a mismatch between the paid-for call and the call actually executed; see worked-example-capacity-attest.md in holistis/agent-receipt-verify (vectors/facilitator-request-binding/) for that separate, tested question.",
+  "request_a": { "path": "mcp-tool-call", "configured_resource": "mcp://tool/record_delivery", "method": "POST", "body": "{\"deliveryId\":\"d-1\",\"amount\":1}" },
+  "request_b": { "path": "mcp-tool-call", "configured_resource": "mcp://tool/record_delivery", "method": "POST", "body": "{\"deliveryId\":\"d-2\",\"amount\":500000}" },
+  "claim": "collapses-to-same-message",
+  "note": "Same tool, wildly different arguments (amount 1 versus 500000): the facilitator sees the identical resource.url either way, because the tool name is the only input @x402/mcp line 92 reads."
+}

@@ -1,0 +1,9 @@
+{
+  "title": "A different HTTP method never reaches the facilitator, with a configured resource",
+  "provenance": "Same source lines as the body vectors: there is no method field anywhere in the /verify or /settle request body.",
+  "limits": "Same model limits as the other vectors in this set.",
+  "request_a": { "path": "/action", "configured_resource": "https://seller.example/action", "method": "GET" },
+  "request_b": { "path": "/action", "configured_resource": "https://seller.example/action", "method": "POST" },
+  "claim": "collapses-to-same-message",
+  "note": "A read-only GET and a state-changing POST to the same route produce the same facilitator message."
+}
