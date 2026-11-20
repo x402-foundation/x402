@@ -43,8 +43,9 @@ block, for example `bip122:000000000019d6689c085ae165831e93` (Bitcoin) or `bip12
 - `asset` names the chain's own coin (see Appendix, open question 1).
 - `payTo` MUST be an address of that chain in the form its software prints.
 - `extra.confirmations` is the number of blocks the transaction MUST be in before the resource is given. `0` means
-  as soon as the facilitator's node accepts the transaction. When absent, it is `1`. A facilitator MAY require more
-  blocks than the resource server asks for, never fewer.
+  as soon as the facilitator's node accepts the transaction. When absent, the facilitator's own setting applies
+  (`1` in the reference implementation). A facilitator MAY require more blocks than the resource server asks for,
+  never fewer.
 
 The `payload` of the `PaymentPayload`:
 
@@ -82,7 +83,8 @@ The facilitator MUST reject the payload, with the reason given, when:
 6. its node would not accept the transaction into its mempool, also when the node has it already, waiting or in a
    block: whoever presents a transaction that is already out need not be who paid (`transaction_refused_by_node`);
 7. the transaction was settled or is being settled, and the payload's `claim` is not the one it was first shown
-   with (`transaction_already_used`).
+   with (`transaction_already_used`), or the `resource` of the `PaymentPayload` is not the one it was first shown
+   for (`invalid_payment_requirements`): one payment buys one resource.
 
 Example of `/verify` for a payment copied from the mempool by someone else:
 
@@ -93,7 +95,8 @@ Example of `/verify` for a payment copied from the mempool by someone else:
 ## Settlement
 
 1. The first time a transaction passes verification, the facilitator MUST durably record its id, a hash of its
-   `claim`, the output that pays and the requirements, and only then hand the transaction to its node.
+   `claim`, the output that pays, the requirements and the `resource` of the payload, and only then hand the
+   transaction to its node. The resource server MUST check that the payload's `resource` is the one requested.
 2. While the paying output is in fewer blocks than `extra.confirmations`, `/settle` answers:
 
    ```json
