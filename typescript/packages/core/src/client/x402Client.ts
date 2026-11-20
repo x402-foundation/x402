@@ -65,6 +65,21 @@ export interface PaymentResponseContext {
   settleResponse?: SettleResponse;
   paymentRequired?: PaymentRequired;
   error?: Error;
+  /** The paid request's HTTP response. Absent on transports without one, such as MCP. */
+  response?: PaidResponse;
+}
+
+/**
+ * The HTTP response to a paid request, as the transport received it.
+ */
+export interface PaidResponse {
+  status: number;
+  getHeader: (name: string) => string | null | undefined;
+  /**
+   * Reads the response body from a copy, so the response returned to the caller stays unread.
+   * Call it before the hook returns. Absent when the transport has already decoded the body.
+   */
+  body?: () => Promise<Uint8Array>;
 }
 
 /**

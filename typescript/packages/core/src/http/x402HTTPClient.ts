@@ -179,12 +179,14 @@ export class x402HTTPClient {
    * @param paymentPayload - The payload that was sent with the request
    * @param getHeader - Function to retrieve a response header by name
    * @param status - The HTTP status code of the response
+   * @param body - Reads the response body without consuming the caller's copy
    * @returns Whether a hook recovered and the parsed settle response (if any)
    */
   async processPaymentResult(
     paymentPayload: PaymentPayload,
     getHeader: (name: string) => string | null | undefined,
     status: number,
+    body?: () => Promise<Uint8Array>,
   ): Promise<{ recovered: boolean; settleResponse?: SettleResponse }> {
     let settleResponse: SettleResponse | undefined;
     try {
@@ -216,6 +218,7 @@ export class x402HTTPClient {
       requirements,
       ...(settleResponse ? { settleResponse } : {}),
       ...(paymentRequired ? { paymentRequired } : {}),
+      response: { status, getHeader, ...(body ? { body } : {}) },
     };
 
     const result = await this.client.handlePaymentResponse(ctx);

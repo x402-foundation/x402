@@ -694,6 +694,34 @@ describe("wrapFetchWithPayment()", () => {
     expect(MockX402HTTPClient.prototype.processPaymentResult).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a payment response hook read the body without consuming the caller's response", async () => {
+    const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
+    const successResponse = createResponse(200, { data: "success" });
+    let readByHook = "";
+
+    mockFetch
+      .mockResolvedValueOnce(createResponse(402, validPaymentRequired))
+      .mockResolvedValueOnce(successResponse);
+    (
+      MockX402HTTPClient.prototype.processPaymentResult as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      async (
+        _payload: PaymentPayload,
+        _getHeader: (name: string) => string | null,
+        _status: number,
+        body: () => Promise<Uint8Array>,
+      ) => {
+        readByHook = new TextDecoder().decode(await body());
+        return { recovered: false };
+      },
+    );
+
+    const result = await wrappedFetch("https://api.example.com", { method: "GET" });
+
+    expect(readByHook).toBe('{"data":"success"}');
+    expect(await result.json()).toEqual({ data: "success" });
+  });
+
   it("should pass recovery retry headers to the second processPaymentResult call", async () => {
     const { x402HTTPClient: MockX402HTTPClient } = await import("@x402/core/client");
     const retryResponse = createResponse(
