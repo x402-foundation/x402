@@ -49,6 +49,7 @@ and fill required environment variables:
 - `EVM_PRIVATE_KEY` - Ethereum private key for EVM payments
 - `SVM_PRIVATE_KEY` - Solana private key for SVM payments
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`) for signing Stellar payments
+- `SUI_PRIVATE_KEY` - Sui Ed25519 private key (`suiprivkey1...`) for Sui payments (optional; `all-networks`). The account needs testnet USDC from the [Circle Faucet](https://faucet.circle.com/) and, unless the facilitator sponsors gas, SUI from the [Sui faucet](https://faucet.sui.io/)
 - `HEDERA_ACCOUNT_ID` - Hedera account id for Hedera payments (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for Hedera payments (optional)
 - `HEDERA_NETWORK` - Hedera network (optional, defaults to `hedera:testnet`)
