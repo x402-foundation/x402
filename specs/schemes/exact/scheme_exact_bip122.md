@@ -46,6 +46,9 @@ block, for example `bip122:000000000019d6689c085ae165831e93` (Bitcoin) or `bip12
   as soon as the facilitator's node accepts the transaction. When absent, the facilitator's own setting applies
   (`1` in the reference implementation). A facilitator MAY require more blocks than the resource server asks for,
   never fewer.
+- `extra.resource`, when the resource server sends it to `/verify` and `/settle`, names what the payment buys. The
+  facilitator MUST bind the payment to it; without it, to the `resource` of the payload, which the client writes.
+  A resource server that serves more than one resource for one `payTo` SHOULD send it.
 
 The `payload` of the `PaymentPayload`:
 
@@ -115,8 +118,8 @@ Example of `/verify` for a payment copied from the mempool by someone else:
 5. When the node no longer knows the paying output, the facilitator SHOULD hand the transaction to it once more; if
    the output is still unknown, it answers `payment_not_found` (the coins were spent by another transaction).
 6. The same transaction with the same `claim` MAY be settled again for a short time after step 4 (600 seconds in
-   the reference implementation), so that a response lost on the way can be fetched; after that,
-   `transaction_already_used`.
+   the reference implementation), so that a response lost on the way can be fetched, with `redelivered: true` in
+   the answer so that the resource server does not count it as a new sale; after that, `transaction_already_used`.
 7. When the facilitator itself fails (its node is away, a timeout), the resource server answers `503` with
    `Retry-After`, not `402`: the payment may already be recorded and broadcast, and the client MUST keep it and its
    `claim` and send them again.
