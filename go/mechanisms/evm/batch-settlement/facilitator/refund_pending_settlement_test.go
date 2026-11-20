@@ -31,43 +31,63 @@ const (
 	receiptWithoutRefunded
 )
 
-// refundChain is a channel holding 10000 at refund nonce 0. The first broadcast lands a
-// 1000 refund, after which a refund simulation reverts as the consumed nonce would onchain.
+// refundChain is a channel holding 10000 at refund nonce 0. Each refund broadcast lands
+// at once and advances the nonce. refundWithSignature simulations revert on a consumed
+// nonce; refund() has no nonce and simulates fine, as onchain. staleReads post-refund
+// channel reads still return the initial state, as a lagging RPC node would.
 type refundChain struct {
 	signer      *fakeFacilitatorSigner
 	simulations int
+	staleReads  int
 	receipts    []receiptOutcome
+	// onWait runs at the start of each receipt wait.
+	onWait func()
 }
 
 func newRefundChain(t *testing.T, receipts ...receiptOutcome) *refundChain {
 	t.Helper()
 	channelId := refundPendingChannelId(t)
 	chain := &refundChain{receipts: receipts}
-	landed := false
+	balance := big.NewInt(10000)
+	refundNonce := big.NewInt(0)
+	refunded := big.NewInt(0)
 	chain.signer = &fakeFacilitatorSigner{
 		addresses: []string{validConfig().ReceiverAuthorizer},
-		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+		readContract: func(functionName string, args ...interface{}) (interface{}, error) {
 			switch functionName {
 			case evm.FunctionTryAggregate:
-				if landed {
-					return multicallChannelStateResult(t, big.NewInt(9000), big.NewInt(0), 0, big.NewInt(1)), nil
+				if refundNonce.Sign() > 0 && chain.staleReads > 0 {
+					chain.staleReads--
+					return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
 				}
-				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
-			case "refund", "refundWithSignature":
+				return multicallChannelStateResult(t, balance, big.NewInt(0), 0, refundNonce), nil
+			case "refundWithSignature":
 				chain.simulations++
-				if landed {
-					return nil, errors.New("execution reverted")
+				if nonce, _ := args[2].(*big.Int); nonce == nil || nonce.Cmp(refundNonce) != 0 {
+					return nil, errors.New("execution reverted: InvalidRefundNonce")
 				}
+				return nil, nil
+			case "refund":
+				chain.simulations++
 				return nil, nil
 			default:
 				return nil, errors.New("unexpected rpc " + functionName)
 			}
 		},
-		writeContract: func(string, ...interface{}) (string, error) {
-			landed = true
+		writeContract: func(_ string, args ...interface{}) (string, error) {
+			_, amount, ok := refundCallFromArgs(args)
+			if !ok {
+				t.Fatalf("unexpected refund write args %v", args)
+			}
+			refunded = amount
+			balance = new(big.Int).Sub(balance, amount)
+			refundNonce = new(big.Int).Add(refundNonce, big.NewInt(1))
 			return refundPendingTxHash, nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
+			if chain.onWait != nil {
+				chain.onWait()
+			}
 			if len(chain.receipts) == 0 {
 				t.Fatal("unexpected receipt wait")
 			}
@@ -78,7 +98,7 @@ func newRefundChain(t *testing.T, receipts ...receiptOutcome) *refundChain {
 				return nil, errors.New("rpc: timeout waiting for receipt")
 			case receiptConfirmed:
 				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash,
-					Logs: []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(1000))}}, nil
+					Logs: []*goethtypes.Log{refundedReceiptLog(t, channelId, refunded)}}, nil
 			case receiptReverted:
 				return &evm.TransactionReceipt{Status: evm.TxStatusFailed, TxHash: txHash}, nil
 			case receiptWithoutRefunded:
@@ -138,11 +158,11 @@ func newRecordingPendingStore() *recordingPendingStore {
 	return &recordingPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore()}
 }
 
-// recordedRefundTx returns the transaction stored under the single key the refund recorded.
+// recordedRefundTx returns the transaction stored under the first key a refund recorded.
 func recordedRefundTx(t *testing.T, store *recordingPendingStore) (string, bool) {
 	t.Helper()
-	if len(store.setKeys) != 1 {
-		t.Fatalf("pending store keys written = %v, want exactly one", store.setKeys)
+	if len(store.setKeys) == 0 {
+		t.Fatal("no refund was recorded in the pending store")
 	}
 	txHash, ok, err := store.Get(context.Background(), store.setKeys[0])
 	if err != nil {
@@ -162,6 +182,21 @@ func requireRefundPending(t *testing.T, resp *x402.SettleResponse, err error) {
 	}
 }
 
+func requireRefundReconciled(t *testing.T, resp *x402.SettleResponse, err error, amount, balance string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !resp.Success || resp.Transaction != refundPendingTxHash || resp.Amount != amount || resp.Payer != validConfig().Payer {
+		t.Fatalf("retry resp = %+v, want success for %q refunding %s", resp, refundPendingTxHash, amount)
+	}
+	state, _ := resp.Extra["channelState"].(map[string]interface{})
+	if state["channelId"] != refundPendingChannelId(t) || state["balance"] != balance ||
+		state["totalClaimed"] != "0" || state["refundNonce"] != "1" || state["withdrawRequestedAt"] != 0 {
+		t.Fatalf("channelState = %+v, want the post-refund onchain state with balance %s", state, balance)
+	}
+}
+
 func TestRefundPendingSettlement_ReceiptWaitFailureRecordsTx(t *testing.T) {
 	for _, mode := range refundSubmitModes {
 		t.Run(string(mode), func(t *testing.T) {
@@ -171,6 +206,9 @@ func TestRefundPendingSettlement_ReceiptWaitFailureRecordsTx(t *testing.T) {
 
 			resp, err := settleRefund(scheme, refundPendingPayload(t, "1000", "0"))
 			requireRefundPending(t, resp, err)
+			if len(store.setKeys) != 1 {
+				t.Fatalf("pending store keys written = %v, want exactly one", store.setKeys)
+			}
 			txHash, ok := recordedRefundTx(t, store)
 			if !ok || txHash != refundPendingTxHash {
 				t.Fatalf("recorded tx = %q ok=%v, want %q", txHash, ok, refundPendingTxHash)
@@ -180,37 +218,77 @@ func TestRefundPendingSettlement_ReceiptWaitFailureRecordsTx(t *testing.T) {
 }
 
 func TestRefundPendingSettlement_RetryReconcilesWithoutResimulating(t *testing.T) {
+	cases := []struct {
+		name    string
+		amount  string
+		balance string
+	}{
+		{name: "partial", amount: "1000", balance: "9000"},
+		{name: "full", amount: "10000", balance: "0"},
+	}
+	for _, mode := range refundSubmitModes {
+		for _, tc := range cases {
+			t.Run(string(mode)+"/"+tc.name, func(t *testing.T) {
+				chain := newRefundChain(t, receiptTimeout, receiptConfirmed)
+				store := newRecordingPendingStore()
+				scheme := refundPendingScheme(t, mode, chain, store)
+				payload := refundPendingPayload(t, tc.amount, "0")
+
+				resp, err := settleRefund(scheme, payload)
+				requireRefundPending(t, resp, err)
+
+				resp, err = settleRefund(scheme, payload)
+				requireRefundReconciled(t, resp, err, tc.amount, tc.balance)
+				if chain.simulations != 1 || chain.signer.writeCalls != 1 {
+					t.Fatalf("simulations=%d writes=%d, want 1 each across both attempts", chain.simulations, chain.signer.writeCalls)
+				}
+				if _, ok := recordedRefundTx(t, store); ok {
+					t.Fatal("confirmed reconcile must clear the pending entry")
+				}
+			})
+		}
+	}
+}
+
+func TestRefundPendingSettlement_ConcurrentRetryWaitsOnSameTx(t *testing.T) {
 	for _, mode := range refundSubmitModes {
 		t.Run(string(mode), func(t *testing.T) {
-			chain := newRefundChain(t, receiptTimeout, receiptConfirmed)
-			store := newRecordingPendingStore()
-			scheme := refundPendingScheme(t, mode, chain, store)
+			chain := newRefundChain(t, receiptTimeout, receiptConfirmed, receiptConfirmed)
+			scheme := refundPendingScheme(t, mode, chain, newRecordingPendingStore())
 			payload := refundPendingPayload(t, "1000", "0")
 
 			resp, err := settleRefund(scheme, payload)
 			requireRefundPending(t, resp, err)
 
+			var concurrent *x402.SettleResponse
+			var concurrentErr error
+			chain.onWait = func() {
+				chain.onWait = nil
+				concurrent, concurrentErr = settleRefund(scheme, payload)
+			}
 			resp, err = settleRefund(scheme, payload)
-			if err != nil {
-				t.Fatalf("retry: %v", err)
+			requireRefundReconciled(t, resp, err, "1000", "9000")
+			requireRefundReconciled(t, concurrent, concurrentErr, "1000", "9000")
+			if chain.signer.writeCalls != 1 {
+				t.Fatalf("writes = %d, want the first broadcast only", chain.signer.writeCalls)
 			}
-			if !resp.Success || resp.Transaction != refundPendingTxHash || resp.Amount != "1000" {
-				t.Fatalf("retry resp = %+v, want success for %q refunding 1000", resp, refundPendingTxHash)
-			}
-			if resp.Payer != validConfig().Payer {
-				t.Fatalf("payer = %q, want %q", resp.Payer, validConfig().Payer)
-			}
-			state, _ := resp.Extra["channelState"].(map[string]interface{})
-			if state["channelId"] != refundPendingChannelId(t) || state["balance"] != "9000" ||
-				state["totalClaimed"] != "0" || state["refundNonce"] != "1" || state["withdrawRequestedAt"] != 0 {
-				t.Fatalf("channelState = %+v, want the post-refund onchain state", state)
-			}
-			if chain.simulations != 1 || chain.signer.writeCalls != 1 {
-				t.Fatalf("simulations=%d writes=%d, want 1 each across both attempts", chain.simulations, chain.signer.writeCalls)
-			}
-			if _, ok := recordedRefundTx(t, store); ok {
-				t.Fatal("confirmed reconcile must clear the pending entry")
-			}
+		})
+	}
+}
+
+func TestRefundPendingSettlement_RetryWaitsOutLaggingChannelRead(t *testing.T) {
+	for _, mode := range refundSubmitModes {
+		t.Run(string(mode), func(t *testing.T) {
+			chain := newRefundChain(t, receiptTimeout, receiptConfirmed)
+			scheme := refundPendingScheme(t, mode, chain, newRecordingPendingStore())
+			payload := refundPendingPayload(t, "1000", "0")
+
+			resp, err := settleRefund(scheme, payload)
+			requireRefundPending(t, resp, err)
+
+			chain.staleReads = 1
+			resp, err = settleRefund(scheme, payload)
+			requireRefundReconciled(t, resp, err, "1000", "9000")
 		})
 	}
 }
@@ -291,10 +369,10 @@ func TestRefundPendingSettlement_RetryWithoutRefundedEventFailsClosed(t *testing
 	}
 }
 
-func TestRefundPendingSettlement_NilStoreKeepsResimulatingOnRetry(t *testing.T) {
+func TestRefundPendingSettlement_NilStoreResimulatesOnRetry(t *testing.T) {
 	for _, mode := range refundSubmitModes {
 		t.Run(string(mode), func(t *testing.T) {
-			chain := newRefundChain(t, receiptTimeout)
+			chain := newRefundChain(t, receiptTimeout, receiptTimeout)
 			submitCtx := SubmitContext{
 				SubmitMode:          mode,
 				Signer:              chain.signer,
@@ -306,17 +384,47 @@ func TestRefundPendingSettlement_NilStoreKeepsResimulatingOnRetry(t *testing.T) 
 			resp, err := SubmitRefund(context.Background(), input, submitCtx)
 			requireRefundPending(t, resp, err)
 
-			resp, err = SubmitRefund(context.Background(), input, submitCtx)
-			if err != nil {
-				t.Fatalf("retry: %v", err)
-			}
-			if resp.Success || resp.ErrorReason != ErrRefundSimulationFailed {
-				t.Fatalf("retry resp = %+v, want %s", resp, ErrRefundSimulationFailed)
-			}
-			if chain.simulations != 2 || chain.signer.writeCalls != 1 {
-				t.Fatalf("simulations=%d writes=%d, want 2 and 1", chain.simulations, chain.signer.writeCalls)
+			_, _ = SubmitRefund(context.Background(), input, submitCtx)
+			if chain.simulations != 2 {
+				t.Fatalf("simulations = %d, want the retry to simulate again", chain.simulations)
 			}
 		})
+	}
+}
+
+func TestRefundPendingSettlement_ManagedPartialRefundRetryReconciles(t *testing.T) {
+	h := newHotRefund(t, unclaimedFields(), workerMarker(), nil)
+	rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+	signer := newManagedSigner(t, rpc)
+	write := signer.writeContract
+	signer.writeContract = func(functionName string, args ...interface{}) (string, error) {
+		balance := new(big.Int).Set(rpc.balance)
+		txHash, err := write(functionName, args...)
+		// Land a 100 refund and revert later simulations of it.
+		rpc.balance = balance.Sub(balance, big.NewInt(100))
+		rpc.simFail = functionName
+		return txHash, err
+	}
+	wait := signer.waitForReceipt
+	waits := 0
+	signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+		waits++
+		if waits == 1 {
+			return nil, errors.New("rpc: timeout waiting for receipt")
+		}
+		return wait(txHash)
+	}
+	h.deps.Signer = signer
+
+	_, err := h.settle("100")
+	requireSettleErrorReason(t, err, ErrSettlementPending)
+
+	resp, err := h.settle("100")
+	if err != nil || !resp.Success || resp.Transaction != successTxHash || resp.Amount != "100" {
+		t.Fatalf("retry resp = %+v err = %v, want success for %q refunding 100", resp, err, successTxHash)
+	}
+	if signer.writeCalls != 1 {
+		t.Fatalf("writes = %d, want the first broadcast only", signer.writeCalls)
 	}
 }
 
@@ -332,22 +440,16 @@ func TestRefundPendingSettlement_DifferentRefundMissesRecordedTx(t *testing.T) {
 	for _, mode := range refundSubmitModes {
 		for _, tc := range cases {
 			t.Run(string(mode)+"/"+tc.name, func(t *testing.T) {
-				chain := newRefundChain(t, receiptTimeout)
+				chain := newRefundChain(t, receiptTimeout, receiptTimeout)
 				store := newRecordingPendingStore()
 				scheme := refundPendingScheme(t, mode, chain, store)
 
 				resp, err := settleRefund(scheme, refundPendingPayload(t, "1000", "0"))
 				requireRefundPending(t, resp, err)
 
-				resp, err = settleRefund(scheme, refundPendingPayload(t, tc.amount, tc.refundNonce))
-				if err != nil {
-					t.Fatalf("different refund: %v", err)
-				}
-				if resp.Success || resp.ErrorReason != ErrRefundSimulationFailed {
-					t.Fatalf("different refund resp = %+v, want %s from the normal path", resp, ErrRefundSimulationFailed)
-				}
+				_, _ = settleRefund(scheme, refundPendingPayload(t, tc.amount, tc.refundNonce))
 				if chain.simulations != 2 {
-					t.Fatalf("simulations = %d, want 2", chain.simulations)
+					t.Fatalf("simulations = %d, want the different refund to simulate", chain.simulations)
 				}
 				txHash, ok := recordedRefundTx(t, store)
 				if !ok || txHash != refundPendingTxHash {
