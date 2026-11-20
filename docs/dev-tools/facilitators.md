@@ -29,6 +29,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
 | [FTP Canton Facilitator](https://www.ftptech.xyz/x402) | Production x402 facilitator for Canton Network mainnet, supporting Canton Coin and CIP-56 tokens |
 | [HPP Facilitator](https://docs.hpp.io/x402/facilitator) | Gasless, public x402 facilitator for HPP Mainnet and Sepolia |
+| [M2MCent](https://m2mcent.com) | Base Mainnet (eip155:8453) x402 V2 facilitator (https://api.m2mcent.com) settling EIP-3009 USDC via Escrow V2, supporting /supported, /verify, /settle, and /discovery/resources |
 | [Meridian](https://mrdn.finance) | Multi-chain facilitator with developer-first features |
 | [Mogami Facilitator](https://facilitator.mogami.tech) | Free, developer-focused facilitator for Base with optional self-hosted Docker deployment |
 | [NEAR x402 Facilitator](https://x402.mikedotexe.com/) | Independent open-source facilitator for exact Circle USDC payments on NEAR and Base, with sponsored gas and durable settlement recovery |
