@@ -13,6 +13,8 @@ import {
   xdr,
   Keypair,
   Asset,
+  MuxedAccount,
+  nativeToScVal,
 } from "@stellar/stellar-sdk";
 import { Api } from "@stellar/stellar-sdk/rpc";
 import { beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -46,12 +48,14 @@ function createMockContractEvent({
   amount,
   fnName = "transfer",
   contractId,
+  toMuxedId,
 }: {
   from: string;
   to: string;
   amount: bigint;
   fnName?: string;
   contractId?: xdr.ContractId | null;
+  toMuxedId?: bigint;
 }): xdr.DiagnosticEvent {
   // symbol for the function name
   const transferSymbol = xdr.ScVal.scvSymbol(fnName);
@@ -77,9 +81,21 @@ function createMockContractEvent({
     }),
   );
 
+  // CAP-67: a transfer to a muxed address emits { amount, to_muxed_id }
+  const data =
+    toMuxedId === undefined
+      ? amountScVal
+      : xdr.ScVal.scvMap([
+          new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"), val: amountScVal }),
+          new xdr.ScMapEntry({
+            key: xdr.ScVal.scvSymbol("to_muxed_id"),
+            val: xdr.ScVal.scvU64(xdr.Uint64.fromString(toMuxedId.toString())),
+          }),
+        ]);
+
   const contractEventV0 = new xdr.ContractEventV0({
     topics: [transferSymbol, fromScAddress, toScAddress],
-    data: amountScVal,
+    data,
   });
   return createMockDiagnosticEvent(
     contractEventV0,
@@ -1143,6 +1159,102 @@ describe("ExactStellarScheme#Verify (randomly using 1-2 facilitator signers)", (
         const result = await facilitator.verify(validPayload, validRequirements);
         expect(result.isValid).toBe(false);
         expect(result.invalidReason).toBe("invalid_exact_stellar_payload_event_not_transfer");
+      });
+
+      describe("muxed payTo (CAP-67)", () => {
+        const MUXED_ID = BigInt(42);
+        const muxedPayTo = new MuxedAccount(
+          new Account(TRANSACTION_RECIPIENT, "0"),
+          MUXED_ID.toString(),
+        ).accountId();
+
+        async function buildMuxedPayment(): Promise<{
+          payload: PaymentPayload;
+          requirements: PaymentRequirements;
+        }> {
+          const args = baseInvokeContractArgs.args;
+          const invokeArgs = new xdr.InvokeContractArgs({
+            contractAddress: baseInvokeContractArgs.contractAddress,
+            functionName: baseInvokeContractArgs.functionName,
+            args: [args[0], nativeToScVal(muxedPayTo, { type: "address" }), args[2]],
+          });
+          const credentials = getAddressCredentials(baseOperation.auth![0].credentials)!;
+          const auth = await authorizeEntry(
+            new xdr.SorobanAuthorizationEntry({
+              credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+                new xdr.SorobanAddressCredentials({
+                  address: credentials.address,
+                  nonce: credentials.nonce,
+                  signatureExpirationLedger: 0, // replaced by authorizeEntry
+                  signature: xdr.ScVal.scvVoid(),
+                }),
+              ),
+              rootInvocation: new xdr.SorobanAuthorizedInvocation({
+                function:
+                  xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(invokeArgs),
+                subInvocations: [],
+              }),
+            }),
+            Keypair.fromSecret(CLIENT_SECRET),
+            credentials.signatureExpirationLedger,
+            networkPassphrase,
+          );
+          const operation = Operation.invokeHostFunction({
+            func: xdr.HostFunction.hostFunctionTypeInvokeContract(invokeArgs),
+            auth: [auth],
+          });
+          const requirements = { ...validRequirements, payTo: muxedPayTo };
+          return {
+            payload: { ...buildStellarPayloadFromOp(operation), accepted: requirements },
+            requirements,
+          };
+        }
+
+        function mockTransferEvent(toMuxedId: bigint | undefined): void {
+          vi.mocked(mockServer.simulateTransaction).mockResolvedValueOnce({
+            id: "test",
+            latestLedger: 123,
+            events: [
+              createMockContractEvent({
+                from: CLIENT_PUBLIC,
+                to: TRANSACTION_RECIPIENT, // CAP-67: the base account, not the M... address
+                amount: BigInt(10000),
+                contractId: expectedAssetHash(),
+                toMuxedId,
+              }),
+            ],
+            _parsed: true,
+            transactionData: new SorobanDataBuilder(),
+            minResourceFee: "100",
+            cost: { cpuInsns: "0", memBytes: "0" },
+            results: [],
+          } as Api.SimulateTransactionSuccessResponse);
+        }
+
+        it("should accept a transfer to a muxed payTo", async () => {
+          const { payload, requirements } = await buildMuxedPayment();
+          mockTransferEvent(MUXED_ID);
+
+          const result = await facilitator.verify(payload, requirements);
+          expect(result).toEqual(validVerifyResponse(CLIENT_PUBLIC));
+        });
+
+        it("should reject when the event carries a different muxed id", async () => {
+          const { payload, requirements } = await buildMuxedPayment();
+          mockTransferEvent(BigInt(7)); // ❌ wrong muxed id
+
+          const result = await facilitator.verify(payload, requirements);
+          expect(result.isValid).toBe(false);
+          expect(result.invalidReason).toBe("invalid_exact_stellar_payload_event_wrong_to");
+        });
+
+        it("should reject a muxed event when payTo is not muxed", async () => {
+          mockTransferEvent(MUXED_ID); // ❌ payTo is the plain G... account
+
+          const result = await facilitator.verify(validPayload, validRequirements);
+          expect(result.isValid).toBe(false);
+          expect(result.invalidReason).toBe("invalid_exact_stellar_payload_event_wrong_to");
+        });
       });
 
       it("should ignore non-contract events and still accept valid transfer", async () => {
