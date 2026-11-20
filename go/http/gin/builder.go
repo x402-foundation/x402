@@ -29,8 +29,11 @@ type Config struct {
 	PaywallConfig *x402http.PaywallConfig
 
 	// SyncFacilitatorOnStart fetches supported kinds from facilitators on startup
-	// Default: true
-	SyncFacilitatorOnStart bool
+	// Default: true (leave nil). Set to a pointer to false to skip the startup fetch.
+	//
+	// A *bool is used because the zero value of a bool cannot express "not set": an explicit false
+	// was previously indistinguishable from the default and was silently ignored.
+	SyncFacilitatorOnStart *bool
 
 	// Timeout for payment operations
 	// Default: 30 seconds
@@ -42,6 +45,13 @@ type Config struct {
 	// SettlementHandler called after successful settlement (optional)
 	SettlementHandler func(*gin.Context, *x402.SettleResponse)
 }
+
+// syncDefaultTrue is a package-level value so internal wrappers can set the pointer field without a
+// local variable. Callers who want an explicit true/false can use spb(true) / spb(false).
+var syncDefaultTrue = true
+
+// spb returns a pointer to b, for the SyncFacilitatorOnStart field.
+func spb(b bool) *bool { return &b }
 
 // SchemeConfig configures a payment scheme for a network.
 type SchemeConfig struct {
@@ -78,17 +88,17 @@ func X402Payment(config Config) gin.HandlerFunc {
 		config.Timeout = 30 * time.Second
 	}
 
-	// Default to sync unless explicitly disabled
-	syncOnStart := config.SyncFacilitatorOnStart
-	if !syncOnStart && config.Facilitator == nil && len(config.Facilitators) == 0 {
-		// If no explicit setting and no facilitators, default to false
-		syncOnStart = false
-	} else if config.Facilitator != nil || len(config.Facilitators) > 0 {
-		// If facilitators provided but SyncFacilitatorOnStart not explicitly set, default to true
-		if config.Timeout != 0 {
-			// User set something, so they're configuring - default to true
-			syncOnStart = true
-		}
+	// Default to sync when facilitators are configured, unless the caller said otherwise.
+	//
+	// nil means "unset" and keeps the documented default (sync when a facilitator exists). A non-nil
+	// value is the caller's explicit choice and is honoured exactly — including false with a
+	// facilitator configured, which the previous bool-based logic discarded.
+	//
+	// Do NOT fold this back into a test on config.Timeout: Timeout is defaulted above this block, so
+	// such a test is unconditionally true.
+	syncOnStart := config.Facilitator != nil || len(config.Facilitators) > 0
+	if config.SyncFacilitatorOnStart != nil {
+		syncOnStart = *config.SyncFacilitatorOnStart
 	}
 
 	// Normalize facilitators list
@@ -174,6 +184,6 @@ func SimpleX402Payment(payTo string, price string, network x402.Network, facilit
 	return X402Payment(Config{
 		Routes:                 routes,
 		Facilitator:            facilitator,
-		SyncFacilitatorOnStart: true,
+		SyncFacilitatorOnStart: &syncDefaultTrue,
 	})
 }
