@@ -26,7 +26,11 @@ import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
-import type { BatchChannelState } from "../types";
+import type {
+  BatchChannelState,
+  BatchRedemptionChannelState,
+  BatchRedemptionStatus,
+} from "../types";
 
 /** Reason reported when a channel is already mid-operation. */
 export const CHANNEL_BUSY = "duplicate_settlement";
@@ -130,6 +134,92 @@ export function verifiedChannelExtra(
   const { chargedCumulativeAmount: _omitted, ...flat } = snapshotChannel(channelId, channel);
   void _omitted;
   return flat;
+}
+
+const REDEMPTION_STATUS: Record<ChannelStatus, BatchRedemptionStatus> = {
+  [ChannelStatus.Open]: "open",
+  [ChannelStatus.Closing]: "closing",
+  [ChannelStatus.Sealed]: "sealed",
+  [ChannelStatus.Distributed]: "distributed",
+};
+
+/**
+ * Project a decoded channel account onto a `extra.channelStates[]` entry.
+ *
+ * @param channelId - Channel PDA
+ * @param channel - Decoded channel account
+ * @returns The channel's confirmed onchain state
+ */
+export function redemptionSnapshot(
+  channelId: string,
+  channel: Channel,
+): BatchRedemptionChannelState {
+  return {
+    ...snapshotChannel(channelId, channel),
+    payoutWatermark: channel.settlement.payoutWatermark.toString(),
+    status: REDEMPTION_STATUS[channel.status as ChannelStatus],
+  };
+}
+
+/**
+ * The state a confirmed distribute leaves behind: payout caught up to settled,
+ * and a sealed channel paid out. It is valid only for a channel read before
+ * that distribute was built; one read after may have settled more since, so
+ * use {@link redemptionSnapshot} for it.
+ *
+ * @param channelId - Channel PDA
+ * @param channel - Decoded channel account read before the distribute
+ * @returns The channel's state after the distribute
+ */
+export function distributedSnapshot(
+  channelId: string,
+  channel: Channel,
+): BatchRedemptionChannelState {
+  const state = redemptionSnapshot(channelId, channel);
+  return {
+    ...state,
+    payoutWatermark: state.totalClaimed,
+    status: state.status === "sealed" ? "distributed" : state.status,
+  };
+}
+
+/**
+ * Snapshot a batch's channels, or none unless every one was read: the server
+ * adopts only a complete batch.
+ *
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param snapshot - Projects a channel onto its reported state
+ * @returns The states, or undefined when a channel was not read
+ */
+export function completeStates(
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[] | undefined,
+  snapshot: (channelId: string, channel: Channel) => BatchRedemptionChannelState,
+): BatchRedemptionChannelState[] | undefined {
+  if (!channels || channels.includes(undefined)) return undefined;
+  return batch.map((item, index) => snapshot(item.channelId, channels[index]!));
+}
+
+/**
+ * Reject a redemption whose effect is already onchain, carrying the channels'
+ * state so the server adopts it instead of resubmitting.
+ *
+ * @param network - CAIP-2 network of the request
+ * @param reason - Machine-readable reason
+ * @param message - Human-readable detail
+ * @param states - The channels' confirmed onchain state
+ * @param payer - Channel payer when recoverable
+ * @returns The settle response
+ */
+export function resyncFailure(
+  network: Network,
+  reason: string,
+  message: string,
+  states: readonly BatchRedemptionChannelState[],
+  payer = "",
+): SettleResponse {
+  return { ...settleFailure(network, reason, payer, message), extra: { channelStates: states } };
 }
 
 /**

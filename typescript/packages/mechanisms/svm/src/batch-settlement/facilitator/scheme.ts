@@ -75,12 +75,16 @@ import {
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
+  completeStates,
   depositResponse,
+  distributedSnapshot,
   envelopeFailure,
   parseOptionalSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
+  redemptionSnapshot,
   refundResponse,
+  resyncFailure,
   settleFailure,
   settlementPending,
   verifiedChannelExtra,
@@ -462,6 +466,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         const channels = await Promise.all(
           prepared.map(item => this.fetchChannel(requirements.network, item.channelId)),
         );
+        let applied = false;
         for (let index = 0; index < prepared.length; index += 1) {
           const item = prepared[index]!;
           const channel = channels[index]!;
@@ -469,9 +474,10 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           this.assertClaimChannel(channel, item.claim.channelConfig, item.terms, requirements, [
             ChannelStatus.Open,
           ]);
-          if (item.cumulative <= channel.settlement.settled || item.cumulative > channel.deposit) {
+          if (item.cumulative > channel.deposit) {
             throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
           }
+          applied ||= item.cumulative <= channel.settlement.settled;
           instructions.push(
             ...buildSettleInstructions({
               channelId: item.channelId,
@@ -482,6 +488,14 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
                 signatureBase58: item.claim.voucher.signature,
               },
             }),
+          );
+        }
+        if (applied) {
+          return resyncFailure(
+            requirements.network,
+            BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+            "claim already applied onchain",
+            prepared.map((item, index) => redemptionSnapshot(item.channelId, channels[index]!)),
           );
         }
         if (this.settlementCache.isDuplicate(claimKey)) {
@@ -597,17 +611,19 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (pending) {
       const recovered = await this.reconcileBroadcast(key, pending, requirements.network, "");
       if (!recovered.ok) return recovered.response;
-      return this.finishDistribution(key, recovered.signature, prepared, requirements);
+      return this.finishDistribution(key, recovered.signature, prepared, requirements, undefined);
     }
     const previous = await this.pendingStore.get(`${key}:result`);
     const previousSlot = await this.pendingStore.get(`${key}:slot`);
     if (previousSlot) this.rememberSlot(requirements.network, BigInt(previousSlot));
     const instructions: ServerInstruction[] = [];
     const swept: PreparedDistribution[] = [];
+    const channels: (Channel | undefined)[] = [];
     for (const item of prepared) {
       const channel = previous
         ? await this.readChannel(requirements.network, item.channelId)
         : await this.fetchChannel(requirements.network, item.channelId);
+      channels.push(channel);
       if (!channel && previous) continue; // The preceding payout may have closed it.
       if (!channel) throw new Error(BatchError.CHANNEL_STATE);
       this.assertClaimChannel(channel, item.channelConfig, item.terms, requirements, [
@@ -629,7 +645,12 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (instructions.length === 0) {
       if (previous) return JSON.parse(previous) as SettleResponse;
       // State alone cannot identify a previous payment or its amount.
-      return settleFailure(payment.accepted.network, BatchError.CUMULATIVE_AMOUNT_MISMATCH, "");
+      return resyncFailure(
+        requirements.network,
+        BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+        "nothing to distribute onchain",
+        prepared.map((item, index) => redemptionSnapshot(item.channelId, channels[index]!)),
+      );
     }
     // Different sweeps can share a recent blockhash. Give each new signed
     // transaction its own identity; recovery always reuses these exact bytes.
@@ -659,7 +680,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       }),
     });
     if (!submitted.ok) return submitted.response;
-    return this.finishDistribution(key, submitted.signature, prepared, requirements);
+    return this.finishDistribution(key, submitted.signature, prepared, requirements, channels);
   }
 
   private async finishDistribution(
@@ -667,6 +688,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     signature: string,
     prepared: PreparedDistribution[],
     requirements: PaymentRequirements,
+    channelsBefore: readonly (Channel | undefined)[] | undefined,
   ): Promise<SettleResponse> {
     try {
       // A cached result contains the actual transfer, including on its first
@@ -739,13 +761,27 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         const amount =
           balance(evidence.meta.postTokenBalances) - balance(evidence.meta.preTokenBalances);
         if (amount < 0n) throw new Error("negative recipient payout");
+        // A recovered sweep re-reads the chain; an unreadable channel omits the field.
+        const channels =
+          channelsBefore ??
+          (await Promise.all(
+            prepared.map(item => this.readChannel(requirements.network, item.channelId)),
+          ).catch(() => undefined));
+        const channelStates = completeStates(
+          prepared,
+          channels,
+          channelsBefore ? distributedSnapshot : redemptionSnapshot,
+        );
         response = {
           success: true,
           network: requirements.network,
           payer: "",
           transaction: signature,
           amount: amount.toString(),
-          extra: { channels: prepared.map(item => item.channelId) },
+          extra: {
+            channels: prepared.map(item => item.channelId),
+            ...(channelStates ? { channelStates } : {}),
+          },
         };
         await this.pendingStore.set(
           `batch:transaction:${requirements.network}:${signature}:result`,

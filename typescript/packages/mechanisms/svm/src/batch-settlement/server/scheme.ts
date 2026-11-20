@@ -540,7 +540,9 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       if (
         (raw.type === "voucher" || raw.type === "authorization") &&
         state !== undefined &&
-        (state.status === "closing" || state.closeRequestedAt !== undefined)
+        (state.status === "closing" ||
+          state.status === "sealed" ||
+          state.closeRequestedAt !== undefined)
       ) {
         throw new Error(BatchError.CHANNEL_CLOSING);
       }
