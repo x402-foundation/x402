@@ -1,6 +1,6 @@
 import { generateKeyPairSigner, getBase58Decoder } from "@solana/kit";
 import { x402ResourceServer } from "@x402/core/server";
-import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import type { Network, PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -766,6 +766,260 @@ describe("batch server voucher signer boundaries", () => {
       abort: true,
       reason: BatchError.OPERATION_CEILING_CHANGED,
     });
+  });
+
+  describe("failed charge cleanup", () => {
+    for (const scenario of [
+      { name: "successful charge control", fault: "none", sibling: false },
+      { name: "handler cancellation control", fault: "cancel", sibling: false },
+      {
+        name: "signer failure releases capacity and permits close verification",
+        fault: "signer",
+        sibling: false,
+      },
+      {
+        name: "signer failure preserves another request's reservation",
+        fault: "signer",
+        sibling: true,
+      },
+      { name: "over-ceiling charge releases its reservation", fault: "limit", sibling: false },
+      {
+        name: "channel cleanup failure preserves the abort and can be retried",
+        fault: "cleanup-update",
+        sibling: true,
+      },
+      {
+        name: "operation release failure preserves the abort and can be retried",
+        fault: "cleanup-release",
+        sibling: true,
+      },
+      {
+        name: "lost write acknowledgement preserves the committed charge and voucher",
+        fault: "ambiguous",
+        sibling: true,
+      },
+    ]) {
+      it(scenario.name, async () => {
+        const network = SOLANA_DEVNET_CAIP2 as Network;
+        const channelId = serverDeposit.authorization!.channelId;
+        const store = new MemoryChannelStore();
+        const operations = new MemoryBatchOperationStore();
+        let failSigning = false;
+        const signing = {
+          address: operator.address,
+          signMessages: (...args: Parameters<typeof operator.signMessages>) => {
+            if (failSigning) throw new Error("synthetic operator unavailable");
+            return operator.signMessages(...args);
+          },
+        };
+        const scheme = new BatchServerScheme({
+          operator: signing,
+          operationStore: operations,
+          receiverAuthorizer,
+          store,
+        });
+        const open = {
+          declaredExtensions: {},
+          paymentPayload: { accepted: requirements(), payload: serverDeposit, x402Version: 2 },
+          requirements: requirements(),
+        };
+        await scheme.schemeHooks.onBeforeVerify!(open);
+        await scheme.schemeHooks.onAfterVerify!({
+          ...open,
+          result: { isValid: true, payer: payer.address },
+        });
+        await scheme.schemeHooks.onAfterSettle!({
+          ...open,
+          phase: "after-handler",
+          result: {
+            success: true,
+            transaction: "synthetic-open",
+            network: SOLANA_DEVNET_CAIP2,
+            extra: {
+              channelState: { balance: "10000", totalClaimed: "0", withdrawRequestedAt: 0 },
+            },
+          },
+        });
+        const initial = (await store.get(channelId))!;
+        expect(initial.chargedCumulativeAmount).toBe(1000n);
+        const facade = {
+          getSupported: async () => ({
+            extensions: [],
+            signers: {},
+            kinds: [
+              {
+                x402Version: 2,
+                scheme: "batch-settlement",
+                network,
+                extra: { feePayer: feePayer.address },
+              },
+            ],
+          }),
+          verify: async () => ({
+            isValid: true,
+            payer: payer.address,
+            extra: { channelId, balance: "10000", totalClaimed: "0", withdrawRequestedAt: 0 },
+          }),
+          settle: vi.fn(async () => {
+            throw new Error("unexpected facilitator settlement");
+          }),
+        };
+        const resource = new x402ResourceServer(facade).register(SOLANA_DEVNET_CAIP2, scheme);
+        await resource.initialize();
+        const recovery = vi.fn(async () => ({
+          recovered: true as const,
+          result: {
+            success: true,
+            transaction: "unexpected-recovery",
+            network,
+          },
+        }));
+        const cancellations = vi.fn(async () => {});
+        resource.onSettleFailure(recovery).onVerifiedPaymentCanceled(cancellations);
+        const ceiling = { ...requirements(), amount: "4000" };
+        const payment: PaymentPayload = {
+          accepted: ceiling,
+          x402Version: 2,
+          payload: {
+            authorization: await authorizationFor("cleanup-paid", 4000n),
+            channelConfig: serverDeposit.channelConfig,
+            type: "authorization",
+          },
+        };
+        expect((await resource.verifyPayment(payment, ceiling)).isValid).toBe(true);
+        const targetId = Object.keys((await store.get(channelId))!.reservations!)[0];
+        expect(targetId).toBeDefined();
+        let sibling: PaymentPayload | undefined;
+        const siblingRequirements = { ...requirements(), amount: "1000" };
+        if (scenario.sibling) {
+          sibling = {
+            accepted: siblingRequirements,
+            x402Version: 2,
+            payload: {
+              authorization: await authorizationFor("cleanup-sibling", 1000n),
+              channelConfig: serverDeposit.channelConfig,
+              type: "authorization",
+            },
+          };
+          expect((await resource.verifyPayment(sibling, siblingRequirements)).isValid).toBe(true);
+        }
+        const siblingReservations = Object.fromEntries(
+          Object.entries((await store.get(channelId))!.reservations!).filter(
+            ([id]) => id !== targetId,
+          ),
+        );
+        const write = store.update.bind(store);
+        let committed: Awaited<ReturnType<typeof write>> | undefined;
+        let updates = 0;
+        const cleanupMessage = `${BatchError.CHANNEL_STATE}: synthetic cleanup unavailable`;
+        const update = vi.spyOn(store, "update").mockImplementation(async (...args) => {
+          updates++;
+          if (scenario.fault === "cleanup-update" && updates === 2) throw new Error(cleanupMessage);
+          const next = await write(...args);
+          if (scenario.fault === "ambiguous" && updates === 1) {
+            committed = structuredClone(next);
+            throw new Error("synthetic channel write acknowledgement lost");
+          }
+          return next;
+        });
+        if (scenario.fault === "cleanup-release")
+          vi.spyOn(operations, "release").mockRejectedValueOnce(new Error(cleanupMessage));
+        failSigning = ["signer", "cleanup-update", "cleanup-release"].includes(scenario.fault);
+        if (scenario.fault === "cancel") {
+          await resource
+            .createPaymentCancellationDispatcher(payment, ceiling)
+            .cancel({ reason: "handler_failed", responseStatus: 500 });
+        } else if (scenario.fault === "none") {
+          expect(
+            (await resource.settlePayment(payment, { ...ceiling, amount: "400" })).success,
+          ).toBe(true);
+        } else {
+          const message =
+            scenario.fault === "limit"
+              ? BatchError.CUMULATIVE_AMOUNT_MISMATCH
+              : scenario.fault === "ambiguous"
+                ? "synthetic channel write acknowledgement lost"
+                : "synthetic operator unavailable";
+          const settlement = resource.settlePayment(payment, {
+            ...ceiling,
+            amount: scenario.fault === "limit" ? "5000" : "400",
+          });
+          await expect(settlement).rejects.toMatchObject({
+            errorReason:
+              scenario.fault === "limit"
+                ? BatchError.CUMULATIVE_AMOUNT_MISMATCH
+                : "transaction_failed",
+            errorMessage: expect.stringContaining(message),
+          });
+          if (scenario.fault.startsWith("cleanup-")) {
+            await expect(settlement).rejects.toMatchObject({
+              errorMessage: `${message}; reservation cleanup failed: ${cleanupMessage}`,
+            });
+            const afterFailure = (await store.get(channelId))!;
+            expect(Boolean(afterFailure.reservations![targetId])).toBe(
+              scenario.fault === "cleanup-update",
+            );
+            const cancellation = {
+              declaredExtensions: {},
+              paymentPayload: payment,
+              requirements: ceiling,
+              phase: "cancel" as const,
+              reason: "handler_failed" as const,
+              settledPhases: [],
+            };
+            await scheme.schemeHooks.onVerifiedPaymentCanceled!(cancellation);
+            const calls = update.mock.calls.length;
+            await scheme.schemeHooks.onVerifiedPaymentCanceled!(cancellation);
+            expect(update).toHaveBeenCalledTimes(calls);
+          }
+        }
+        const state = (await store.get(channelId))!;
+        expect(state.reservations).toEqual(siblingReservations);
+        const charged = scenario.fault === "none" || scenario.fault === "ambiguous";
+        expect(state.chargedCumulativeAmount).toBe(charged ? 1400n : 1000n);
+        if (scenario.fault === "ambiguous") {
+          expect(committed).toBeDefined();
+          expect(state).toEqual(committed);
+        } else if (!charged) {
+          expect(state.signedMaxClaimable).toBe(initial.signedMaxClaimable);
+          expect(state.highestVoucherSignature).toBe(initial.highestVoucherSignature);
+        }
+        expect((await operations.get(channelId, "cleanup-paid"))!.status).toBe(
+          charged ? "completed" : "reserved",
+        );
+        expect(recovery).not.toHaveBeenCalled();
+        expect(facade.settle).not.toHaveBeenCalled();
+        expect(cancellations).toHaveBeenCalledTimes(scenario.fault === "cancel" ? 1 : 0);
+        expect(
+          await resource.verifyPayment({ ...payment, payload: { ...payment.payload } }, ceiling),
+        ).toMatchObject({ isValid: false, invalidReason: "duplicate_settlement" });
+        const close: PaymentPayload = {
+          accepted: requirements(),
+          x402Version: 2,
+          payload: await buildRefundPayload({
+            authorization: await authorizationFor("cleanup-close", 0n),
+            channelConfig: serverDeposit.channelConfig,
+            channelId,
+            feePayer: feePayer.address,
+            payer,
+          }),
+        };
+        if (sibling) {
+          const busyClose = {
+            ...close,
+            payload: {
+              ...close.payload,
+              authorization: await authorizationFor("cleanup-close-busy", 0n),
+            },
+          };
+          expect((await resource.verifyPayment(busyClose, requirements())).isValid).toBe(false);
+          await resource
+            .createPaymentCancellationDispatcher(sibling, siblingRequirements)
+            .cancel({ reason: "handler_failed" });
+        }
+        expect((await resource.verifyPayment(close, requirements())).isValid).toBe(true);
+      });
+    }
   });
 
   it("enriches server-mode refunds with the stored operator voucher", async () => {

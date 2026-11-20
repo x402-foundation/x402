@@ -853,10 +853,17 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       this.requestContexts.delete(ctx.paymentPayload);
       return { skip: true, result: acceptedResponse(committed, ctx.requirements) };
     } catch (error) {
-      return this.abort(
+      const result = this.abort(
         classifyError(error),
         error instanceof Error ? error.message : String(error),
       );
+      try {
+        await this.clearReservation(ctx.paymentPayload);
+      } catch (cleanupError) {
+        const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        result.message += `; reservation cleanup failed: ${message}`;
+      }
+      return result;
     }
   }
 
@@ -998,8 +1005,10 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    */
   private async clearReservation(payload: DeepReadonly<PaymentPayload>): Promise<void> {
     const request = this.requestContexts.get(payload);
-    this.requestContexts.delete(payload);
-    if (!request?.pendingId) return;
+    if (!request?.pendingId) {
+      this.requestContexts.delete(payload);
+      return;
+    }
     await this.store.update(request.channelId, current => {
       if (!current) throw new Error(BatchError.CHANNEL_STATE);
       if (!current.reservations?.[request.pendingId!]) return current;
@@ -1011,6 +1020,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     if (request.requestId) {
       await this.operationStore.release(request.channelId, request.requestId);
     }
+    this.requestContexts.delete(payload);
   }
 
   /**
