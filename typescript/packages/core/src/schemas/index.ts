@@ -166,6 +166,9 @@ export type PaymentRequirementsV2 = z.infer<typeof PaymentRequirementsV2Schema>;
 /**
  * PaymentRequired (402 response) schema for V2.
  * Contains payment requirements when a resource requires payment.
+ *
+ * `accepts` may be empty, as the v2 spec allows (for example on routes that need
+ * an extension's flow instead of a payment). Creating a payment from it still fails.
  */
 export const PaymentRequiredV2Schema = z.object({
   x402Version: z.literal(2),
@@ -174,7 +177,7 @@ export const PaymentRequiredV2Schema = z.object({
     .nullish()
     .transform(v => v ?? undefined),
   resource: ResourceInfoSchema,
-  accepts: z.array(PaymentRequirementsV2Schema).min(1).max(maxPaymentAccepts),
+  accepts: z.array(PaymentRequirementsV2Schema).max(maxPaymentAccepts),
   extensions: OptionalAny,
 });
 export type PaymentRequiredV2 = z.infer<typeof PaymentRequiredV2Schema>;
