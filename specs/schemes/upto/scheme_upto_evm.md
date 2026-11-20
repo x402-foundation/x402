@@ -4,13 +4,15 @@
 
 The `upto` scheme on EVM enables usage-based payments where the Client (user) authorizes a **maximum amount**, and the Facilitator (server) settles for the **actual amount used** at the end of the request. This is ideal for variable-cost resources like LLM token generation, bandwidth metering, or time-based access.
 
-This scheme uses the **Permit2** asset transfer method exclusively, leveraging the `permitWitnessTransferFrom` function to allow settling for any amount up to the signed maximum.
+This scheme supports native **EIP-3009** authorization for compatible tokens and **Permit2** as the generic ERC-20 path.
 
-| AssetTransferMethod | Use Case                                                        | Notes                                           |
-| :------------------ | :-------------------------------------------------------------- | :---------------------------------------------- |
-| **Permit2**         | All ERC-20 tokens. Client signs max, server settles actual.     | Uses existing `x402Permit2Proxy` contract.      |
+| AssetTransferMethod | Use Case                                                    | Notes                                                                                  |
+| :------------------ | :---------------------------------------------------------- | :------------------------------------------------------------------------------------- |
+| **EIP-3009**        | Tokens with native `receiveWithAuthorization`, such as USDC. | Pulls the signed maximum into `x402UptoERC3009Proxy`, pays actual, and refunds unused. |
+| **Permit2**         | All ERC-20 tokens.                                          | Uses `x402UptoPermit2Proxy` to transfer only the actual amount.                        |
 
-> **Note**: EIP-3009 (`transferWithAuthorization`) is **not supported** for the `upto` scheme because it requires exact amounts at signature time.
+For backward compatibility, an omitted `assetTransferMethod` means `permit2`. Servers offering the
+EIP-3009 path MUST publish `assetTransferMethod: "eip3009"` explicitly.
 
 ---
 
@@ -22,9 +24,212 @@ This scheme uses the **Permit2** asset transfer method exclusively, leveraging t
 
 ---
 
-## 1. AssetTransferMethod: `Permit2`
+## 1. AssetTransferMethod: `EIP-3009`
 
-This scheme uses the `permitWitnessTransferFrom` from the [canonical **Permit2** contract](#canonical-permit2) combined with the [`x402Permit2Proxy`](#reference-implementation-x402permit2proxy) to enforce receiver address security via the "Witness" pattern.
+The `eip3009` asset transfer method uses `receiveWithAuthorization`. The client authorizes the
+`x402UptoERC3009Proxy` to receive the maximum amount. At settlement, the proxy atomically:
+
+1. receives the full maximum;
+2. transfers the actual amount to `payTo`; and
+3. refunds the remainder to the client.
+
+`transferWithAuthorization` MUST NOT be used for this flow. A third party could submit it directly
+to the token and transfer funds to the proxy without executing the payment and refund.
+
+### Phase 1: `PAYMENT-SIGNATURE` Header Payload
+
+**Example PaymentRequired (402 Response):**
+
+```json
+{
+  "x402Version": 2,
+  "error": "PAYMENT-SIGNATURE header is required",
+  "resource": {
+    "url": "https://api.example.com/llm/generate",
+    "description": "LLM text generation endpoint",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "upto",
+      "network": "eip155:84532",
+      "amount": "5000000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "assetTransferMethod": "eip3009",
+        "name": "USDC",
+        "version": "2",
+        "settlerAddress": "0xSettlerAddress"
+      }
+    }
+  ]
+}
+```
+
+The payload contains:
+
+- `signature`: the client's `ReceiveWithAuthorization` signature. EOA signatures use the
+  65-byte `r || s || v` encoding; deployed contract-wallet signatures use the token-specific bytes
+  encoding. ERC-6492 envelopes, undeployed counterfactual wallets, and 64-byte EIP-2098 EOA
+  signatures are not supported;
+- `authorization`: the standard EIP-3009 authorization;
+- `paymentInfo`: the recipient, selected settler, and random salt committed through the nonce.
+
+```json
+{
+  "payload": {
+    "signature": "0x...",
+    "authorization": {
+      "from": "0x857b06519E91e3A54538791bDbb0E22373e36b66",
+      "to": "<x402UptoERC3009Proxy>",
+      "value": "5000000",
+      "validAfter": "1740672089",
+      "validBefore": "1740672154",
+      "nonce": "0x..."
+    },
+    "paymentInfo": {
+      "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
+      "settler": "0xSettlerAddress",
+      "salt": "0x..."
+    }
+  }
+}
+```
+
+The authorization fields have the standard EIP-3009 meaning, with these additional requirements:
+
+- `authorization.to` MUST equal the canonical `x402UptoERC3009Proxy`.
+- `authorization.value` MUST equal the maximum `PaymentRequirements.amount`.
+- `paymentInfo.payTo` MUST equal `PaymentRequirements.payTo`.
+- `paymentInfo.settler` MUST equal `extra.settlerAddress`.
+- `paymentInfo.salt` MUST be a fresh random 32-byte value.
+- `authorization.validBefore - authorization.validAfter` MUST NOT exceed
+  `PaymentRequirements.maxTimeoutSeconds`. Clients and facilitators MAY account for bounded clock
+  skew when choosing and validating these timestamps, but MUST NOT extend the signed validity
+  window.
+- `authorization.nonce` MUST equal:
+
+```text
+NONCE_TYPEHASH = keccak256(
+  "x402UptoERC3009Nonce(uint256 chainId,address token,address payTo,address settler,bytes32 salt)"
+)
+
+authorization.nonce = keccak256(
+  abi.encode(
+    NONCE_TYPEHASH,
+    chainId,
+    PaymentRequirements.asset,
+    paymentInfo.payTo,
+    paymentInfo.settler,
+    paymentInfo.salt
+  )
+)
+```
+
+The nonce is a hash commitment. EIP-3009 has no witness or arbitrary-data field, so the client sends
+the commitment preimage in `paymentInfo` and the proxy recomputes it onchain. The commitment binds
+the chain, token, recipient, and settler. `authorization.to` separately binds the proxy. This does
+not rely on optional EIP-712 domain fields to prevent cross-token or cross-chain use.
+
+`extra.settlerAddress` selects one address for each payment. A server settling directly uses an
+address it controls. A server delegating settlement uses an address advertised by its facilitator.
+The selected address MUST remain available until `authorization.validBefore`.
+
+### Phase 2: Verification Logic
+
+The verifier MUST:
+
+1. validate the payload shape. Reject an ERC-6492 envelope or an undeployed payer. When the payer
+   has no code, require a 65-byte `r || s || v` signature and reject a 64-byte EIP-2098 signature.
+   A deployed contract wallet MAY use arbitrary signature bytes accepted by its ERC-1271
+   implementation;
+2. validate the EIP-712 `ReceiveWithAuthorization` signature;
+3. verify the network and EIP-712 token domain from `extra.name` and `extra.version`;
+4. verify `authorization.to`, `authorization.value`, `paymentInfo.payTo`, and
+   `paymentInfo.settler` against the requirements;
+5. recompute the nonce commitment from the network chain ID, requirements asset, and `paymentInfo`;
+6. verify `authorization.validAfter < now < authorization.validBefore`, that the validity window
+   does not exceed `maxTimeoutSeconds`, and that the authorization is unused. Both ERC-3009 bounds
+   are exclusive;
+7. verify the client balance covers the full signed maximum; and
+8. simulate `x402UptoERC3009Proxy.settle` from the selected settler with `amount` equal to
+   `authorization.value`.
+
+Step 8 checks that the signed maximum can be pulled and paid in full. It does not execute the refund
+transfer, because a full settlement leaves a zero refund. The client must still hold the entire
+maximum, since every settlement pulls `authorization.value` before paying and refunding. When the
+expected charge is already known and is below that maximum, the verifier SHOULD also simulate
+`settle` with that charge so the refund transfer is included. Simulating only the full maximum is
+not sufficient for a later partial settlement. Phase 3 requires that simulation before broadcast.
+
+### Phase 3: Settlement Logic
+
+At settlement, `PaymentRequirements.amount` carries the actual amount selected by the resource
+server. If that amount is zero, no transaction is submitted and the authorization remains unconsumed.
+The authorization remains usable by the bound settler until `authorization.validBefore`, unless the
+token supports and the payer calls `cancelAuthorization`. The onchain contract rejects zero-amount
+settlement.
+
+When the amount is non-zero, the settler MUST:
+
+1. re-verify the signature against `authorization.value`, not the settle-time amount;
+2. require `0 < PaymentRequirements.amount <= authorization.value`;
+3. simulate `x402UptoERC3009Proxy.settle` with `PaymentRequirements.amount` before broadcast. A
+   verify-time simulation of the full maximum never refunds, so it cannot show that the unused
+   amount can be transferred back to `authorization.from`. This simulation is required whenever the
+   transaction will be broadcast, including when the charge equals the signed maximum; and
+4. call:
+
+```solidity
+x402UptoERC3009Proxy.settle(
+    requirements.asset,
+    requirements.amount,
+    authorization,
+    paymentInfo,
+    signature
+);
+```
+
+The transaction MUST be sent by `paymentInfo.settler`. The proxy receives the full
+`authorization.value`, transfers `requirements.amount` to `paymentInfo.payTo`, and refunds
+`authorization.value - requirements.amount` to `authorization.from`. Each of those three token
+movements must deliver the exact amount. Any failure reverts the entire transaction, including
+token receipt and nonce consumption. A successful settlement emits `Settled` with the token, payer,
+recipient, nonce, actual amount, and refund.
+
+### Token Compatibility
+
+The proxy supports both common `receiveWithAuthorization` interfaces. It first calls the
+`bytes signature` overload used by modern tokens with contract-wallet support. When a 65-byte
+signature's bytes-overload call reverts or returns without increasing the proxy's balance, the proxy
+interprets the signature as `r || s || v`, normalizes `v` from `0/1` to `27/28` when necessary, and
+retries the normative ERC-3009 `v, r, s` overload. This fallback supports standards-only and older
+token implementations, including those with permissive fallbacks, without changing the payment
+payload. Contract-wallet signatures require a token that implements the bytes overload and validates
+the wallet through ERC-1271 or an equivalent mechanism.
+
+The proxy does not execute ERC-6492 preparation calls, so the payer wallet must already be deployed.
+The VRS fallback accepts only 65-byte `r || s || v`; it does not decode the 64-byte EIP-2098 compact
+representation. Verifiers must reject these unsupported formats before a server delivers work.
+
+The proxy reverts unless the pull, the merchant payment, and any refund each change the corresponding
+balance by the exact amount. Tokens that charge transfer fees, rebase during settlement, or otherwise
+fail to transfer exact requested amounts are unsupported. After a successful settlement, the proxy
+balance MUST equal its balance before receiving the authorization, so a settlement cannot spend a
+balance that was already on the proxy.
+
+A supported token MUST enforce that a `receiveWithAuthorization` caller equals the authorization's
+`to` address. Before supporting an asset, a facilitator MUST simulate a valid authorization from a
+caller other than `authorization.to` and confirm that it reverts. The proxy cannot determine this
+property generically from the token interface.
+
+---
+
+## 2. AssetTransferMethod: `Permit2`
+
+This method uses `permitWitnessTransferFrom` from the [canonical **Permit2** contract](#canonical-permit2) combined with [`x402UptoPermit2Proxy`](#reference-implementation-x402uptopermit2proxy) to enforce receiver address security via the witness pattern.
 
 The `permit.permitted.amount` represents the **maximum** authorized amount, while the actual settlement amount is determined by the server at settlement time.
 
@@ -50,7 +255,7 @@ The Facilitator pays the gas for the approval transaction on the user's behalf.
 If the token supports EIP-2612, the user signs a permit authorizing Permit2.
 
 - _Prerequisite:_ Token supports EIP-2612.
-- _Flow:_ Facilitator calls `x402Permit2Proxy.settleWithPermit()`
+- _Flow:_ Facilitator calls `x402UptoPermit2Proxy.settleWithPermit()`
 
 ### Phase 2: `PAYMENT-SIGNATURE` Header Payload
 
@@ -61,7 +266,7 @@ The `payload` field must contain:
 
 **Important Logic:** The `permit2Authorization.permitted.amount` represents the **maximum** amount the client is willing to pay. The actual amount charged will be determined at settlement and will be less than or equal to this maximum.
 
-> **Requirement**: The `x402Permit2Proxy` contract will be deployed to the same address across all supported EVM chains using `CREATE2` to ensure consistent behavior and simpler integration.
+> **Requirement**: The `x402UptoPermit2Proxy` contract is deployed to the same address across all supported EVM chains using `CREATE2`.
 
 **Facilitator Address Discovery:** The facilitator announces its address via the `/supported` endpoint in the `extra` field of each supported scheme. The client MUST include this `facilitatorAddress` in the `permit2Authorization.witness.facilitator` field when constructing the payment signature. This binds the authorization to a specific facilitator, preventing unauthorized settlement by other parties.
 
@@ -85,6 +290,7 @@ The `payload` field must contain:
       "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
       "maxTimeoutSeconds": 300,
       "extra": {
+        "assetTransferMethod": "permit2",
         "name": "USDC",
         "version": "2",
         "facilitatorAddress": "0xFacilitatorAddress1234567890123456789012"
@@ -112,6 +318,7 @@ The `payload` field must contain:
     "payTo": "0x209693Bc6afc0C5328bA36FaF03C514EF312287C",
     "maxTimeoutSeconds": 300,
     "extra": {
+      "assetTransferMethod": "permit2",
       "name": "USDC",
       "version": "2"
     }
@@ -158,19 +365,20 @@ The verifier must execute these checks in order:
 
     > **Note**: This check applies at **verification** time, where `requirements.amount` represents the authorized maximum. At **settlement** time, `requirements.amount` carries the actual settlement amount, which may be less than `permitted.amount`. See [Phase 4 — Settle-Time Verification](#settle-time-verification) for the required handling.
 
-5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
+5.  **Verify** `witness.validAfter <= now <= deadline`. The Permit2 lower bound and signature
+    deadline are both inclusive.
 
 6.  **Verify** the Token and Network match the requirement.
 
 7.  **Simulation:**
 
-    - _Standard:_ Simulate `x402Permit2Proxy.settle` with the full `amount` (worst case).
+    - _Standard:_ Simulate `x402UptoPermit2Proxy.settle` with the full `amount` (worst case).
     - _With "Sponsored ERC20 Approval" (Extension):_ Simulate batch `transfer` -> `approve` -> `settle`.
-    - _With "EIP2612 Permit" (Extension):_ Simulate `x402Permit2Proxy.settleWithPermit`.
+    - _With "EIP2612 Permit" (Extension):_ Simulate `x402UptoPermit2Proxy.settleWithPermit`.
 
 ### Phase 4: Settlement Logic
 
-Settlement is performed by calling the `x402Permit2Proxy` with the **actual amount** to charge.
+Settlement is performed by calling `x402UptoPermit2Proxy` with the **actual amount** to charge.
 
 The server determines the actual amount based on resource consumption during the request (tokens generated, bytes transferred, time elapsed, etc.).
 
@@ -182,7 +390,7 @@ The server determines the actual amount based on resource consumption during the
 
 #### Settle-Time Verification
 
-Before executing an on-chain settlement, the facilitator MUST re-verify the client's signature. Because the `upto` scheme uses phase-dependent `amount` semantics (see [§2 PaymentRequirements Schema](#2-paymentrequirements-schema)), the `/settle` request will carry `paymentRequirements.amount` set to the **actual settlement amount** (as communicated by the resource server via `setSettlementOverrides`), which may be less than `paymentPayload.payload.permit2Authorization.permitted.amount` (the **authorized maximum** the client signed).
+Before executing an on-chain settlement, the facilitator MUST re-verify the client's signature. Because the `upto` scheme uses phase-dependent `amount` semantics (see [§3 PaymentRequirements Schema](#3-paymentrequirements-schema)), the `/settle` request will carry `paymentRequirements.amount` set to the **actual settlement amount** (as communicated by the resource server via `setSettlementOverrides`), which may be less than `paymentPayload.payload.permit2Authorization.permitted.amount` (the **authorized maximum** the client signed).
 
 The facilitator MUST handle this case as follows:
 
@@ -225,16 +433,17 @@ In this example, the buyer signed for up to `20000` atomic units. The resource s
 **Settlement Process:**
 
 1.  **Standard Settlement:**
-    Call `x402Permit2Proxy.settle(permit, actualAmount, owner, witness, signature)` where `actualAmount <= permit.permitted.amount`.
+    Call `x402UptoPermit2Proxy.settle(permit, actualAmount, owner, witness, signature)` where `actualAmount <= permit.permitted.amount`.
 
 2.  **With Sponsored ERC20 Approval (Extension):**
-    If `erc20ApprovalGasSponsoring` is used, the facilitator must construct a batched transaction that executes the sponsored `ERC20.approve` call strictly before the `x402Permit2Proxy.settle` call.
+    If `erc20ApprovalGasSponsoring` is used, the facilitator must construct a batched transaction that executes the sponsored `ERC20.approve` call strictly before the `x402UptoPermit2Proxy.settle` call.
 
 3.  **With EIP-2612 Permit (Extension):**
-    If `eip2612GasSponsoring` is used, call `x402Permit2Proxy.settleWithPermit`.
+    If `eip2612GasSponsoring` is used, call `x402UptoPermit2Proxy.settleWithPermit`.
 
 4.  **Zero Settlement:**
-    If the settled `amount = 0`, no on-chain transaction is required. The authorization simply expires unused.
+    If the settled `amount = 0`, no onchain transaction is required. The authorization remains
+    unconsumed until its deadline.
 
 If the settlement transaction broadcasts successfully but its confirmation cannot be established (e.g. a node/RPC error or timeout while waiting for the receipt), the facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling)) with the broadcast transaction hash in `transaction`, so the caller can reconcile on chain before retrying.
 
@@ -252,7 +461,7 @@ If the settlement transaction broadcasts successfully but its confirmation canno
 
 ---
 
-## 2. PaymentRequirements Schema
+## 3. PaymentRequirements Schema
 
 The `upto` scheme uses the following `PaymentRequirements` schema:
 
@@ -264,7 +473,12 @@ The `upto` scheme uses the following `PaymentRequirements` schema:
 | `asset`             | `string` | Required | Token contract address                                                        |
 | `payTo`             | `string` | Required | Recipient wallet address                                                      |
 | `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion                                   |
-| `extra`             | `object` | Optional | Scheme-specific additional information (must include `name`, `version`, and `facilitatorAddress`) |
+| `extra`             | `object` | Required | Method-specific fields, including `assetTransferMethod` and settlement authority |
+
+For `eip3009`, `extra` MUST contain `assetTransferMethod: "eip3009"`, token-domain `name` and
+`version`, and `settlerAddress`. For `permit2`, `extra` MUST contain
+`assetTransferMethod: "permit2"` and `facilitatorAddress`; `name` and `version` are required when
+the EIP-2612 gas-sponsoring extension is used.
 
 > **Note**: In the `upto` scheme, the `amount` field of `PaymentRequirements` is phase-dependent for server-to-facilitator communication:
 >
@@ -275,7 +489,7 @@ The `upto` scheme uses the following `PaymentRequirements` schema:
 
 ---
 
-## 3. SettlementResponse Schema Extension
+## 4. SettlementResponse Schema Extension
 
 The `upto` scheme extends the base [`SettlementResponse`](../../x402-specification-v2.md#53-settlementresponse-schema) with the actual settled amount:
 
@@ -290,15 +504,19 @@ The `upto` scheme extends the base [`SettlementResponse`](../../x402-specificati
 
 ---
 
-## 4. Error Codes
+## 5. Error Codes
 
 The `upto` scheme uses the standard x402 error codes defined in the [x402 specification](../../x402-specification-v2.md#9-error-handling).
 
 ### Scheme-Specific Error Code
 
-The `upto` scheme defines one additional error code:
+The `upto` scheme defines these additional error codes:
 
 - **`invalid_upto_evm_payload_settlement_exceeds_amount`**: Attempted to settle for more than the authorized `amount`
+- **`invalid_upto_evm_eip3009_nonce_mismatch`**: EIP-3009 nonce does not commit to the supplied payment information
+- **`invalid_upto_evm_eip3009_settler_mismatch`**: Bound settler does not match the requirements or facilitator submitter
+- **`invalid_upto_evm_eip3009_erc6492_unsupported`**: EIP-3009 signature is an unsupported ERC-6492 envelope
+- **`invalid_upto_evm_eip3009_compact_signature_unsupported`**: EIP-3009 EOA signature uses the unsupported 64-byte EIP-2098 representation
 
 ---
 
@@ -308,7 +526,13 @@ The `upto` scheme defines one additional error code:
 
 The Canonical Permit2 contract address can be found at [https://docs.uniswap.org/contracts/v4/deployments](https://docs.uniswap.org/contracts/v4/deployments).
 
-### Reference Implementation: `x402Permit2Proxy`
+### Reference Implementation: `x402UptoERC3009Proxy`
+
+The EIP-3009 path uses `x402UptoERC3009Proxy` at
+`0x40203Fa50150e6ec970DE91F3330e82cDF640006`. The pre-audit contract is
+deterministically deployable at this address with CREATE2 on supported EVM chains.
+
+### Reference Implementation: `x402UptoPermit2Proxy`
 
 The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002`), which is structurally similar to the `x402ExactPermit2Proxy` used by the [exact scheme](../exact/scheme_exact_evm.md#reference-implementation-x402permit2proxy) but includes a `facilitator` field in the witness struct for access control. The contract's `settle` function accepts an `amount` parameter that can be less than or equal to `permit.permitted.amount`, which enables the variable settlement amounts required by the `upto` scheme.
 
@@ -320,9 +544,56 @@ The `upto` scheme uses its own `x402UptoPermit2Proxy` contract (deployed at `0x4
 
 2. **Server Trust**: The `upto` scheme requires clients to trust that servers will charge fair amounts based on actual usage. Malicious servers could charge up to `amount` regardless of actual usage.
 
-3. **Signature Reuse Prevention**: The Permit2 nonce mechanism prevents signature reuse. Each authorization can only be settled once.
+3. **Signature Reuse Prevention**: Permit2 and EIP-3009 consume their signed nonces. Each authorization can only be settled once.
 
-4. **Time Constraints**: Authorizations have explicit valid time windows (`deadline`, `validAfter`) to limit their lifetime and reduce exposure.
+4. **Time Constraints**: Authorizations have explicit validity bounds to limit their lifetime and reduce exposure.
 
-5. **Zero Settlement**: Allowing $0 settlements means unused authorizations naturally expire without on-chain transactions, reducing gas costs and blockchain bloat.
+5. **Zero Settlement**: A zero-charge EIP-3009 outcome sends no transaction and leaves the
+   authorization usable until `validBefore`, unless the payer cancels it through a token-supported
+   `cancelAuthorization` path. Clients and facilitators must bound that validity window using
+   `maxTimeoutSeconds`.
+
+6. **EIP-3009 Full-Balance Requirement**: EIP-3009 settlement temporarily pulls the maximum and
+   refunds the unused amount. The client must retain the full maximum until settlement, and both
+   outgoing transfers must succeed atomically. Concurrent outstanding authorizations therefore
+   require enough available balance to cover their aggregate maxima even when the expected charges
+   are much smaller. Servers should use the shortest `maxTimeoutSeconds` that accommodates request
+   execution, confirmation, and bounded retries, and should settle promptly after each request
+   instead of delaying for long batching windows. Clients that need to reuse the unused maximum
+   immediately should prefer the Permit2 path, which transfers only the actual charge.
+
+7. **Bound Settlement Authority**: The EIP-3009 path is not an arbitrary-relayer design. Only the
+   address committed as `paymentInfo.settler` may select the actual charge. That address has the
+   same ability as the Permit2 facilitator to charge any amount up to the signed maximum.
+
+8. **Signing-Surface Disclosure**: The standard EIP-3009 typed-data message displays the proxy
+   address and opaque nonce, not `paymentInfo.payTo` or `paymentInfo.settler`. A client or wallet
+   that receives `paymentInfo` MUST recompute the nonce before displaying or relying on those values.
+
+9. **Token Caller Check**: A token that does not require the
+   `receiveWithAuthorization` caller to equal `authorization.to` can have an authorization consumed
+   outside the proxy, leaving tokens locked there. Facilitators must enforce the compatibility check
+   above before supporting an asset.
+
+10. **Delivery-Before-Settlement Risk**: Verification does not reserve the payer's balance or
+    authorization. Before settlement, a payer can move funds, cancel the authorization, or consume
+    its nonce, causing settlement to revert after the server delivered work. Servers should bound
+    unpaid exposure, recheck the full-maximum balance and authorization state immediately before
+    expensive work, and settle promptly. These checks narrow but do not eliminate the race.
+
+11. **Signature Format Limits**: ERC-6492 envelopes, undeployed counterfactual wallets, and 64-byte
+    EIP-2098 EOA signatures are unsupported. Verifiers must reject them before serving work.
+    Deployed ERC-1271 wallets may use arbitrary signature bytes accepted by the token.
+
+12. **Settlement Observability**: The proxy's `Settled` event records the token, payer, recipient,
+    nonce, actual charge, and refund. Monitoring should reconcile these values with the metered amount
+    and signed maximum to detect incorrect settlement behavior.
+
+13. **Issuer-Controlled Availability**: A token issuer that can blacklist addresses, pause transfers,
+    or apply similar administrative restrictions can prevent the canonical proxy from receiving,
+    paying, or refunding that token. Facilitators should monitor supported assets for restrictions on
+    the proxy when the token exposes such state, retain the mandatory verification and settle-time
+    simulations as the generic compatibility check, and stop accepting new authorizations while
+    settlement is disabled. A failed settlement reverts atomically, but a replacement proxy cannot
+    rescue an existing authorization because `authorization.to` commits to the original address.
 
