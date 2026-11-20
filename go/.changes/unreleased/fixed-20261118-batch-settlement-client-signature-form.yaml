@@ -1,3 +1,0 @@
-kind: fixed
-body: 'Batch-settlement client recovery and refund-authorizer verification reject ECDSA signatures that x402BatchSettlement cannot recover: anything other than 65 bytes with a low s and v of 27 or 28. A corrective 402 no longer stores a high-s or v = 0/1 voucher, and verifyRefundAuthorizerSignature no longer accepts those forms.'
-time: 2026-11-18T20:00:00Z

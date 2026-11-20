@@ -1,3 +1,0 @@
-kind: fixed
-body: 'Batch-settlement voucher verification (VerifyBatchedVoucherTypedData and the EOA clearance in VerifyEoaVoucherSignature) rejects ECDSA signatures that x402BatchSettlement cannot recover: anything other than 65 bytes with a low s and v of 27 or 28. Previously a high-s or v = 0/1 voucher signature verified off-chain, and the later claim reverted.'
-time: 2026-11-09T12:00:00Z
