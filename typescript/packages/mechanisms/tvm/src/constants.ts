@@ -38,6 +38,10 @@ export const DEFAULT_TVM_EMULATION_WALLET_ID = 2147483409;
 export const DEFAULT_TVM_EMULATION_SEQNO = 1;
 export const DEFAULT_TVM_EMULATION_RELAY_AMOUNT = 130_000_000n;
 
+/** Reserved asset identifier for payments in the network's native coin (TON). */
+export const NATIVE_ASSET = "native";
+export const NATIVE_DECIMALS = 9;
+
 /** USDT Jetton Master on TON mainnet. */
 export const USDT_MAINNET_MINTER =
   "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe";
@@ -91,6 +95,7 @@ export const ERR_EXACT_TVM_INVALID_W5_MESSAGE =
   "invalid_exact_tvm_payload_w5_internal_signed_request";
 export const ERR_EXACT_TVM_INVALID_W5_ACTIONS = "invalid_exact_tvm_payload_w5_actions";
 export const ERR_EXACT_TVM_INVALID_JETTON_TRANSFER = "invalid_exact_tvm_payload_jetton_transfer";
+export const ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER = "invalid_exact_tvm_payload_native_transfer";
 export const ERR_EXACT_TVM_INVALID_SIGNATURE = "invalid_exact_tvm_payload_invalid_signature";
 export const ERR_EXACT_TVM_INVALID_CODE_HASH = "invalid_exact_tvm_payload_invalid_code_hash";
 export const ERR_EXACT_TVM_INVALID_ASSET = "invalid_exact_tvm_payload_asset_mismatch";

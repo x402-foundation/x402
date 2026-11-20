@@ -26,6 +26,7 @@ export type {
 export type {
   ExactTvmPayload,
   ParsedJettonTransfer,
+  ParsedNativeTransfer,
   ParsedTvmSettlement,
   TvmAccountState,
   TvmJettonWalletData,
@@ -42,6 +43,8 @@ export type { TvmProviderClient, TvmProviderName } from "./provider";
 export {
   TVM_MAINNET,
   TVM_TESTNET,
+  NATIVE_ASSET,
+  NATIVE_DECIMALS,
   USDT_MASTER,
   USDT_MAINNET_MINTER,
   USDT_TESTNET_MINTER,
@@ -58,6 +61,7 @@ export {
 
 // Utils
 export { normalizeTonAddress, priceToNano } from "./utils";
+export { isNativeAsset, normalizeAsset } from "./codecs/common";
 
 export {
   DEFAULT_ASSETS,

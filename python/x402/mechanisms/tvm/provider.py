@@ -650,6 +650,7 @@ def _tonapi_transaction_to_toncenter(transaction: dict[str, Any]) -> dict[str, o
             "compute_ph": _tonapi_compute_phase(transaction.get("compute_phase")),
             "action": _tonapi_action_phase(transaction.get("action_phase")),
             "storage_ph": _tonapi_storage_phase(transaction.get("storage_phase")),
+            "bounce": transaction.get("bounce_phase"),
         },
         "in_msg": _tonapi_message_to_toncenter(transaction.get("in_msg")),
         "out_msgs": [

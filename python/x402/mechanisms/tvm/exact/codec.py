@@ -6,6 +6,7 @@ import base64
 
 from ..codecs.common import normalize_address
 from ..codecs.jetton import parse_jetton_transfer
+from ..codecs.native import parse_native_transfer
 from ..codecs.w5 import parse_out_list
 from ..constants import (
     ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC,
@@ -15,7 +16,7 @@ from ..constants import (
     SEND_MODE_PAY_FEES_SEPARATELY,
     W5_INTERNAL_SIGNED_OPCODE,
 )
-from ..types import ParsedTvmSettlement
+from ..types import ParsedJettonTransfer, ParsedNativeTransfer, ParsedTvmSettlement
 
 try:
     from pytoniq_core import Cell
@@ -27,7 +28,16 @@ except ImportError as e:
 
 
 def parse_exact_tvm_payload(settlement_boc: str) -> ParsedTvmSettlement:
-    """Parse an exact TVM settlement payload into structured fields."""
+    """Parse an exact TVM settlement payload carrying a TEP-74 Jetton ``transfer``."""
+    return _parse_settlement(settlement_boc, native=False)
+
+
+def parse_exact_tvm_native_payload(settlement_boc: str) -> ParsedTvmSettlement:
+    """Parse an exact TVM settlement payload carrying a native TON transfer to ``payTo``."""
+    return _parse_settlement(settlement_boc, native=True)
+
+
+def _parse_settlement(settlement_boc: str, *, native: bool) -> ParsedTvmSettlement:
     try:
         root = Cell.one_from_boc(base64.b64decode(settlement_boc))
         message = MessageAny.deserialize(root.begin_parse())
@@ -60,11 +70,10 @@ def parse_exact_tvm_payload(settlement_boc: str) -> ParsedTvmSettlement:
         raise ValueError(ERR_EXACT_TVM_INVALID_W5_ACTIONS)
 
     action = actions[0]
-    if (
-        not action.out_msg.is_internal
-        or action.out_msg.info.dest is None
-        or not action.out_msg.info.bounce
-    ):
+    if not action.out_msg.is_internal or action.out_msg.info.dest is None:
+        raise ValueError(ERR_EXACT_TVM_INVALID_W5_ACTIONS)
+    # Jetton transfers must bounce so that a failed transfer returns the attached TON.
+    if not native and not action.out_msg.info.bounce:
         raise ValueError(ERR_EXACT_TVM_INVALID_W5_ACTIONS)
 
     allowed_send_modes = {
@@ -74,11 +83,15 @@ def parse_exact_tvm_payload(settlement_boc: str) -> ParsedTvmSettlement:
     if action.mode not in allowed_send_modes:
         raise ValueError(ERR_EXACT_TVM_INVALID_W5_ACTIONS)
 
-    transfer = parse_jetton_transfer(
-        jetton_wallet=normalize_address(action.out_msg.info.dest),
-        body=action.out_msg.body,
-    )
-    transfer.attached_ton_amount = action.out_msg.info.value_coins
+    transfer: ParsedJettonTransfer | ParsedNativeTransfer
+    if native:
+        transfer = parse_native_transfer(action.out_msg)
+    else:
+        transfer = parse_jetton_transfer(
+            jetton_wallet=normalize_address(action.out_msg.info.dest),
+            body=action.out_msg.body,
+        )
+        transfer.attached_ton_amount = action.out_msg.info.value_coins
 
     signature = body_slice.load_bytes(64)
     if body_slice.remaining_bits or body_slice.remaining_refs:

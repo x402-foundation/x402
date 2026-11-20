@@ -8,14 +8,21 @@ from ....schemas import AssetAmount, Network, PaymentRequirements, Price, Suppor
 from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..codecs.common import (
     encode_base64_boc,
+    is_native_asset,
     make_zero_bit_cell,
     normalize_address,
+    normalize_asset,
     parse_amount,
 )
 from ..constants import (
+    NATIVE_ASSET,
+    NATIVE_DECIMALS,
     SCHEME_EXACT,
 )
 from ..default_assets import find_default_asset, get_default_asset
+
+# Ticker that selects native TON in money strings such as "0.01 TON".
+NATIVE_SYMBOL = "TON"
 
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
@@ -44,7 +51,7 @@ class ExactTvmScheme:
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
             return AssetAmount(
                 amount=price["amount"],
-                asset=normalize_address(price["asset"]),
+                asset=normalize_asset(price["asset"]),
                 extra=price.get("extra", {}),
             )
 
@@ -53,7 +60,7 @@ class ExactTvmScheme:
                 raise ValueError(f"Asset address required for AssetAmount on {network}")
             return AssetAmount(
                 amount=price.amount,
-                asset=normalize_address(price.asset),
+                asset=normalize_asset(price.asset),
                 extra=price.extra,
             )
 
@@ -78,7 +85,7 @@ class ExactTvmScheme:
 
         if not requirements.asset:
             requirements.asset = get_default_asset(str(requirements.network))["asset"]
-        requirements.asset = normalize_address(requirements.asset)
+        requirements.asset = normalize_asset(requirements.asset)
         requirements.pay_to = normalize_address(requirements.pay_to)
 
         if "." in requirements.amount:
@@ -109,6 +116,12 @@ class ExactTvmScheme:
     def _default_money_conversion(
         self, amount: str, network: str, symbol: str | None = None
     ) -> AssetAmount:
+        if symbol == NATIVE_SYMBOL:
+            return AssetAmount(
+                amount=convert_to_token_amount(amount, NATIVE_DECIMALS),
+                asset=NATIVE_ASSET,
+                extra={"areFeesSponsored": True},
+            )
         asset = get_default_asset(network, symbol)
         return AssetAmount(
             amount=convert_to_token_amount(amount, asset["decimals"]),
@@ -121,6 +134,8 @@ class ExactTvmScheme:
         )
 
     def get_asset_decimals(self, asset: str, network: Network) -> int:
+        if is_native_asset(asset):
+            return NATIVE_DECIMALS
         found = find_default_asset(asset, str(network))
         if found is None:
             raise ValueError(
