@@ -1,25 +1,23 @@
 # Payment Identifier Client Example
 
-This example demonstrates how to use the `payment-identifier` extension on the client side for idempotent payment requests.
+This example attaches a payment identifier to one logical purchase. The x402 HTTP client creates a fresh payment credential for that request. This client does not cache or replay `PAYMENT-SIGNATURE`, and it does not establish exactly-once effects.
 
-## What is the Payment Identifier Extension?
+## What this client does
 
-The payment-identifier extension allows clients to include a unique idempotency key with their payment. This enables:
+- Generates a new payment identifier for each payload when the server declares `payment-identifier`
+- Registers that behavior with `RegisterExtension` and `EnrichPaymentPayload`
+- Issues one purchase. The SDK sends its unpaid probe and one payment retry with a fresh credential
+- Leaves method, URL, query, body, and caller headers to that SDK payment retry
 
-- **Safe retries** - Retry failed requests without duplicate charges
-- **Exactly-once semantics** - Ensure operations are processed only once
-- **Payment tracking** - Track the same payment across multiple attempts
+`PaymentCreationContext` contains `Ctx`, `Version`, and `SelectedRequirements`. It has no `Extensions` field. `OnBeforePaymentCreation` cannot inject the identifier.
 
-## How It Works
+The scheme method is `CreatePaymentPayload(ctx, requirements, payloadCtx)`. `payloadCtx` is a `PaymentPayloadContext`: the server extension map and the resolved spend cap. This example disables spend controls, so the cap is empty. `EnrichPaymentPayload` appends the identifier after the scheme returns.
 
-1. **Generate a payment ID** using `GeneratePaymentID()`
-2. **Register a hook** to add the ID to extensions before payment creation
-3. **Make requests** - the ID is automatically included
-4. **Retry safely** - same ID means no duplicate processing
+A second purchase is a different request. Give it a new identifier and let the SDK create a new credential. Reusing one identifier with a new credential conflicts with credential-bound server state. TypeScript and Python examples can replay one captured header for one immutable URL and one selected set of accepted terms. This Go example does not.
 
 ## Prerequisites
 
-- Go 1.21 or higher
+- Go 1.24 (the module declares `go 1.24.0` and toolchain `go1.24.1`)
 - EVM private key (testnet recommended)
 - Running payment-identifier server (see [server example](../../servers/payment-identifier/))
 
@@ -43,6 +41,8 @@ go mod download
 go run main.go
 ```
 
+`go test ./...` builds this module against the local SDK (`replace` => `../../../../go`). It uses a local HTTP fixture and does not sign a transaction or contact a facilitator.
+
 ## Usage
 
 ### Generating a Payment ID
@@ -59,33 +59,52 @@ id := paymentidentifier.GeneratePaymentID("order_")
 // Result: "order_7d5d747be160e280504c099d984bcfe0"
 ```
 
-### Adding Payment ID via Hook
+### Adding the identifier
+
+Append the id from a client extension. An empty id tells `AppendPaymentIdentifierToExtensions` to mint one. The helper does nothing when the server did not declare a valid `payment-identifier` extension.
 
 ```go
+import (
+    "context"
+
+    x402 "github.com/x402-foundation/x402/go/v2"
+    "github.com/x402-foundation/x402/go/v2/extensions/paymentidentifier"
+    exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
+)
+
+type paymentIdentifierExtension struct{}
+
+func (paymentIdentifierExtension) Key() string {
+    return paymentidentifier.PAYMENT_IDENTIFIER
+}
+
+func (paymentIdentifierExtension) EnrichPaymentPayload(
+    _ context.Context,
+    payload x402.PaymentPayload,
+    required x402.PaymentRequired,
+) (x402.PaymentPayload, error) {
+    extensions := map[string]interface{}{}
+    for key, value := range payload.Extensions {
+        extensions[key] = value
+    }
+    if _, ok := extensions[paymentidentifier.PAYMENT_IDENTIFIER]; !ok && required.Extensions != nil {
+        if declared, ok := required.Extensions[paymentidentifier.PAYMENT_IDENTIFIER]; ok {
+            extensions[paymentidentifier.PAYMENT_IDENTIFIER] = declared
+        }
+    }
+    if err := paymentidentifier.AppendPaymentIdentifierToExtensions(extensions, ""); err != nil {
+        return payload, err
+    }
+    payload.Extensions = extensions
+    return payload, nil
+}
+
 client := x402.Newx402Client().
-    Register("eip155:*", evm.NewExactEvmScheme(signer))
-
-paymentID := paymentidentifier.GeneratePaymentID("")
-
-client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
-    if ctx.Extensions == nil {
-        return nil, nil
-    }
-
-    // Only add if server declared the extension
-    if ctx.Extensions[paymentidentifier.PAYMENT_IDENTIFIER] == nil {
-        return nil, nil
-    }
-
-    // Append our payment ID
-    err := paymentidentifier.AppendPaymentIdentifierToExtensions(ctx.Extensions, paymentID)
-    if err != nil {
-        return nil, err
-    }
-
-    return nil, nil
-})
+    Register("eip155:*", exactevm.NewExactEvmScheme(signer, nil)).
+    RegisterExtension(paymentIdentifierExtension{})
 ```
+
+`examples/go/clients/payment-identifier/main.go` is the runnable form. `WrapHTTPClientWithPayment` uses the `http.Client` transport you pass. This example does not wrap that transport with a credential cache.
 
 ### Validating a Payment ID
 
@@ -100,27 +119,13 @@ required, err := paymentidentifier.ExtractPaymentIdentifierFromPaymentRequired(p
 ## Example Output
 
 ```
-Generated Payment ID: pay_7d5d747be160e280504c099d984bcfe0
-
-First Request (with payment ID)
+One logical purchase
 Making request to: http://localhost:4021/order
-
-[BeforePaymentCreation] Checking for payment-identifier extension...
-  Payment identifier required: true
-  Added payment ID: pay_7d5d747be160e280504c099d984bcfe0
-
-Response (1.234s): {"orderId":"order_123","status":"created","paymentId":"pay_7d5d747be160e280504c099d984bcfe0"}
-
-Second Request (SAME payment ID)
-Making request to: http://localhost:4021/order
-Expected: Server returns cached response without payment processing
-
-Response (0.045s): {"orderId":"order_123","status":"already_processed","paymentId":"pay_7d5d747be160e280504c099d984bcfe0"}
-
-Summary
-  Payment ID: pay_7d5d747be160e280504c099d984bcfe0
-  First request:  1.234s
-  Second request: 0.045s
+The SDK creates a fresh payment credential for this request.
+A new payment identifier is added only if the server advertises the extension.
+The SDK sends one unpaid probe and one payment retry. It does not cache that credential.
+Response (1.234s): {"orderId":"order_123","status":"created"}
+Payment ID: pay_7d5d747be160e280504c099d984bcfe0
 ```
 
 ## Related Examples

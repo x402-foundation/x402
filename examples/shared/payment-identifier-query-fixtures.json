@@ -1,0 +1,52 @@
+[
+  {
+    "name": "tilde-unreserved",
+    "url": "http://localhost:4022/weather?a=~",
+    "canonical": "/weather?a=~"
+  },
+  {
+    "name": "space-percent-20",
+    "url": "http://localhost:4022/weather?q=a%20b",
+    "canonical": "/weather?q=a%20b"
+  },
+  {
+    "name": "plus-decoded-as-space",
+    "url": "http://localhost:4022/weather?q=a+b",
+    "canonical": "/weather?q=a%20b"
+  },
+  {
+    "name": "unicode-checkmark",
+    "url": "http://localhost:4022/weather?q=%E2%9C%93",
+    "canonical": "/weather?q=%E2%9C%93"
+  },
+  {
+    "name": "empty-value",
+    "url": "http://localhost:4022/weather?a=",
+    "canonical": "/weather?a="
+  },
+  {
+    "name": "repeated-keys-stable",
+    "url": "http://localhost:4022/weather?a=1&a=2",
+    "canonical": "/weather?a=1&a=2"
+  },
+  {
+    "name": "repeated-keys-reversed",
+    "url": "http://localhost:4022/weather?a=2&a=1",
+    "canonical": "/weather?a=2&a=1"
+  },
+  {
+    "name": "sort-by-decoded-key",
+    "url": "http://localhost:4022/weather?b=1&a=2",
+    "canonical": "/weather?a=2&b=1"
+  },
+  {
+    "name": "percent-encoded-key-sorts-decoded",
+    "url": "http://localhost:4022/weather?b=1&%61=2",
+    "canonical": "/weather?a=2&b=1"
+  },
+  {
+    "name": "exclamation-not-unreserved",
+    "url": "http://localhost:4022/weather?x=!",
+    "canonical": "/weather?x=%21"
+  }
+]
