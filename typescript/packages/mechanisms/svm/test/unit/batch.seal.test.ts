@@ -20,6 +20,7 @@ import { getChannelDistributionHash } from "../../src/payment-channels/facilitat
 import { ChannelStatus } from "../../src/payment-channels/onchain";
 import { buildOpenPaymentChannelTransaction } from "../../src/payment-channels/open";
 import { signVoucher } from "../../src/payment-channels/voucher";
+import { TransactionOnchainFailureError } from "../../src/utils";
 
 const NETWORK = SOLANA_DEVNET_CAIP2;
 const MINT = USDC_DEVNET_ADDRESS;
@@ -110,7 +111,9 @@ function signer() {
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
     getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
     getAddresses: vi.fn(() => [feePayer.address]),
-    getLatestBlockhash: vi.fn(),
+    getLatestBlockhash: vi
+      .fn()
+      .mockResolvedValue({ blockhash: USDC_MAINNET_ADDRESS, lastValidBlockHeight: 0n }),
     getSigner: vi.fn(() => feePayer),
     getSlot: vi.fn(),
     sendTransaction: vi.fn().mockResolvedValue(SIGNATURE),
@@ -160,12 +163,14 @@ async function sealPayload(cumulative: bigint, overrides: Partial<BatchSealPaylo
  * @param options - Binding seed and live channel
  * @param options.live - The channel account the facilitator reads
  * @param options.bound - Whether the receiver authorizer was bound at deposit
- * @returns The scheme and its stubbed internals
+ * @param options.broadcast - Build and send real redemption bytes through the stubbed signer
+ * @returns The scheme, its stubbed internals, and its signer
  */
 async function facilitator(
   options: {
     live?: Channel;
     bound?: boolean;
+    broadcast?: boolean;
     onDistributionConfirmed?: ReturnType<typeof vi.fn>;
     pendingSettlementStore?: InMemoryBatchPendingSettlementStore;
   } = {},
@@ -183,7 +188,8 @@ async function facilitator(
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     });
   }
-  const scheme = new BatchSvmScheme(signer() as never, {
+  const svm = signer();
+  const scheme = new BatchSvmScheme(svm as never, {
     channelStorage: store,
     onDistributionConfirmed: options.onDistributionConfirmed,
     pendingSettlementStore: options.pendingSettlementStore,
@@ -205,14 +211,16 @@ async function facilitator(
     data: new Uint8Array([9]),
     programAddress: address(RECEIVER),
   });
-  api.submitRedemption = vi.fn().mockResolvedValue({
-    ok: true,
-    replayed: false,
-    signature: SIGNATURE,
-  });
+  if (!options.broadcast) {
+    api.submitRedemption = vi.fn().mockResolvedValue({
+      ok: true,
+      replayed: false,
+      signature: SIGNATURE,
+    });
+  }
   const original = api.sealDependencies.bind(scheme);
   api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
-  return { api, scheme, store };
+  return { api, scheme, store, svm };
 }
 
 const settle = (scheme: BatchSvmScheme, payload: BatchSealPayload) =>
@@ -575,6 +583,266 @@ describe("batch-settlement seal", () => {
     expect(api.submitRedemption).toHaveBeenCalledOnce();
     await expect(scheme.settle(payment, requirements())).resolves.toEqual(recovered);
     expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { intent: "seal", stage: "result" },
+    { intent: "refund", stage: "result" },
+    { intent: "seal", stage: "completion" },
+    { intent: "refund", stage: "completion" },
+    { intent: "seal", stage: "visibility" },
+    { intent: "refund", stage: "visibility" },
+  ] as const)(
+    "resumes a confirmed $intent from its prepared response after a $stage failure",
+    async ({ intent, stage }) => {
+      const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+      const record = vi.fn().mockResolvedValue(undefined);
+      const live =
+        intent === "refund"
+          ? channel({ closureStartedAt: 0n, status: ChannelStatus.Open })
+          : channel();
+      const { api, scheme, svm } = await facilitator({
+        broadcast: true,
+        live,
+        onDistributionConfirmed: record,
+        pendingSettlementStore,
+      });
+      // The sealed distribute deallocates the channel: once the close is sent
+      // it is gone, after at most one lagging read of the pre-close account.
+      let lagging = stage === "visibility";
+      const sent = () => svm.sendTransaction.mock.calls.length > 0;
+      api.readChannel = vi.fn(async () => {
+        if (!sent()) return live;
+        if (!lagging) return undefined;
+        lagging = false;
+        return live;
+      });
+      api.fetchChannel = vi.fn(async () => {
+        if (!sent()) return live;
+        throw new Error(`${BatchError.CHANNEL_STATE}: channel is not visible after confirmation`);
+      });
+      const key = `batch:${intent}:${NETWORK}:${channelId}:3000`;
+      const failing = { completion: `${key}:completed`, result: `${key}:result`, visibility: "" }[
+        stage
+      ];
+      const set = pendingSettlementStore.set.bind(pendingSettlementStore);
+      let failed = false;
+      vi.spyOn(pendingSettlementStore, "set").mockImplementation(async (name, value) => {
+        if (name === failing && !failed) {
+          failed = true;
+          throw new Error("store unavailable");
+        }
+        return set(name, value);
+      });
+      const payment = {
+        accepted: requirements(),
+        payload: { ...(await sealPayload(3_000n)), type: intent },
+        x402Version: 2,
+      } as never;
+
+      // The payout landed: answer pending with its signature, not a bare failure.
+      const first = await scheme.settle(payment, requirements());
+      expect(first).toMatchObject({ errorReason: "settlement_pending", success: false });
+      expect(first.transaction).not.toBe("");
+      expect(record).not.toHaveBeenCalled();
+
+      const recovered = await scheme.settle(payment, requirements());
+      expect(recovered).toMatchObject({
+        amount: intent === "refund" ? "7000" : "2500",
+        extra: {
+          channelState: { balance: "10000", channelId, totalClaimed: "3000" },
+          paidToReceiver: "2500",
+        },
+        payer: payer.address,
+        success: true,
+        transaction: first.transaction,
+      });
+      expect(record).toHaveBeenCalledOnce();
+      expect(record).toHaveBeenCalledWith({ ...recovered, amount: "2500" }, requirements());
+      // A retry may resend the recorded bytes but never builds a replacement.
+      expect(new Set(svm.sendTransaction.mock.calls.map(([wire]) => wire)).size).toBe(1);
+      await expect(scheme.settle(payment, requirements())).resolves.toEqual(recovered);
+      expect(record).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("sends nothing when a close's prepared response cannot be stored", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const { scheme, svm } = await facilitator({ broadcast: true, pendingSettlementStore });
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    const set = pendingSettlementStore.set.bind(pendingSettlementStore);
+    vi.spyOn(pendingSettlementStore, "set").mockImplementation(async (name, value) => {
+      if (name.startsWith(`${key}:prepared:`)) throw new Error("prepared store unavailable");
+      return set(name, value);
+    });
+    await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
+      errorMessage: expect.stringContaining("prepared store unavailable"),
+      success: false,
+      transaction: "",
+    });
+    expect(svm.sendTransaction).not.toHaveBeenCalled();
+    expect(await pendingSettlementStore.get(key)).toBeUndefined();
+  });
+
+  it.each(["result", "callback"] as const)(
+    "refuses to finish a confirmed close for another receiver after a %s failure",
+    async failure => {
+      const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+      const record = vi.fn().mockResolvedValue(undefined);
+      if (failure === "callback") record.mockRejectedValueOnce(new Error("ledger unavailable"));
+      const { api, scheme } = await facilitator({
+        broadcast: true,
+        onDistributionConfirmed: record,
+        pendingSettlementStore,
+      });
+      const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+      const set = pendingSettlementStore.set.bind(pendingSettlementStore);
+      let failed = failure !== "result";
+      vi.spyOn(pendingSettlementStore, "set").mockImplementation(async (name, value) => {
+        if (name === `${key}:result` && !failed) {
+          failed = true;
+          throw new Error("store unavailable");
+        }
+        return set(name, value);
+      });
+      const payload = await sealPayload(3_000n);
+      const first = await settle(scheme, payload);
+      expect(first).toMatchObject({ errorReason: "settlement_pending", success: false });
+      api.fetchChannel.mockRejectedValue(new Error(`${BatchError.CHANNEL_STATE}: account gone`));
+
+      // Nothing onchain ties payTo to the channel any more, so the stored close does.
+      const elsewhere = { ...requirements(), payTo: authorizer.address };
+      await expect(
+        scheme.settle({ accepted: elsewhere, payload, x402Version: 2 } as never, elsewhere),
+      ).resolves.toMatchObject({ errorReason: BatchError.CHANNEL_STATE, success: false });
+      expect(record).toHaveBeenCalledTimes(failure === "callback" ? 1 : 0);
+
+      await expect(settle(scheme, payload)).resolves.toMatchObject({
+        amount: "2500",
+        success: true,
+        transaction: first.transaction,
+      });
+      expect(record).toHaveBeenLastCalledWith(expect.anything(), requirements());
+      expect(record).toHaveBeenCalledTimes(failure === "callback" ? 2 : 1);
+    },
+  );
+
+  it("keeps the signature when a replay cannot read the prepared close", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const record = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const { scheme } = await facilitator({
+      broadcast: true,
+      onDistributionConfirmed: record,
+      pendingSettlementStore,
+    });
+    const payload = await sealPayload(3_000n);
+    const first = await settle(scheme, payload);
+    expect(first).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(first.transaction).not.toBe("");
+
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    const get = pendingSettlementStore.get.bind(pendingSettlementStore);
+    let failed = false;
+    vi.spyOn(pendingSettlementStore, "get").mockImplementation(async name => {
+      if (name.startsWith(`${key}:prepared:`) && !failed) {
+        failed = true;
+        throw new Error("prepared store unavailable");
+      }
+      return get(name);
+    });
+    // The close is confirmed, so a replay that cannot check its receiver stays pending.
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      errorMessage: expect.stringContaining("prepared store unavailable"),
+      errorReason: "settlement_pending",
+      success: false,
+      transaction: first.transaction,
+    });
+    expect(record).toHaveBeenCalledOnce();
+
+    await expect(settle(scheme, payload)).resolves.toMatchObject({
+      amount: "2500",
+      success: true,
+      transaction: first.transaction,
+    });
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers a lost broadcast reservation with the winner's prepared close", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const record = vi.fn().mockResolvedValue(undefined);
+    const { scheme, svm } = await facilitator({
+      broadcast: true,
+      onDistributionConfirmed: record,
+      pendingSettlementStore,
+    });
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    // Another process read the channel after a sweep raised its watermark,
+    // prepared its own bytes, and reserved the key first.
+    const winner = {
+      amount: "2000",
+      extra: {
+        channelState: { balance: "10000", channelId, totalClaimed: "3000", withdrawRequestedAt: 0 },
+        paidToReceiver: "2000",
+      },
+      network: NETWORK,
+      payer: payer.address,
+      success: true,
+      transaction: SIGNATURE,
+    };
+    const setIfAbsent = pendingSettlementStore.setIfAbsent.bind(pendingSettlementStore);
+    vi.spyOn(pendingSettlementStore, "setIfAbsent").mockImplementation(async (name, value) => {
+      if (name === key) {
+        await pendingSettlementStore.set(
+          `${key}:prepared:${SIGNATURE}`,
+          JSON.stringify({ asset: MINT, payTo: RECEIVER, response: winner }),
+        );
+        await setIfAbsent(name, SIGNATURE);
+      }
+      return setIfAbsent(name, value);
+    });
+    const response = await settle(scheme, await sealPayload(3_000n));
+    expect(response).toEqual(winner);
+    expect(svm.sendTransaction).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith(winner, requirements());
+  });
+
+  it("completes a close recorded without a prepared response from the channel", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    await pendingSettlementStore.set(`${key}:completed`, SIGNATURE);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const { api, scheme, svm } = await facilitator({
+      broadcast: true,
+      onDistributionConfirmed: record,
+      pendingSettlementStore,
+    });
+    await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
+      amount: "2500",
+      success: true,
+      transaction: SIGNATURE,
+    });
+    expect(api.fetchChannel).toHaveBeenCalledOnce();
+    expect(svm.sendTransaction).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledOnce();
+  });
+
+  it("reports a recorded close that failed onchain without reading the channel", async () => {
+    const pendingSettlementStore = new InMemoryBatchPendingSettlementStore();
+    const key = `batch:seal:${NETWORK}:${channelId}:3000`;
+    await pendingSettlementStore.set(key, SIGNATURE);
+    const { api, scheme, svm } = await facilitator({ broadcast: true, pendingSettlementStore });
+    svm.confirmTransaction.mockRejectedValue(new TransactionOnchainFailureError("seal failed"));
+    await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
+      errorReason: "transaction_failed",
+      success: false,
+      transaction: SIGNATURE,
+    });
+    expect(api.fetchChannel).not.toHaveBeenCalled();
+    expect(await pendingSettlementStore.get(key)).toBeUndefined();
   });
 
   it("rejects a claim against a closing channel with the dedicated code", async () => {
