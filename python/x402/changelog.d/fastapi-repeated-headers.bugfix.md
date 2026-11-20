@@ -1,0 +1,1 @@
+The FastAPI middleware now keeps repeated response headers on paid routes. Previously, rebuilding the settled response from a dict kept only the first `Set-Cookie` (and any other repeated header) the handler set, and sent the handler's `Cache-Control` and the added `private` directive as two separate headers.
