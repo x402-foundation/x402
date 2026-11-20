@@ -233,32 +233,35 @@ Fetch the list of available x402 services using the facilitator client:
   </Tab>
   <Tab title="Python">
     ```python
+    import asyncio
+
     from x402.http import FacilitatorConfig, HTTPFacilitatorClient
     from x402.extensions.bazaar import with_bazaar, ListDiscoveryResourcesParams
 
-    facilitator_client = HTTPFacilitatorClient(
-        FacilitatorConfig(url="https://x402.org/facilitator")
-    )
-    client = with_bazaar(facilitator_client)
+    async def main():
+        async with with_bazaar(HTTPFacilitatorClient(
+            FacilitatorConfig(url="https://x402.org/facilitator")
+        )) as client:
+            # List HTTP services; use type="mcp" to list MCP tools instead.
+            response = await client.extensions.bazaar.list_resources(
+                ListDiscoveryResourcesParams(type="http")
+            )
 
-    # List HTTP services; use type="mcp" to list MCP tools instead
-    response = client.extensions.bazaar.list_resources(
-        ListDiscoveryResourcesParams(type="http")
-    )
+            # Filter services under $0.10
+            usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            max_price = 100000  # $0.10 in USDC atomic units (6 decimals)
 
-    # Filter services under $0.10
-    usdc_asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-    max_price = 100000  # $0.10 in USDC atomic units (6 decimals)
+            return [
+                item
+                for item in response.items
+                if any(
+                    payment_req.get("asset") == usdc_asset
+                    and int(payment_req.get("amount", 0)) < max_price
+                    for payment_req in (item.accepts or [])
+                )
+            ]
 
-    affordable_services = [
-        item
-        for item in response.items
-        if any(
-            payment_req.get("asset") == usdc_asset
-            and int(payment_req.get("amount", 0)) < max_price
-            for payment_req in (item.accepts or [])
-        )
-    ]
+    affordable_services = asyncio.run(main())
     ```
 
   </Tab>
@@ -304,15 +307,25 @@ You can also search for services using a natural-language query. Pagination is f
   </Tab>
   <Tab title="Python">
     ```python
-    from x402.extensions.bazaar import SearchDiscoveryResourcesParams
+    import asyncio
 
-    results = client.extensions.bazaar.search(
-        SearchDiscoveryResourcesParams(query="weather APIs", type="http")
-    )
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+    from x402.extensions.bazaar import with_bazaar, SearchDiscoveryResourcesParams
 
-    print(f"Found {len(results.resources)} services")
-    if results.pagination is not None:
-        print(f"Next cursor: {results.pagination.cursor}")
+    async def main():
+        async with with_bazaar(HTTPFacilitatorClient(
+            FacilitatorConfig(url="https://x402.org/facilitator")
+        )) as client:
+            results = await client.extensions.bazaar.search(
+                SearchDiscoveryResourcesParams(query="weather APIs", type="http")
+            )
+
+            print(f"Found {len(results.resources)} services")
+            if results.pagination is not None:
+                print(f"Next cursor: {results.pagination.cursor}")
+            return results
+
+    results = asyncio.run(main())
     ```
 
   </Tab>
