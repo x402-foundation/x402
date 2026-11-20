@@ -272,6 +272,36 @@ Base64 decode the header value and JSON parse the result.
 - **Not Before**: If `notBefore` is present, it MUST be in the past.
 - **Nonce**: MUST be unique. Server SHOULD track used nonces to prevent replay attacks.
 
+#### Origin canonicalization
+
+"Exactly" in the **Domain** and **URI** checks above is defined over the canonical form of the origin, not over the raw string. Implementations MUST canonicalize both sides before comparing: the Server's configured public origin, and the challenge's `domain` and the origin of its `uri`. Delegating this to a platform URL parser is not sufficient on its own, because parsers differ (for example, some lowercase the host and drop default ports, others return the input unchanged).
+
+| Component             | Canonical form                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| Scheme                | Lowercase. Only `http` and `https` are valid.                                                 |
+| Host                  | Lowercase. Internationalized names in punycode (`xn--` ASCII form). One trailing `.` removed. |
+| Port                  | Omitted when it is the scheme default (`443` for `https`, `80` for `http`); otherwise kept.   |
+| Userinfo              | Not allowed in a configured origin. Excluded from comparison.                                 |
+| Path, query, fragment | Not part of an origin. Excluded from comparison.                                              |
+
+The canonical `domain` is the canonical host, followed by `:` and the port when the port is not the default. A challenge `domain` is canonicalized with the same rules, so `API.Example.com` and `api.example.com:443` both match a Server configured with `https://api.example.com`.
+
+Each of these origins MUST canonicalize to the same value:
+
+| Canonical origin                | Equivalent spellings                                                                     |
+| ------------------------------- | ---------------------------------------------------------------------------------------- |
+| `https://api.example.com`       | `https://API.Example.com`, `https://api.example.com:443`, `https://api.example.com.`     |
+| `http://api.example.com`        | `http://api.example.com:80`                                                              |
+| `https://xn--bcher-kva.example` | `https://bücher.example`                                                                 |
+
+These pairs MUST NOT match:
+
+| Configured origin           | Challenge `uri` origin         | Reason                      |
+| --------------------------- | ------------------------------ | --------------------------- |
+| `https://api.example.com`   | `https://api.example.com:8443` | Different non-default port  |
+| `https://api.example.com`   | `http://api.example.com`       | Different scheme            |
+| `https://api.example.com`   | `https://api.example.org`      | Different host              |
+
 Validation failures SHOULD be reported with a machine-readable code identifying the failed check:
 
 | Code                               | Failed check                                            |
