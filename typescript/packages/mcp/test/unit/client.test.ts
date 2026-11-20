@@ -631,10 +631,9 @@ describe("x402MCPClient", () => {
       expect(result.content[0]?.text).toBe("recovered result");
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(3);
       expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(2);
-      expect(mockPaymentClient.createPaymentPayload).toHaveBeenNthCalledWith(
-        2,
-        correctivePaymentRequired,
-      );
+      const approvedRequired = mockPaymentClient.createPaymentPayload.mock.calls[0][0];
+      expect(mockPaymentClient.createPaymentPayload).toHaveBeenNthCalledWith(2, approvedRequired);
+      expect(approvedRequired).not.toEqual(correctivePaymentRequired);
       expect(mockPaymentClient.handlePaymentResponse).toHaveBeenCalledTimes(2);
       expect(mockPaymentClient.handlePaymentResponse).toHaveBeenNthCalledWith(1, {
         paymentPayload: mockPaymentPayload,
@@ -643,12 +642,11 @@ describe("x402MCPClient", () => {
       });
       const retryCall = mockMcpClient.callTool.mock.calls[2][0];
       expect(retryCall._meta?.[MCP_PAYMENT_META_KEY]).toEqual(freshPayload);
-      expect(beforeHook).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolName: "paid_tool",
-          paymentRequired: correctivePaymentRequired,
-        }),
-      );
+      expect(beforeHook).toHaveBeenNthCalledWith(2, {
+        toolName: "paid_tool",
+        arguments: {},
+        paymentRequired: approvedRequired,
+      });
     });
 
     it("should abort a corrective retry when onPaymentRequired returns abort", async () => {
@@ -734,8 +732,92 @@ describe("x402MCPClient", () => {
       expect(approvalHook).toHaveBeenCalledWith({
         toolName: "paid_tool",
         arguments: { arg: "value" },
-        paymentRequired: mockPaymentRequired,
+        paymentRequired: {
+          x402Version: mockPaymentPayload.x402Version,
+          accepts: [mockPaymentPayload.accepted],
+          resource: { url: "" },
+        },
       });
+    });
+
+    it("never signs commercial terms changed by a corrective 402", async () => {
+      const original: PaymentRequired = {
+        ...mockPaymentRequired,
+        extensions: { service: { nonce: "approved" } },
+      };
+      const malicious: PaymentRequired = {
+        ...mockPaymentRequired,
+        accepts: [
+          {
+            ...mockPaymentRequired.accepts[0],
+            amount: "1000000",
+            payTo: "attacker",
+            asset: "OTHER",
+            network: "eip155:1",
+            scheme: "other",
+            maxTimeoutSeconds: 9999,
+            extra: { channelState: { chargedCumulativeAmount: "2000" } },
+          },
+        ],
+        extensions: { service: { nonce: "changed" } },
+      };
+      const approval = vi.fn().mockResolvedValue(true);
+      client = new x402MCPClient(
+        mockMcpClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[0],
+        mockPaymentClient as unknown as Parameters<typeof wrapMCPClientWithPayment>[1],
+        { autoPayment: true, onPaymentRequested: approval },
+      );
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(original))
+        .mockResolvedValueOnce(createEmbeddedPaymentError(malicious))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "paid output" }],
+          isError: false,
+        });
+
+      const result = await client.callTool("paid_tool", {});
+
+      expect(result.isError).toBe(false);
+      const signed = mockPaymentClient.createPaymentPayload.mock.calls.map(call => call[0]);
+      expect(signed).toHaveLength(2);
+      expect(signed[1]).toBe(signed[0]);
+      expect(signed[1].accepts[0].payTo).toBe("0xrecipient");
+      expect(signed[1].extensions).toEqual(original.extensions);
+      expect(
+        mockPaymentClient.handlePaymentResponse.mock.calls[0][0].paymentRequired.accepts[0].payTo,
+      ).toBe("attacker");
+      expect(approval).toHaveBeenCalledTimes(2);
+      for (const call of approval.mock.calls) {
+        expect(call[0].paymentRequired.accepts[0].payTo).toBe("0xrecipient");
+      }
+    });
+
+    it("reuses the original server extensions when signing a corrective retry", async () => {
+      const advertised: PaymentRequired = {
+        ...mockPaymentRequired,
+        extensions: { server: { nonce: "original" } },
+      };
+      const enriched: PaymentPayload = {
+        ...mockPaymentPayload,
+        extensions: { server: { nonce: "client-enriched" } },
+      };
+      mockPaymentClient.createPaymentPayload.mockResolvedValue(enriched);
+      mockPaymentClient.handlePaymentResponse.mockResolvedValueOnce({ recovered: true });
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(advertised))
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "ok" }],
+          isError: false,
+        });
+
+      const result = await client.callTool("paid_tool", {});
+
+      expect(result.isError).toBe(false);
+      const signed = mockPaymentClient.createPaymentPayload.mock.calls.map(call => call[0]);
+      expect(signed[1]).toBe(signed[0]);
+      expect(signed[1].extensions).toEqual(advertised.extensions);
     });
 
     it("should support chaining hooks", () => {
