@@ -358,6 +358,22 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
       );
     });
 
+    it("aborts discovery requests after the client's timeoutMs", async () => {
+      mockFetch.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) =>
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+          ),
+      );
+
+      const { bazaar } = withBazaar(
+        new HTTPFacilitatorClient({ url: "https://x402.org/facilitator", timeoutMs: 20 }),
+      ).extensions;
+
+      await expect(bazaar.listResources()).rejects.toThrow();
+      await expect(bazaar.search({ query: "weather" })).rejects.toThrow();
+    });
+
     describe("search", () => {
       it("should call correct endpoint with required query param", async () => {
         const mockResponse: SearchDiscoveryResourcesResponse = {

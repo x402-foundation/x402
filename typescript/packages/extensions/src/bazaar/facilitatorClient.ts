@@ -262,6 +262,7 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
 
         const response = await fetch(endpoint, {
           method: "GET",
+          signal: AbortSignal.timeout(client.timeoutMs),
           headers,
         });
 
@@ -317,6 +318,7 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
 
         const response = await fetch(endpoint, {
           method: "GET",
+          signal: AbortSignal.timeout(client.timeoutMs),
           headers,
         });
 
