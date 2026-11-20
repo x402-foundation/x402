@@ -516,6 +516,47 @@ describe("BatchSettlementChannelManager — claim()", () => {
     expect((await storage.get(skipped.channelId))?.totalClaimed).toBe("0");
   });
 
+  it("claims withdraw-pending channels even when they are not idle", async () => {
+    const { manager, storage, facilitator } = buildManager();
+    const pending = buildSession({
+      chargedCumulativeAmount: "5000",
+      withdrawRequestedAt: Math.floor(Date.now() / 1000),
+      lastRequestTimestamp: Date.now(),
+    });
+    await storeChannel(storage, pending);
+
+    expect(await manager.getClaimableVouchers({ idleSecs: 60 })).toHaveLength(1);
+    const results = await manager.claim({ idleSecs: 60 });
+    expect(results).toMatchObject([{ vouchers: 1 }]);
+    expect(facilitator.settle).toHaveBeenCalledTimes(1);
+    expect((await storage.get(pending.channelId))?.totalClaimed).toBe("5000");
+  });
+
+  it("claims withdraw-pending channels the claim selector drops", async () => {
+    const { manager, storage } = buildManager();
+    const pendingConfig = buildChannelConfig("01");
+    const skippedConfig = buildChannelConfig("02");
+    const pending = buildSession({
+      channelConfig: pendingConfig,
+      channelId: computeChannelId(pendingConfig),
+      chargedCumulativeAmount: "5000",
+      withdrawRequestedAt: Math.floor(Date.now() / 1000),
+    });
+    const skipped = buildSession({
+      channelConfig: skippedConfig,
+      channelId: computeChannelId(skippedConfig),
+      chargedCumulativeAmount: "7000",
+    });
+    await storeChannel(storage, pending);
+    await storeChannel(storage, skipped);
+
+    const results = await manager.claim({ selectClaimChannels: () => [] });
+
+    expect(results).toMatchObject([{ vouchers: 1 }]);
+    expect((await storage.get(pending.channelId))?.totalClaimed).toBe("5000");
+    expect((await storage.get(skipped.channelId))?.totalClaimed).toBe("0");
+  });
+
   it("updates session.totalClaimed after a successful claim", async () => {
     const { manager, storage } = buildManager();
     const session = buildSession({ chargedCumulativeAmount: "5000", totalClaimed: "0" });
