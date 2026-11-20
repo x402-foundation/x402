@@ -535,3 +535,94 @@ func TestRefundPendingSettlement_SameRefundNonceReconcilesRecordedRefund(t *test
 		})
 	}
 }
+
+type failingGetPendingStore struct {
+	x402.PendingSettlementStore
+	getErr error
+}
+
+func (s *failingGetPendingStore) Get(ctx context.Context, key string) (string, bool, error) {
+	if s.getErr != nil {
+		return "", false, s.getErr
+	}
+	return s.PendingSettlementStore.Get(ctx, key)
+}
+
+func TestRefundPendingSettlement_StoreGetErrorFailsClosed(t *testing.T) {
+	for _, mode := range refundSubmitModes {
+		t.Run(string(mode), func(t *testing.T) {
+			chain := newRefundChain(t, receiptTimeout, receiptConfirmed)
+			inner := newRecordingPendingStore()
+			store := &failingGetPendingStore{PendingSettlementStore: inner}
+			scheme := refundPendingScheme(t, mode, chain, store)
+			payload := refundPendingPayload(t, "1000", "0")
+
+			resp, err := settleRefund(scheme, payload)
+			requireRefundPending(t, resp, err)
+
+			store.getErr = errors.New("pending store unavailable")
+			resp, err = settleRefund(scheme, payload)
+			se := requireSettleErrorReason(t, err, ErrRefundTransactionFailed)
+			if resp != nil || se.Transaction != "" {
+				t.Fatalf("resp = %+v tx = %q, want nil response and empty transaction", resp, se.Transaction)
+			}
+			if chain.simulations != 1 || chain.signer.writeCalls != 1 {
+				t.Fatalf("simulations=%d writes=%d, want no second simulate or broadcast", chain.simulations, chain.signer.writeCalls)
+			}
+
+			store.getErr = nil
+			resp, err = settleRefund(scheme, payload)
+			requireRefundReconciled(t, resp, err, "1000", "9000")
+			if chain.simulations != 1 || chain.signer.writeCalls != 1 {
+				t.Fatalf("simulations=%d writes=%d, want 1 each across all attempts", chain.simulations, chain.signer.writeCalls)
+			}
+		})
+	}
+}
+
+func TestRefundPendingSettlement_ManagedStoreGetErrorFailsClosed(t *testing.T) {
+	for _, mode := range refundSubmitModes {
+		t.Run(string(mode), func(t *testing.T) {
+			h := newHotRefund(t, unclaimedFields(), workerMarker(), nil)
+			rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+			signer := newManagedSigner(t, rpc)
+			wait := signer.waitForReceipt
+			waits := 0
+			signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+				waits++
+				if waits == 1 {
+					return nil, errors.New("rpc: timeout waiting for receipt")
+				}
+				return wait(txHash)
+			}
+			store := &failingGetPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore()}
+			h.deps.Signer = signer
+			h.deps.SubmitMode = mode
+			h.deps.AuthorizerSubmitter = signer
+			h.deps.PendingStore = store
+
+			_, err := h.settle("100")
+			requireSettleErrorReason(t, err, ErrSettlementPending)
+
+			store.getErr = errors.New("pending store unavailable")
+			reads := rpc.tryAggregate
+			resp, err := h.settle("100")
+			se := requireSettleErrorReason(t, err, ErrRefundTransactionFailed)
+			if resp != nil || se.Transaction != "" {
+				t.Fatalf("resp = %+v tx = %q, want nil response and empty transaction", resp, se.Transaction)
+			}
+			if rpc.tryAggregate != reads || signer.writeCalls != 1 {
+				t.Fatalf("reads=%d->%d writes=%d, want no channel read or second broadcast", reads, rpc.tryAggregate, signer.writeCalls)
+			}
+
+			store.getErr = nil
+			resp, err = h.settle("100")
+			if err != nil || !resp.Success || resp.Transaction != successTxHash || resp.Amount != "100" {
+				t.Fatalf("retry resp = %+v err = %v, want success for %q refunding 100", resp, err, successTxHash)
+			}
+			if signer.writeCalls != 1 {
+				t.Fatalf("writes = %d, want the first broadcast only", signer.writeCalls)
+			}
+		})
+	}
+}

@@ -575,7 +575,10 @@ func settleManagedRefund(
 
 	nonce := fmt.Sprintf("%d", stored.RefundNonce)
 	refundKey := refundSettlementCacheKey(channelId, nonce)
-	pendingTx, pending := pendingRefundTx(ctx, deps.PendingStore, refundKey)
+	pendingTx, pending, err := pendingRefundTx(ctx, deps.PendingStore, refundKey, raw.ChannelConfig.Payer, x402.Network(requirements.Network))
+	if err != nil {
+		return nil, err
+	}
 	amount := resolveRefundAmount(raw.Amount, stored)
 	// A pending refund may have landed, so a fresh cap no longer describes it.
 	if !pending {

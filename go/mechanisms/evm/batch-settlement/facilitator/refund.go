@@ -299,12 +299,23 @@ func refundSettlementCacheKey(channelId, refundNonce string) string {
 }
 
 // pendingRefundTx returns the transaction an earlier attempt recorded for refundKey.
-func pendingRefundTx(ctx context.Context, store x402.PendingSettlementStore, refundKey string) (string, bool) {
+// Store read errors fail closed so a retry cannot broadcast a second direct refund().
+func pendingRefundTx(
+	ctx context.Context,
+	store x402.PendingSettlementStore,
+	refundKey string,
+	payer string,
+	network x402.Network,
+) (string, bool, error) {
 	if store == nil {
-		return "", false
+		return "", false, nil
 	}
-	txHash, hit, _ := store.Get(ctx, refundKey)
-	return txHash, hit
+	txHash, hit, err := store.Get(ctx, refundKey)
+	if err != nil {
+		return "", false, x402.NewSettleError(ErrRefundTransactionFailed, payer, network, "",
+			evm.TruncateErrorMessage(fmt.Sprintf("failed to read pending refund store: %s", err)))
+	}
+	return txHash, hit, nil
 }
 
 // reconcilePendingRefund resolves txHash, a refund an earlier attempt broadcast but could not
@@ -634,7 +645,10 @@ func SubmitRefund(ctx context.Context, input SubmitRefundInput, submitCtx Submit
 		return submitRefund(ctx, input, submitCtx)
 	}
 	refundKey := refundSettlementCacheKey(channelId, input.Payload.RefundNonce)
-	txHash, pending := pendingRefundTx(ctx, submitCtx.PendingStore, refundKey)
+	txHash, pending, err := pendingRefundTx(ctx, submitCtx.PendingStore, refundKey, input.Payload.ChannelConfig.Payer, x402.Network(input.Network))
+	if err != nil {
+		return nil, err
+	}
 	if !pending {
 		return submitRefund(ctx, input, submitCtx)
 	}
