@@ -20,6 +20,7 @@ export {
   ErrPermit2AmountMismatch,
   ErrPermit2TokenMismatch,
   ErrPermit2InvalidSignature,
+  ErrPermit2FailedToVerifySignature,
   ErrPermit2AllowanceRequired,
   ErrPermit2InvalidAmount,
   ErrPermit2InvalidDestination,

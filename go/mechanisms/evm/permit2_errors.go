@@ -14,6 +14,9 @@ const (
 	ErrPermit2InvalidSignature  = "invalid_permit2_signature"
 	ErrPermit2AllowanceRequired = "permit2_allowance_required"
 
+	// An RPC call the signature check needed failed, so the signature was not checked
+	ErrPermit2FailedToVerifySignature = "invalid_permit2_failed_to_verify_signature"
+
 	// Settle errors (from contract reverts)
 	ErrPermit2InvalidAmount      = "permit2_invalid_amount"
 	ErrPermit2InvalidDestination = "permit2_invalid_destination"

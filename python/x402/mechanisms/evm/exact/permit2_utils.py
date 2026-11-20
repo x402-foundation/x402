@@ -35,6 +35,7 @@ from ..constants import (  # noqa: E402
     ERR_PERMIT2_ALLOWANCE_REQUIRED,
     ERR_PERMIT2_AMOUNT_MISMATCH,
     ERR_PERMIT2_DEADLINE_EXPIRED,
+    ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
     ERR_PERMIT2_INVALID_SIGNATURE,
     ERR_PERMIT2_INVALID_SPENDER,
     ERR_PERMIT2_NOT_YET_VALID,
@@ -70,7 +71,7 @@ from ..utils import (  # noqa: E402
     normalize_address,
     truncate_error_message,
 )
-from ..verify import verify_typed_data_strict  # noqa: E402
+from ..verify import SignatureCheckUnavailableError, verify_typed_data_strict  # noqa: E402
 
 
 def create_permit2_payload(
@@ -284,6 +285,19 @@ def verify_permit2(
             is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
         )
 
+    # One payer code lookup serves the signature check. A lookup that fails is an RPC failure,
+    # not an invalid signature.
+    try:
+        payer_code = signer.get_code(payer)
+    except Exception as e:
+        logger.warning("Permit2 verify: payer code lookup failed: %s", e)
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
+            invalid_message=truncate_error_message(str(e)),
+            payer=payer,
+        )
+
     try:
         sig_bytes = hex_to_bytes(permit2_payload.signature)
         logger.info(
@@ -298,6 +312,7 @@ def verify_permit2(
             permit2_payload.permit2_authorization,
             chain_id,
             sig_bytes,
+            code=payer_code,
         )
         if not is_valid_sig:
             logger.warning("Permit2 verify: signature verification returned False")
@@ -305,6 +320,14 @@ def verify_permit2(
                 is_valid=False, invalid_reason=ERR_PERMIT2_INVALID_SIGNATURE, payer=payer
             )
         logger.info("Permit2 verify: signature OK")
+    except SignatureCheckUnavailableError as e:
+        logger.warning("Permit2 verify: isValidSignature call failed: %s", e)
+        return VerifyResponse(
+            is_valid=False,
+            invalid_reason=ERR_PERMIT2_FAILED_TO_VERIFY_SIGNATURE,
+            invalid_message=truncate_error_message(str(e)),
+            payer=payer,
+        )
     except Exception as e:
         logger.warning("Permit2 verify: signature exception: %s", e, exc_info=True)
         return VerifyResponse(
@@ -844,6 +867,7 @@ def _verify_permit2_signature(
     permit2_authorization: ExactPermit2Authorization,
     chain_id: int,
     signature: bytes,
+    code: bytes | None = None,
 ) -> bool:
     """Verify a Permit2 EIP-712 signature.
 
@@ -856,9 +880,13 @@ def _verify_permit2_signature(
         permit2_authorization: The authorization that was signed.
         chain_id: Chain ID.
         signature: Signature bytes.
+        code: Payer bytecode already fetched; when given, no second ``eth_getCode`` is issued.
 
     Returns:
         True if signature is valid.
+
+    Raises:
+        SignatureCheckUnavailableError: An ``isValidSignature`` call failed without reverting.
     """
     domain_dict, typed_fields, primary_type, message = _build_permit2_typed_data(
         permit2_authorization, chain_id
@@ -873,4 +901,6 @@ def _verify_permit2_signature(
         primary_type,
         message,
         signature,
+        code=code,
+        raise_unavailable=True,
     )
