@@ -1,0 +1,6 @@
+@X402.App_HostAddress = http://localhost:5287
+
+GET {{X402.App_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
