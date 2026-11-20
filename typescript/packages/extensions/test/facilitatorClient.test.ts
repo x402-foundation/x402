@@ -13,7 +13,7 @@ import {
   type SearchDiscoveryResourcesParams,
   type SearchDiscoveryResourcesResponse,
 } from "../src/bazaar/facilitatorClient";
-import { HTTPFacilitatorClient } from "@x402/core/http";
+import { FacilitatorTimeoutError, HTTPFacilitatorClient } from "@x402/core/http";
 
 describe("Bazaar Client Extension - facilitatorClient", () => {
   describe("Type definitions", () => {
@@ -370,8 +370,10 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
         new HTTPFacilitatorClient({ url: "https://x402.org/facilitator", timeoutMs: 20 }),
       ).extensions;
 
-      await expect(bazaar.listResources()).rejects.toThrow();
-      await expect(bazaar.search({ query: "weather" })).rejects.toThrow();
+      await expect(bazaar.listResources()).rejects.toBeInstanceOf(FacilitatorTimeoutError);
+      await expect(bazaar.search({ query: "weather" })).rejects.toBeInstanceOf(
+        FacilitatorTimeoutError,
+      );
     });
 
     describe("search", () => {
