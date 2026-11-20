@@ -302,12 +302,36 @@ These pairs MUST NOT match:
 | `https://api.example.com`   | `http://api.example.com`       | Different scheme            |
 | `https://api.example.com`   | `https://api.example.org`      | Different host              |
 
+This profile is defined by this specification, not by a platform URL parser or a living external standard. SDK URL parsers are approximations of it and MUST be checked against the vectors above.
+
+##### Total mapping
+
+Canonicalization maps every input to exactly one of two results: a canonical origin, or **uncanonicalizable**. Inputs are never silently coerced into a different origin. An input is uncanonicalizable when any of the following holds:
+
+- the scheme is missing or is not `http` or `https` (for a configured origin or a `uri`);
+- the host is empty, contains an empty label (`api..example.com`), or contains whitespace or control characters;
+- the host is an internationalized name that cannot be converted to punycode;
+- the port is not an integer from 1 to 65535;
+- the input includes userinfo (`user:pass@host`);
+- the host is an IP literal that is not in canonical form. IPv4 MUST be dotted decimal; IPv6 MUST be bracketed and lowercase, with no zone identifier.
+
+Otherwise the input canonicalizes by the table above. The comparison then has exactly three outcomes:
+
+| Outcome           | Condition                                                    |
+| ----------------- | ------------------------------------------------------------ |
+| Match             | Both sides canonicalize and the canonical origins are equal. |
+| Mismatch          | Both sides canonicalize and the canonical origins differ.    |
+| Uncanonicalizable | Either side cannot be canonicalized. The value was not judged. |
+
+Mismatch and uncanonicalizable are different failures: in the first the value was judged and refused, in the second it could not be judged as presented. A Server whose configured origin is uncanonicalizable has a configuration error and SHOULD fail at startup rather than at request time. A Client that cannot canonicalize a challenge's `domain` or `uri` MUST refuse to sign it and SHOULD report that the check was not performed, not that the origins differ.
+
 Validation failures SHOULD be reported with a machine-readable code identifying the failed check:
 
 | Code                               | Failed check                                            |
 | ---------------------------------- | ------------------------------------------------------- |
 | `invalid_siwx_domain_mismatch`     | `domain` does not match the request host                |
 | `invalid_siwx_uri_mismatch`        | `uri` does not start with the expected resource origin  |
+| `invalid_siwx_origin_uncanonicalizable` | `domain` or `uri` could not be put in canonical form (see Origin canonicalization), so it was not compared |
 | `invalid_siwx_issued_at`           | `issuedAt` is not a valid timestamp                     |
 | `invalid_siwx_issued_at_too_old`   | `issuedAt` exceeds the maximum age                      |
 | `invalid_siwx_issued_at_in_future` | `issuedAt` is in the future                             |
