@@ -31,7 +31,7 @@ from datetime import timedelta
 from typing import Any
 
 from ..client import x402Client, x402ClientSync
-from ..schemas import PaymentPayload, PaymentRequired
+from ..schemas import PaymentPayload, PaymentPayloadV1, PaymentRequired
 from ..schemas.hooks import PaymentResponseContext
 from ..schemas.responses import SettleResponse
 from .constants import MCP_PAYMENT_META_KEY
@@ -154,7 +154,7 @@ class x402MCPSession:
 
         payment_payload = await self._x402_client.create_payment_payload(payment_required)
         for attempt in range(2):
-            accepted = payment_payload.accepted
+            accepted = getattr(payment_payload, "accepted", None)
             paid_timeout = paid_read_timeout_seconds(
                 read_timeout_seconds,
                 accepted.max_timeout_seconds if accepted is not None else None,
@@ -170,7 +170,7 @@ class x402MCPSession:
             corrective = self._extract_payment_required(result) if result.isError else None
             hook = getattr(self._x402_client, "handle_payment_response", None)
             recovered = None
-            if callable(hook):
+            if accepted is not None and callable(hook):
                 try:
                     recovered = await hook(
                         PaymentResponseContext(
@@ -413,7 +413,7 @@ class x402MCPClientSync:
         self,
         name: str,
         args: dict[str, Any],
-        payload: PaymentPayload,
+        payload: PaymentPayload | PaymentPayloadV1,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         """Call a tool with an explicit payment payload (sync).
@@ -436,14 +436,14 @@ class x402MCPClientSync:
         self,
         name: str,
         args: dict[str, Any],
-        payload: PaymentPayload,
+        payload: PaymentPayload | PaymentPayloadV1,
         payment_required: PaymentRequired | None,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         for attempt in range(2):
             params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
-            accepted = payload.accepted
+            accepted = getattr(payload, "accepted", None)
             max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
             paid_timeout = paid_read_timeout_seconds(
                 kwargs.get("read_timeout_seconds"),
@@ -461,7 +461,7 @@ class x402MCPClientSync:
             response_hook = getattr(self._payment_client, "handle_payment_response", None)
             recovered = None
             response_error = None
-            if callable(response_hook):
+            if accepted is not None and callable(response_hook):
                 try:
                     recovered = response_hook(
                         PaymentResponseContext(

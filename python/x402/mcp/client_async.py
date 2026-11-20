@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..schemas import PaymentPayload, PaymentRequired, PaymentResponseContext
+from ..schemas import PaymentPayload, PaymentPayloadV1, PaymentRequired, PaymentResponseContext
 from .types import (
     AfterPaymentContext,
     MCPToolCallResult,
@@ -230,7 +230,7 @@ class x402MCPClient:
         self,
         name: str,
         args: dict[str, Any],
-        payload: PaymentPayload,
+        payload: PaymentPayload | PaymentPayloadV1,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         """Call a tool with explicit payment payload.
@@ -250,14 +250,14 @@ class x402MCPClient:
         self,
         name: str,
         args: dict[str, Any],
-        payload: PaymentPayload,
+        payload: PaymentPayload | PaymentPayloadV1,
         payment_required: PaymentRequired | None,
         **kwargs: Any,
     ) -> MCPToolCallResult:
         for attempt in range(2):
             call_params = attach_payment_to_meta({"name": name, "arguments": args}, payload)
 
-            accepted = payload.accepted
+            accepted = getattr(payload, "accepted", None)
             max_timeout_seconds = accepted.max_timeout_seconds if accepted is not None else None
             paid_timeout = paid_read_timeout_seconds(
                 kwargs.get("read_timeout_seconds"),
@@ -274,11 +274,11 @@ class x402MCPClient:
             recovered = None
             response_error = None
             try:
-                if callable(response_hook):
+                if accepted is not None and callable(response_hook):
                     recovered = response_hook(
                         PaymentResponseContext(
                             payment_payload=payload,
-                            requirements=payload.accepted,
+                            requirements=accepted,
                             settle_response=settle_response,
                             payment_required=corrective,
                         )
