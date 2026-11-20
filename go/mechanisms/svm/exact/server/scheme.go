@@ -252,6 +252,19 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
+	// A server MUST NOT issue splits the selected facilitator does not
+	// advertise (§5.5), so a misconfigured route fails here rather than as a
+	// verify rejection after the client has signed.
+	if svm.UsesSplitTerms(requirements) {
+		legs, err := svm.ParsePaymentLegs(requirements)
+		if err != nil {
+			return requirements, err
+		}
+		if err := svm.AssertWithinCapabilities(legs, svm.GetSplitCapabilities(supportedKind.Extra)); err != nil {
+			return requirements, err
+		}
+	}
+
 	s.enrichRecentBlockhash(ctx, requirements.Extra)
 
 	// Copy extensions from supportedKind if provided

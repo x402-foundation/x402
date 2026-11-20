@@ -101,6 +101,33 @@ function matchTuple(
     : { matched: instructions.slice(0, split), rest: instructions.slice(split) };
 }
 
+/**
+ * Validates Lighthouse assertion guards and removes them from the protocol sequence.
+ *
+ * @param instructions - Top-level instructions
+ * @param feePayerAddress - Sponsor address that guards must not reference
+ * @returns The non-guard instructions, or the guard-policy error
+ */
+export function stripAssertionGuards<T extends Ix>(
+  instructions: readonly T[],
+  feePayerAddress: string,
+): T[] | { errorReason: string } {
+  // Validate all Lighthouse instructions before stripping tuples or returning a
+  // recoverable layout error, including ones explicitly configured in an allowlist.
+  for (const ix of instructions) {
+    if (ix.programAddress.toString() !== LIGHTHOUSE_PROGRAM_ADDRESS) continue;
+    if (classify(ix) !== "guard") {
+      return { errorReason: Errors.ErrInvalidLighthouseInstruction };
+    }
+    try {
+      assertFeePayerIsolatedFromInstructions([ix], feePayerAddress);
+    } catch {
+      return { errorReason: Errors.ErrFeePayerTransferringFunds };
+    }
+  }
+  return instructions.filter(ix => classify(ix) !== "guard");
+}
+
 export type PartitionedInstructions = {
   computeLimitIx?: Ix;
   computePriceIx?: Ix;
@@ -138,19 +165,8 @@ export function resolveProtocolLayout(
   feePayerAddress: string,
   version: number | string = 0,
 ): PartitionedInstructions | { errorReason: string } {
-  // Validate all Lighthouse instructions before stripping tuples or returning a
-  // recoverable layout error, including ones explicitly configured in an allowlist.
-  for (const ix of instructions) {
-    if (ix.programAddress.toString() !== LIGHTHOUSE_PROGRAM_ADDRESS) continue;
-    if (classify(ix) !== "guard") {
-      return { errorReason: Errors.ErrInvalidLighthouseInstruction };
-    }
-    try {
-      assertFeePayerIsolatedFromInstructions([ix], feePayerAddress);
-    } catch {
-      return { errorReason: Errors.ErrFeePayerTransferringFunds };
-    }
-  }
+  const protocol = stripAssertionGuards(instructions, feePayerAddress);
+  if ("errorReason" in protocol) return protocol;
   if (
     version === 1 &&
     instructions.some(
@@ -159,7 +175,7 @@ export function resolveProtocolLayout(
   ) {
     return { errorReason: Errors.ErrTransactionV1ComputeBudgetInstruction };
   }
-  let rest = instructions;
+  let rest = protocol;
   for (const [tuples, fromEnd] of [
     [options?.preflightInstructionAllowlist, false],
     [options?.postflightInstructionAllowlist, true],

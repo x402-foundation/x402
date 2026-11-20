@@ -27,8 +27,26 @@ const (
 	// Set to 20000 to accommodate: transfer (~6200 CUs) + memo (~8500 CUs without signer) + budget instructions (~300 CUs) + headroom
 	DefaultComputeUnitLimit uint32 = 20000
 
+	// DefaultMaxComputeUnits is the reference sponsor compute-unit ceiling.
+	DefaultMaxComputeUnits uint32 = 400_000
+
 	// MaxMemoBytes is the maximum byte length for seller-defined memo data (extra.memo)
 	MaxMemoBytes = 256
+
+	// MaxSplits is the most extra.splits entries a charge may carry (scheme_exact_svm.md §5).
+	MaxSplits = 8
+
+	// MaxSplitMemoBytes is the maximum byte length of extra.splits[].memo.
+	MaxSplitMemoBytes = 566
+
+	// AssociatedTokenProgramAddress is the SPL Associated Token Account program.
+	AssociatedTokenProgramAddress = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
+	// SplitTransferComputeUnits and AtaCreationComputeUnits are added on top of
+	// DefaultComputeUnitLimit per extra TransferChecked and per CreateIdempotent.
+	// Sized for Token-2022, which costs more than SPL Token on both.
+	SplitTransferComputeUnits uint32 = 15_000
+	AtaCreationComputeUnits   uint32 = 40_000
 
 	// LighthouseProgramAddress is the wallet-protection program some Solana wallets
 	// inject into signed transactions. Path 1 accepts up to 3 Lighthouse instructions
