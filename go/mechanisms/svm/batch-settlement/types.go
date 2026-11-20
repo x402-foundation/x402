@@ -19,20 +19,21 @@ var errOutOfRange = errors.New("account index out of range")
 
 // BatchExtra is the wire shape of batch-settlement requirements extra.
 type BatchExtra struct {
-	PaymentFlow        string             `json:"paymentFlow,omitempty"`
-	MinDeposit         string             `json:"minDeposit,omitempty"`
-	FeePayer           string             `json:"feePayer"`
-	ReceiverAuthorizer string             `json:"receiverAuthorizer"`
-	WithdrawDelay      int                `json:"withdrawDelay"`
-	TokenProgram       string             `json:"tokenProgram"`
-	Memo               string             `json:"memo,omitempty"`
-	RecentBlockhash    string             `json:"recentBlockhash,omitempty"`
-	RecentSlot         uint64             `json:"recentSlot,omitempty"`
-	ChannelState       *BatchChannelState `json:"channelState,omitempty"`
-	VoucherState       *BatchVoucherState `json:"voucherState,omitempty"`
-	VoucherSigner      string             `json:"voucherSigner,omitempty"`
-	Operator           string             `json:"operator,omitempty"`
-	MaxIdleSecs        *int               `json:"maxIdleSecs,omitempty"`
+	PaymentFlow          string             `json:"paymentFlow,omitempty"`
+	MinDeposit           string             `json:"minDeposit,omitempty"`
+	FeePayer             string             `json:"feePayer"`
+	ReceiverAuthorizer   string             `json:"receiverAuthorizer"`
+	WithdrawDelay        int                `json:"withdrawDelay"`
+	TokenProgram         string             `json:"tokenProgram"`
+	Memo                 string             `json:"memo,omitempty"`
+	RecentBlockhash      string             `json:"recentBlockhash,omitempty"`
+	LastValidBlockHeight string             `json:"lastValidBlockHeight,omitempty"`
+	RecentSlot           uint64             `json:"recentSlot,omitempty"`
+	ChannelState         *BatchChannelState `json:"channelState,omitempty"`
+	VoucherState         *BatchVoucherState `json:"voucherState,omitempty"`
+	VoucherSigner        string             `json:"voucherSigner,omitempty"`
+	Operator             string             `json:"operator,omitempty"`
+	MaxIdleSecs          *int               `json:"maxIdleSecs,omitempty"`
 }
 
 // BatchVoucherState is the signed cumulative a corrective 402 carries.
