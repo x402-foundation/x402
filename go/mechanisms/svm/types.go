@@ -274,8 +274,11 @@ type FacilitatorSvmSigner interface {
 	// Returns transaction signature or error if send fails
 	SendTransaction(ctx context.Context, tx *solana.Transaction, network string) (solana.Signature, error)
 
-	// ConfirmTransaction waits for transaction confirmation
-	// Returns error if confirmation fails or times out
+	// ConfirmTransaction waits for transaction confirmation.
+	// Returns an error if confirmation fails or times out. Return a
+	// *TransactionFailedError when the chain confirmed the transaction with an
+	// execution error; schemes treat that as terminal and any other error as
+	// settlement_pending.
 	ConfirmTransaction(ctx context.Context, signature solana.Signature, network string) error
 }
 
