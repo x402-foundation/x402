@@ -859,7 +859,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
       const result = await facilitator.verify(payload, requirements);
 
       expect(result.isValid).toBe(false);
-      expect(result.invalidReason).toBe(Errors.ErrInvalidSignature);
+      expect(result.invalidReason).toBe("invalid_exact_evm_payload_signature");
     });
 
     it("should normalize addresses (case-insensitive)", async () => {
