@@ -124,3 +124,4 @@ demo for stable assertions across stacks.
 | `EVM_REFUND_AUTHORIZER_PRIVATE_KEY` | no | Managed mode only: signs cooperative refunds when the facilitator does not advertise `delegatedRefund: true` |
 | `STORAGE_DIR` | no | Persist channel sessions on disk (defaults to in-memory) |
 | `DEFERRED_WITHDRAW_DELAY_SECONDS` | no | Self-managed channel `withdrawDelay`; ignored in facilitator-managed mode (facilitator advertises `withdrawDelay`) |
+| `SVM_RPC_URL` | no | Solana RPC for the SVM redemption worker. Empty does not use the public cluster endpoint |

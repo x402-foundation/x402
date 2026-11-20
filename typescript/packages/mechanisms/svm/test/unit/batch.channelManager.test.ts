@@ -276,8 +276,9 @@ describe("batch-settlement redemption worker", () => {
     const errors: unknown[] = [];
     const { settle } = recorder(() => ok());
     const result = await new BatchChannelManager({
-      readPayoutWatermark: async () => 3000n,
       onError: error => errors.push(error),
+      readPayoutWatermark: async () => 3000n,
+      readSettledWatermark: async () => undefined,
       receiverAuthorizer,
       network: SOLANA_DEVNET_CAIP2,
       settle,
@@ -286,7 +287,9 @@ describe("batch-settlement redemption worker", () => {
 
     expect(result).toEqual({ claimed: [], distributed: [], sealed: [] });
     expect((await store.get("chan-a"))?.settled).toBe(0n);
-    expect(errors).toHaveLength(1);
+    expect(errors.map(error => (error as Error).message)).toEqual([
+      "confirmed settled watermark unavailable or behind the claim",
+    ]);
   });
 
   it("stop with flush runs one final redeem pass", async () => {

@@ -309,8 +309,8 @@ export class BatchChannelManager {
     {
       // The spec's claim response is just `success`/`transaction`/`network`/
       // `amount`; the reference facilitator adds `extra.accepts[]` with each
-      // channel's confirmed watermark. Use it when present. Otherwise a
-      // configured settled reader or `rpcUrl` confirms the watermark.
+      // channel's confirmed watermark. Use it when present. Otherwise read a
+      // configured settled reader or `rpcUrl`, or record the voucher amount.
       const accepts = response.extra?.accepts;
       if (accepts !== undefined) {
         if (
@@ -340,7 +340,7 @@ export class BatchChannelManager {
       let claimedInBatch = 0;
       for (const channel of batch) {
         let settled = channel.signedMaxClaimable;
-        if (accepts === undefined) {
+        if (accepts === undefined && this.hasSettledReader()) {
           try {
             const observed = await this.readSettledWatermark(channel.channelId);
             if (observed === undefined || observed < channel.signedMaxClaimable) {
