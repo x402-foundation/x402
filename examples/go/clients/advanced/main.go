@@ -56,8 +56,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	if pattern == "all-networks" && evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
-		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or CASPER_PRIVATE_KEY is required")
+	cardanoConfigured := os.Getenv("CARDANO_MNEMONIC") != "" && os.Getenv("BLOCKFROST_PROJECT_ID") != ""
+	if pattern == "all-networks" && evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" && !cardanoConfigured {
+		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, CASPER_PRIVATE_KEY, or CARDANO_MNEMONIC (with BLOCKFROST_PROJECT_ID) is required")
 		os.Exit(1)
 	}
 

@@ -85,6 +85,7 @@
       "assetTransferMethod": "default",
       "sdks": [
         "typescript",
+        "go",
         "python"
       ],
       "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
@@ -104,6 +105,7 @@
       "maxTimeoutSeconds": 600,
       "sdks": [
         "typescript",
+        "go",
         "python"
       ],
       "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
@@ -122,6 +124,7 @@
       "assetTransferMethod": "script",
       "sdks": [
         "typescript",
+        "go",
         "python"
       ],
       "requiresEnv": "SERVER_CARDANO_SELLER_MNEMONIC",
