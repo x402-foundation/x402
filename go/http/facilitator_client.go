@@ -409,8 +409,9 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 // ============================================================================
 
 func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
-	// Build request body
-	var payloadMap, requirementsMap map[string]interface{}
+	// Build request body. RawMessage keeps each value's JSON text, so numbers
+	// are forwarded exactly instead of being rounded through float64.
+	var payloadMap, requirementsMap map[string]json.RawMessage
 	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
@@ -483,8 +484,9 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 }
 
 func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.SettleResponse, error) {
-	// Build request body
-	var payloadMap, requirementsMap map[string]interface{}
+	// Build request body. RawMessage keeps each value's JSON text, so numbers
+	// are forwarded exactly instead of being rounded through float64.
+	var payloadMap, requirementsMap map[string]json.RawMessage
 	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
 	}

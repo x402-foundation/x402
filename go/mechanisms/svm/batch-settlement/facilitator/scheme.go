@@ -1075,9 +1075,12 @@ func payloadRecord(payload any) (map[string]any, bool) {
 	return record, ok
 }
 
+// decodeAs re-encodes a decoded payload map into T. Integer-valued numbers such
+// as 60.0 are rewritten as 60 first, so they still decode into int fields now
+// that payload maps hold json.Number instead of float64.
 func decodeAs[T any](value any) (T, error) {
 	var out T
-	raw, err := json.Marshal(value)
+	raw, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return out, err
 	}

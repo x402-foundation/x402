@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"math/big"
@@ -2380,6 +2381,50 @@ func TestReadExtraTotalClaimed(t *testing.T) {
 			got, ok := readExtraTotalClaimed(extra)
 			if ok != tc.ok || got != tc.want {
 				t.Fatalf("readExtraTotalClaimed(%v) = (%q, %v), want (%q, %v)", tc.value, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestOptionalUintString(t *testing.T) {
+	cases := []struct {
+		name  string
+		value interface{}
+		want  string
+		ok    bool
+	}{
+		{"json.Number above uint64", json.Number("123456789012345678901"), "123456789012345678901", true},
+		{"json.Number exact above 2^53", json.Number("9007199254740993.0"), "9007199254740993", true},
+		{"json.Number negative", json.Number("-1"), "", false},
+		{"json.Number fractional", json.Number("1.5"), "", false},
+		{"json.Number near-integer", json.Number("1.0000000000000000001"), "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := optionalUintString(tc.value)
+			if (got != nil) != tc.ok || (got != nil && *got != tc.want) {
+				t.Fatalf("optionalUintString(%v) = %v, want (%q, %v)", tc.value, got, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestExtraNumber(t *testing.T) {
+	cases := []struct {
+		name  string
+		value interface{}
+		want  int
+		ok    bool
+	}{
+		{"json.Number", json.Number("42"), 42, true},
+		{"json.Number near-integer", json.Number("1.0000000000000000001"), 0, false},
+		{"json.Number above int64", json.Number("9223372036854775808"), 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := extraNumber(tc.value)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("extraNumber(%v) = (%d, %v), want (%d, %v)", tc.value, got, ok, tc.want, tc.ok)
 			}
 		})
 	}

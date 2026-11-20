@@ -1639,3 +1639,16 @@ func TestManagedRefundAuthorizerSigner(t *testing.T) {
 		t.Fatal("managed mode should expose refund signer only")
 	}
 }
+
+func TestReadCorrectiveChannelStateJSONNumber(t *testing.T) {
+	cs := readCorrectiveChannelState(map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"channelId":           "0x01",
+			"refundNonce":         json.Number("4"),
+			"withdrawRequestedAt": json.Number("5"),
+		},
+	})
+	if cs == nil || cs.RefundNonce != "4" || cs.WithdrawRequestedAt != 5 {
+		t.Fatalf("got %+v", cs)
+	}
+}

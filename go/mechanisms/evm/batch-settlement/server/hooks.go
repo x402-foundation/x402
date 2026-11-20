@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -1269,31 +1270,13 @@ func readChannelStateFromExtra(extra map[string]interface{}) *batchsettlement.Ba
 	if v, ok := raw["channelId"].(string); ok {
 		out.ChannelId = v
 	}
-	if v, ok := raw["balance"].(string); ok {
-		out.Balance = v
-	} else if v, ok := raw["balance"].(float64); ok {
-		out.Balance = fmt.Sprintf("%.0f", v)
-	}
-	if v, ok := raw["totalClaimed"].(string); ok {
-		out.TotalClaimed = v
-	} else if v, ok := raw["totalClaimed"].(float64); ok {
-		out.TotalClaimed = fmt.Sprintf("%.0f", v)
-	}
-	if v, ok := raw["withdrawRequestedAt"].(float64); ok {
-		out.WithdrawRequestedAt = int(v)
-	} else if v, ok := raw["withdrawRequestedAt"].(int); ok {
+	out.Balance = mapStringField(raw, "balance", "")
+	out.TotalClaimed = mapStringField(raw, "totalClaimed", "")
+	if v, ok := batchsettlement.ExtraInt(raw["withdrawRequestedAt"]); ok {
 		out.WithdrawRequestedAt = v
 	}
-	if v, ok := raw["refundNonce"].(string); ok {
-		out.RefundNonce = v
-	} else if v, ok := raw["refundNonce"].(float64); ok {
-		out.RefundNonce = fmt.Sprintf("%.0f", v)
-	}
-	if v, ok := raw["chargedCumulativeAmount"].(string); ok {
-		out.ChargedCumulativeAmount = v
-	} else if v, ok := raw["chargedCumulativeAmount"].(float64); ok {
-		out.ChargedCumulativeAmount = fmt.Sprintf("%.0f", v)
-	}
+	out.RefundNonce = mapStringField(raw, "refundNonce", "")
+	out.ChargedCumulativeAmount = mapStringField(raw, "chargedCumulativeAmount", "")
 	return out
 }
 
@@ -1307,6 +1290,11 @@ func mapStringField(m map[string]interface{}, key string, defaultVal string) str
 	}
 	if v, ok := m[key].(float64); ok {
 		return fmt.Sprintf("%.0f", v)
+	}
+	if v, ok := m[key].(json.Number); ok {
+		if i, ok := x402.ParseJSONInteger(v); ok {
+			return i.String()
+		}
 	}
 	return defaultVal
 }
@@ -1337,6 +1325,12 @@ func mapUintStringField(m map[string]interface{}, key string) (string, bool) {
 			return "", false
 		}
 		return new(big.Int).SetUint64(uint64(v)).String(), true
+	case json.Number:
+		i, ok := x402.ParseJSONInteger(v)
+		if !ok || i.Sign() < 0 || i.Cmp(big.NewInt(1<<53-1)) > 0 {
+			return "", false
+		}
+		return i.String(), true
 	}
 	return "", false
 }
@@ -1351,6 +1345,10 @@ func mapIntField(m map[string]interface{}, key string, defaultVal int) int {
 		return int(v)
 	case int:
 		return v
+	case json.Number:
+		if n, ok := batchsettlement.ExtraInt(v); ok {
+			return n
+		}
 	case string:
 		n, _ := new(big.Int).SetString(v, 10)
 		if n != nil {

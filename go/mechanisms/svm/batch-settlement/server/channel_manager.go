@@ -768,11 +768,11 @@ func advertisedCapacity(value any) int {
 	case float64:
 		n = v
 	case json.Number:
-		parsed, err := v.Int64()
-		if err != nil {
+		i, ok := x402.ParseJSONInteger(v)
+		if !ok || !i.IsInt64() {
 			return maxChannelsPerBatch
 		}
-		n = float64(parsed)
+		n = float64(i.Int64())
 	default:
 		return maxChannelsPerBatch
 	}

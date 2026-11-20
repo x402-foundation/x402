@@ -353,11 +353,10 @@ func readCorrectiveChannelState(extra map[string]interface{}) *batchsettlement.B
 		out.RefundNonce = v
 	} else if v, ok := raw["refundNonce"].(float64); ok {
 		out.RefundNonce = strconv.Itoa(int(v))
+	} else if v, ok := batchsettlement.ExtraInt(raw["refundNonce"]); ok {
+		out.RefundNonce = strconv.Itoa(v)
 	}
-	switch v := raw["withdrawRequestedAt"].(type) {
-	case float64:
-		out.WithdrawRequestedAt = int(v)
-	case int:
+	if v, ok := batchsettlement.ExtraInt(raw["withdrawRequestedAt"]); ok {
 		out.WithdrawRequestedAt = v
 	}
 	return out

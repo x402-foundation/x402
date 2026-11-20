@@ -1,8 +1,10 @@
 package x402
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +15,7 @@ var (
 	moneyParsePattern  = regexp.MustCompile(`^\$?\s*(\d+(?:\.\d+)?)(?:\s+([A-Za-z][A-Za-z0-9.]*))?$`)
 	tokenAmountPattern = regexp.MustCompile(`^-?\d+\.?\d*$`)
 	scientificPattern  = regexp.MustCompile(`[eE]`)
+	jsonNumberPattern  = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 )
 
 // ValidatePaymentPayload performs basic validation on a payment payload
@@ -181,4 +184,58 @@ func ConvertToTokenAmount(decimalAmount string, decimals int) (string, error) {
 		tokenAmount = "0"
 	}
 	return tokenAmount, nil
+}
+
+// maxJSONNumberExponent bounds the exponent ParseJSONInteger accepts, so a
+// short input such as 1e1000000000 cannot force a huge allocation.
+const maxJSONNumberExponent = 1000
+
+// ParseJSONInteger returns n as an exact integer. Decimal and exponent forms
+// such as 60.0 and 6e1 are accepted when they equal an integer; values with a
+// fractional part, or that are not JSON numbers, are rejected. Callers apply
+// their own range checks to the result.
+func ParseJSONInteger(n json.Number) (*big.Int, bool) {
+	s := string(n)
+	if !jsonNumberPattern.MatchString(s) {
+		return nil, false
+	}
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		exp, err := strconv.Atoi(strings.TrimPrefix(s[i+1:], "+"))
+		if err != nil || exp > maxJSONNumberExponent || exp < -maxJSONNumberExponent {
+			return nil, false
+		}
+	}
+	r, ok := new(big.Rat).SetString(s)
+	if !ok || !r.IsInt() {
+		return nil, false
+	}
+	return new(big.Int).Set(r.Num()), true
+}
+
+// NormalizeJSONNumbers returns a copy of a decoded JSON value in which every
+// integer-valued json.Number (60.0, 6e1) is rewritten as a plain integer (60),
+// so a map re-encoded with json.Marshal still decodes into Go integer fields.
+// Other values are kept as they are, and the input is not modified.
+func NormalizeJSONNumbers(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = NormalizeJSONNumbers(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = NormalizeJSONNumbers(item)
+		}
+		return out
+	case json.Number:
+		if i, ok := ParseJSONInteger(v); ok {
+			return json.Number(i.String())
+		}
+		return v
+	default:
+		return value
+	}
 }
