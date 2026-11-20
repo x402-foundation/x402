@@ -1,0 +1,324 @@
+{
+  "meta": {
+    "profile": "x402-authority-conformance/1",
+    "spec": "specs/extensions/authority.md",
+    "constants": {
+      "MANDATE_VERSION": "x402-mandate/1",
+      "COMMIT_VERSION": "x402-mandate-commit/1",
+      "PAYEE_ATT_VERSION": "x402-mandate-payee/1",
+      "BINDING_VERSION": "x402-mandate-binding/1",
+      "ANY_RECIPIENT": "*",
+      "PAYEES_ACCOUNTANT": "payees"
+    },
+    "note": "All values deterministic: seeds = SHA-256(\"x402-authority-vectors/1:<label>\") b64url; Ed25519 per RFC 8032; verifier clock fixed at 2026-08-19T00:00:00Z"
+  },
+  "keys": {
+    "issuer": {
+      "seedB64url": "83YMfZFNjCxVM8ai7FjVVvYctOMYH64nNMCKSz4PcI0",
+      "publicKeyB64url": "ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8"
+    },
+    "accountant": {
+      "seedB64url": "ZWAiEKMQcv1VYtGBxM18YN6EAN3QTrTeK8ljr2Kp3Uk",
+      "publicKeyB64url": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8"
+    },
+    "agent-subject": {
+      "seedB64url": "-DbF8XmD0tgPGPlKTNqtRTW2rOM0Ry9_AZuJ9TOftH8",
+      "publicKeyB64url": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8"
+    },
+    "child-agent": {
+      "seedB64url": "ttpv1rg7W_RbTs7qi4CJbE3K5phiqs2jcd_FJhzr4eI",
+      "publicKeyB64url": "gDZzIcV0X_bbq6USA6qo6F8xfYIUjldS2vmOduSE7og"
+    },
+    "payee-1": {
+      "seedB64url": "avv6f_LGWFpshJZH886gkCFZiZeP6opnRy0KJMX7xCM",
+      "publicKeyB64url": "tSLsAa4YTzFB9-47RjgMhK7mzHD6wWLbWEcqPQLGHpY"
+    },
+    "payee-2": {
+      "seedB64url": "Be-zrLsn5mqvQyJJ7bxPeNQE7hO0-f8V0mWjV8egAI0",
+      "publicKeyB64url": "pG5h932Q_01BwZLtWhM3T-i2kU3eH-A9cI2UrJHJPd4"
+    },
+    "mallory": {
+      "seedB64url": "vsBZ5y4OVmccDGCBfxhMTCuY7YUugsJ6V2CPUk3I0lk",
+      "publicKeyB64url": "P8pNwAeIsdHMTWru7u3Vji662vTk7yzetk4HRDOha8M"
+    }
+  },
+  "modelA": {
+    "mandate": {
+      "v": "x402-mandate/1",
+      "issuer": "ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8",
+      "subject": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+      "asset": "FCUSD",
+      "cap": "1000000",
+      "perPayment": "250000",
+      "recipients": [
+        "merchant.example",
+        "api.vendor.example"
+      ],
+      "accountant": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
+      "purpose": "conformance vectors — model A",
+      "notAfter": "2027-01-01T00:00:00Z",
+      "nonce": "authority-vec-a-001"
+    },
+    "jcs": "{\"accountant\":\"M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8\",\"asset\":\"FCUSD\",\"cap\":\"1000000\",\"issuer\":\"ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8\",\"nonce\":\"authority-vec-a-001\",\"notAfter\":\"2027-01-01T00:00:00Z\",\"perPayment\":\"250000\",\"purpose\":\"conformance vectors — model A\",\"recipients\":[\"merchant.example\",\"api.vendor.example\"],\"subject\":\"HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8\",\"v\":\"x402-mandate/1\"}",
+    "digest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+    "alg": "Ed25519",
+    "sig": "Kvggg4hh76z8PngCRDjcwHELBw7RJ4hECAGqqmDOpVSbIzce40T7quwC_vjm8Aab3SPRUB5ZPywfoDFwvra_AQ",
+    "sigVerifies": true,
+    "paymentAccepted": {
+      "payment": {
+        "payer": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+        "recipient": "merchant.example",
+        "asset": "FCUSD",
+        "amount": "100000",
+        "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+        "at": "2026-08-19T00:00:00Z"
+      },
+      "verdict": true
+    },
+    "paymentRefusals": {
+      "overPerPayment": false,
+      "outOfScopeRecipient": false,
+      "wrongAsset": false,
+      "wrongPayer": false,
+      "expired": false
+    },
+    "binding": {
+      "paymentId": "pay-001",
+      "eip3009": "0x5aa71c23c84e6763bdb31a473f1981fd37ccf93945205b77eb84e0c271c1e74b",
+      "permit2": "41003414045902520435980278564259620301945597019592807630744813971199613855563",
+      "xrpl": "5AA71C23C84E6763BDB31A473F1981FD37CCF93945205B77EB84E0C271C1E74B",
+      "verifies": true
+    },
+    "spendLog": {
+      "entries": [
+        {
+          "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+          "asset": "FCUSD",
+          "paymentId": "pay-001",
+          "recipient": "merchant.example",
+          "amount": "100000",
+          "cumulative": "100000",
+          "priorRoot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+          "asset": "FCUSD",
+          "paymentId": "pay-002",
+          "recipient": "api.vendor.example",
+          "amount": "50000",
+          "cumulative": "150000",
+          "priorRoot": "86272f0e08025eb35c7594a2a5192ac0a437302820e9aa88c243d72f80119036"
+        },
+        {
+          "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+          "asset": "FCUSD",
+          "paymentId": "pay-003",
+          "recipient": "merchant.example",
+          "amount": "25000",
+          "cumulative": "175000",
+          "priorRoot": "9bfe10739b844bde0c17e522702b5153e31ca4ce6b9d9af0288a9358effe88ff"
+        }
+      ],
+      "root": "af101190770f54d48a4ed68b746e0d6bbec622ba8663ff5f892101c97468cf6f",
+      "total": "175000",
+      "inclusionProofIndex2": {
+        "entry": {
+          "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+          "asset": "FCUSD",
+          "paymentId": "pay-003",
+          "recipient": "merchant.example",
+          "amount": "25000",
+          "cumulative": "175000",
+          "priorRoot": "9bfe10739b844bde0c17e522702b5153e31ca4ce6b9d9af0288a9358effe88ff"
+        },
+        "index": 2,
+        "size": 3,
+        "proof": [
+          "9bfe10739b844bde0c17e522702b5153e31ca4ce6b9d9af0288a9358effe88ff"
+        ]
+      }
+    },
+    "head1": {
+      "commitment": {
+        "v": "x402-mandate-commit/1",
+        "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+        "accountant": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
+        "seq": 1,
+        "root": "af101190770f54d48a4ed68b746e0d6bbec622ba8663ff5f892101c97468cf6f",
+        "total": "175000",
+        "at": "2026-08-19T00:00:00Z"
+      },
+      "jcs": "{\"accountant\":\"M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8\",\"at\":\"2026-08-19T00:00:00Z\",\"mandateDigest\":\"sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05\",\"root\":\"af101190770f54d48a4ed68b746e0d6bbec622ba8663ff5f892101c97468cf6f\",\"seq\":1,\"total\":\"175000\",\"v\":\"x402-mandate-commit/1\"}",
+      "alg": "Ed25519",
+      "sig": "IO30o-O8GkH0sYFMT6SFJZJCODd9L5Ops3fnHpb_4Ry0Dsx2iPtOXA7j6SypRmJuSnyvK_1y1FSvGgE1eP-GAw",
+      "anchorDigest": "sha256:390b2cd253b07a2ef7f10b5607c470bc67805cc9467b5580b505d84a2538db10",
+      "anchorCalldata": "x402note/1;sha256:390b2cd253b07a2ef7f10b5607c470bc67805cc9467b5580b505d84a2538db10;for=sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05#1;by=M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
+      "anchorVerifies": true,
+      "parsed": {
+        "anchorDigest": "sha256:390b2cd253b07a2ef7f10b5607c470bc67805cc9467b5580b505d84a2538db10",
+        "mandateDigest": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05",
+        "seq": 1,
+        "by": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8"
+      },
+      "floorFromAnchors": 1
+    },
+    "verdicts": {
+      "fullLogAgainstHead_lastSeq0": true,
+      "fullLog_lastSeqNull_ok": true,
+      "fullLog_lastSeqNull_warned": true,
+      "truncatedLogRefused": false,
+      "fakeAccountantRefused": false,
+      "rollbackRefused": false,
+      "duplicatePaymentIdRefused": false,
+      "postSettleInclusion": true
+    }
+  },
+  "modelB": {
+    "mandate": {
+      "v": "x402-mandate/1",
+      "issuer": "ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8",
+      "subject": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+      "asset": "FCYD",
+      "cap": "500000",
+      "recipients": [
+        "tSLsAa4YTzFB9-47RjgMhK7mzHD6wWLbWEcqPQLGHpY",
+        "pG5h932Q_01BwZLtWhM3T-i2kU3eH-A9cI2UrJHJPd4"
+      ],
+      "accountant": "payees",
+      "purpose": "conformance vectors — model B",
+      "notAfter": "2027-01-01T00:00:00Z",
+      "nonce": "authority-vec-b-001"
+    },
+    "digest": "sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530",
+    "alg": "Ed25519",
+    "sig": "uYNuLkc3u8MPoW-0HQ6U_GMbfMdny6G5Q1SRMq2mmdY4sxgutfvH0H4OSiK0Z4QzFsGqSs0ef6cVe6Hi6gu1Aw",
+    "entries": [
+      {
+        "mandateDigest": "sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530",
+        "asset": "FCYD",
+        "paymentId": "bpay-001",
+        "recipient": "tSLsAa4YTzFB9-47RjgMhK7mzHD6wWLbWEcqPQLGHpY",
+        "amount": "120000",
+        "cumulative": "120000",
+        "priorRoot": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "mandateDigest": "sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530",
+        "asset": "FCYD",
+        "paymentId": "bpay-002",
+        "recipient": "pG5h932Q_01BwZLtWhM3T-i2kU3eH-A9cI2UrJHJPd4",
+        "amount": "80000",
+        "cumulative": "200000",
+        "priorRoot": "aa51e974e5cfca515456fef238064ca88112da6e0b85da9a00078db2e1e810ee"
+      }
+    ],
+    "attestations": [
+      {
+        "attestation": {
+          "v": "x402-mandate-payee/1",
+          "mandateDigest": "sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530",
+          "paymentId": "bpay-001",
+          "payee": "tSLsAa4YTzFB9-47RjgMhK7mzHD6wWLbWEcqPQLGHpY",
+          "asset": "FCYD",
+          "amount": "120000",
+          "at": "2026-08-19T00:00:00Z"
+        },
+        "alg": "Ed25519",
+        "sig": "PopsCJjHchkNp9boyaGfZLoFG4VRNZ1pGKBOC-3V6ujpkGEu48rARWzHFR9tVDAaKov_Wb0S3pPsKvqOCHqiCg",
+        "verifies": true
+      },
+      {
+        "attestation": {
+          "v": "x402-mandate-payee/1",
+          "mandateDigest": "sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530",
+          "paymentId": "bpay-002",
+          "payee": "pG5h932Q_01BwZLtWhM3T-i2kU3eH-A9cI2UrJHJPd4",
+          "asset": "FCYD",
+          "amount": "80000",
+          "at": "2026-08-19T00:00:00Z"
+        },
+        "alg": "Ed25519",
+        "sig": "h9ch8SfniGyDWFHfwTs6UNyBmTqxe5EIAoPqKiDIOtvjSjMI9fP0_m1HAh_SLU42y4re2hnRbRef3lxijM1dDA",
+        "verifies": true
+      }
+    ],
+    "att1AnchorDigest": "sha256:8e745d2c91c89c0e7e94d52ec42140c2dea3c2de2f1f927704fbd86aed5cf3a1",
+    "att1AnchorCalldata": "x402note/1;sha256:8e745d2c91c89c0e7e94d52ec42140c2dea3c2de2f1f927704fbd86aed5cf3a1;for=sha256:d3e777586f4367ef13be1991a5d583ab5d8c7e6fabd5a678ba79a1a3125cb530@bpay-001;by=tSLsAa4YTzFB9-47RjgMhK7mzHD6wWLbWEcqPQLGHpY",
+    "verdicts": {
+      "entryBackingOk": true,
+      "fabricationRefused": false,
+      "reconcileFullOk": true,
+      "reconcileOmissionRefused": false
+    }
+  },
+  "delegation": {
+    "child": {
+      "v": "x402-mandate/1",
+      "issuer": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+      "subject": "gDZzIcV0X_bbq6USA6qo6F8xfYIUjldS2vmOduSE7og",
+      "asset": "FCUSD",
+      "cap": "200000",
+      "perPayment": "50000",
+      "recipients": [
+        "merchant.example"
+      ],
+      "accountant": "M16cS6EkFTGx6nsxHb5QM0yn-dzWlxHsrbFsEhJ7il8",
+      "purpose": "conformance vectors — delegated",
+      "notAfter": "2026-12-01T00:00:00Z",
+      "nonce": "authority-vec-c-001",
+      "parent": "sha256:445fed871d7c43d2b775e68124103c77646fc0f096fb42c9ea3d9f00c960ca05"
+    },
+    "childDigest": "sha256:00395567484632f264d9ee163d231dc7d298144065ba939a5da99d561c5e23b4",
+    "childAlg": "Ed25519",
+    "childSig": "av9tftdbWp5nXCzQf4dp7Obaw3FzqdS7373InGq7b4hvV3we6i0N6J-0AB71xClAKSEHqmN8n1jDJ73WPj-LCQ",
+    "chainOk": true,
+    "rootIssuer": "ZpxwxbuTQMjJCKTuNk6E-qHD4wGTc7QJ8yYPUdUvSm8",
+    "delegatedPaymentOk": true,
+    "siblingBudget": {
+      "overRefused": false,
+      "withinOk": true
+    },
+    "wideningRefusals": {
+      "capAboveParent": "refusing a widening delegation: child cap 2000000 exceeds parent cap 1000000",
+      "laterNotAfter": "refusing a widening delegation: child expiry is later than the parent's",
+      "recipientOutsideParent": "refusing a widening delegation: child recipient evil.example is outside the parent scope",
+      "anyUnderScopedParent": "refusing a widening delegation: child cannot opt into ANY_RECIPIENT under a scoped parent"
+    }
+  },
+  "shapeRefusals": {
+    "feb30NotAfter": "refusing to issue a malformed mandate: mandate.notAfter must be strict RFC 3339 UTC (…Z)",
+    "emptyRecipients": "refusing to issue a malformed mandate: mandate.recipients is empty — use [ANY_RECIPIENT] for an explicit unconstrained opt-in",
+    "starMixedWithNamed": "refusing to issue a malformed mandate: '*' must be the SOLE element to opt into an unconstrained recipient set",
+    "floatCap": "refusing to issue a malformed mandate: mandate.cap must be an integer minor-unit string",
+    "perPaymentAboveCap": "refusing to issue a malformed mandate: mandate.perPayment exceeds cap — a per-payment bound above the cumulative cap is incoherent"
+  },
+  "securityFixes": {
+    "settledPaymentMatchesOk": true,
+    "settledUnderReport": {
+      "note": "Agent logged 1; the rail moved 1000000. (a) commitmentMismatch is the under-report itself, caught by comparing the committed entry to the settled artifact (MUST-rule 2). (b) decodedAmount shows the slot binds (mandate, paymentId) but not amount — it refuses on the per-payment bound, which would also fire on an honest 1000000, so it is NOT under-report detection.",
+      "paymentId": "pay-001",
+      "settled": {
+        "scheme": "eip3009",
+        "slot": "0x5aa71c23c84e6763bdb31a473f1981fd37ccf93945205b77eb84e0c271c1e74b",
+        "payer": "HMcvJ5nY6DANhYEDgfaEHjR5Ur7xbfmqwbOn2kG5qE8",
+        "recipient": "merchant.example",
+        "asset": "FCUSD",
+        "amount": "1000000"
+      },
+      "committedEntryAmount": "1",
+      "commitmentMismatchVerdictOk": false,
+      "commitmentMismatchReason": "committed entry amount 1 != settled amount 1000000 — under-reported spend",
+      "presentedTupleVerdictOk": true,
+      "decodedAmountVerdictOk": false,
+      "decodedAmountReason": "payment 1000000 exceeds per-payment bound 250000"
+    },
+    "strangerVetoResisted": true,
+    "surrogatePurposeRefusedNotThrown": {
+      "threw": false,
+      "ok": false
+    },
+    "badAlgRefused": false,
+    "unknownMemberMandateRefused": "refusing to issue a malformed mandate: mandate carries an unknown member 'extra' — the object is closed (fail closed on unknown fields)",
+    "unknownMemberCommitmentRefused": "commitment carries an unknown member 'extra' — the object is closed"
+  }
+}
