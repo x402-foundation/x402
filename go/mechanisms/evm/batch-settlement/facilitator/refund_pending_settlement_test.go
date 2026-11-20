@@ -12,6 +12,7 @@ import (
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/storage"
 )
 
 // Exercises the PendingSettlementStore fast path wired into SubmitRefund: a refund whose
@@ -625,4 +626,211 @@ func TestRefundPendingSettlement_ManagedStoreGetErrorFailsClosed(t *testing.T) {
 			}
 		})
 	}
+}
+
+type spySettleTargets struct {
+	*storage.InMemorySettleTargetStorage
+	deltas []storage.SettleTargetClaimDelta
+}
+
+func newSpySettleTargets() *spySettleTargets {
+	return &spySettleTargets{InMemorySettleTargetStorage: storage.NewInMemorySettleTargetStorage()}
+}
+
+func (s *spySettleTargets) RecordClaimed(ctx context.Context, delta storage.SettleTargetClaimDelta) error {
+	s.deltas = append(s.deltas, delta)
+	return s.InMemorySettleTargetStorage.RecordClaimed(ctx, delta)
+}
+
+func TestRefundPendingSettlement_ManagedBundledClaimRetryFinalizesBookkeeping(t *testing.T) {
+	for _, mode := range refundSubmitModes {
+		t.Run(string(mode), func(t *testing.T) {
+			h := newHotRefund(t, unclaimedFields(), nil, nil)
+			rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+			signer := newManagedSigner(t, rpc)
+			wait := signer.waitForReceipt
+			waits := 0
+			signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+				waits++
+				if waits == 1 {
+					return nil, errors.New("rpc: timeout waiting for receipt")
+				}
+				rpc.totalClaimed = big.NewInt(5000)
+				rpc.balance = big.NewInt(5000)
+				return wait(txHash)
+			}
+			targets := newSpySettleTargets()
+			h.deps.Signer = signer
+			h.deps.SubmitMode = mode
+			h.deps.AuthorizerSubmitter = signer
+			h.deps.SettleTargetStorage = targets
+
+			_, err := h.settle("5000")
+			requireSettleErrorReason(t, err, ErrSettlementPending)
+			if len(signer.writeFns) != 1 || signer.writeFns[0] != "multicall" {
+				t.Fatalf("writes = %v, want one bundled multicall", signer.writeFns)
+			}
+			if got := h.row(); got.PendingClaim == nil || got.PendingClaim.TxHash != successTxHash || got.ChargeCount != 6 {
+				t.Fatalf("after timeout: row = %+v, want pending claim with tx %q and chargeCount 6", got, successTxHash)
+			}
+			if len(targets.deltas) != 0 {
+				t.Fatalf("settle target deltas before confirm = %v, want none", targets.deltas)
+			}
+
+			resp, err := h.settle("5000")
+			if err != nil || !resp.Success || resp.Transaction != successTxHash || resp.Amount != "5000" {
+				t.Fatalf("retry resp = %+v err = %v, want success for %q refunding 5000", resp, err, successTxHash)
+			}
+			if signer.writeCalls != 1 {
+				t.Fatalf("writes = %d, want the first broadcast only", signer.writeCalls)
+			}
+			if got := h.row(); got.PendingClaim != nil || got.ChargeCount != 0 || got.TotalClaimed != "5000" {
+				t.Fatalf("after retry: row = %+v, want cleared pending claim, chargeCount 0, totalClaimed 5000", got)
+			}
+			if got := extraInt(resp, "chargeCount"); got != 0 {
+				t.Fatalf("response chargeCount = %d, want 0", got)
+			}
+			if len(targets.deltas) != 1 || targets.deltas[0].Amount.String() != "4000" {
+				t.Fatalf("settle target deltas = %+v, want one delta of 4000", targets.deltas)
+			}
+			page, err := targets.ListSettleTargets(context.Background(), storage.SettleQuery{Network: managedNetwork, Limit: intPtr(10)})
+			if err != nil || len(page.Items) != 1 {
+				t.Fatalf("settle targets = %+v err = %v, want 1 target", page, err)
+			}
+			if entries := h.deps.PendingStore.(*x402.InMemoryPendingSettlementStore).Entries(); len(entries) != 0 {
+				t.Fatalf("pending entries = %v, want cleared", entries)
+			}
+		})
+	}
+}
+
+func TestRefundPendingSettlement_ManagedBundledClaimRetryNoOpAndRevert(t *testing.T) {
+	t.Run("noop claim leg keeps charge count pending", func(t *testing.T) {
+		for _, mode := range refundSubmitModes {
+			t.Run(string(mode), func(t *testing.T) {
+				h := newHotRefund(t, unclaimedFields(), nil, nil)
+				rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+				signer := newManagedSigner(t, rpc)
+				wait := signer.waitForReceipt
+				waits := 0
+				signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+					waits++
+					if waits == 1 {
+						return nil, errors.New("rpc: timeout waiting for receipt")
+					}
+					rpc.totalClaimed = big.NewInt(5000)
+					rpc.balance = big.NewInt(5000)
+					receipt, recErr := wait(txHash)
+					if receipt == nil {
+						return receipt, recErr
+					}
+					return withoutClaimedLogs(receipt), recErr
+				}
+				targets := newSpySettleTargets()
+				h.deps.Signer = signer
+				h.deps.SubmitMode = mode
+				h.deps.AuthorizerSubmitter = signer
+				h.deps.SettleTargetStorage = targets
+
+				_, err := h.settle("5000")
+				requireSettleErrorReason(t, err, ErrSettlementPending)
+
+				resp, err := h.settle("5000")
+				if err != nil || !resp.Success {
+					t.Fatalf("retry resp = %+v err = %v, want success", resp, err)
+				}
+				if got := h.row(); got.PendingClaim != nil || got.ChargeCount != 6 || got.TotalClaimed != "5000" {
+					t.Fatalf("after no-op retry: row = %+v, want cleared pending claim and chargeCount 6", got)
+				}
+				if len(targets.deltas) != 1 || targets.deltas[0].Amount.String() != "4000" {
+					t.Fatalf("settle target deltas = %+v, want one delta of 4000", targets.deltas)
+				}
+			})
+		}
+	})
+
+	t.Run("reverted retry clears pending claim marker", func(t *testing.T) {
+		for _, mode := range refundSubmitModes {
+			t.Run(string(mode), func(t *testing.T) {
+				h := newHotRefund(t, unclaimedFields(), nil, nil)
+				rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+				signer := newManagedSigner(t, rpc)
+				waits := 0
+				signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+					waits++
+					if waits == 1 {
+						return nil, errors.New("rpc: timeout waiting for receipt")
+					}
+					return &evm.TransactionReceipt{Status: evm.TxStatusFailed, TxHash: txHash}, nil
+				}
+				targets := newSpySettleTargets()
+				h.deps.Signer = signer
+				h.deps.SubmitMode = mode
+				h.deps.AuthorizerSubmitter = signer
+				h.deps.SettleTargetStorage = targets
+
+				_, err := h.settle("5000")
+				requireSettleErrorReason(t, err, ErrSettlementPending)
+
+				_, err = h.settle("5000")
+				requireSettleErrorReason(t, err, ErrTransactionReverted)
+				if got := h.row(); got.PendingClaim != nil || got.ChargeCount != 6 || got.TotalClaimed != "1000" {
+					t.Fatalf("after reverted retry: row = %+v, want cleared pending claim and untouched counts", got)
+				}
+				if len(targets.deltas) != 0 {
+					t.Fatalf("settle target deltas = %+v, want none on revert", targets.deltas)
+				}
+			})
+		}
+	})
+
+	t.Run("refund-only retry does not touch worker marker or start a new claim", func(t *testing.T) {
+		for _, mode := range refundSubmitModes {
+			t.Run(string(mode), func(t *testing.T) {
+				marker := workerMarker()
+				h := newHotRefund(t, unclaimedFields(), marker, nil)
+				rpc := &managedRPC{balance: big.NewInt(10000), totalClaimed: big.NewInt(1000)}
+				signer := newManagedSigner(t, rpc)
+				wait := signer.waitForReceipt
+				waits := 0
+				var markerOnRetry *PendingClaim
+				signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+					waits++
+					if waits == 1 {
+						return nil, errors.New("rpc: timeout waiting for receipt")
+					}
+					markerOnRetry = h.row().PendingClaim
+					return wait(txHash)
+				}
+				targets := newSpySettleTargets()
+				h.deps.Signer = signer
+				h.deps.SubmitMode = mode
+				h.deps.AuthorizerSubmitter = signer
+				h.deps.SettleTargetStorage = targets
+
+				_, err := h.settle("5000")
+				requireSettleErrorReason(t, err, ErrSettlementPending)
+
+				// Worker finishes between attempt 1 and attempt 2, leaving unclaimed charges behind.
+				item := attestedClaim{ChannelID: h.channelID, Count: marker.AttestedCount, ClaimedTo: marker.ClaimedTo, StartedAt: marker.StartedAt}
+				if finishErr := finishAttestedClaim(context.Background(), h.inner, h.channelID, "3000", item, true); finishErr != nil {
+					t.Fatal(finishErr)
+				}
+
+				resp, err := h.settle("5000")
+				if err != nil || !resp.Success {
+					t.Fatalf("retry resp = %+v err = %v, want success", resp, err)
+				}
+				if markerOnRetry != nil {
+					t.Fatalf("retry wrote a new pending claim marker %+v for a refund-only tx", markerOnRetry)
+				}
+				if got := h.row(); got.PendingClaim != nil || got.ChargeCount != 2 || got.TotalClaimed != "3000" {
+					t.Fatalf("after refund-only retry: row = %+v, want worker result untouched", got)
+				}
+				if len(targets.deltas) != 0 {
+					t.Fatalf("settle target deltas = %+v, want none for refund-only tx", targets.deltas)
+				}
+			})
+		}
+	})
 }
