@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Go SIWX: a configured origin is now canonicalized before comparison — host lowercased, default ports (80/443) dropped, non-default ports kept, IPv6 hosts re-bracketed — so https://API.Example.com:443 matches https://api.example.com, consistent with the Python and TypeScript SDKs.'
+time: 2026-11-20T10:25:33Z

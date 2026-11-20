@@ -2,7 +2,9 @@ package signinwithx
 
 import (
 	"fmt"
+	"net"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -35,8 +37,26 @@ func normalizeConfiguredOrigin(origin string) (*url.URL, error) {
 
 	return &url.URL{
 		Scheme: parsed.Scheme,
-		Host:   parsed.Host,
+		Host:   canonicalOriginHost(parsed),
 	}, nil
+}
+
+// canonicalOriginHost lowercases the host and drops the port when it is the
+// default for the scheme, so that "https://API.Example.com:443" and
+// "https://api.example.com" yield the same origin.
+func canonicalOriginHost(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port == "" {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func urlOrigin(u *url.URL) string {
