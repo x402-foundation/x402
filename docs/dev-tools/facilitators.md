@@ -35,6 +35,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [PayAI Facilitator](https://facilitator.payai.network) | Production-grade multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
 | [Radius Facilitator](https://facilitator.radiustech.xyz) | x402 facilitator for SBC on Radius and USDC on Base, supporting `exact` and `upto` via EIP-3009 and Permit2; no API key required |
+| [Roundhouse Facilitator](https://roundhouseai.io/docs/guides/use-the-roundhouse-facilitator) | Facilitator for `exact` payments on Base mainnet (`eip155:8453`) and Solana mainnet, x402 v1 and v2, with facilitator-sponsored gas. Endpoint: `https://x402.roundhouseai.io` |
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [Sui Facilitator (UIG Studios)](https://github.com/DrVelvetFog/sui-x402-facilitator) | Non-custodial, zero-fee x402 facilitator for Sui mainnet and testnet with USDC support |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
