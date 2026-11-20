@@ -1,0 +1,7 @@
+kind: fixed
+body: >-
+  Sign-In-With-X records a successful settlement against the server request
+  path. A client-supplied payment resource URL is used only when the settlement
+  has no HTTP request, so paying one SIWX route can no longer be recorded as
+  access to another. HTTP settlement now passes its transport into settle hooks.
+time: 2026-10-18T12:00:00Z

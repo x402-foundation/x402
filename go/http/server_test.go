@@ -670,6 +670,60 @@ func TestProcessSettlement(t *testing.T) {
 	}
 }
 
+func TestProcessSettlementPassesHTTPTransportToSettleHook(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockFacilitatorClient{
+		settle: func(ctx context.Context, payloadBytes []byte, requirementsBytes []byte) (*x402.SettleResponse, error) {
+			return &x402.SettleResponse{
+				Success:     true,
+				Transaction: "0xtx",
+				Payer:       "0xpayer",
+				Network:     "eip155:8453",
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		RoutesConfig{},
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:1", &mockSchemeServer{scheme: "exact"}),
+	)
+	_ = server.Initialize(ctx)
+
+	var seen interface{}
+	server.OnAfterSettle(func(hookCtx x402.SettleResultContext) error {
+		seen = hookCtx.TransportContext
+		return nil
+	})
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "exact",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xtest",
+	}
+	payload := types.PaymentPayload{
+		X402Version: 2,
+		Accepted:    requirements,
+		Payload:     map[string]interface{}{},
+		Resource:    &types.ResourceInfo{URL: "https://api.example.com/joke"},
+	}
+	transport := &HTTPTransportContext{
+		Request: &HTTPRequestContext{Path: "/weather", Method: "GET"},
+	}
+
+	result := server.ProcessSettlement(ctx, payload, requirements, nil, transport, nil, nil, "")
+	if !result.Success {
+		t.Fatalf("Unexpected failure: %v", result.ErrorReason)
+	}
+	got, ok := seen.(*HTTPTransportContext)
+	if !ok || got == nil || got.Request == nil || got.Request.Path != "/weather" {
+		t.Fatalf("settle hook transport = %#v", seen)
+	}
+}
+
 func TestProcessSettlement_Failure(t *testing.T) {
 	ctx := context.Background()
 	landedTxHash := "0x" + strings.Repeat("cd", 32)
