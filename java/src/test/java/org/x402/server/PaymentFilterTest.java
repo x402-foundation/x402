@@ -706,6 +706,55 @@ class PaymentFilterTest {
         assertEquals("malformed X-PAYMENT header", node.path("error").asText());
     }
 
+    /* ------------ header that is not valid base64 => 402 ----------------- */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "not base64!",   // space and '!' are outside the base64 alphabet
+        "e30=e30=",      // padding in the middle
+        "e30",           // truncated: a lone trailing character group
+        "@@@@"
+    })
+    void base64InvalidHeaderReturns402(String header) throws Exception {
+        when(req.getRequestURI()).thenReturn("/private");
+        when(req.getHeader("X-PAYMENT")).thenReturn(header);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        PrintWriter out = new PrintWriter(body, true);
+        when(resp.getWriter()).thenReturn(out);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp, never()).setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+        verifyNoInteractions(fac);
+        out.flush();
+        JsonNode node = Json.MAPPER.readTree(body.toString(StandardCharsets.UTF_8));
+        assertEquals("malformed X-PAYMENT header", node.path("error").asText());
+    }
+
+    /* ------------ non-string resource is rejected locally ----------------- */
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "123", "true", "{}", "[\"/private\"]", "{\"path\":\"/private\"}"})
+    void nonStringResourceReturns402WithoutFacilitator(String resourceJson) throws Exception {
+        when(req.getRequestURI()).thenReturn("/private");
+        String json = "{\"x402Version\":1,\"scheme\":\"exact\",\"network\":\"base-sepolia\","
+                + "\"payload\":{\"resource\":" + resourceJson + "}}";
+        String header = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+        when(req.getHeader("X-PAYMENT")).thenReturn(header);
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        PrintWriter out = new PrintWriter(body, true);
+        when(resp.getWriter()).thenReturn(out);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_PAYMENT_REQUIRED);
+        verify(chain, never()).doFilter(any(), any());
+        verifyNoInteractions(fac);
+        out.flush();
+        JsonNode node = Json.MAPPER.readTree(body.toString(StandardCharsets.UTF_8));
+        assertEquals("resource mismatch", node.path("error").asText());
+    }
+
     /* ------------ facilitator IOException body is valid JSON -------------- */
     @Test
     void facilitatorIOExceptionBodyIsValidJson() throws Exception {

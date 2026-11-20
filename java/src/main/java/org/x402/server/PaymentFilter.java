@@ -113,9 +113,10 @@ public class PaymentFilter implements Filter {
         }
 
         // Optional sanity check: the spec-defined exact-scheme payload ({signature, authorization})
-        // carries no resource, so only reject a payload that names a different one.
-        Object claimedResource = payload.payload.get("resource");
-        if (claimedResource != null && !claimedResource.equals(path)) {
+        // carries no resource, so only check a payload that names one. A present "resource" must be
+        // a string equal to the request path; an explicit null or non-string value is rejected.
+        if (payload.payload.containsKey("resource")
+                && !(payload.payload.get("resource") instanceof String claimed && claimed.equals(path))) {
             respond402(response, path, "resource mismatch");
             return;
         }
