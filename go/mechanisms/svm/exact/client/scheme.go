@@ -67,8 +67,8 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	// Validate splits before any other RPC work, and obtain consent for them
-	// (§5.6). Without splits this is a single leg of the full amount.
+	// Validate payment terms before RPC work. Recipient screening belongs in
+	// the core client payment-creation hook.
 	var legs []svm.PaymentLeg
 	if svm.UsesSplitTerms(requirements) {
 		parsed, err := svm.ParsePaymentLegs(requirements)
@@ -76,9 +76,6 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 			return types.PaymentPayload{}, err
 		}
 		legs = parsed
-		if err := c.approveSplits(ctx, requirements, legs); err != nil {
-			return types.PaymentPayload{}, err
-		}
 	}
 
 	// Get network configuration
@@ -283,34 +280,6 @@ func (c *ExactSvmScheme) resolveRecentBlockhash(
 		return solana.Hash{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
 	}
 	return latestBlockhash.Value.Blockhash, nil
-}
-
-// approveSplits asks the configured ApproveSplits hook to consent to the
-// requirements' splits (§5.6). Requirements without splits need no consent.
-func (c *ExactSvmScheme) approveSplits(ctx context.Context, requirements types.PaymentRequirements, legs []svm.PaymentLeg) error {
-	if len(legs) <= 1 {
-		return nil
-	}
-	if c.config == nil || c.config.ApproveSplits == nil {
-		return fmt.Errorf("%s: payment requirements carry extra.splits; set ApproveSplits in the client config to consent to them", ErrSplitsNotApproved)
-	}
-	splits := make([]svm.SplitTerms, 0, len(legs)-1)
-	for _, leg := range legs[1:] {
-		splits = append(splits, svm.SplitTerms{
-			PayTo:  leg.Owner.String(),
-			Amount: strconv.FormatUint(leg.Amount, 10),
-			Memo:   leg.Memo,
-		})
-	}
-	info := svm.SplitApprovalInfo{
-		PayTo:         requirements.PayTo,
-		PrimaryAmount: strconv.FormatUint(legs[0].Amount, 10),
-		Requirements:  requirements,
-	}
-	if !c.config.ApproveSplits(ctx, splits, info) {
-		return fmt.Errorf("%s: splits in the payment requirements were not approved", ErrSplitsNotApproved)
-	}
-	return nil
 }
 
 // accountExists reports whether an account is confirmed to exist. An RPC

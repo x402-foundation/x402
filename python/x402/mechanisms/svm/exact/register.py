@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     )
 
     from ..signer import ClientSvmSigner, FacilitatorSvmSigner
-    from .client import ApproveSplits
 
 # Type vars for accepting both async and sync variants
 ClientT = TypeVar("ClientT", "x402Client", "x402ClientSync")
@@ -31,7 +30,6 @@ def register_exact_svm_client(
     networks: str | list[str] | None = None,
     policies: list | None = None,
     rpc_url: str | None = None,
-    approve_splits: "ApproveSplits | None" = None,
 ) -> ClientT:
     """Register SVM exact payment schemes to x402Client.
 
@@ -45,8 +43,6 @@ def register_exact_svm_client(
         networks: Optional specific network(s) (default: wildcard).
         policies: Optional payment policies.
         rpc_url: Optional custom RPC URL.
-        approve_splits: Optional consent hook for requirements carrying
-            ``extra.splits`` (V2 only); without it such requirements are refused.
 
     Returns:
         Client for chaining.
@@ -54,7 +50,7 @@ def register_exact_svm_client(
     from .client import ExactSvmScheme as ExactSvmClientScheme
     from .v1.client import ExactSvmSchemeV1 as ExactSvmClientSchemeV1
 
-    scheme = ExactSvmClientScheme(signer, rpc_url, approve_splits=approve_splits)
+    scheme = ExactSvmClientScheme(signer, rpc_url)
 
     if networks:
         if isinstance(networks, str):

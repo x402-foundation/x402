@@ -39,6 +39,7 @@ import {
   readTransactionV1Config,
 } from "../../src/transactionV1";
 import { decodeTransactionFromPayload, transactionMessageHash } from "../../src/utils";
+import { x402Client } from "@x402/core/client";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { ExactSvmScheme as ExactSvmClient } from "../../src/exact/client/scheme";
 import { ExactSvmScheme as ExactSvmFacilitator } from "../../src/exact/facilitator/scheme";
@@ -370,33 +371,9 @@ describe("matchTransfersToLegs", () => {
 });
 
 describe("exact client with splits", () => {
-  it("refuses splits without an approveSplits hook, or when it declines", async () => {
+  it("accepts valid splits by default and builds one transfer per leg", async () => {
     const p = await parties();
-    await expect(
-      new ExactSvmClient(p.payer).createPaymentPayload(2, requirements(p)),
-    ).rejects.toThrow(/approveSplits/);
-    const declining = new ExactSvmClient(p.payer, { approveSplits: () => false });
-    await expect(declining.createPaymentPayload(2, requirements(p))).rejects.toThrow(
-      /not approved/,
-    );
-  });
-
-  it("passes the splits and the primary remainder to approveSplits", async () => {
-    const p = await parties();
-    const approveSplits = vi.fn(() => true);
-    await new ExactSvmClient(p.payer, { approveSplits }).createPaymentPayload(2, requirements(p));
-    expect(approveSplits).toHaveBeenCalledWith(
-      [
-        { payTo: p.platform.address, amount: "40000", memo: "platform fee" },
-        { payTo: p.referrer.address, amount: "10000", memo: "referral" },
-      ],
-      expect.objectContaining({ payTo: p.merchant.address, primaryAmount: "1000000" }),
-    );
-  });
-
-  it("builds compute budget, one transfer per leg in order, then the memo", async () => {
-    const p = await parties();
-    const client = new ExactSvmClient(p.payer, { approveSplits: () => true });
+    const client = new ExactSvmClient(p.payer);
     const { payload } = await client.createPaymentPayload(2, requirements(p));
     const ixs = instructionsOf((payload as { transaction: string }).transaction);
     expect(ixs.map(ix => ix.programAddress.toString())).toEqual([
@@ -424,7 +401,7 @@ describe("exact client with splits", () => {
         { payTo: p.referrer.address, amount: "10000" },
       ],
     });
-    const client = new ExactSvmClient(p.payer, { approveSplits: () => true });
+    const client = new ExactSvmClient(p.payer);
     const { payload } = await client.createPaymentPayload(2, req);
     const ixs = instructionsOf((payload as { transaction: string }).transaction);
     const creates = ixs.filter(ix => ix.programAddress === ASSOCIATED_TOKEN_PROGRAM_ADDRESS);
@@ -446,7 +423,7 @@ describe("exact client with splits", () => {
 
 describe("exact facilitator with splits", () => {
   async function clientTransaction(p: Parties, req: PaymentRequirements): Promise<string> {
-    const client = new ExactSvmClient(p.payer, { approveSplits: () => true });
+    const client = new ExactSvmClient(p.payer);
     const { payload } = await client.createPaymentPayload(2, req);
     return (payload as { transaction: string }).transaction;
   }
@@ -684,7 +661,7 @@ describe("exact facilitator with splits", () => {
         ataCreationRequired: true,
       })),
     });
-    const client = new ExactSvmClient(p.payer, { approveSplits: () => true });
+    const client = new ExactSvmClient(p.payer);
     await expect(client.createPaymentPayload(2, withCreates)).rejects.toThrow(/1232-byte limit/);
   });
 
@@ -1455,4 +1432,27 @@ describe("split assertion guard policy", () => {
       expect(() => parsePaymentLegs({ ...requirements(p), payTo })).toThrow(SplitsError);
     },
   );
+});
+
+it("lets the core recipient policy reject a split before construction or signing", async () => {
+  const p = await parties();
+  const req = requirements(p);
+  req.amount = "105000";
+  const scheme = new ExactSvmClient(p.payer);
+  const create = vi.spyOn(scheme, "createPaymentPayload");
+  const client = new x402Client().register(SOLANA_DEVNET_CAIP2, scheme);
+  client.onBeforePaymentCreation(({ selectedRequirements }) => {
+    const legs = parsePaymentLegs(selectedRequirements);
+    if (legs.some(leg => leg.owner === p.platform.address)) {
+      return { abort: true, reason: "recipient policy rejected platform" };
+    }
+  });
+  await expect(
+    client.createPaymentPayload({
+      x402Version: 2,
+      accepts: [req],
+      resource: { url: "https://example.com", description: "", mimeType: "text/plain" },
+    }),
+  ).rejects.toThrow("recipient policy rejected platform");
+  expect(create).not.toHaveBeenCalled();
 });

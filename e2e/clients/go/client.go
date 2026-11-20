@@ -182,9 +182,6 @@ func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientCont
 		svmCfg := &svmconfig.ClientConfig{
 			RPCURL:              svmRpcURL,
 			TransactionVersions: opts.SvmTransactionVersions,
-			ApproveSplits: func(_ context.Context, splits []svmconfig.SplitTerms, info svmconfig.SplitApprovalInfo) bool {
-				return len(splits) == 1 && splits[0].PayTo == "4AdS22kC7xzb4bcqg9JATuCfAMNcQYcZa1u5eWzs6cSJ" && splits[0].Amount == "100" && splits[0].Memo == "" && info.PrimaryAmount == "900"
-			},
 		}
 
 		batchCfg := &batchsvmclient.BatchSvmClientConfig{

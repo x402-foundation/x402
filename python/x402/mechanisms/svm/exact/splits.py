@@ -95,15 +95,6 @@ def uses_split_terms(requirements: PaymentRequirements) -> bool:
     return extra.get("ataCreationRequired") is True
 
 
-def get_splits(requirements: PaymentRequirements) -> list[dict[str, Any]]:
-    """Return the ``extra.splits`` entries, or an empty list when absent.
-
-    Call only on requirements already validated by :func:`parse_payment_legs`.
-    """
-    splits = (requirements.extra or {}).get("splits")
-    return list(splits) if isinstance(splits, list) else []
-
-
 def _parse_amount(value: object, field_name: str) -> int:
     """Parse a canonical positive u64 decimal string."""
     if not isinstance(value, str) or not _CANONICAL_AMOUNT.fullmatch(value):

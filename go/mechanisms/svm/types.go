@@ -9,8 +9,6 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-
-	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 // ExactSvmPayload represents a SVM (Solana) payment payload
@@ -445,24 +443,15 @@ type AssetInfo struct {
 	Decimals int    // Token decimals
 }
 
-// ClientConfig contains optional client configuration
+// ClientConfig contains optional client configuration.
+// Valid splits distribute the quoted total among multiple recipients by default.
+// Applications can screen recipients with x402Client.OnBeforePaymentCreation.
 type ClientConfig struct {
 	RPCURL string // Custom RPC URL
 	// TransactionVersions narrows the transaction message versions this client
 	// builds (entries 0 and/or 1), for a signer that cannot sign version 1.
 	// Nil means ClientSupportedTransactionVersions.
 	TransactionVersions []int
-
-	// ApproveSplits is the consent hook for multi-payee splits
-	// (scheme_exact_svm.md §5.6). It is called before signing whenever the
-	// requirements carry a non-empty extra.splits, with the splits and the
-	// primary remainder reaching payTo. Return true only when every recipient,
-	// amount and memo matches the terms you agreed to; show any memo alongside
-	// its payTo, never in place of it.
-	//
-	// When nil, requirements with splits are refused: a server could otherwise
-	// inject recipients and divert part of the payment.
-	ApproveSplits func(ctx context.Context, splits []SplitTerms, info SplitApprovalInfo) bool
 }
 
 // ClientTransactionVersions returns the configured client version set, or nil
@@ -472,23 +461,6 @@ func (c *ClientConfig) ClientTransactionVersions() []int {
 		return nil
 	}
 	return c.TransactionVersions
-}
-
-// SplitTerms is one extra.splits entry as presented for consent.
-type SplitTerms struct {
-	PayTo  string
-	Amount string
-	// Memo is the split's label; empty when absent.
-	Memo string
-}
-
-// SplitApprovalInfo is the context passed to ClientConfig.ApproveSplits.
-type SplitApprovalInfo struct {
-	// PayTo is the primary recipient.
-	PayTo string
-	// PrimaryAmount is the remainder reaching PayTo (amount minus the splits).
-	PrimaryAmount string
-	Requirements  types.PaymentRequirements
 }
 
 // ServerConfig contains optional server configuration.

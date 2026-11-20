@@ -113,8 +113,6 @@ func (p clientSplitParties) ata(t *testing.T, owner solana.PublicKey) solana.Pub
 	return ata
 }
 
-func approveAll(context.Context, []svm.SplitTerms, svm.SplitApprovalInfo) bool { return true }
-
 func decodePayloadTx(t *testing.T, payload types.PaymentPayload) *solana.Transaction {
 	t.Helper()
 	tx, err := svm.DecodeTransaction(payload.Payload["transaction"].(string))
@@ -140,73 +138,22 @@ func accountOf(t *testing.T, tx *solana.Transaction, ix solana.CompiledInstructi
 	return key
 }
 
-func TestSplitsRequireConsent(t *testing.T) {
+func TestSplitsRejectInvalidTermsBeforeRPC(t *testing.T) {
 	p := newClientSplitParties()
 	_, url := newSplitRPC(t, p.mint)
-
-	_, err := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url}).
-		CreatePaymentPayload(context.Background(), p.requirements(nil), x402.PaymentPayloadContext{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), ErrSplitsNotApproved)
-	assert.Contains(t, err.Error(), "ApproveSplits")
-
-	declining := NewExactSvmScheme(p.payer, &svm.ClientConfig{
-		RPCURL:        url,
-		ApproveSplits: func(context.Context, []svm.SplitTerms, svm.SplitApprovalInfo) bool { return false },
-	})
-	_, err = declining.CreatePaymentPayload(context.Background(), p.requirements(nil), x402.PaymentPayloadContext{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not approved")
-}
-
-func TestSplitsConsentReceivesSplitsAndPrimaryRemainder(t *testing.T) {
-	p := newClientSplitParties()
-	_, url := newSplitRPC(t, p.mint)
-	var gotSplits []svm.SplitTerms
-	var gotInfo svm.SplitApprovalInfo
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{
-		RPCURL: url,
-		ApproveSplits: func(_ context.Context, splits []svm.SplitTerms, info svm.SplitApprovalInfo) bool {
-			gotSplits, gotInfo = splits, info
-			return true
-		},
-	})
-	req := p.requirements(nil)
-	_, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
-	require.NoError(t, err)
-	assert.Equal(t, []svm.SplitTerms{
-		{PayTo: p.platform.String(), Amount: "40000", Memo: "platform fee"},
-		{PayTo: p.referrer.String(), Amount: "10000", Memo: "referral"},
-	}, gotSplits)
-	assert.Equal(t, p.merchant.String(), gotInfo.PayTo)
-	assert.Equal(t, "1000000", gotInfo.PrimaryAmount)
-	assert.Equal(t, req.Amount, gotInfo.Requirements.Amount)
-}
-
-func TestSplitsRejectInvalidTermsBeforeConsent(t *testing.T) {
-	p := newClientSplitParties()
-	_, url := newSplitRPC(t, p.mint)
-	called := false
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{
-		RPCURL: url,
-		ApproveSplits: func(context.Context, []svm.SplitTerms, svm.SplitApprovalInfo) bool {
-			called = true
-			return true
-		},
-	})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 	req := p.requirements(map[string]interface{}{
 		"splits": []interface{}{map[string]interface{}{"payTo": p.platform.String(), "amount": "1050000"}},
 	})
 	_, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), svm.ErrSplitRemainderNotPositive)
-	assert.False(t, called)
 }
 
-func TestSplitsBuildOneTransferPerLegInOrder(t *testing.T) {
+func TestSplitsAcceptedByDefaultWithOneTransferPerLeg(t *testing.T) {
 	p := newClientSplitParties()
 	_, url := newSplitRPC(t, p.mint)
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url, ApproveSplits: approveAll})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 	payload, err := client.CreatePaymentPayload(context.Background(), p.requirements(nil), x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 	tx := decodePayloadTx(t, payload)
@@ -230,7 +177,7 @@ func TestSplitsCreateAtaOnlyForMarkedRecipientsWithoutOne(t *testing.T) {
 	p := newClientSplitParties()
 	rpcState, url := newSplitRPC(t, p.mint)
 	rpcState.existing[p.ata(t, p.merchant)] = true
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url, ApproveSplits: approveAll})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 	req := p.requirements(map[string]interface{}{
 		"ataCreationRequired": true,
 		"splits": []interface{}{
@@ -273,7 +220,7 @@ func TestSplitsIncludeCreateWhenAccountLookupFails(t *testing.T) {
 	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 	req := p.requirements(map[string]interface{}{"splits": []interface{}{}, "ataCreationRequired": true})
 	payload, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
-	require.NoError(t, err, "no consent is needed without splits")
+	require.NoError(t, err, "primary-only ATA creation works without a recipient policy")
 	programs := programsOf(t, decodePayloadTx(t, payload))
 	require.Len(t, programs, 5)
 	assert.Equal(t, solana.SPLAssociatedTokenAccountProgramID, programs[2])
@@ -297,7 +244,7 @@ func TestSplitsSinglePayeeUnchangedWithoutSplits(t *testing.T) {
 func TestSplitsEightFitAndOversizedChargeIsRefused(t *testing.T) {
 	p := newClientSplitParties()
 	_, url := newSplitRPC(t, p.mint)
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url, ApproveSplits: approveAll})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 
 	recipients := make([]solana.PublicKey, 8)
 	plain := make([]interface{}, 8)
@@ -333,11 +280,39 @@ func TestSplitsFullVersionOneChargeUsesDefaultComputeCeiling(t *testing.T) {
 		splits[i] = map[string]interface{}{"payTo": solana.NewWallet().PublicKey().String(), "amount": "1000", "ataCreationRequired": true}
 	}
 	req := p.requirements(map[string]interface{}{"transactionVersions": []int{1}, "ataCreationRequired": true, "splits": splits})
-	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url, ApproveSplits: approveAll})
+	client := NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: url})
 	payload, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
 	tx := decodePayloadTx(t, payload)
 	require.Equal(t, solana.MessageVersionV1, tx.Message.GetVersion())
 	require.NotNil(t, tx.Message.TransactionConfig.ComputeUnitLimit)
 	assert.Equal(t, uint32(400_000), *tx.Message.TransactionConfig.ComputeUnitLimit)
+}
+
+func TestCoreRecipientPolicyRejectsSplitBeforeSigning(t *testing.T) {
+	p := newClientSplitParties()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		t.Error("recipient policy must run before RPC work or signing")
+		http.Error(w, "unexpected RPC", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	req := p.requirements(nil)
+	req.Amount = "105000"
+	client := x402.Newx402Client().Register(x402.Network(req.Network), NewExactSvmScheme(p.payer, &svm.ClientConfig{RPCURL: server.URL}))
+	called := false
+	client.OnBeforePaymentCreation(func(context x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
+		called = true
+		require.Equal(t, req.Extra["splits"], context.SelectedRequirements.GetExtra()["splits"])
+		entries := context.SelectedRequirements.GetExtra()["splits"].([]interface{})
+		for _, raw := range entries {
+			entry := raw.(map[string]interface{})
+			if entry["payTo"] == p.platform.String() {
+				return &x402.BeforePaymentCreationHookResult{Abort: true, Reason: "recipient policy rejected platform"}, nil
+			}
+		}
+		return nil, nil
+	})
+	_, err := client.CreatePaymentPayload(context.Background(), req, nil, nil)
+	require.ErrorContains(t, err, "recipient policy rejected platform")
+	assert.True(t, called)
 }

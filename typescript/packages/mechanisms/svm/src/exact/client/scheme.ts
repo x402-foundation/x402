@@ -37,10 +37,12 @@ import {
 import { createRpcClient, resolveBlockhash, resolveTransactionVersion } from "../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 import { findDefaultAsset } from "../../defaultAssets";
-import { getSplits, parsePaymentLegs } from "../splits";
+import { parsePaymentLegs } from "../splits";
 
 /**
  * SVM client implementation for the Exact payment scheme.
+ * Valid extra.splits distribute the quoted total among multiple recipients by default.
+ * Applications can screen recipients with x402Client.onBeforePaymentCreation.
  */
 export class ExactSvmScheme implements SchemeNetworkClient {
   readonly scheme = "exact";
@@ -76,29 +78,9 @@ export class ExactSvmScheme implements SchemeNetworkClient {
     );
     const rpc = createRpcClient(paymentRequirements.network, this.config?.rpcUrl);
 
-    // Validate splits before any other RPC work, and obtain consent for them
-    // (§5.6). Without splits this is a single leg of the full amount.
+    // Validate all payment terms before RPC work. The total may be distributed
+    // across multiple recipients; application policy runs in the core client hook.
     const legs = parsePaymentLegs(paymentRequirements);
-    const splits = getSplits(paymentRequirements);
-    if (splits.length > 0) {
-      if (!this.config?.approveSplits) {
-        throw new Error(
-          "Payment requirements carry extra.splits; set approveSplits in the client config to consent to them",
-        );
-      }
-      const approved = await this.config.approveSplits(
-        splits.map(({ payTo, amount, memo }) => ({ payTo, amount, memo })),
-        {
-          payTo: paymentRequirements.payTo,
-          primaryAmount: legs[0].amount.toString(),
-          requirements: paymentRequirements,
-        },
-      );
-      if (!approved) {
-        throw new Error("Splits in the payment requirements were not approved");
-      }
-    }
-
     const mintMetadata = await getCachedMintMetadata(
       rpc,
       paymentRequirements.network,

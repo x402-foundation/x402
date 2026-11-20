@@ -16,6 +16,7 @@ from solders.pubkey import Pubkey
 from solders.signature import Signature
 from solders.transaction import VersionedTransaction
 
+from x402 import x402ClientSync
 from x402.mechanisms.svm import (
     ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
     ERR_AMOUNT_MISMATCH,
@@ -60,7 +61,16 @@ from x402.mechanisms.svm.exact.splits import (
 )
 from x402.mechanisms.svm.signers import KeypairSigner
 from x402.mechanisms.svm.utils import derive_ata
-from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, SupportedKind
+from x402.schemas import (
+    AbortResult,
+    PaymentAbortedError,
+    PaymentCreationContext,
+    PaymentPayload,
+    PaymentRequired,
+    PaymentRequirements,
+    ResourceInfo,
+    SupportedKind,
+)
 
 BLOCKHASH = "EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k"
 
@@ -140,10 +150,9 @@ class MockRpc:
 def client_payload(
     p: Parties,
     req: PaymentRequirements,
-    approve: Any = lambda splits, ctx: True,
     rpc: MockRpc | None = None,
 ) -> str:
-    client = ExactSvmClientScheme(KeypairSigner(p.payer), approve_splits=approve)
+    client = ExactSvmClientScheme(KeypairSigner(p.payer))
     with patch.object(client, "_get_client", return_value=rpc or MockRpc()):
         return client.create_payment_payload(req)["transaction"]
 
@@ -413,32 +422,7 @@ class TestGetSplitCapabilities:
 
 
 class TestClientWithSplits:
-    def test_refuses_splits_without_a_hook_or_when_it_declines(self, p):
-        with pytest.raises(ValueError, match="approve_splits"):
-            client_payload(p, requirements(p), approve=None)
-        with pytest.raises(ValueError, match="not approved"):
-            client_payload(p, requirements(p), approve=lambda splits, ctx: False)
-
-    def test_passes_the_splits_and_the_primary_remainder_to_the_hook(self, p):
-        calls: list[tuple[Any, Any]] = []
-
-        def approve(splits, ctx):
-            calls.append((splits, ctx))
-            return True
-
-        req = requirements(p)
-        client_payload(p, req, approve=approve)
-        assert len(calls) == 1
-        splits, ctx = calls[0]
-        assert splits == [
-            {"payTo": addr(p.platform), "amount": "40000", "memo": "platform fee"},
-            {"payTo": addr(p.referrer), "amount": "10000", "memo": "referral"},
-        ]
-        assert ctx["payTo"] == addr(p.merchant)
-        assert ctx["primaryAmount"] == "1000000"
-        assert ctx["requirements"] is req
-
-    def test_builds_compute_budget_one_transfer_per_leg_in_order_then_the_memo(self, p):
+    def test_accepts_splits_by_default_and_builds_each_payment_leg(self, p):
         ixs = decoded_instructions(client_payload(p, requirements(p)))
         assert [program for program, _, _ in ixs] == [
             COMPUTE_BUDGET_PROGRAM_ADDRESS,
@@ -490,9 +474,7 @@ class TestClientWithSplits:
 
     def test_includes_the_create_when_the_ata_lookup_fails(self, p):
         req = requirements(p, splits=[], ataCreationRequired=True)
-        ixs = decoded_instructions(
-            client_payload(p, req, approve=None, rpc=MockRpc(fail_lookups=True))
-        )
+        ixs = decoded_instructions(client_payload(p, req, rpc=MockRpc(fail_lookups=True)))
         assert [program for program, _, _ in ixs][2:4] == [
             ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
             TOKEN_PROGRAM_ADDRESS,
@@ -500,7 +482,7 @@ class TestClientWithSplits:
 
     def test_builds_a_single_payee_transfer_unchanged_without_splits(self, p):
         req = requirements(p, splits=[])
-        ixs = decoded_instructions(client_payload(p, req, approve=None))
+        ixs = decoded_instructions(client_payload(p, req))
         assert len(ixs) == 4
         assert ixs[2][1][2] == ata(p.merchant)
         assert int.from_bytes(ixs[2][2][1:9], "little") == 1_050_000
@@ -972,3 +954,25 @@ def test_split_lighthouse_guard_must_isolate_fee_payer(p):
     result = facilitator(p, max_splits=8).verify(payment(req, tx), req)
     assert not result.is_valid
     assert result.invalid_reason == ERR_FEE_PAYER_TRANSFERRING
+
+
+def test_core_recipient_policy_rejects_split_before_construction_or_signing(p):
+    req = requirements(p)
+    req.amount = "105000"
+    scheme = ExactSvmClientScheme(KeypairSigner(p.payer))
+    client = x402ClientSync().register(SOLANA_DEVNET_CAIP2, scheme)
+
+    def policy(context: PaymentCreationContext) -> AbortResult | None:
+        assert context.selected_requirements.extra["splits"] == req.extra["splits"]
+        if any(
+            split["payTo"] == addr(p.platform)
+            for split in context.selected_requirements.extra["splits"]
+        ):
+            return AbortResult(reason="recipient policy rejected platform")
+        return None
+
+    client.on_before_payment_creation(policy)
+    with patch.object(scheme, "create_payment_payload") as create:
+        with pytest.raises(PaymentAbortedError, match="recipient policy rejected platform"):
+            client.create_payment_payload(PaymentRequired(accepts=[req]))
+        create.assert_not_called()

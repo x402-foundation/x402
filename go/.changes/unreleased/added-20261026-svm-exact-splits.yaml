@@ -7,7 +7,8 @@ body: >-
   fee-payer-funded CreateIdempotent for recipients marked ataCreationRequired),
   matches every leg across the CPI trace on Path 2, and confirms every leg after
   settlement. Servers refuse requirements the facilitator does not advertise.
-  Clients build one transfer per leg and require consent through
-  ClientConfig.ApproveSplits before signing a charge with splits. Split charges
-  work on transaction versions 0 and 1.
+  Clients accept valid splits by default and distribute the quoted total among
+  multiple recipients. Applications can screen recipients through the core
+  OnBeforePaymentCreation hook before signing. Split charges work on
+  transaction versions 0 and 1.
 time: 2026-10-26T12:00:00Z

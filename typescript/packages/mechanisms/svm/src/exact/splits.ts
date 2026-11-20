@@ -84,17 +84,6 @@ export function usesSplitTerms(requirements: PaymentRequirements): boolean {
 }
 
 /**
- * Returns the `extra.splits` entries, or an empty array when absent.
- *
- * @param requirements - Payment requirements, already validated by {@link parsePaymentLegs}
- * @returns The split entries
- */
-export function getSplits(requirements: PaymentRequirements): ExactSvmSplit[] {
-  const splits = requirements.extra?.splits;
-  return Array.isArray(splits) ? (splits as ExactSvmSplit[]) : [];
-}
-
-/**
  * Parses a base-unit amount that must be a canonical positive u64 decimal.
  *
  * @param value - Candidate amount

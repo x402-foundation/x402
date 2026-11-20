@@ -232,7 +232,7 @@ extra: {
 
 - **Facilitator**: splits are off by default. Pass `maxSplits` (0–8) to accept them and `ataCreationSponsored: true` to fund `CreateIdempotent` for recipients marked `ataCreationRequired`; both are advertised in `/supported`. Each sponsored creation spends about 0.002 SOL of facilitator funds. A recipient can close its ATA, reclaim the rent, and trigger sponsorship again on the next charge. Enabling this option therefore permits repeated rent extraction unless the operator enforces out-of-band limits per owner and mint. Splits do not automatically charge for sponsorship; fee negotiation is not implemented.
 - **Server**: `enhancePaymentRequirements` throws when a route asks for more splits, or ATA sponsorship, than the selected facilitator advertises.
-- **Client**: requirements with splits are refused unless the client config sets `approveSplits`, which receives every split and the remainder reaching `payTo` and must return `true` only for terms the payer agreed to.
+- **Client**: valid split requirements are accepted by default. The quoted total is distributed among `payTo` and the split recipients; the facilitator pays transaction fees and authorized ATA rent. Applications that screen recipients can inspect `selectedRequirements.extra.splits` in `x402Client.onBeforePaymentCreation` and return `{ abort: true, reason }` before construction or signing, just as for `payTo`.
 - **Transaction versions**: splits work on version 0 and version 1. The client checks the built transaction against its version's size limit (1232 bytes for version 0, 4096 for version 1), so a charge with many splits and ATA creations may only fit as version 1.
 
 ## Duplicate Settlement Protection

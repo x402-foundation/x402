@@ -2,7 +2,7 @@
 
 import binascii
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 try:
@@ -43,25 +43,16 @@ from ..utils import (
     resolve_transaction_version,
     transaction_size_exceeded,
 )
-from .splits import get_splits, parse_payment_legs, uses_split_terms
-
-ApproveSplits = Callable[[list[dict[str, str]], dict[str, Any]], bool]
-"""Consent hook for multi-payee splits (scheme_exact_svm.md §5.6).
-
-Called before signing whenever the requirements carry a non-empty
-``extra.splits``, as ``approve_splits(splits, context)`` where ``splits`` is a
-list of ``{"payTo", "amount", "memo"?}`` dicts and ``context`` is
-``{"payTo", "primaryAmount", "requirements"}``. Return True only when every
-recipient, amount and memo matches the terms you agreed to; show any memo
-alongside its payTo, never in place of it.
-"""
+from .splits import parse_payment_legs, uses_split_terms
 
 
 class ExactSvmScheme:
     """SVM client implementation for the Exact payment scheme (V2).
 
     Implements SchemeNetworkClient protocol. Returns the inner payload dict,
-    which x402Client wraps into a full PaymentPayload.
+    which x402Client wraps into a full PaymentPayload. Valid ``extra.splits``
+    distribute the quoted total among multiple recipients by default. Applications
+    can screen recipients with the core client's ``on_before_payment_creation`` hook.
 
     Attributes:
         scheme: The scheme identifier ("exact").
@@ -75,7 +66,6 @@ class ExactSvmScheme:
         signer: ClientSvmSigner,
         rpc_url: str | None = None,
         transaction_versions: Sequence[int] | None = None,
-        approve_splits: ApproveSplits | None = None,
     ):
         """Create ExactSvmScheme.
 
@@ -85,14 +75,9 @@ class ExactSvmScheme:
             transaction_versions: Transaction message versions this client's
                 signer can build (``0`` and/or ``1``). Defaults to both; the
                 highest version the facilitator also advertises is built.
-            approve_splits: Consent hook for requirements carrying
-                ``extra.splits`` (see :data:`ApproveSplits`). When unset,
-                requirements with splits are refused: a server could otherwise
-                inject recipients and divert part of the payment.
         """
         self._signer = signer
         self._transaction_versions = normalize_client_transaction_versions(transaction_versions)
-        self._approve_splits = approve_splits
         self._custom_rpc_url = rpc_url
         self._clients: dict[str, SvmRpcClient] = {}
         self._mint_cache: MintMetadataCache = {}
@@ -140,30 +125,9 @@ class ExactSvmScheme:
         extra = requirements.extra or {}
         transaction_version = resolve_transaction_version(extra, self._transaction_versions)
 
-        # Validate splits before any RPC work, and obtain consent for them (§5.6).
+        # Validate all payment terms before RPC work; recipient policy is application-defined.
         split_terms = uses_split_terms(requirements)
         legs = parse_payment_legs(requirements) if split_terms else []
-        splits = get_splits(requirements) if split_terms else []
-        if splits:
-            if self._approve_splits is None:
-                raise ValueError(
-                    "Payment requirements carry extra.splits; pass approve_splits to the "
-                    "client to consent to them"
-                )
-            approved = self._approve_splits(
-                [
-                    {k: split[k] for k in ("payTo", "amount", "memo") if split.get(k) is not None}
-                    for split in splits
-                ],
-                {
-                    "payTo": requirements.pay_to,
-                    "primaryAmount": str(legs[0].amount),
-                    "requirements": requirements,
-                },
-            )
-            if approved is not True:
-                raise ValueError("Splits in the payment requirements were not approved")
-
         client = self._get_client(network)
 
         # Facilitator must provide feePayer to cover transaction fees

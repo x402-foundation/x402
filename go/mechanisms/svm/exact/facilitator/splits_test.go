@@ -173,8 +173,7 @@ func (s splitClientSigner) SignTransaction(_ context.Context, tx *solana.Transac
 func (p splitParties) clientTransaction(t *testing.T, req types.PaymentRequirements) string {
 	t.Helper()
 	client := exactclient.NewExactSvmScheme(splitClientSigner{key: p.payer}, &svm.ClientConfig{
-		RPCURL:        p.rpcURL,
-		ApproveSplits: func(context.Context, []svm.SplitTerms, svm.SplitApprovalInfo) bool { return true },
+		RPCURL: p.rpcURL,
 	})
 	payload, err := client.CreatePaymentPayload(context.Background(), req, x402.PaymentPayloadContext{})
 	require.NoError(t, err)
