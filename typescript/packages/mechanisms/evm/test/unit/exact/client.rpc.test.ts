@@ -24,16 +24,25 @@ const {
   };
 });
 
-vi.mock("viem", () => ({
-  createPublicClient: mockCreatePublicClient,
-  http: mockHttp,
-}));
+vi.mock("viem", async () => {
+  const actual = await vi.importActual<typeof import("viem")>("viem");
+  return {
+    ...actual,
+    createPublicClient: mockCreatePublicClient,
+    http: mockHttp,
+  };
+});
 
 import {
   resolveRpcUrl,
   resolveExtensionRpcCapabilities,
   type EvmSchemeOptions,
 } from "../../../src/shared/rpc";
+import { ExactEvmScheme } from "../../../src/exact/client/scheme";
+import { UptoEvmScheme } from "../../../src/upto/client/scheme";
+import { _resetSponsoringWarnings } from "../../../src/shared/extensions/gasSponsoring";
+import { ERC20_APPROVAL_GAS_SPONSORING_KEY } from "../../../src/exact/extensions";
+import type { PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 
 describe("Exact EVM RPC resolver", () => {
   beforeEach(() => {
@@ -120,4 +129,144 @@ describe("Exact EVM RPC resolver", () => {
     expect(nonce).toBe(3);
     expect(fees).toEqual({ maxFeePerGas: 111n, maxPriorityFeePerGas: 22n });
   });
+});
+
+describe("allowance short-circuit", () => {
+  const signerAddress = "0x1234567890123456789012345678901234567890" as const;
+  const payTo = "0x3333333333333333333333333333333333333333" as const;
+  const asset = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" as const;
+  const facilitator = "0x4444444444444444444444444444444444444444" as const;
+
+  const exactRequirements: PaymentRequirements = {
+    scheme: "exact",
+    network: "eip155:8453",
+    asset,
+    amount: "100",
+    payTo,
+    maxTimeoutSeconds: 600,
+    extra: {
+      assetTransferMethod: "permit2",
+      name: "USDC",
+      version: "2",
+    },
+  };
+
+  const uptoRequirements: PaymentRequirements = {
+    scheme: "upto",
+    network: "eip155:8453",
+    asset,
+    amount: "100",
+    payTo,
+    maxTimeoutSeconds: 600,
+    extra: {
+      facilitatorAddress: facilitator,
+      name: "USDC",
+      version: "2",
+    },
+  };
+
+  const schemes: {
+    name: string;
+    requirements: PaymentRequirements;
+    create: (signer: ClientEvmSigner, options?: EvmSchemeOptions) => SchemeNetworkClient;
+  }[] = [
+    {
+      name: "exact",
+      requirements: exactRequirements,
+      create: (signer, options) => new ExactEvmScheme(signer, options),
+    },
+    {
+      name: "upto",
+      requirements: uptoRequirements,
+      create: (signer, options) => new UptoEvmScheme(signer, options),
+    },
+  ];
+
+  const cases: {
+    name: string;
+    hasRpc?: boolean;
+    rpc?: (url: string) => EvmSchemeOptions;
+    wantReads: number;
+    wantRpcCall: number;
+    wantWarning: boolean;
+  }[] = [
+    { name: "reads allowance without probe", wantReads: 1, wantRpcCall: 0, wantWarning: false },
+    {
+      name: "reads allowance when HasRPCClient is true",
+      hasRpc: true,
+      wantReads: 1,
+      wantRpcCall: 0,
+      wantWarning: false,
+    },
+    {
+      name: "skips allowance read when HasRPCClient is false",
+      hasRpc: false,
+      wantReads: 0,
+      wantRpcCall: 0,
+      wantWarning: true,
+    },
+    {
+      name: "reads allowance via RPCURL when HasRPCClient is false",
+      hasRpc: false,
+      rpc: url => ({ rpcUrl: url }),
+      wantReads: 0,
+      wantRpcCall: 1,
+      wantWarning: false,
+    },
+    {
+      name: "reads allowance via RPCByChainID when HasRPCClient is false",
+      hasRpc: false,
+      rpc: url => ({ 8453: { rpcUrl: url } }),
+      wantReads: 0,
+      wantRpcCall: 1,
+      wantWarning: false,
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetSponsoringWarnings();
+    mockReadContract.mockResolvedValue(1_000_000n);
+  });
+
+  for (const schemeCase of schemes) {
+    describe(schemeCase.name, () => {
+      for (const rpcCase of cases) {
+        it(rpcCase.name, async () => {
+          const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+          const readContract = vi.fn().mockResolvedValue(1_000_000n);
+          const signer: ClientEvmSigner = {
+            address: signerAddress,
+            signTypedData: vi.fn().mockResolvedValue("0x01"),
+            readContract,
+            signTransaction: vi.fn().mockResolvedValue("0x02ab"),
+            getTransactionCount: vi.fn().mockResolvedValue(0),
+            estimateFeesPerGas: vi
+              .fn()
+              .mockResolvedValue({ maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }),
+            ...(rpcCase.hasRpc === undefined
+              ? {}
+              : { hasRpcClient: () => rpcCase.hasRpc === true }),
+          };
+          const options = rpcCase.rpc?.("https://allowance.example");
+          const scheme = schemeCase.create(signer, options);
+
+          try {
+            const payload = await scheme.createPaymentPayload(2, schemeCase.requirements, {
+              extensions: {
+                [ERC20_APPROVAL_GAS_SPONSORING_KEY]: {},
+              },
+            });
+
+            expect(payload.extensions).toBeUndefined();
+            expect(readContract).toHaveBeenCalledTimes(rpcCase.wantReads);
+            expect(mockReadContract).toHaveBeenCalledTimes(rpcCase.wantRpcCall);
+            expect(warn).toHaveBeenCalledTimes(rpcCase.wantWarning ? 1 : 0);
+          } finally {
+            warn.mockRestore();
+          }
+        });
+      }
+    });
+  }
 });
