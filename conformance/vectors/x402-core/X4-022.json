@@ -1,0 +1,17 @@
+{
+  "id": "X4-022",
+  "title": "Attestation-Domain Binding (OATR)",
+  "category": "identity_verification",
+  "requirement": "HC-15: Attestation audience must bind to the serving domain to prevent replay",
+  "method": "GET",
+  "request": {
+    "path": "/",
+    "target_url": "http://mock"
+  },
+  "owasp_asi": "ASI04",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-022"
+}

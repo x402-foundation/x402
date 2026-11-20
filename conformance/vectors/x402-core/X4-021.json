@@ -1,0 +1,16 @@
+{
+  "id": "X4-021",
+  "title": "Operator Attestation Presence (OATR)",
+  "category": "identity_verification",
+  "requirement": "HC-14: x402 endpoints must present verifiable operator identity via OATR attestation",
+  "method": "GET",
+  "request": {
+    "path": "/"
+  },
+  "owasp_asi": "ASI04",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-021"
+}

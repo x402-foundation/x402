@@ -1,0 +1,22 @@
+{
+  "id": "X4-040",
+  "title": "Cross-Chain Payment Confusion",
+  "category": "network_attacks",
+  "requirement": "HC-30: Server must validate chain ID matches expected network in payment proof",
+  "method": "GET",
+  "request": {
+    "server_network": "1",
+    "wrong_networks": [
+      "base",
+      "base-sepolia",
+      "arbitrum",
+      "optimism"
+    ]
+  },
+  "owasp_asi": "ASI09",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-040"
+}

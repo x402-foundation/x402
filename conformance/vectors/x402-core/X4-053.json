@@ -1,0 +1,22 @@
+{
+  "id": "X4-053",
+  "title": "Payment Metadata Side Channel",
+  "category": "metadata_exfiltration",
+  "requirement": "HC-43: Error responses must not vary in size/timing based on payment amount validation",
+  "method": "GET",
+  "request": {
+    "test_amounts": [
+      "valid_small",
+      "valid_large",
+      "boundary",
+      "negative",
+      "overflow"
+    ]
+  },
+  "owasp_asi": "ASI06",
+  "severity": "medium",
+  "impact": "info_leak",
+  "normative": "SHOULD",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-053"
+}

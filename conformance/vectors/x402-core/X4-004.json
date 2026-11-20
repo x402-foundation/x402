@@ -1,0 +1,16 @@
+{
+  "id": "X4-004",
+  "title": "Recipient Address Consistency (Dynamic Routing)",
+  "category": "recipient_manipulation",
+  "requirement": "Twelve Numbers: payTo address must be stable and verifiable",
+  "method": "GET",
+  "request": {
+    "n_requests": 5
+  },
+  "owasp_asi": "ASI09",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-004"
+}

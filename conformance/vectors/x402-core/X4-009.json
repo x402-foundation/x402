@@ -1,0 +1,17 @@
+{
+  "id": "X4-009",
+  "title": "Expired Session Token Rejection",
+  "category": "session_security",
+  "requirement": "HC-7: Server must enforce session token expiration",
+  "method": "GET",
+  "request": {
+    "token_type": "expired_jwt",
+    "exp": "1 hour ago"
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "session_hijack",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-009"
+}
