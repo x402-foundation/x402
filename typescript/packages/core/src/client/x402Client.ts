@@ -2,6 +2,7 @@ import { x402Version } from "..";
 import { DefaultAsset, SchemeNetworkClient } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import {
+  PaymentReconcileResult,
   Money,
   Network,
   PaymentRequired,
@@ -523,6 +524,35 @@ export class x402Client {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Asks the scheme client that created `paymentPayload` whether it has settled.
+   * Returns `"unknown"` when no scheme is registered for it, the scheme cannot
+   * reconcile, or the check itself fails.
+   *
+   * @param paymentPayload - A payload previously returned by createPaymentPayload
+   * @returns Whether the payment settled
+   */
+  async reconcilePaymentPayload(paymentPayload: PaymentPayload): Promise<PaymentReconcileResult> {
+    const requirements = paymentPayload.accepted;
+    const clientSchemesByNetwork = this.registeredClientSchemes.get(paymentPayload.x402Version);
+    if (!requirements || !clientSchemesByNetwork) {
+      return "unknown";
+    }
+    const schemeNetworkClient = findByNetworkAndScheme(
+      clientSchemesByNetwork,
+      requirements.scheme,
+      requirements.network,
+    );
+    if (!schemeNetworkClient?.reconcilePaymentPayload) {
+      return "unknown";
+    }
+    try {
+      return await schemeNetworkClient.reconcilePaymentPayload(paymentPayload);
+    } catch {
+      return "unknown";
+    }
   }
 
   /**

@@ -3,7 +3,7 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
 } from ".";
-import { SettleResponse } from "../types";
+import { PaymentReconcileResult, SettleResponse } from "../types";
 import { PaymentPayload, PaymentRequired } from "../types/payments";
 import { x402Client, type PaymentResponseContext } from "../client/x402Client";
 
@@ -168,6 +168,16 @@ export class x402HTTPClient {
    */
   async createPaymentPayload(paymentRequired: PaymentRequired): Promise<PaymentPayload> {
     return this.client.createPaymentPayload(paymentRequired);
+  }
+
+  /**
+   * Delegates to the underlying client's reconcilePaymentPayload.
+   *
+   * @param paymentPayload - A payload previously returned by createPaymentPayload
+   * @returns Whether the payment settled
+   */
+  async reconcilePaymentPayload(paymentPayload: PaymentPayload): Promise<PaymentReconcileResult> {
+    return this.client.reconcilePaymentPayload(paymentPayload);
   }
 
   /**
