@@ -58,9 +58,9 @@ from ..types import (
     ERC6492SignatureData,
     ExactEIP3009Payload,
     TransactionReceipt,
-    _is_uint256_string,
     get_payload_payer,
     is_permit2_payload,
+    is_uint256_string,
     validate_exact_evm_payload,
 )
 from ..utils import (
@@ -247,7 +247,7 @@ class ExactEvmScheme:
             )
 
         # Validate amount
-        if not _is_uint256_string(requirements.amount):
+        if not is_uint256_string(requirements.amount):
             return (
                 VerifyResponse(
                     is_valid=False,

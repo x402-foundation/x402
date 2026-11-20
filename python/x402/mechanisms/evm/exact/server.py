@@ -6,7 +6,7 @@ from ....schemas import AssetAmount, Network, PaymentRequirements, Price, Suppor
 from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset, get_default_asset
-from ..types import _is_uint256_string
+from ..types import is_uint256_string
 from ..utils import (
     get_asset_info,
     parse_amount,
@@ -17,7 +17,7 @@ MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
 
 
 def _require_uint256_amount(amount: str) -> None:
-    if _is_uint256_string(amount):
+    if is_uint256_string(amount):
         return
     raise ValueError(f"amount must be a uint256 decimal string, got {amount!r}")
 
