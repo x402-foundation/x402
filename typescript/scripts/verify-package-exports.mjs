@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Verifies that every `"types"` condition target in every workspace package's
- * `package.json` `"exports"` map actually exists on disk, post-build.
+ * Verifies every top-level `types` entry and `exports.*.types` target in workspace
+ * package declaration targets exist on disk, post-build.
  *
  * This is a safety net for build-config changes like `mirror-cjs-dts.mjs`
  * (typescript/scripts/mirror-cjs-dts.mjs): a script or tsup config mistake there could
@@ -10,16 +10,16 @@
  * subpath. Run this after building the workspace (e.g. `pnpm build && pnpm verify:exports`
  * from `typescript/`, or rely on CI/publish workflows that run `pnpm verify:exports`).
  *
- * Scans every package under the directories in {@link PACKAGE_GLOBS}, including
- * `packages/legacy/*` (this only reads already-published-shape config; it does not
- * modify anything, so it's safe to run there too).
+ * Scans all packages, including `packages/legacy/*`; legacy export targets are still
+ * checked, but frozen packages are exempt from the current-package top-level `types`
+ * and `typesVersions` checks.
  *
- * Packages with no `dist/` directory are skipped (expected for scoped builds). Exits
- * non-zero when no package was checked unless `VERIFY_EXPORTS_ALLOW_EMPTY=1`.
+ * Packages with no `dist/` directory are skipped for on-disk target checks (expected for scoped builds).
+ * Exits non-zero when no package was checked unless `VERIFY_EXPORTS_ALLOW_EMPTY=1`.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const TYPESCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -108,28 +108,68 @@ function collectTypesTargets(node, inTypesKey = false, found = []) {
 }
 
 /**
- * Verifies one package's `exports.*.types` targets exist on disk. Returns `null`
- * (skip) for a package with no `dist` directory at all: a scoped build (e.g. `turbo
- * run build --filter=site...`) only builds a subset of the workspace, so an unbuilt
- * sibling package here is expected, not a missing-types regression. A package that
- * turbo actually ran and that legitimately failed to produce output would already
- * have failed that build step with a non-zero exit before this script ever runs.
+ * Verifies one package's declaration entrypoints exist on disk. Returns `null` (skip)
+ * for a package with no `dist/` directory, as only selected workspace packages may be built.
+ * Legacy package top-level `types` fields are ignored because those packages are frozen;
+ * their `exports.*.types` targets are still validated.
  *
  * @param packageDir - Absolute path to the package directory
- * @returns Missing target paths (relative to the package directory), or `null` if
- *   this package was skipped (not built in this run)
+ * @returns Missing declaration targets (relative to the package directory), or `null` if skipped
  */
 function verifyPackage(packageDir) {
   const pkg = readPackageJson(packageDir)
-  if (!pkg.exports) return []
+  if (!pkg.exports && (isLegacyPackage(packageDir) || !pkg.types)) return []
   if (!existsSync(join(packageDir, 'dist'))) return null
 
-  const targets = collectTypesTargets(pkg.exports)
-  return targets.filter((target) => !existsSync(join(packageDir, target)))
+  const targets = pkg.exports ? collectTypesTargets(pkg.exports) : []
+  if (!isLegacyPackage(packageDir) && typeof pkg.types === 'string') targets.push(pkg.types)
+  return [...new Set(targets)].filter((target) => !existsSync(join(packageDir, target)))
 }
 
 /**
- * Verifies every workspace package's `exports.*.types` targets.
+ * Checks whether a package belongs to the frozen legacy namespace.
+ *
+ * @param packageDir - Absolute path to the package directory
+ * @returns True when the package is in `packages/legacy`
+ */
+function isLegacyPackage(packageDir) {
+  return relative(TYPESCRIPT_ROOT, packageDir).startsWith(join('packages', 'legacy') + sep)
+}
+
+/**
+ * Verifies every current package's explicit subpath export has a legacy-resolution mapping.
+ * Frozen legacy packages are intentionally excluded.
+ *
+ * @param packageDir - Absolute path to the package directory
+ * @returns Missing `typesVersions` mappings
+ */
+function verifyTypesVersions(packageDir) {
+  if (isLegacyPackage(packageDir)) return []
+
+  const pkg = readPackageJson(packageDir)
+  if (!pkg.exports || typeof pkg.exports !== 'object') return []
+
+  const mappings = pkg.typesVersions?.['*'] ?? {}
+  const missing = []
+  for (const [subpath, exportMap] of Object.entries(pkg.exports)) {
+    if (!subpath.startsWith('./')) continue
+
+    const target = exportMap?.require?.types
+    const key = subpath.slice(2)
+    if (typeof target !== 'string') {
+      missing.push(`${subpath}: missing an exports require.types target`)
+      continue
+    }
+    if (!Array.isArray(mappings[key]) || !mappings[key].includes(target)) {
+      missing.push(`${subpath}: typesVersions["*"]["${key}"] must include "${target}"`)
+    }
+  }
+  return missing
+}
+
+
+/**
+ * Verifies declaration targets and legacy-resolution mappings for every current package.
  *
  * @returns Nothing; prints a report and exits 1 if any target is missing
  */
@@ -143,8 +183,18 @@ function main() {
   let checkedCount = 0
   let skippedCount = 0
   let missingCount = 0
+  let missingMappingCount = 0
 
   for (const packageDir of packageDirs) {
+    const missingMappings = verifyTypesVersions(packageDir)
+    if (missingMappings.length > 0) {
+      missingMappingCount += missingMappings.length
+      const name = readPackageJson(packageDir).name
+      for (const mapping of missingMappings) {
+        console.error(`[verify-package-exports] ${name}: ${mapping}`)
+      }
+    }
+
     const missing = verifyPackage(packageDir)
     if (missing === null) {
       skippedCount += 1
@@ -155,14 +205,14 @@ function main() {
       missingCount += missing.length
       const name = readPackageJson(packageDir).name
       for (const target of missing) {
-        console.error(`[verify-package-exports] ${name}: missing "${target}" (declared in exports)`)
+        console.error(`[verify-package-exports] ${name}: missing "${target}" (declared in package.json)`)
       }
     }
   }
 
-  if (missingCount > 0) {
+  if (missingCount > 0 || missingMappingCount > 0) {
     console.error(
-      `[verify-package-exports] ${missingCount} missing types target(s) across ${checkedCount} built package(s) (${skippedCount} unbuilt package(s) skipped).`,
+      `[verify-package-exports] ${missingCount} missing type target(s) across ${checkedCount} built package(s) (${skippedCount} unbuilt package(s) skipped), and ${missingMappingCount} missing typesVersions mapping(s).`,
     )
     process.exit(1)
   }
@@ -177,7 +227,7 @@ function main() {
   }
 
   console.log(
-    `[verify-package-exports] All exports.*.types targets exist (${checkedCount} built package(s) checked, ${skippedCount} unbuilt package(s) skipped).`,
+    `[verify-package-exports] All declaration targets exist (${checkedCount} built package(s) checked, ${skippedCount} unbuilt package(s) skipped); current package subpaths have typesVersions mappings.`,
   )
 }
 

@@ -4,6 +4,46 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "v1": [
+        "./dist/cjs/v1/index.d.ts"
+      ],
+      "exact/client": [
+        "./dist/cjs/exact/client/index.d.ts"
+      ],
+      "exact/server": [
+        "./dist/cjs/exact/server/index.d.ts"
+      ],
+      "exact/facilitator": [
+        "./dist/cjs/exact/facilitator/index.d.ts"
+      ],
+      "exact/v1/client": [
+        "./dist/cjs/exact/v1/client/index.d.ts"
+      ],
+      "exact/v1/facilitator": [
+        "./dist/cjs/exact/v1/facilitator/index.d.ts"
+      ],
+      "upto/client": [
+        "./dist/cjs/upto/client/index.d.ts"
+      ],
+      "upto/server": [
+        "./dist/cjs/upto/server/index.d.ts"
+      ],
+      "upto/facilitator": [
+        "./dist/cjs/upto/facilitator/index.d.ts"
+      ],
+      "batch-settlement/client": [
+        "./dist/cjs/batch-settlement/client/index.d.ts"
+      ],
+      "batch-settlement/server": [
+        "./dist/cjs/batch-settlement/server/index.d.ts"
+      ],
+      "batch-settlement/facilitator": [
+        "./dist/cjs/batch-settlement/facilitator/index.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
     "build": "tsup && node ../../../scripts/mirror-cjs-dts.mjs",

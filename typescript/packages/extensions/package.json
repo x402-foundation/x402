@@ -4,6 +4,25 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "bazaar": [
+        "./dist/cjs/bazaar/index.d.ts"
+      ],
+      "sign-in-with-x": [
+        "./dist/cjs/sign-in-with-x/index.d.ts"
+      ],
+      "offer-receipt": [
+        "./dist/cjs/offer-receipt/index.d.ts"
+      ],
+      "payment-identifier": [
+        "./dist/cjs/payment-identifier/index.d.ts"
+      ],
+      "builder-code": [
+        "./dist/cjs/builder-code/index.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
     "build": "tsup && node ../../scripts/mirror-cjs-dts.mjs",
