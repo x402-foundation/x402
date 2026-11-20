@@ -596,7 +596,7 @@ The optional `invalidMessage` and `errorMessage` fields provide human-readable d
 
 - **`insufficient_funds`**: Client does not have enough tokens to complete the payment
 - **`invalid_exact_evm_payload_authorization_valid_after`**: Payment authorization is not yet valid (before validAfter timestamp)
-- **`invalid_exact_evm_payload_authorization_valid_before`**: Payment authorization has expired (after validBefore timestamp)
+- **`invalid_exact_evm_payload_authorization_valid_before`**: Payment authorization has expired (after validBefore timestamp), or expires too soon to settle safely (less than the facilitator's minimum remaining validity margin; see the [exact EVM scheme](./schemes/exact/scheme_exact_evm.md))
 - **`invalid_exact_evm_payload_authorization_value_mismatch`**: Payment amount does not exactly match the required amount
 - **`invalid_exact_evm_payload_signature`**: Payment authorization signature is invalid or improperly signed
 - **`invalid_exact_evm_payload_recipient_mismatch`**: Recipient address does not match payment requirements
