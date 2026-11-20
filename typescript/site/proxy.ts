@@ -24,7 +24,6 @@ const BLOCKED_COUNTRIES = [
   "KP", // North Korea
   "IR", // Iran
   "CU", // Cuba
-  "SY", // Syria
 ];
 
 // List of blocked regions within specific countries
