@@ -199,7 +199,7 @@ class x402HTTPClientBase:
         if body:
             try:
                 body_data = json.loads(body)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
 
         return get_header, body_data

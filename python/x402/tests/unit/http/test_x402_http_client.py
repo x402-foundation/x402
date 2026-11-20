@@ -28,7 +28,7 @@ from x402.schemas import (
     PaymentRequirements,
     SettleResponse,
 )
-from x402.schemas.hooks import RecoveredResponseResult
+from x402.schemas.hooks import PaymentRequiredHeadersResult, RecoveredResponseResult
 from x402.schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
 
 # =============================================================================
@@ -94,6 +94,43 @@ class MockX402ClientSync:
 # =============================================================================
 # Base Class Tests (Shared Logic)
 # =============================================================================
+
+
+class TestNonJson402Body:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [b"\xff\xfe\xfd", b"\x80", b"not json"])
+    async def test_async_header_challenge_with_non_json_body(self, body):
+        client = x402HTTPClient(x402Client())
+        client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"X-Hook": "retry"})
+        )
+        challenge = PaymentRequired(x402_version=2, accepts=[make_payment_requirements()])
+
+        headers, payload = await client.handle_402_response(
+            {PAYMENT_REQUIRED_HEADER: encode_payment_required_header(challenge)},
+            body,
+            "https://api.example.com/",
+        )
+
+        assert headers == {"X-Hook": "retry"}
+        assert payload is None
+
+    @pytest.mark.parametrize("body", [b"\xff\xfe\xfd", b"\x80", b"not json"])
+    def test_sync_header_challenge_with_non_json_body(self, body):
+        client = x402HTTPClientSync(x402ClientSync())
+        client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"X-Hook": "retry"})
+        )
+        challenge = PaymentRequired(x402_version=2, accepts=[make_payment_requirements()])
+
+        headers, payload = client.handle_402_response(
+            {PAYMENT_REQUIRED_HEADER: encode_payment_required_header(challenge)},
+            body,
+            "https://api.example.com/",
+        )
+
+        assert headers == {"X-Hook": "retry"}
+        assert payload is None
 
 
 class TestX402HTTPClientBase:
