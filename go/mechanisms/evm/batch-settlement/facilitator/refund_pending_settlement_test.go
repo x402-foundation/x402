@@ -475,12 +475,16 @@ func TestRefundPendingSettlement_ManagedRetryReconcilesRecomputedAmount(t *testi
 				_, err := h.settle(tc.amount)
 				requireSettleErrorReason(t, err, ErrSettlementPending)
 
+				reads := rpc.tryAggregate
 				resp, err := h.settle(tc.amount)
 				if err != nil || !resp.Success || resp.Transaction != successTxHash || resp.Amount != tc.amount {
 					t.Fatalf("retry resp = %+v err = %v, want success for %q refunding %s", resp, err, successTxHash, tc.amount)
 				}
 				if signer.writeCalls != 1 {
 					t.Fatalf("writes = %d, want the first broadcast only", signer.writeCalls)
+				}
+				if got := rpc.tryAggregate - reads; got != 1 {
+					t.Fatalf("retry channel reads = %d, want only the post-refund read", got)
 				}
 				if entries := h.deps.PendingStore.(*x402.InMemoryPendingSettlementStore).Entries(); len(entries) != 0 {
 					t.Fatalf("pending entries = %v, want the reconciled refund cleared", entries)

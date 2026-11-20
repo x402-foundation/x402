@@ -573,17 +573,23 @@ func settleManagedRefund(
 		return failSettle(requirements, ErrCumulativeAmountMismatch), nil
 	}
 
-	onchain, readErr := ReadChannelState(ctx, deps.Signer, channelId)
-	if readErr != nil || onchain == nil {
-		return failSettle(requirements, ErrRpcReadFailed), nil
+	nonce := fmt.Sprintf("%d", stored.RefundNonce)
+	refundKey := refundSettlementCacheKey(channelId, nonce)
+	pendingTx, pending := pendingRefundTx(ctx, deps.PendingStore, refundKey)
+	amount := resolveRefundAmount(raw.Amount, stored)
+	// A pending refund may have landed, so a fresh cap no longer describes it.
+	if !pending {
+		onchain, readErr := ReadChannelState(ctx, deps.Signer, channelId)
+		if readErr != nil || onchain == nil {
+			return failSettle(requirements, ErrRpcReadFailed), nil
+		}
+		var capErr string
+		if amount, capErr = capRefundAmount(amount, onchain.Balance, stored.ChargedCumulativeAmount); capErr != "" {
+			return failSettle(requirements, capErr), nil
+		}
 	}
 
 	claims := rebuildClaims(stored)
-	amount, capErr := capRefundAmount(resolveRefundAmount(raw.Amount, stored), onchain.Balance, stored.ChargedCumulativeAmount)
-	if capErr != "" {
-		return failSettle(requirements, capErr), nil
-	}
-	nonce := fmt.Sprintf("%d", stored.RefundNonce)
 	// Consent has passed; the facilitator signs the onchain Refund/ClaimBatch digests itself.
 	enriched := *StripAuthorizerSignatures(raw)
 	enriched.Amount = amount
@@ -624,18 +630,24 @@ func settleManagedRefund(
 	// The claim leg may be a no-op (no Claimed event). Capture which rows actually claimed so
 	// the local charge count is only decremented when an indexer would credit it.
 	claimed := map[string]struct{}{}
-	settled, err := SubmitRefund(ctx, SubmitRefundInput{
+	input := SubmitRefundInput{
 		Network:    requirements.Network,
 		Payload:    &enriched,
 		DataSuffix: dataSuffix,
 		OnClaimed:  func(ids map[string]struct{}) { claimed = ids },
-	}, SubmitContext{
-		SubmitMode:          deps.SubmitMode,
-		Signer:              deps.Signer,
-		AuthorizerSigner:    deps.AuthorizerSigner,
-		AuthorizerSubmitter: deps.AuthorizerSubmitter,
-		PendingStore:        deps.PendingStore,
-	})
+	}
+	var settled *x402.SettleResponse
+	if pending {
+		settled, err = reconcilePendingRefund(ctx, deps.Signer, deps.PendingStore, refundKey, input, channelId, pendingTx)
+	} else {
+		settled, err = submitRefund(ctx, input, SubmitContext{
+			SubmitMode:          deps.SubmitMode,
+			Signer:              deps.Signer,
+			AuthorizerSigner:    deps.AuthorizerSigner,
+			AuthorizerSubmitter: deps.AuthorizerSubmitter,
+			PendingStore:        deps.PendingStore,
+		})
+	}
 	landed, releaseErr := releaseAttestedClaims(ctx, deps.Storage, begun, err, settled)
 	if err != nil {
 		if releaseErr != nil {
