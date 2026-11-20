@@ -634,6 +634,7 @@ func settleManagedRefund(
 		Signer:              deps.Signer,
 		AuthorizerSigner:    deps.AuthorizerSigner,
 		AuthorizerSubmitter: deps.AuthorizerSubmitter,
+		PendingStore:        deps.PendingStore,
 	})
 	landed, releaseErr := releaseAttestedClaims(ctx, deps.Storage, begun, err, settled)
 	if err != nil {

@@ -1,0 +1,3 @@
+kind: fixed
+body: 'EVM batch-settlement refunds record a broadcast transaction in the `PendingSettlementStore` when the receipt wait fails, as deposits already do. A retry of the same refund (same channel, refund nonce and amount) waits on that transaction instead of re-simulating it, so a refund that already landed no longer fails with `invalid_batch_settlement_evm_refund_simulation_failed`. A still-pending transaction returns `settlement_pending` again and a reverted one is terminal. `SubmitContext` gains an optional `PendingStore`; nil keeps the previous behavior.'
+time: 2026-11-20T12:00:00Z
