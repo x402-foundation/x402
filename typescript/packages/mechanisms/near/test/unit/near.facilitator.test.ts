@@ -397,7 +397,8 @@ describe("near facilitator settle", () => {
     const cache = new SettlementCache();
     const scheme = new ExactNearScheme(mockFacilitatorSigner({ blockHeight: 1000n }), cache);
 
-    // Delegate with max_block_height 999 cannot land at final height 1000.
+    // An orphaned row: inserted by a settle that never reached release(). Its
+    // max_block_height 999 has passed at final height 1000, so it cannot land.
     cache.isDuplicate(settlementCacheKey("expired-delegate"), 999n);
 
     const result = await scheme.settle(makePayload(b64, requirements), requirements);
