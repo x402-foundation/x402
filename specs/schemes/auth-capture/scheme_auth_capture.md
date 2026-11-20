@@ -90,6 +90,7 @@ Every `auth-capture` network binding MUST specify:
 ### Network bindings
 
 - [`scheme_auth_capture_evm.md`](./scheme_auth_capture_evm.md) — EVM.
+- [`scheme_auth_capture_stellar.md`](./scheme_auth_capture_stellar.md) — Stellar.
 
 ## Version History
 
