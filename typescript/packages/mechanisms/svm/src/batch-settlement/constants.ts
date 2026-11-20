@@ -5,7 +5,11 @@ export const BATCH_SETTLEMENT_SCHEME = "batch-settlement";
  * `PaymentRequirements.extra` keys a server regenerates for every
  * `PaymentRequired`, so they are not part of requirements matching.
  */
-export const DYNAMIC_EXTRA_FIELDS: readonly string[] = ["recentBlockhash", "recentSlot"];
+export const DYNAMIC_EXTRA_FIELDS: readonly string[] = [
+  "recentBlockhash",
+  "lastValidBlockHeight",
+  "recentSlot",
+];
 
 /** Shortest grace period a channel may advertise, in seconds (15 minutes). */
 export const MIN_WITHDRAW_DELAY = 900;

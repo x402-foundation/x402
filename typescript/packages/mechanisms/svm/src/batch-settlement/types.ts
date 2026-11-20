@@ -16,6 +16,7 @@ export type BatchExtra = {
   tokenProgram: string;
   memo?: string | undefined;
   recentBlockhash?: string | undefined;
+  lastValidBlockHeight?: string | undefined;
   recentSlot?: number | undefined;
   channelState?: BatchChannelState | undefined;
   voucherState?: BatchVoucherState | undefined;
@@ -471,6 +472,7 @@ export function isBatchExtra(value: unknown): value is BatchExtra {
     isOptional(value.minDeposit, isDecimal) &&
     isOptional(value.memo, isString) &&
     isOptional(value.recentBlockhash, isString) &&
+    isOptional(value.lastValidBlockHeight, isDecimal) &&
     isOptional(value.recentSlot, isSafeUint) &&
     isOptional(value.channelState, isBatchChannelState) &&
     isOptional(value.voucherState, isBatchVoucherState) &&

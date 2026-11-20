@@ -249,6 +249,7 @@ and `SettlementResponse` types are defined in
 | `tokenProgram` | string | yes | SPL Token (`Tokenkeg...`) or Token-2022 (`TokenzQ...`) program that owns `asset`. The client and facilitator MUST verify it against the onchain mint owner. |
 | `memo` | string | no | Seller-defined UTF-8 payment reference for the setup transaction's Memo instruction. Maximum 256 bytes. |
 | `recentBlockhash` | string | no | Pre-fetched blockhash the client MAY use to build an `open` or `top_up` transaction without an RPC round trip. The client MUST refresh it if it is no longer valid. |
+| `lastValidBlockHeight` | string | no | Last block height at which `recentBlockhash` is valid, as a decimal string. Informational; MAY be ignored by the client. Ignored when `recentBlockhash` is absent. |
 | `recentSlot` | number | no | Recent slot the client MAY use as `channelConfig.openSlot` when it does not fetch its own slot. The program still enforces the open-slot window. |
 | `minDeposit` | string | no | Atomic deposit target. When present, MUST be a positive integer greater than or equal to `amount`. |
 | `maxIdleSecs` | number | no | Facilitator idle window in seconds, copied from the facilitator's `/supported` `extra`. After this long with no facilitator-visible lifecycle activity on an `Open` channel, the facilitator MAY abandon-close it at the onchain `settled` watermark (see Phase 4). Absent means the facilitator does not idle-close. |
@@ -258,10 +259,12 @@ and `SettlementResponse` types are defined in
 | `channelState` | object | no | Corrective-only server channel snapshot for cumulative amount resynchronization. |
 | `voucherState` | object | no | Corrective-only signed voucher proof for cumulative amount resynchronization. |
 
-`recentBlockhash` and `recentSlot` are
+`recentBlockhash`, `lastValidBlockHeight` and `recentSlot` are
 transaction-construction hints only. They are not persistent channel
 configuration and are not included in the voucher message. A client MAY ignore
-the hints and obtain fresher values from an RPC.
+the hints and obtain fresher values from an RPC. A server MAY regenerate them
+for every `PaymentRequired`, so they are not part of requirements matching
+(section 4.5).
 
 Clients SHOULD use a conforming `extra.minDeposit` as the deposit target and
 SHOULD enforce a local maximum deposit so a 402 cannot lock unbounded escrow.
@@ -729,7 +732,9 @@ A successful voucher-only response is:
 
 The standard x402 `POST /verify` and `POST /settle` request envelope contains
 `x402Version`, `paymentPayload`, and `paymentRequirements`. For every request,
-`paymentPayload.accepted` MUST equal `paymentRequirements`.
+`paymentPayload.accepted` MUST equal `paymentRequirements`, ignoring the
+transaction-construction hints `extra.recentBlockhash`,
+`extra.lastValidBlockHeight` and `extra.recentSlot` (section 4.1).
 
 | Request field | Type | Required | Notes |
 |---|---|---|---|
