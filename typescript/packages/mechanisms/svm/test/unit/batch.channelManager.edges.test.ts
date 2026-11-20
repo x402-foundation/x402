@@ -446,7 +446,8 @@ describe("batch-settlement redemption worker edge cases", () => {
 
   it("infers a confirmed claim but not a distribute's payout when no reader is configured", async () => {
     const store = new MemoryChannelStore();
-    await store.put(channel("chan-a"));
+    const id = USDC_DEVNET_ADDRESS;
+    await store.put(channel(id));
     const errors: string[] = [];
     const urls = await capturingFetch(async () => {
       const result = await new BatchChannelManager({
@@ -458,8 +459,8 @@ describe("batch-settlement redemption worker edge cases", () => {
         store,
       }).redeem();
       expect(errors).toEqual([]);
-      expect(result).toEqual({ claimed: ["chan-a"], distributed: [], sealed: [] });
-      expect(await store.get("chan-a")).toMatchObject({ payoutWatermark: 0n, settled: 3_000n });
+      expect(result).toEqual({ claimed: [id], distributed: [], sealed: [] });
+      expect(await store.get(id)).toMatchObject({ payoutWatermark: 0n, settled: 3_000n });
     });
     expect(urls).toEqual([]);
   });
@@ -550,6 +551,30 @@ describe("batch-settlement redemption worker edge cases", () => {
       }).redeem();
       expect(result.claimed).toEqual([]);
       expect((await store.get(USDC_DEVNET_ADDRESS))?.settled).toBe(0n);
+    });
+    expect(urls.some(url => url.startsWith("http://127.0.0.1:9"))).toBe(true);
+    expect(urls.some(url => url.includes("solana.com"))).toBe(false);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("reports a configured payout read that fails and does not use the public endpoint", async () => {
+    const store = new MemoryChannelStore();
+    const id = USDC_DEVNET_ADDRESS;
+    await store.put(
+      channel(id, { highestVoucherSignature: undefined, payoutWatermark: 0n, settled: 3_000n }),
+    );
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        receiverAuthorizer,
+        requirements: requirements(),
+        rpcUrl: "http://127.0.0.1:9",
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(result.distributed).toEqual([]);
+      expect((await store.get(id))?.payoutWatermark).toBe(0n);
     });
     expect(urls.some(url => url.startsWith("http://127.0.0.1:9"))).toBe(true);
     expect(urls.some(url => url.includes("solana.com"))).toBe(false);

@@ -270,10 +270,11 @@ describe("batch-settlement redemption worker", () => {
     const store = new MemoryChannelStore();
     await store.put(channel("chan-a"));
     const errors: unknown[] = [];
-    const { settle } = recorder(() => ({ ...ok(), network: "solana:other" }));
+    const { settle } = recorder(() => ok());
     const result = await new BatchChannelManager({
-      readPayoutWatermark: async () => 3000n,
       onError: error => errors.push(error),
+      readPayoutWatermark: async () => 3000n,
+      readSettledWatermark: async () => undefined,
       receiverAuthorizer,
       requirements: requirements(),
       settle,
@@ -283,7 +284,7 @@ describe("batch-settlement redemption worker", () => {
     expect(result).toEqual({ claimed: [], distributed: [], sealed: [] });
     expect((await store.get("chan-a"))?.settled).toBe(0n);
     expect(errors.map(error => (error as Error).message)).toEqual([
-      "batch-settlement claim response bound to another network",
+      "confirmed settled watermark unavailable or behind the claim",
     ]);
   });
 
