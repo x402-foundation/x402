@@ -270,7 +270,7 @@ describe("batch-settlement redemption worker", () => {
     const store = new MemoryChannelStore();
     await store.put(channel("chan-a"));
     const errors: unknown[] = [];
-    const { settle } = recorder(() => ok());
+    const { settle } = recorder(() => ({ ...ok(), network: "solana:other" }));
     const result = await new BatchChannelManager({
       readPayoutWatermark: async () => 3000n,
       onError: error => errors.push(error),
@@ -282,7 +282,9 @@ describe("batch-settlement redemption worker", () => {
 
     expect(result).toEqual({ claimed: [], distributed: [], sealed: [] });
     expect((await store.get("chan-a"))?.settled).toBe(0n);
-    expect(errors).toHaveLength(1);
+    expect(errors.map(error => (error as Error).message)).toEqual([
+      "batch-settlement claim response bound to another network",
+    ]);
   });
 
   it("stop with flush runs one final redeem pass", async () => {

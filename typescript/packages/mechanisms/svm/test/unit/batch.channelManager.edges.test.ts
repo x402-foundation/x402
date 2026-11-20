@@ -443,4 +443,133 @@ describe("batch-settlement redemption worker edge cases", () => {
     expect(seal).toMatchObject({ channelId: id, type: "seal" });
     expect(seal).not.toHaveProperty("closeAuthorization");
   });
+
+  it("infers a confirmed claim but not a distribute's payout when no reader is configured", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a"));
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        receiverAuthorizer,
+        requirements: requirements(),
+        rpcUrl: "   ",
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(errors).toEqual([]);
+      expect(result).toEqual({ claimed: ["chan-a"], distributed: [], sealed: [] });
+      expect(await store.get("chan-a")).toMatchObject({ payoutWatermark: 0n, settled: 3_000n });
+    });
+    expect(urls).toEqual([]);
+  });
+
+  it("keeps an unpaid balance payable when a recovered distribute answers without a reader", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(
+      channel("chan-a", {
+        highestVoucherSignature: undefined,
+        payoutWatermark: 1_000n,
+        settled: 2_200n,
+      }),
+    );
+    const seen: string[] = [];
+    const errors: string[] = [];
+    const manager = new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      receiverAuthorizer,
+      requirements: requirements(),
+      settle: async request => {
+        const raw = request.payload as Payload;
+        seen.push(raw.type);
+        return boundDistribute(raw);
+      },
+      store,
+    });
+    const urls = await capturingFetch(async () => {
+      expect((await manager.redeem()).distributed).toEqual([]);
+      expect((await store.get("chan-a"))?.payoutWatermark).toBe(1_000n);
+      await manager.redeem();
+    });
+    expect(errors).toEqual([]);
+    expect(seen).toEqual(["settle", "settle"]);
+    expect(urls).toEqual([]);
+  });
+
+  it("does not open a public settled read when only a payout reader is configured", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a"));
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        readPayoutWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(errors).toEqual([]);
+      expect(result).toEqual({ claimed: ["chan-a"], distributed: ["chan-a"], sealed: [] });
+    });
+    expect(urls).toEqual([]);
+  });
+
+  it("does not open a public payout read when only a settled reader is configured", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a"));
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        readSettledWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(errors).toEqual([]);
+      expect(result).toEqual({ claimed: ["chan-a"], distributed: [], sealed: [] });
+      expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
+    });
+    expect(urls).toEqual([]);
+  });
+
+  it("reads a bare claim from the configured rpcUrl and reports the failure", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel(USDC_DEVNET_ADDRESS));
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        receiverAuthorizer,
+        requirements: requirements(),
+        rpcUrl: "http://127.0.0.1:9",
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(result.claimed).toEqual([]);
+      expect((await store.get(USDC_DEVNET_ADDRESS))?.settled).toBe(0n);
+    });
+    expect(urls.some(url => url.startsWith("http://127.0.0.1:9"))).toBe(true);
+    expect(urls.some(url => url.includes("solana.com"))).toBe(false);
+    expect(errors.length).toBeGreaterThan(0);
+  });
 });
+
+/** Runs `body` while recording every fetch URL, and fails those fetches closed. */
+async function capturingFetch(body: () => Promise<void>): Promise<string[]> {
+  const urls: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    urls.push(url);
+    throw new Error(`unexpected rpc ${url}`);
+  }) as typeof fetch;
+  try {
+    await body();
+    return urls;
+  } finally {
+    globalThis.fetch = original;
+  }
+}
