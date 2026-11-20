@@ -24,6 +24,8 @@ Per-extension guides live next to the TypeScript sources in this repository:
 | EIP-2612 gas sponsoring | Gasless Permit2 via EIP-2612 permit + facilitator `settleWithPermit` | `@x402/extensions` | [src/eip2612-gas-sponsoring/README.md](src/eip2612-gas-sponsoring/README.md) |
 | ERC-20 approval gas sponsoring | Gasless Permit2 for tokens without EIP-2612 (pre-signed `approve`) | `@x402/extensions` | [src/erc20-approval-gas-sponsoring/README.md](src/erc20-approval-gas-sponsoring/README.md) |
 
+For manual EVM wallet authentication without Solana runtime dependencies, use `@x402/extensions/sign-in-with-x/evm`. See the [EVM-only manual flow](src/sign-in-with-x/README.md#evm-only-manual-flow).
+
 ## Related resources
 
 - [x402 Core package](../core/README.md) — protocol types, resource server, and facilitator client primitives

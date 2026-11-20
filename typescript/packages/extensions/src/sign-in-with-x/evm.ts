@@ -7,9 +7,10 @@
 
 import { verifyMessage } from "viem";
 import { SiweMessage } from "@signinwithethereum/siwe";
-import type { EVMMessageVerifier } from "./types";
-import type { CompleteSIWxInfo } from "./client";
-import type { SIWxSigner } from "./sign";
+import type { EVMMessageVerifier, SIWxPayload, SIWxVerifyOptions, SIWxVerifyResult } from "./types";
+import type { CompleteSIWxInfo } from "./client-common";
+import { assertSIWxChallengeBoundToOrigin, buildSIWxPayload } from "./client-common";
+import type { EVMSigner, SIWxSigner } from "./sign";
 
 /**
  * Extract numeric chain ID from CAIP-2 EVM chainId.
@@ -176,4 +177,107 @@ export function isEVMSigner(signer: SIWxSigner): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Get address from an EVM signer.
+ *
+ * @param signer - EVM wallet signer instance
+ * @returns The wallet address as a hex string
+ */
+export function getEVMAddress(signer: EVMSigner): string {
+  if (signer.account?.address) {
+    return signer.account.address;
+  }
+  if (signer.address) {
+    return signer.address;
+  }
+  throw new Error("EVM signer missing address");
+}
+
+/**
+ * Sign a message with an EVM wallet.
+ * Returns hex-encoded signature.
+ *
+ * @param message - The message to sign
+ * @param signer - EVM wallet signer instance
+ * @returns Hex-encoded signature
+ */
+export async function signEVMMessage(message: string, signer: EVMSigner): Promise<string> {
+  if (signer.account) {
+    return signer.signMessage({ message, account: signer.account });
+  }
+  return signer.signMessage({ message });
+}
+
+/**
+ * Create an EVM SIWX payload after checking the challenge origin.
+ *
+ * @param serverExtension - Server extension info with the selected EVM chain
+ * @param signer - EVM wallet signer
+ * @param requestUrl - Final URL of the 402 response after redirects
+ * @returns Complete SIWX payload with signature
+ */
+export async function createEVMPayload(
+  serverExtension: CompleteSIWxInfo,
+  signer: EVMSigner,
+  requestUrl: string | URL,
+): Promise<SIWxPayload> {
+  assertSIWxChallengeBoundToOrigin(serverExtension, requestUrl);
+  const address = getEVMAddress(signer);
+  const message = formatSIWEMessage(serverExtension, address);
+  const signature = await signEVMMessage(message, signer);
+  return buildSIWxPayload(serverExtension, address, signature);
+}
+
+/**
+ * Verify EVM signature with optional smart wallet support.
+ *
+ * @param payload - The SIWX payload containing signature and message data
+ * @param options - Optional verification options for EIP-1271/EIP-6492 support
+ * @returns Verification result with recovered address if valid
+ */
+export async function verifyEVMPayload(
+  payload: SIWxPayload,
+  options?: SIWxVerifyOptions,
+): Promise<SIWxVerifyResult> {
+  try {
+    extractEVMChainId(payload.chainId);
+  } catch (error) {
+    return {
+      isValid: false,
+      invalidReason: "invalid_siwx_chain_id",
+      invalidMessage: error instanceof Error ? error.message : "Invalid EVM chainId format",
+    };
+  }
+
+  const message = formatSIWEMessage(payload, payload.address);
+
+  try {
+    const valid = await verifyEVMSignature(
+      message,
+      payload.address,
+      payload.signature,
+      options?.evmVerifier,
+    );
+
+    if (!valid) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_siwx_signature",
+        invalidMessage: "Signature verification failed",
+      };
+    }
+
+    return {
+      isValid: true,
+      payer: payload.address,
+    };
+  } catch (error) {
+    return {
+      isValid: false,
+      invalidReason: "invalid_siwx_verifier_error",
+      invalidMessage: error instanceof Error ? error.message : "Signature verification failed",
+    };
+  }
 }
