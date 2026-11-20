@@ -1,0 +1,78 @@
+{
+  "contract": "upto",
+  "network": "testnet",
+  "caip2": "stellar:testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "rpc_url": "https://soroban-testnet.stellar.org",
+  "contract_id": "CBTVKCHLSGQ3WSV3NKSU6FZR4FZMC6ENMDMXUS5XQ66HYVUUHYE3TU7U",
+  "wasm_sha256": "cc2d2fefe77d1a470abe88be8563679a9d40f49c127683947784c0cb2d0ca797",
+  "wasm_size": 4451,
+  "crate": "x402-upto-stellar",
+  "source": "contracts/stellar/upto",
+  "source_sha256": "c783ef0838c7d2c235ded5c4e28b8303e7d7e387362ff868f0a3cc5018802343",
+  "bldimg": "docker.io/stellar/stellar-cli:28.0.0-rust1.98.0-slim-trixie-amd64-0@sha256:3901802ef2324ff9563a50995279818ca4b98938b45e1dab0e1e7c5d69adb5a9",
+  "bldopt": ["--locked", "--optimize"],
+  "build_cli": "28.1.0",
+  "repository": "https://github.com/tolgayayci/rail402",
+  "commit": "b63695c8ac4ed27fa5e75e18690084c9b74c23bb",
+  "deployer": "GDIPKWWR6XJF54ZWAU5VVAUY36RFAWJG4OTWU5TVHEI2WGAE6PCSFBA4",
+  "salt": "379714072c27ad068d175a4e64017065e569fb9fd33b9c7c8b59428741f7330b",
+  "salt_preimage": "x402-upto-stellar/v1.1",
+  "stellar_cli": "28.0.0",
+  "transactions": {
+    "upload": {
+      "tx": "86c3d9f7ffbe078e654a242426a266926797fe1fbc7fc05fcc2ab47779a249de",
+      "ledger": 5071398
+    },
+    "deploy": {
+      "tx": "cf415bbdf8782de3fb429bdf0d5f6dbe8cef2c174d4a54673ea4c14fc3f90fa9",
+      "ledger": 5071399
+    },
+    "extend_instance": {
+      "tx": "0155aed10ff6fa3491a0ceb64c5ed91b92d79dcc0714a7405c729487fce280bd",
+      "ledger": 5071400,
+      "extend_to": 3110399
+    },
+    "extend_code": {
+      "tx": "20315838b03ac600a23b32eb0d1cea55bd6aa6e309d37a9e484b17d5b9e649c3",
+      "ledger": 5071401,
+      "extend_to": 3110399
+    }
+  },
+  "live_until_ledger": {
+    "instance": 8181799,
+    "code": 8181800
+  },
+  "ttl_extensions": [
+    {
+      "instance": {
+        "tx": "3973bcf46f18946cfd1f14c248138cb4302681cc7c5193393466178aa62197ff",
+        "ledger": 5293271
+      },
+      "code": {
+        "tx": "2717b86561207d0b89692945751270f3c09af95b5a89dedef912423a6e9bef1c",
+        "ledger": 5293274
+      },
+      "extend_to": 3110399,
+      "stellar_cli": "28.1.0",
+      "live_until_ledger": {
+        "instance": 8403670,
+        "code": 8403673
+      }
+    }
+  ],
+  "previous": [
+    {
+      "contract_id": "CCNU3CYA6HCLF5HQSPV3UU2FYVGJ4QWKLCJPMCRSSU6ZKF6LJSN5AYPB",
+      "wasm_sha256": "40258eb6b66e51016abe13a4cc1b11b18b7d65ac4f9999a38f13fa15448d2435",
+      "repository": "https://github.com/tolgayayci/rail402",
+      "commit": "b63695c8ac4ed27fa5e75e18690084c9b74c23bb",
+      "salt_preimage": "x402-upto-stellar/v1",
+      "deploy": {
+        "tx": "cde479b8cfe62edce958d6fd0425d208bc230fe403e12eefb26025d1a0fce422",
+        "ledger": 4941332
+      },
+      "note": "Superseded by the current deployment. The same source, built with `--locked` only (no `--optimize`) and SEP-58 metadata (`bldimg`, `bldopt`, `source_sha256`) instead of SEP-55 `source_repo`."
+    }
+  ]
+}

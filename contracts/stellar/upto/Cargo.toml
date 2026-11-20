@@ -1,0 +1,30 @@
+[package]
+name = "x402-upto-stellar"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.91.0"
+description = "Settlement contract for the x402 upto payment scheme on Stellar"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "=28.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "=28.0.0", features = ["testutils"] }
+ed25519-dalek = "2.2.0"
+soroban-env-host = "=28.0.2"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
