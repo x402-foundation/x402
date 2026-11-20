@@ -378,6 +378,78 @@ export const DEFAULT_ASSETS: DefaultAssetTable<ExactDefaultAssetInfo> = {
       symbol: "USDC",
     },
   ], // World Chain Sepolia USDC
+  "eip155:10": [
+    {
+      asset: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      name: "USD Coin",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // OP Mainnet USDC
+  "eip155:130": [
+    {
+      asset: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Unichain USDC
+  "eip155:146": [
+    {
+      asset: "0x29219dd400f2Bf60E5a23d13Be72B486D4038894",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Sonic USDC
+  "eip155:999": [
+    {
+      asset: "0xb88339CB7199b77E23DB6E890353E22632Ba630f",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // HyperEVM USDC
+  "eip155:57073": [
+    {
+      asset: "0x2D270e6886d130D724215A266106e6832161EAEd",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Ink USDC
+  "eip155:59144": [
+    {
+      asset: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Linea USDC
+  "eip155:81224": [
+    {
+      asset: "0xd996633a415985DBd7D6D12f4A4343E31f5037cf",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Codex USDC
+  "eip155:98866": [
+    {
+      asset: "0x222365EF19F7947e5484218551B56bb3965Aa7aF",
+      name: "USDC",
+      version: "2",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  ], // Plume USDC
 };
 
 /**
