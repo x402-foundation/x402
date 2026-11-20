@@ -1,0 +1,3 @@
+kind: fixed
+body: 'SVM batch-settlement treats extra.lastValidBlockHeight as a per-PaymentRequired transaction-construction hint, as exact and upto do: it is in DynamicExtraFields, so the server leaves it out of requirements matching and the facilitator out of the paymentPayload.accepted check. Previously a challenge that refreshed it next to extra.recentBlockhash failed with invalid_payment_requirements.'
+time: 2026-11-20T10:00:00Z

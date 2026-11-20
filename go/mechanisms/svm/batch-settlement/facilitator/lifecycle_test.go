@@ -657,8 +657,12 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		}
 		stale := payment(batchsettlement.BatchVoucherPayload{
 			Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
-		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1")))
-		fresh := requirements(withExtra(batchsettlement.ExtraRecentSlot, "2"), withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"))
+		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1"), withExtra(batchsettlement.ExtraLastValidBlockHeight, "1")))
+		fresh := requirements(
+			withExtra(batchsettlement.ExtraRecentSlot, "2"),
+			withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"),
+			withExtra(batchsettlement.ExtraLastValidBlockHeight, "2"),
+		)
 		result, err = scheme.Verify(ctx, stale, fresh, nil)
 		require.NoError(t, err)
 		require.True(t, result.IsValid, result.InvalidReason)
