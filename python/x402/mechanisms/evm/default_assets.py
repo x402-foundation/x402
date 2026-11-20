@@ -135,7 +135,7 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "symbol": "USDs",
             "asset_transfer_method": "permit2",
         },
-    ],  # Arbitrum One USDC, Sperax USD (Permit2; no EIP-3009 or working EIP-2612)
+    ],  # Arbitrum One USDC; Sperax USD is Permit2 only (no EIP-3009, permit does not set allowances)
     "eip155:421614": [
         {
             "asset": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
@@ -349,6 +349,96 @@ DEFAULT_ASSETS: dict[str, list[ExactDefaultAssetInfo]] = {
             "asset_transfer_method": "permit2",
         },
     ],  # Hemi testnet USDC.e (no EIP-3009, no EIP-2612)
+    "eip155:480": [
+        {
+            "asset": "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # World Chain USDC
+    "eip155:4801": [
+        {
+            "asset": "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # World Chain Sepolia USDC
+    "eip155:10": [
+        {
+            "asset": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+            "name": "USD Coin",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # OP Mainnet USDC
+    "eip155:130": [
+        {
+            "asset": "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Unichain USDC
+    "eip155:146": [
+        {
+            "asset": "0x29219dd400f2Bf60E5a23d13Be72B486D4038894",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Sonic USDC
+    "eip155:999": [
+        {
+            "asset": "0xb88339CB7199b77E23DB6E890353E22632Ba630f",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # HyperEVM USDC
+    "eip155:57073": [
+        {
+            "asset": "0x2D270e6886d130D724215A266106e6832161EAEd",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Ink USDC
+    "eip155:59144": [
+        {
+            "asset": "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Linea USDC
+    "eip155:81224": [
+        {
+            "asset": "0xd996633a415985DBd7D6D12f4A4343E31f5037cf",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Codex USDC
+    "eip155:98866": [
+        {
+            "asset": "0x222365EF19F7947e5484218551B56bb3965Aa7aF",
+            "name": "USDC",
+            "version": "2",
+            "decimals": 6,
+            "symbol": "USDC",
+        },
+    ],  # Plume USDC
 }
 
 

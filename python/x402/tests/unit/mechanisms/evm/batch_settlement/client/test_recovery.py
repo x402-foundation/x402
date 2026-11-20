@@ -14,6 +14,7 @@ pytest.importorskip("eth_keys")
 
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from eth_keys.constants import SECPK1_N
 
 from x402.mechanisms.evm.batch_settlement.abi import BATCH_SETTLEMENT_ABI
 from x402.mechanisms.evm.batch_settlement.client.channel import (
@@ -47,6 +48,20 @@ from x402.schemas import PaymentRequired, PaymentRequirements
 
 TEST_PRIVATE_KEY = "0xa915e4eaadfaa5e6f59574d2c8e1d2a4cd2b6c0c0b9f6a3c7d9e2b8f5a4e3c2d"
 OTHER_PRIVATE_KEY = "0x" + "22" * 32
+
+
+def _contract_rejected_form(signature: str, form: str) -> str:
+    """Rewrite a 27/28 signature into a form OpenZeppelin ECDSA recovery rejects."""
+    raw = bytearray(bytes.fromhex(signature.removeprefix("0x")))
+    if form == "high-s":
+        s = int.from_bytes(raw[32:64], "big")
+        raw[32:64] = (SECPK1_N - s).to_bytes(32, "big")
+        raw[64] = 28 if raw[64] == 27 else 27
+    elif form == "v01":
+        raw[64] -= 27
+    else:
+        raise AssertionError(form)
+    return "0x" + raw.hex()
 
 
 def _deps() -> BatchSettlementClientDeps:
@@ -222,6 +237,18 @@ class TestProcessCorrectivePaymentRequired:
     @pytest.mark.parametrize("charged", [499, 1501])
     def test_rejects_cumulative_outside_claimed_and_signed_bounds(self, recovery, charged):
         pr = _corrective(recovery, charged=charged)
+
+        assert process_corrective_payment_required(recovery.deps, pr) is False
+
+        recovery.write.assert_not_called()
+        assert recovery.deps.storage.get(recovery.channel_id) == recovery.previous
+        recovery.sign.assert_not_called()
+
+    @pytest.mark.parametrize("form", ["high-s", "v01"])
+    def test_rejects_signature_forms_the_contract_cannot_recover(self, recovery, form):
+        pr = _corrective(recovery)
+        proof = pr.accepts[0].extra["voucherState"]
+        proof["signature"] = _contract_rejected_form(proof["signature"], form)
 
         assert process_corrective_payment_required(recovery.deps, pr) is False
 

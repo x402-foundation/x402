@@ -4,6 +4,8 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -695,6 +697,94 @@ func TestSVMIntegrationBatchSettlement(t *testing.T) {
 			t.Fatalf("expected empty second pass, got %+v", again)
 		}
 	})
+
+	t.Run("converges after a lost claim response and a lost distribute response", func(t *testing.T) {
+		if channelID == "" {
+			t.Fatal("opening payment did not succeed")
+		}
+		pipe := env.pipeline(t, ctx, lifecycleStore, false)
+		payBatchFlow(t, ctx, pipe, env, batchPayOptions{})
+		matched := pipe.accepts(t, ctx, env)[0]
+		before := batchPayeeBalance(t, ctx, env.payTo, matched)
+
+		lossy := &lostResponseFacilitatorClient{
+			localSvmFacilitatorClient: &localSvmFacilitatorClient{facilitator: pipe.facilitator, signer: env.facSigner},
+			lose:                      map[string]bool{batchsettlement.PayloadTypeClaim: true, batchsettlement.PayloadTypeSettle: true},
+		}
+		manager, err := pipe.serverScheme.CreateChannelManager(lossy, matched, batchserver.BatchChannelManagerConfig{})
+		if err != nil {
+			t.Fatalf("Failed to create channel manager: %v", err)
+		}
+
+		for pass := 0; pass < 3; pass++ {
+			if _, err := retryWhileRateLimited(ctx, func() (batchserver.RedemptionResult, error) {
+				return manager.Redeem(ctx)
+			}); err != nil && !errors.Is(err, errLostResponse) {
+				t.Fatalf("Redeem pass %d failed: %v", pass, err)
+			}
+		}
+
+		if got := lossy.submitted[batchsettlement.PayloadTypeClaim]; got != 2 {
+			t.Fatalf("expected the claim to be submitted once and replayed once, got %d submissions", got)
+		}
+		if got := lossy.submitted[batchsettlement.PayloadTypeSettle]; got != 2 {
+			t.Fatalf("expected the distribute to be submitted once and replayed once, got %d submissions", got)
+		}
+		channel := fetchBatchChannel(t, ctx, channelID)
+		state, err := lifecycleStore.Get(channelID)
+		if err != nil || state == nil {
+			t.Fatalf("Failed to read store: %v", err)
+		}
+		if state.Settled != channel.Settlement.Settled || state.PayoutWatermark != channel.Settlement.PayoutWatermark {
+			t.Fatalf("server watermarks %d/%d did not converge on onchain %d/%d",
+				state.Settled, state.PayoutWatermark, channel.Settlement.Settled, channel.Settlement.PayoutWatermark)
+		}
+		if state.PayoutWatermark != state.ChargedCumulativeAmount {
+			t.Fatalf("expected payout watermark %d to reach charged %d", state.PayoutWatermark, state.ChargedCumulativeAmount)
+		}
+		if after := batchPayeeBalance(t, ctx, env.payTo, matched); after <= before {
+			t.Fatalf("expected payee balance to increase, before=%d after=%d", before, after)
+		}
+
+		settled, err := manager.Redeem(ctx)
+		if err != nil {
+			t.Fatalf("Redeem after convergence failed: %v", err)
+		}
+		if len(settled.Claimed) != 0 || len(settled.Distributed) != 0 {
+			t.Fatalf("expected nothing left to redeem, got %+v", settled)
+		}
+		if got := lossy.submitted[batchsettlement.PayloadTypeClaim] + lossy.submitted[batchsettlement.PayloadTypeSettle]; got != 4 {
+			t.Fatalf("expected no further submissions, got %d in total", got)
+		}
+	})
+}
+
+var errLostResponse = errors.New("facilitator response lost in transit")
+
+// lostResponseFacilitatorClient drops the first success response of each type
+// in lose after the facilitator applied it, as a timed-out HTTP call would.
+type lostResponseFacilitatorClient struct {
+	*localSvmFacilitatorClient
+	lose      map[string]bool
+	submitted map[string]int
+}
+
+func (l *lostResponseFacilitatorClient) Settle(ctx context.Context, payloadBytes, requirementsBytes []byte) (*x402.SettleResponse, error) {
+	var envelope types.PaymentPayload
+	if err := json.Unmarshal(payloadBytes, &envelope); err != nil {
+		return nil, err
+	}
+	payloadType, _ := envelope.Payload["type"].(string)
+	if l.submitted == nil {
+		l.submitted = map[string]int{}
+	}
+	l.submitted[payloadType]++
+	response, err := l.localSvmFacilitatorClient.Settle(ctx, payloadBytes, requirementsBytes)
+	if err == nil && response != nil && response.Success && l.lose[payloadType] {
+		l.lose[payloadType] = false
+		return nil, errLostResponse
+	}
+	return response, err
 }
 
 func TestSVMIntegrationBatchSettlementOperatorSigning(t *testing.T) {

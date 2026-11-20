@@ -19,13 +19,9 @@ def extract_evm_chain_id(chain_id: str) -> int:
 
 
 def canonical_evm_address(address: str) -> str:
-    """Return the EIP-55 checksummed form of a hex address, or the input unchanged.
+    """Return the EIP-55 checksum of a hex address, or the input unchanged.
 
-    EIP-4361 requires the address line to carry the EIP-55 checksum, and the
-    TypeScript library (@signinwithethereum/siwe) and the Go SDK always checksum
-    it. Rebuilding the message from a non-checksummed payload address without
-    this step yields a different message and EIP-191 hash, so a valid signature
-    from another implementation would be rejected.
+    EIP-4361 hashes that casing, so any other form is a different EIP-191 digest.
     """
     from eth_utils import is_hex_address, to_checksum_address
 

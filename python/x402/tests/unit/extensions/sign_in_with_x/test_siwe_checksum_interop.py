@@ -1,13 +1,6 @@
-"""Cross-implementation interop: the EVM SIWE message must carry the EIP-55
-checksummed address.
+"""EIP-4361 requires the EIP-55 checksum on the SIWE address line.
 
-EIP-4361 requires the account line to be "conformant to capitalization encoded
-checksum specified in EIP-55", and the TypeScript library
-(@signinwithethereum/siwe) always checksums it. If this Python facilitator
-rebuilds the message from a non-checksummed payload address without
-checksumming, it produces a different message, a different EIP-191 hash, and
-rejects an otherwise valid signature produced by a client using another
-implementation.
+Any other casing is a different message and a different EIP-191 digest.
 """
 
 from __future__ import annotations

@@ -3,14 +3,16 @@ package facilitator
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math/big"
+	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
 
-// Vectors: TS client signVoucher on eip155:84532; high-s and v=0/1 are the same signature
-// rewritten. x402BatchSettlement.claim reverts on both (ECDSAInvalidSignatureS / ECDSAInvalidSignature).
 func TestVerifyBatchedVoucherTypedDataRejectsUnrecoverableForms(t *testing.T) {
 	const (
 		payer     = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
@@ -61,6 +63,57 @@ func TestVerifyBatchedVoucherTypedDataRejectsUnrecoverableForms(t *testing.T) {
 			t.Error("expected claim construction to reject malformed signature")
 		}
 	}
+}
+
+func TestVerifyRefundAuthorizerSignatureRejectsUnrecoverableForms(t *testing.T) {
+	const (
+		channelId = "0xdcdc13344de9746cfe666524db81860d28053b2d3fd65d3ee06aabbcd00ef339"
+		amount    = "1000"
+		nonce     = "0"
+		network   = "eip155:84532"
+	)
+	authorizer, canonical := signRefundWithKey(t, serverRefundKeyHex, channelId, amount, nonce, network)
+	cases := map[string]struct {
+		sig  string
+		want bool
+	}{
+		"canonical": {canonical, true},
+		"high-s":    {refundHighS(canonical), false},
+		"v=0/1":     {refundYParity(canonical), false},
+	}
+	for name, tc := range cases {
+		got := verifyRefundAuthorizerSignature(tc.sig, authorizer, channelId, amount, nonce, network)
+		if got != tc.want {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func refundHighS(sig string) string {
+	raw := append([]byte(nil), refundSigBytes(sig)...)
+	s := new(big.Int).SetBytes(raw[32:64])
+	s.Sub(crypto.S256().Params().N, s)
+	s.FillBytes(raw[32:64])
+	if raw[64] == 27 {
+		raw[64] = 28
+	} else {
+		raw[64] = 27
+	}
+	return "0x" + hex.EncodeToString(raw)
+}
+
+func refundYParity(sig string) string {
+	raw := append([]byte(nil), refundSigBytes(sig)...)
+	raw[64] -= 27
+	return "0x" + hex.EncodeToString(raw)
+}
+
+func refundSigBytes(sig string) []byte {
+	raw, err := hex.DecodeString(strings.TrimPrefix(sig, "0x"))
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 func TestContractVoucherSignatureUsesOneCodeLookup(t *testing.T) {
