@@ -7,25 +7,15 @@
 
 import type { RoutesConfig } from "@x402/core/server";
 import type { DiscoveryExtension } from "./types";
-import { validateDiscoveryExtension, validateDiscoveryExtensionSpec } from "./facilitator";
+import {
+  supportsDynamicCodeGeneration,
+  validateDiscoveryExtension,
+  validateDiscoveryExtensionSpec,
+} from "./facilitator";
 
 export { checkIfBazaarNeeded } from "@x402/core/server";
 
 const HTTP_VERB_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD)\b/i;
-
-/**
- * Checks whether this runtime permits the dynamic code generation Ajv uses to compile schemas.
- *
- * @returns True if a Function can be constructed, false otherwise
- */
-function supportsDynamicCodeGeneration(): boolean {
-  try {
-    new Function("");
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Inject a synthetic method into a pre-enrichment extension so the schema's
