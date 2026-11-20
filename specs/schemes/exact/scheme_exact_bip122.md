@@ -43,7 +43,8 @@ block, for example `bip122:000000000019d6689c085ae165831e93` (Bitcoin) or `bip12
 - `asset` names the chain's own coin (see Appendix, open question 1).
 - `payTo` MUST be an address of that chain in the form its software prints.
 - `extra.confirmations` is the number of blocks the transaction MUST be in before the resource is given. `0` means
-  as soon as the facilitator's node accepts the transaction. When absent, it is `1`.
+  as soon as the facilitator's node accepts the transaction. When absent, it is `1`. A facilitator MAY require more
+  blocks than the resource server asks for, never fewer.
 
 The `payload` of the `PaymentPayload`:
 
@@ -78,8 +79,8 @@ The facilitator MUST reject the payload, with the reason given, when:
    output pays `payTo` (`invalid_payload`);
 5. `claim` is absent while `extra.confirmations` is above 0 (`claim_required`), or is not of the stated form
    (`invalid_payload`);
-6. its node would not accept the transaction into its mempool, unless the node has it already
-   (`transaction_refused_by_node`);
+6. its node would not accept the transaction into its mempool, also when the node has it already, waiting or in a
+   block: whoever presents a transaction that is already out need not be who paid (`transaction_refused_by_node`);
 7. the transaction was settled or is being settled, and the payload's `claim` is not the one it was first shown
    with (`transaction_already_used`).
 
@@ -101,8 +102,11 @@ Example of `/verify` for a payment copied from the mempool by someone else:
    ```
 
    and the resource server answers the client `202 Accepted` with `Retry-After` and `PAYMENT-RESPONSE`.
-3. The client sends the same `PAYMENT-SIGNATURE` again. The facilitator MUST hold it to the requirements recorded at
-   step 1, not to the price of the moment.
+3. The client sends the same `PAYMENT-SIGNATURE` again. It MUST still match the requirements recorded at step 1, and
+   those MUST cover what the resource server asks now: the same `scheme`, `network`, `asset` and `payTo`, and a
+   recorded `amount` at least the current one (`invalid_payment_requirements` otherwise). A resource server whose
+   price moves SHOULD keep accepting the prices it quoted for a while, so that a payment that waits for its block
+   is not refused because the price rose meanwhile.
 4. Once the output is deep enough, `/settle` answers `success: true` with `transaction` set to the transaction id,
    records that it was given, and the resource server answers `200` with the resource.
 5. When the node no longer knows the paying output, the facilitator SHOULD hand the transaction to it once more; if
@@ -110,6 +114,9 @@ Example of `/verify` for a payment copied from the mempool by someone else:
 6. The same transaction with the same `claim` MAY be settled again for a short time after step 4 (600 seconds in
    the reference implementation), so that a response lost on the way can be fetched; after that,
    `transaction_already_used`.
+7. When the facilitator itself fails (its node is away, a timeout), the resource server answers `503` with
+   `Retry-After`, not `402`: the payment may already be recorded and broadcast, and the client MUST keep it and its
+   `claim` and send them again.
 
 ## Security considerations
 
