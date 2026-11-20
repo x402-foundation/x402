@@ -70,7 +70,7 @@ from .erc6492 import (
 )
 
 # Signer protocols
-from .signer import ClientEvmSigner, FacilitatorEvmSigner
+from .signer import ClientEvmSigner, FacilitatorEvmSigner, RPCChainConfig, RPCConfig
 
 # Signer implementations
 from .signers import EthAccountSigner, EthAccountSignerWithRPC, FacilitatorWeb3Signer
@@ -189,6 +189,8 @@ __all__ = [
     # Signer protocols
     "ClientEvmSigner",
     "FacilitatorEvmSigner",
+    "RPCConfig",
+    "RPCChainConfig",
     # Signer implementations
     "EthAccountSigner",
     "EthAccountSignerWithRPC",
