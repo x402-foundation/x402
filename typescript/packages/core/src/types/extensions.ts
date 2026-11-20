@@ -1,4 +1,5 @@
 import type { VerifyResponse, SettleResponse } from "./facilitator";
+import type { PaymentPayload, PaymentRequirements } from "./payments";
 import type {
   PaymentRequiredContext,
   SettleResultContext,
@@ -27,8 +28,26 @@ export type {
   VerifiedPaymentCanceledContext,
 };
 
+export interface FacilitatorSettleContext {
+  paymentPayload: PaymentPayload;
+  requirements: PaymentRequirements;
+}
+
+export interface FacilitatorSettleResultContext extends FacilitatorSettleContext {
+  result: SettleResponse;
+}
+
 export interface FacilitatorExtension {
   key: string;
+  /**
+   * Called once the scheme facilitator's settle returns without throwing, after the afterSettle
+   * hooks. This includes a result with `success: false`, so an extension that only applies to a
+   * completed settlement should check `context.result.success` and return undefined otherwise.
+   * Not called when settlement throws. The return value is placed at
+   * SettleResponse.extensions[key]; returning undefined skips the key entirely. Errors are caught
+   * and logged — they never fail the settlement.
+   */
+  enrichSettleResponse?: (context: FacilitatorSettleResultContext) => Promise<unknown>;
 }
 
 /**
