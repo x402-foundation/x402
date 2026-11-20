@@ -2,6 +2,26 @@
 
 <!-- towncrier release notes start -->
 
+## [2.29.0] - 2026-11-20
+
+### Fixed
+
+- A resource-server afterVerify hook that raises is logged and skipped. Later hooks still run, and the verify result stays unchanged. An async afterVerify hook on the sync server still raises, and it does not run on_verify_failure. ([#4249](https://github.com/x402-foundation/x402/pull/4249)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Add World Chain (`eip155:480`) and World Chain Sepolia (`eip155:4801`) USDC as default assets, matching the Go SDK, so `"$0.01"` prices resolve there and default client spend controls accept World Chain USDC. ([#4331](https://github.com/x402-foundation/x402/pull/4331)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+- Batch-settlement client recovery rejects a corrective-402 voucher signature that `x402BatchSettlement` cannot recover. A high-s or `v` of 0/1 signature no longer overwrites local channel state. ([#4319](https://github.com/x402-foundation/x402/pull/4319)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Batch-settlement voucher verification (`verify_batch_settlement_voucher_typed_data`) rejects ECDSA signatures that `x402BatchSettlement` cannot recover: anything other than 65 bytes with a low `s` and `v` of 27 or 28. Previously a high-s or `v` = 0/1 voucher signature verified off-chain, and the later claim reverted. ([#4316](https://github.com/x402-foundation/x402/pull/4316)) - Thanks [@erikreppel](https://github.com/erikreppel) and [@erkancamli](https://github.com/erkancamli)!
+- Fixed `FacilitatorWeb3Signer` queuing every later transaction behind a missing nonce after one send failed. The nonce is now given back when building, signing or sending a transaction fails, and the next transaction starts again from the node's pending count once no other send is in flight. ([#4313](https://github.com/x402-foundation/x402/pull/4313)) - Thanks [@Shikhyy](https://github.com/Shikhyy)!
+- Fixed exact EVM payment amounts that are not canonical uint256 decimal strings. The server raises ValueError naming the amount when building requirements, after converting a dotted human amount. Verify and settle return invalid_exact_evm_required_amount instead of raising ValueError or treating 1_000, +1000, and surrounding whitespace as the same integer. ([#4291](https://github.com/x402-foundation/x402/pull/4291)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- Settlement failed responses now report the network of the matched payment requirement instead of the first `accepts` entry in the sync and async MCP payment wrappers. ([#4261](https://github.com/x402-foundation/x402/pull/4261)) - Thanks [@pjdurden](https://github.com/pjdurden)!
+- Sign-in-with-x SIWE messages now render the EIP-55 checksummed account address, so Python verifies EVM sign-ins signed by other SDKs even when the payload address is not EIP-55 checksummed. The custom EVM verifier and the returned payer get the same checksummed address. ([#4272](https://github.com/x402-foundation/x402/pull/4272)) - Thanks [@erkancamli](https://github.com/erkancamli)!
+- The Flask middleware now closes the protected route's response after buffering it on paid routes, as PEP 3333 requires. Callbacks registered with `response.call_on_close` now run, and files served with `send_file` are closed, as they already are on unprotected routes. ([#4323](https://github.com/x402-foundation/x402/pull/4323)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+
+### Added
+
+- Add Circle-issued USDC as the default stablecoin on OP Mainnet (chain ID 10), Unichain (130), Sonic (146), HyperEVM (999), Ink (57073), Linea (59144), Codex (81224) and Plume (98866), so `"$0.01"` prices resolve on these networks and clients recognize the token under default spend controls. ([#4337](https://github.com/x402-foundation/x402/pull/4337)) - Thanks [@Shikhyy](https://github.com/Shikhyy)!
+- Add Sperax USD (USDs) on Arbitrum One (eip155:42161) as a Permit2 default asset, so "$0.10 USDs" resolves and clients recognize USDs under default spend controls; bare "$0.10" still resolves to USDC. USDs has no EIP-3009 and its permit() does not set allowances, so it carries no supports_eip2612 flag and first payments use ERC-20 approval gas sponsoring. ([#3514](https://github.com/x402-foundation/x402/pull/3514)) - Thanks [@nirholas](https://github.com/nirholas) and [@claude](https://github.com/claude)!
+
+
 ## [2.28.0] - 2026-11-12
 
 ### Fixed
