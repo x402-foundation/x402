@@ -725,11 +725,24 @@ func encodePaymentRequiredHeader(required x402.PaymentRequired) (string, error) 
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
+// requireJSONObject rejects header JSON that is not an object. json.Unmarshal
+// decodes `null` into a struct without an error, leaving a zero value.
+func requireJSONObject(data []byte, label string) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("%s must decode to a JSON object", label)
+	}
+	return nil
+}
+
 // decodePaymentRequiredHeader decodes a base64 payment required header
 func decodePaymentRequiredHeader(header string) (x402.PaymentRequired, error) {
 	data, err := base64.StdEncoding.DecodeString(header)
 	if err != nil {
 		return x402.PaymentRequired{}, fmt.Errorf("invalid base64 encoding: %w", err)
+	}
+	if err := requireJSONObject(data, "payment required header"); err != nil {
+		return x402.PaymentRequired{}, err
 	}
 
 	var required x402.PaymentRequired
@@ -791,6 +804,9 @@ func decodePaymentResponseHeader(header string) (*x402.SettleResponse, error) {
 	data, err := base64.StdEncoding.DecodeString(header)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 encoding: %w", err)
+	}
+	if err := requireJSONObject(data, "payment response header"); err != nil {
+		return nil, err
 	}
 
 	var response x402.SettleResponse
