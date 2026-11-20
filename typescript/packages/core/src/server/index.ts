@@ -14,6 +14,7 @@ export type {
   SettleFailureContext,
   SettlePhase,
   VerifiedPaymentCanceledContext,
+  VerifiedPaymentCompletedContext,
   VerifiedPaymentCancellationReason,
   VerifiedPaymentCancelOptions,
   PaymentCancellationDispatcher,
@@ -29,6 +30,7 @@ export type {
   AfterSettleHook,
   OnSettleFailureHook,
   OnVerifiedPaymentCanceledHook,
+  OnVerifiedPaymentCompletedHook,
 } from "./x402ResourceServer";
 export {
   SDK_DEFAULT_ASSET_TRANSFER_METHOD,

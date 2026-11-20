@@ -3,6 +3,7 @@ import {
   x402ResourceServer,
   SettleContext,
   SettlePhase,
+  VerifiedPaymentCompletedContext,
   PAYMENT_FLOWS,
   SDK_DEFAULT_ASSET_TRANSFER_METHOD,
   applyPaymentFlowWireExtra,
@@ -875,6 +876,94 @@ describe("payment flows", () => {
         }),
       );
     });
+
+    it("upfront: onVerifiedPaymentCompleted fires once after the handler with its response", async () => {
+      const httpServer = await setup("upfront");
+      const completed: VerifiedPaymentCompletedContext[] = [];
+      let canceled = false;
+      ResourceServer.onVerifiedPaymentCompleted(async ctx => {
+        completed.push(ctx);
+      });
+      ResourceServer.onVerifiedPaymentCanceled(async () => {
+        canceled = true;
+      });
+
+      const result = await verifiedRequest(httpServer, "upfront");
+      expect(result.type).toBe("payment-verified");
+      if (result.type !== "payment-verified") return;
+      expect(completed).toHaveLength(0);
+
+      const transportContext = {
+        request: { adapter: new MockHTTPAdapter({}), path: "/api/test", method: "GET" },
+        responseBody: Buffer.from('{"ok":true}'),
+      };
+      const settle = await httpServer.processSettlement(
+        result.paymentPayload,
+        result.paymentRequirements,
+        result.declaredExtensions,
+        transportContext,
+        undefined,
+        result.beforeHandlerSettlement,
+      );
+
+      expect(settle.success).toBe(true);
+      expect(mockFacilitator.settleCalls).toHaveLength(1);
+      expect(canceled).toBe(false);
+      expect(completed).toHaveLength(1);
+      expect(completed[0].phase).toBe("after-handler");
+      expect(completed[0].settledPhases).toEqual(["before-handler"]);
+      expect(completed[0].result.transaction).toBe("0xtx");
+      expect(
+        (completed[0].transportContext as typeof transportContext).responseBody.toString(),
+      ).toBe('{"ok":true}');
+    });
+
+    it("upfront: a throwing onVerifiedPaymentCompleted hook is warned and settlement still succeeds", async () => {
+      const httpServer = await setup("upfront");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      ResourceServer.onVerifiedPaymentCompleted(async () => {
+        throw new Error("store down");
+      });
+
+      const result = await verifiedRequest(httpServer, "upfront");
+      if (result.type !== "payment-verified") throw new Error("expected payment-verified");
+      const settle = await httpServer.processSettlement(
+        result.paymentPayload,
+        result.paymentRequirements,
+        result.declaredExtensions,
+        undefined,
+        undefined,
+        result.beforeHandlerSettlement,
+      );
+
+      expect(settle.success).toBe(true);
+      expect(warnSpy.mock.calls.some(([msg]) => String(msg).includes("store down"))).toBe(true);
+    });
+
+    it.each(["authorization", "escrow"] as const)(
+      "%s: onVerifiedPaymentCompleted does not fire (settle hooks run after the handler)",
+      async flow => {
+        const httpServer = await setup(flow);
+        let completed = false;
+        ResourceServer.onVerifiedPaymentCompleted(async () => {
+          completed = true;
+        });
+
+        const result = await verifiedRequest(httpServer, flow);
+        if (result.type !== "payment-verified") throw new Error("expected payment-verified");
+        const settle = await httpServer.processSettlement(
+          result.paymentPayload,
+          result.paymentRequirements,
+          result.declaredExtensions,
+          undefined,
+          undefined,
+          result.beforeHandlerSettlement,
+        );
+
+        expect(settle.success).toBe(true);
+        expect(completed).toBe(false);
+      },
+    );
 
     it("warns once when settleBeforeHandler flow is settled without beforeHandlerSettlement", async () => {
       const httpServer = await setup("upfront");
