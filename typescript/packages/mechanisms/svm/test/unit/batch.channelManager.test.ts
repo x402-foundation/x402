@@ -1,4 +1,4 @@
-import { generateKeyPairSigner } from "@solana/kit";
+import { address, generateKeyPairSigner } from "@solana/kit";
 import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,14 @@ import { MemoryChannelStore } from "../../src/batch-settlement/server/storage";
 import type { ChannelState } from "../../src/batch-settlement/server/types";
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
+import { getChannelEncoder } from "../../src/payment-channels/generated/accounts/channel";
+import { ChannelStatus, PAYMENT_CHANNELS_PROGRAM_ID } from "../../src/payment-channels/onchain";
+import { createRpcClient } from "../../src/utils";
+
+vi.mock("../../src/utils", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../src/utils")>();
+  return { ...actual, createRpcClient: vi.fn() };
+});
 
 const RECEIVER = USDC_MAINNET_ADDRESS;
 const receiverAuthorizer = await generateKeyPairSigner();
@@ -572,6 +580,17 @@ describe("batch-settlement redemption resync from the facilitator", () => {
     ["a malformed amount", [{ ...valid, totalClaimed: "30x0" }]],
     ["a numeric amount", [{ ...valid, totalClaimed: 3_000 }]],
     ["a missing amount", [{ ...valid, payoutWatermark: undefined }]],
+    [
+      "an amount above uint64",
+      [
+        {
+          ...valid,
+          balance: "18446744073709551616",
+          payoutWatermark: "18446744073709551616",
+          totalClaimed: "18446744073709551616",
+        },
+      ],
+    ],
   ])("ignores channel states that name %s or carry impossible values", async (_name, entries) => {
     const store = new MemoryChannelStore();
     await store.put(channel("chan-a"));
@@ -583,6 +602,22 @@ describe("batch-settlement redemption resync from the facilitator", () => {
     expect(claimsOf(submitted)).toHaveLength(1);
     expect(errors).toHaveLength(1);
     expect((await store.get("chan-a"))?.settled).toBe(0n);
+  });
+
+  it("adopts a watermark at the uint64 maximum", async () => {
+    const max = "18446744073709551615";
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a"));
+    const { settle } = recorder(() =>
+      resyncFailure(BatchError.CUMULATIVE_AMOUNT_MISMATCH, {
+        ...valid,
+        balance: max,
+        payoutWatermark: max,
+        totalClaimed: max,
+      }),
+    );
+    await manager(store, settle, [], { readPayoutWatermark: undefined }).redeem();
+    expect((await store.get("chan-a"))?.settled).toBe(BigInt(max));
   });
 
   it("ignores channel states bound to another network", async () => {
@@ -616,7 +651,60 @@ describe("batch-settlement redemption resync from the facilitator", () => {
     expect((await store.get("chan-a"))?.payoutWatermark).toBe(3_000n);
   });
 
-  it("reports a distribute rejection that carries no state and leaves local state alone", async () => {
+  it("falls back to a configured settled reader when the facilitator sends no usable state", async () => {
+    const absent = {
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      network: SOLANA_DEVNET_CAIP2,
+      success: false as const,
+    };
+    const rejected = resyncFailure(
+      BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      channelStateEntry("chan-z", "open", 10_000, 3_000, 0),
+    );
+    for (const response of [absent, rejected]) {
+      const store = new MemoryChannelStore();
+      await store.put(channel("chan-a"));
+      const errors: string[] = [];
+      let reads = 0;
+      const { settle } = recorder(payload =>
+        payload.type === "claim" ? response : recovered(payload),
+      );
+      await manager(store, settle, errors, {
+        readPayoutWatermark: undefined,
+        readSettledWatermark: async () => {
+          reads += 1;
+          return 3_000n;
+        },
+      }).redeem();
+      expect(reads).toBe(1);
+      expect(errors).toEqual([]);
+      expect((await store.get("chan-a"))?.settled).toBe(3_000n);
+    }
+  });
+
+  it("resyncs a distribute from a configured reader when the facilitator sends no state", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a", settledOnly));
+    const errors: string[] = [];
+    let reads = 0;
+    const { settle } = recorder(() => ({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      network: SOLANA_DEVNET_CAIP2,
+      success: false,
+    }));
+    const result = await manager(store, settle, errors, {
+      readPayoutWatermark: async () => {
+        reads += 1;
+        return 3_000n;
+      },
+    }).redeem();
+    expect(reads).toBe(1);
+    expect(errors).toEqual([]);
+    expect(result.distributed).toEqual([]);
+    expect((await store.get("chan-a"))?.payoutWatermark).toBe(3_000n);
+  });
+
+  it("reports a distribute rejection that carries no state and leaves local state alone without a reader", async () => {
     const store = new MemoryChannelStore();
     await store.put(channel("chan-a", settledOnly));
     const errors: string[] = [];
@@ -625,11 +713,9 @@ describe("batch-settlement redemption resync from the facilitator", () => {
       network: SOLANA_DEVNET_CAIP2,
       success: false,
     }));
-    await manager(store, settle, errors, {
-      readPayoutWatermark: async () => {
-        throw new Error("a rejection without state must not read the chain");
-      },
-    }).redeem();
+    vi.mocked(createRpcClient).mockClear();
+    await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "  " }).redeem();
+    expect(createRpcClient).not.toHaveBeenCalled();
     expect(errors).toEqual([
       `batch-settlement distribute failed: ${BatchError.CUMULATIVE_AMOUNT_MISMATCH}`,
     ]);
@@ -713,6 +799,76 @@ describe("batch-settlement redemption resync from the facilitator", () => {
         settled: 3_000n,
         status: "sealed",
       });
+    });
+
+    it("resyncs a seal from the configured rpc when the facilitator sends no state", async () => {
+      const { id, store } = await closing();
+      const errors: string[] = [];
+      const data = Buffer.from(
+        getChannelEncoder().encode({
+          authorizedSigner: address(USDC_DEVNET_ADDRESS),
+          bump: 1,
+          closureStartedAt: 0,
+          deposit: 10_000n,
+          discriminator: 1,
+          distributionHash: new Array<number>(32).fill(0),
+          gracePeriod: 900,
+          mint: address(USDC_DEVNET_ADDRESS),
+          openSlot: 1n,
+          payee: address(RECEIVER),
+          payer: address(USDC_DEVNET_ADDRESS),
+          payerWithdrawnAt: 0,
+          rentPayer: address(RECEIVER),
+          salt: 0n,
+          settlement: { payoutWatermark: 3_000n, settled: 3_000n },
+          status: ChannelStatus.Distributed,
+          version: 1,
+        }),
+      ).toString("base64");
+      vi.mocked(createRpcClient).mockReset();
+      vi.mocked(createRpcClient).mockReturnValue({
+        getAccountInfo: () => ({
+          send: async () => ({
+            value: { data: [data, "base64"], owner: PAYMENT_CHANNELS_PROGRAM_ID },
+          }),
+        }),
+      } as unknown as ReturnType<typeof createRpcClient>);
+      const { settle, submitted } = recorder(() => ({
+        errorReason: BatchError.CLOSE_STATE,
+        network: SOLANA_DEVNET_CAIP2,
+        success: false,
+      }));
+      const result = await manager(store, settle, errors, {
+        readPayoutWatermark: undefined,
+        rpcUrl: "https://rpc.example",
+      }).redeem();
+      expect(createRpcClient).toHaveBeenCalledExactlyOnceWith(
+        SOLANA_DEVNET_CAIP2,
+        "https://rpc.example",
+      );
+      expect(errors).toEqual([]);
+      expect(result.sealed).toEqual([]);
+      expect(submitted.map(entry => entry.type)).toEqual(["seal"]);
+      expect(await store.get(id)).toMatchObject({
+        payoutWatermark: 3_000n,
+        settled: 3_000n,
+        status: "distributed",
+      });
+    });
+
+    it("reports a seal rejection with no state and no rpc without reading the chain", async () => {
+      const { id, store } = await closing();
+      const errors: string[] = [];
+      vi.mocked(createRpcClient).mockClear();
+      const { settle } = recorder(() => ({
+        errorReason: BatchError.CLOSE_STATE,
+        network: SOLANA_DEVNET_CAIP2,
+        success: false,
+      }));
+      await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "" }).redeem();
+      expect(createRpcClient).not.toHaveBeenCalled();
+      expect(errors).toEqual([`batch-settlement seal failed: ${BatchError.CLOSE_STATE}`]);
+      expect(await store.get(id)).toMatchObject({ settled: 0n, status: "closing" });
     });
 
     it("reports a seal rejection for a channel that is still closing without recording it", async () => {
