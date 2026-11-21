@@ -70,6 +70,7 @@ This page tracks which features are implemented in each SDK (TypeScript, Go, Pyt
 | batch-settlement | svm | - | ✅ | ✅ | ❌ |
 | auth-capture | evm | `eip3009` | ✅ | ✅ | ❌ |
 | auth-capture | evm | `permit2` | ✅ | ✅ | ❌ |
+| work | profile-defined PoW | - | ✅ | ❌ | ❌ |
 
 ## Extensions
 

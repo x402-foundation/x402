@@ -28,6 +28,7 @@
     "@typescript-eslint/parser": "^8.29.1",
     "@vitest/coverage-v8": "^4.1.12",
     "@x402/evm": "workspace:~",
+    "@x402/work": "workspace:~",
     "eslint": "^9.24.0",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-jsdoc": "^50.6.9",
