@@ -179,6 +179,7 @@ async function main() {
         facilitatorClient,
         svmRequirements,
         {
+          rpcUrl: process.env.SVM_RPC_URL?.trim() || undefined,
           onClaim: (r: { vouchers: number; transaction: string }) =>
             console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
           onSettle: (r: { transaction: string }) =>

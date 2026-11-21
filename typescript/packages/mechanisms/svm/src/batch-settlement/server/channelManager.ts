@@ -63,8 +63,9 @@ export interface BatchChannelManagerConfig {
   /** Channels per claim or distribute transaction, capped at the facilitator's advertised capacity. */
   maxChannelsPerBatch?: number | undefined;
   /**
-   * RPC endpoint for confirmed watermark reads. Omit to use the public
-   * endpoint for `requirements.network`.
+   * RPC endpoint for confirmed watermark reads. Empty disables chain reads
+   * unless the matching watermark reader is set. Never the public endpoint
+   * for `requirements.network`.
    */
   rpcUrl?: string | undefined;
   /** Optional confirmed channel reader for custom transports; never estimate from the response amount. */
@@ -280,8 +281,8 @@ export class BatchChannelManager {
     {
       // The spec's claim response is just `success`/`transaction`/`network`/
       // `amount`; the reference facilitator adds `extra.accepts[]` with each
-      // channel's confirmed watermark. Use it when present, otherwise read the
-      // watermark from the chain so any conforming facilitator works.
+      // channel's confirmed watermark. Use it when present. Otherwise read a
+      // configured settled reader or `rpcUrl`, or record the voucher amount.
       const accepts = response.extra?.accepts;
       if (accepts !== undefined) {
         if (
@@ -311,7 +312,7 @@ export class BatchChannelManager {
       let claimedInBatch = 0;
       for (const channel of batch) {
         let settled = channel.signedMaxClaimable;
-        if (accepts === undefined) {
+        if (accepts === undefined && this.hasSettledReader()) {
           try {
             const observed = await this.readSettledWatermark(channel.channelId);
             if (observed === undefined || observed < channel.signedMaxClaimable) {
@@ -474,7 +475,8 @@ export class BatchChannelManager {
       }
       // `extra.channels[]` is the reference facilitator's addition, not a
       // spec field; when present it must name exactly this batch. The paid
-      // watermark is always reconciled from the chain below either way.
+      // watermark comes from a configured reader or `rpcUrl`. Without one the
+      // channel stays payable.
       const channels = response.extra?.channels;
       if (
         channels !== undefined &&
@@ -490,6 +492,7 @@ export class BatchChannelManager {
       }
       let distributedInBatch = 0;
       for (const channel of batch) {
+        if (!this.hasPayoutReader()) continue;
         try {
           // This response may recover an earlier sweep. A channel ID and a
           // successful signature do not prove that today's full claim was paid.
@@ -515,6 +518,33 @@ export class BatchChannelManager {
       }
     }
     return distributed;
+  }
+
+  /**
+   * Whether a settled watermark can be read without a public RPC.
+   *
+   * @returns True when `readSettledWatermark` or a non-empty `rpcUrl` is set
+   */
+  private hasSettledReader(): boolean {
+    return this.config.readSettledWatermark !== undefined || this.configuredRpcUrl() !== undefined;
+  }
+
+  /**
+   * Whether a payout watermark can be read without a public RPC.
+   *
+   * @returns True when `readPayoutWatermark` or a non-empty `rpcUrl` is set
+   */
+  private hasPayoutReader(): boolean {
+    return this.config.readPayoutWatermark !== undefined || this.configuredRpcUrl() !== undefined;
+  }
+
+  /**
+   * The configured RPC endpoint.
+   *
+   * @returns Non-empty `rpcUrl`, or undefined when chain reads through RPC are off
+   */
+  private configuredRpcUrl(): string | undefined {
+    return this.config.rpcUrl || undefined;
   }
 
   /**
@@ -548,7 +578,13 @@ export class BatchChannelManager {
   private async readSettlement(
     channelId: string,
   ): Promise<{ settled: bigint; payoutWatermark: bigint } | undefined> {
-    const rpc = createRpcClient(this.config.requirements.network, this.config.rpcUrl);
+    const rpcUrl = this.configuredRpcUrl();
+    if (rpcUrl === undefined) {
+      throw new Error(
+        `${BATCH_SETTLEMENT_SCHEME} watermark read requires rpcUrl or a watermark reader`,
+      );
+    }
+    const rpc = createRpcClient(this.config.requirements.network, rpcUrl);
     const account = await rpc
       .getAccountInfo(address(channelId), { commitment: "confirmed", encoding: "base64" })
       .send();

@@ -204,6 +204,8 @@ const manager = batchedSvmScheme.createChannelManager(facilitatorClient, require
 manager.start(60); // seconds between passes
 ```
 
+The worker reads watermarks only through `rpcUrl`, `readSettledWatermark`, or `readPayoutWatermark`. With none set it never uses the public Solana RPC. A confirmed claim without `extra.accepts` is recorded at the voucher amount. A distribute's payout is not inferred, so the channel stays payable until a reader or `rpcUrl` reports it.
+
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer.
 
 ## Facilitator Usage
