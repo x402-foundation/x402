@@ -16,6 +16,25 @@ If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients sho
 
 In all cases, the Facilitator cannot modify the amount or destination. They serve only as the transaction broadcaster.
 
+### Facilitator Capability Declaration
+
+`assetTransferMethod` is the discriminator field for this scheme. Facilitators declare which values they support via `capabilities.assetTransferMethod` in their `/supported` response (see core spec §7.3.2). Valid values are `"eip3009"`, `"permit2"`, and `"erc7710"`. A facilitator omitting `capabilities` is assumed to support all three.
+
+Example kind entry for a facilitator that supports `eip3009` and `permit2` but not `erc7710`:
+
+```json
+{
+  "x402Version": 2,
+  "scheme": "exact",
+  "network": "eip155:84532",
+  "capabilities": {
+    "assetTransferMethod": ["eip3009", "permit2"]
+  }
+}
+```
+
+Servers must not advertise an `assetTransferMethod` in `PaymentRequired.extra` that is absent from the matched facilitator kind's `capabilities`.
+
 ---
 
 ## 1. AssetTransferMethod: `EIP-3009`
