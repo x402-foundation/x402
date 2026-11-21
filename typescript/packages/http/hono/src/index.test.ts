@@ -588,6 +588,38 @@ describe("paymentMiddleware", () => {
     expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
   });
 
+  it.each([204, 205, 304])("preserves a settled null-body %i response", async status => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const context = createMockContext();
+    const next = vi.fn().mockImplementation(async () => {
+      context.res = new Response(null, { status, headers: { "X-Handler": "preserved" } });
+    });
+
+    await middleware(context, next);
+
+    expect(mockProcessSettlement).toHaveBeenCalledTimes(1);
+    expect(context.json).not.toHaveBeenCalledWith({}, 402);
+    expect(context.res?.status).toBe(status);
+    expect(context.res?.body).toBeNull();
+    expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+    expect(context.res?.headers.get("X-Handler")).toBe("preserved");
+  });
+
   it("strips settlement override header from client response", async () => {
     setupMockHttpServer(
       {
