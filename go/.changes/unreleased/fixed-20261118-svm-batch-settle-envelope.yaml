@@ -1,3 +1,0 @@
-kind: fixed
-body: 'SVM batch-settlement `Settle` now checks the payment envelope like the upto schemes and EVM batch-settlement: `paymentPayload.accepted` must carry the `batch-settlement` scheme and the requirements'' network. A mismatch returns a `SettleResponse` with `success: false`, `errorReason` `unsupported_scheme` for a non-`batch-settlement` scheme or `invalid_payment_requirements` for a different network, before any channel read, storage write or broadcast. The amount may still differ, so settlement overrides keep charging below the accepted ceiling. Wire format unchanged.'
-time: 2026-11-18T12:00:00Z

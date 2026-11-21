@@ -1,5 +1,14 @@
 # @x402/stellar Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- [4cc2ce4](https://github.com/x402-foundation/x402/commit/4cc2ce4): The Stellar exact client and facilitator accept an optional `rpcConfig.horizonUrl` for the ledger close time estimate. They used to always read the public SDF Horizon (`horizon.stellar.org` on pubnet) even when `rpcConfig.url` pointed at a custom RPC. Without `horizonUrl` the default Horizon URLs are used as before. ([#4288](https://github.com/x402-foundation/x402/pull/4288)) - Thanks [@kzmttkc](https://github.com/kzmttkc) and [@claude](https://github.com/claude)!
+- [e2b5bcb](https://github.com/x402-foundation/x402/commit/e2b5bcb): Upgrade `@stellar/stellar-sdk` from `^16.4.1` to `^17.4.0`. SDK 17 rebuilds the `xdr` namespace on `@stellar/js-xdr` v5: union arms and struct fields are now properties (`.switch()` becomes `.type`), and `toXDR()`/`fromXDR()` become `toXdr()`/`fromXdr()`. The client, facilitator and shared helpers are migrated, and the wire format is unchanged. Callers that pass `xdr` values into exported helpers such as `getAddressCredentials` must build them with SDK 17. SDK 17 also signs CAP-71 V2 (`sorobanCredentialsAddressV2`) auth entries by default. The facilitator already accepts V2 entries, and the network accepts them from Protocol 28. `engines.node` is raised to `>=22.12.0` to match the SDK, whose CommonJS build needs unflagged `require(esm)`. ([#4229](https://github.com/x402-foundation/x402/pull/4229)) - Thanks [@jeesunikim](https://github.com/jeesunikim) and [@claude](https://github.com/claude)!
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/core@2.32.0
+
 ## 2.31.0
 
 ### Minor Changes

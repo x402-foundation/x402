@@ -466,6 +466,7 @@ func (f *BatchSettlementEvmScheme) submitContext() SubmitContext {
 		Signer:              f.signer,
 		AuthorizerSigner:    f.authorizerSigner,
 		AuthorizerSubmitter: f.authorizerSubmitter,
+		PendingStore:        f.pendingStore,
 	}
 }
 
