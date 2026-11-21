@@ -454,7 +454,7 @@ describe("batch-settlement redemption worker edge cases", () => {
         onError: error => errors.push((error as Error).message),
         receiverAuthorizer,
         requirements: requirements(),
-        rpcUrl: "   ",
+        rpcUrl: "",
         settle: async () => ok(),
         store,
       }).redeem();
@@ -463,6 +463,27 @@ describe("batch-settlement redemption worker edge cases", () => {
       expect(await store.get(id)).toMatchObject({ payoutWatermark: 0n, settled: 3_000n });
     });
     expect(urls).toEqual([]);
+  });
+
+  it("dials a whitespace-only rpcUrl and does not record the claim", async () => {
+    const store = new MemoryChannelStore();
+    const id = USDC_DEVNET_ADDRESS;
+    await store.put(channel(id));
+    const errors: string[] = [];
+    const urls = await capturingFetch(async () => {
+      const result = await new BatchChannelManager({
+        onError: error => errors.push((error as Error).message),
+        receiverAuthorizer,
+        requirements: requirements(),
+        rpcUrl: "   ",
+        settle: async () => ok(),
+        store,
+      }).redeem();
+      expect(result).toEqual({ claimed: [], distributed: [], sealed: [] });
+      expect((await store.get(id))?.settled).toBe(0n);
+    });
+    expect(urls).toEqual(["   "]);
+    expect(errors.length).toBeGreaterThan(0);
   });
 
   it("keeps an unpaid balance payable when a recovered distribute answers without a reader", async () => {

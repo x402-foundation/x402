@@ -539,13 +539,12 @@ export class BatchChannelManager {
   }
 
   /**
-   * The configured RPC endpoint, with a blank value treated as unset.
+   * The configured RPC endpoint.
    *
-   * @returns Trimmed `rpcUrl`, or undefined when chain reads through RPC are off
+   * @returns Non-empty `rpcUrl`, or undefined when chain reads through RPC are off
    */
   private configuredRpcUrl(): string | undefined {
-    const url = this.config.rpcUrl?.trim();
-    return url ? url : undefined;
+    return this.config.rpcUrl || undefined;
   }
 
   /**
