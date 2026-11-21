@@ -890,11 +890,30 @@ describe("batch-settlement redemption resync from the facilitator", () => {
       success: false,
     }));
     vi.mocked(createRpcClient).mockClear();
-    await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "  " }).redeem();
+    await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "" }).redeem();
     expect(createRpcClient).not.toHaveBeenCalled();
     expect(errors).toEqual([
       `batch-settlement distribute failed: ${BatchError.CUMULATIVE_AMOUNT_MISMATCH}`,
     ]);
+    expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
+  });
+
+  it("dials a whitespace rpcUrl as given when a distribute has no state", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a", settledOnly));
+    const errors: string[] = [];
+    vi.mocked(createRpcClient).mockReset();
+    vi.mocked(createRpcClient).mockImplementation(() => {
+      throw new Error("dialed");
+    });
+    const { settle } = recorder(() => ({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      network: SOLANA_DEVNET_CAIP2,
+      success: false,
+    }));
+    await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "  " }).redeem();
+    expect(createRpcClient).toHaveBeenCalledExactlyOnceWith(SOLANA_DEVNET_CAIP2, "  ");
+    expect(errors[0]).toBe("dialed");
     expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
   });
 
