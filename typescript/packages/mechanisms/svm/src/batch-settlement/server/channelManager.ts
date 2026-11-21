@@ -9,15 +9,20 @@
 
 import { address, type MessagePartialSigner } from "@solana/kit";
 import { getChannelDecoder } from "../../payment-channels/generated/accounts/channel";
-import { PAYMENT_CHANNELS_PROGRAM_ID } from "../../payment-channels/onchain";
+import { ChannelStatus, PAYMENT_CHANNELS_PROGRAM_ID } from "../../payment-channels/onchain";
 import { createRpcClient } from "../../utils";
 import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
 
 import { signCloseAuthorization } from "../closeAuthorization";
 import { BatchError } from "../errors";
 import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "../facilitator/constants";
-import { BATCH_SETTLEMENT_SCHEME, type BatchSealPayload } from "../types";
-import type { ChannelState, ChannelStore } from "./types";
+import {
+  BATCH_SETTLEMENT_SCHEME,
+  isBatchRedemptionChannelState,
+  type BatchRedemptionStatus,
+  type BatchSealPayload,
+} from "../types";
+import type { BatchChannelStatus, ChannelState, ChannelStore } from "./types";
 
 /**
  * The spec packs no more than four channels into one claim transaction, and a
@@ -25,6 +30,9 @@ import type { ChannelState, ChannelStore } from "./types";
  */
 /** Channels per claim or settle request when the facilitator advertises no capacity. */
 const DEFAULT_CHANNELS_PER_BATCH = 4;
+
+/** Largest unsigned 64-bit integer a channel watermark can hold. */
+const U64_MAX = (1n << 64n) - 1n;
 
 /** Submits a server-authored redemption payload; normally a facilitator. */
 export type RedemptionSettler = (
@@ -63,8 +71,9 @@ export interface BatchChannelManagerConfig {
   /** Channels per claim or distribute transaction, capped at the facilitator's advertised capacity. */
   maxChannelsPerBatch?: number | undefined;
   /**
-   * RPC endpoint for confirmed watermark reads. Omit to use the public
-   * endpoint for `requirements.network`.
+   * RPC endpoint for confirmed watermark reads. Empty disables chain reads
+   * unless the matching watermark reader is set. Never the public endpoint
+   * for `requirements.network`.
    */
   rpcUrl?: string | undefined;
   /** Optional confirmed channel reader for custom transports; never estimate from the response amount. */
@@ -92,6 +101,13 @@ export interface BatchChannelManagerConfig {
    */
   receiverAuthorizer?: MessagePartialSigner | undefined;
 }
+
+/** A channel's confirmed onchain state, as the facilitator reported it in `extra.channelStates`. */
+type ObservedChannel = {
+  status: BatchRedemptionStatus;
+  settled: bigint;
+  payout: bigint;
+};
 
 /** What one redemption pass moved. */
 export interface RedemptionResult {
@@ -225,10 +241,12 @@ export class BatchChannelManager {
    * @param result - Accumulates the pass outcome
    * @param result.claimed - Channels whose claim landed
    * @param result.sealed - Closing channels finalized through `seal`
+   * @param resynced - Whether a resync re-claim already ran in this chain, so a second mismatch is reported rather than retried
    */
   private async claimBatch(
     batch: ChannelState[],
     result: { claimed: string[]; sealed: string[] },
+    resynced = false,
   ): Promise<void> {
     const response = await this.config.settle(
       {
@@ -257,18 +275,20 @@ export class BatchChannelManager {
         // others one by one and finalize the closing one with its latest
         // voucher through `seal` while the grace period still allows it.
         if (batch.length > 1) {
-          for (const channel of batch) await this.claimBatch([channel], result);
+          for (const channel of batch) await this.claimBatch([channel], result, resynced);
           return;
         }
         const channel = batch[0]!;
         if (await this.seal(channel)) result.sealed.push(channel.channelId);
         return;
       }
+      if (response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH) {
+        await this.resyncClaim(batch, response, result, resynced);
+        return;
+      }
       // A batch that did not land leaves its channels for the next pass;
       // the watermark is monotonic, so a repeat is harmless.
-      this.config.onError?.(
-        new Error(`${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`),
-      );
+      this.reportClaimFailure(response);
       return;
     }
     if (response.network !== this.config.requirements.network) {
@@ -280,8 +300,8 @@ export class BatchChannelManager {
     {
       // The spec's claim response is just `success`/`transaction`/`network`/
       // `amount`; the reference facilitator adds `extra.accepts[]` with each
-      // channel's confirmed watermark. Use it when present, otherwise read the
-      // watermark from the chain so any conforming facilitator works.
+      // channel's confirmed watermark. Use it when present. Otherwise a
+      // configured settled reader or `rpcUrl` confirms the watermark.
       const accepts = response.extra?.accepts;
       if (accepts !== undefined) {
         if (
@@ -340,6 +360,54 @@ export class BatchChannelManager {
         });
       }
     }
+  }
+
+  /**
+   * Report a claim that did not land.
+   *
+   * @param response - The facilitator's rejection
+   */
+  private reportClaimFailure(response: SettleResponse): void {
+    this.config.onError?.(
+      new Error(`${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`),
+    );
+  }
+
+  /**
+   * Resync from a claim the facilitator rejected as already applied: record the
+   * channels whose confirmed `settled` covers their voucher and re-claim the
+   * rest once. Confirmation is `extra.channelStates`, or a configured reader
+   * when that snapshot is missing or unusable. A resynced channel is not a new
+   * claim, so it does not reach `onClaim`.
+   *
+   * @param batch - The rejected claim batch
+   * @param response - The rejection, possibly carrying `extra.channelStates`
+   * @param result - Accumulates the pass outcome
+   * @param result.claimed - Channels whose claim landed
+   * @param result.sealed - Closing channels finalized through `seal`
+   * @param resynced - Whether a resync re-claim already ran in this chain
+   */
+  private async resyncClaim(
+    batch: ChannelState[],
+    response: SettleResponse,
+    result: { claimed: string[]; sealed: string[] },
+    resynced: boolean,
+  ): Promise<void> {
+    const states = this.adoptChannelStates(response, batch);
+    const behind: ChannelState[] = [];
+    for (const channel of batch) {
+      const settled = await this.observeSettled(channel.channelId, states);
+      if (settled === undefined || settled < channel.signedMaxClaimable) {
+        behind.push(channel);
+        continue;
+      }
+      await this.recordObserved(channel.channelId, { settled });
+    }
+    if (behind.length === batch.length || (behind.length > 0 && resynced)) {
+      this.reportClaimFailure(response);
+      return;
+    }
+    if (behind.length > 0) await this.claimBatch(behind, result, true);
   }
 
   /**
@@ -412,6 +480,9 @@ export class BatchChannelManager {
       this.config.requirements,
     );
     if (!response.success || response.network !== network) {
+      if (!response.success && response.errorReason === BatchError.CLOSE_STATE) {
+        if (await this.resyncSeal(channel, response)) return false;
+      }
       this.config.onError?.(
         new Error(`${BATCH_SETTLEMENT_SCHEME} seal failed: ${response.errorReason ?? "unknown"}`),
       );
@@ -433,6 +504,38 @@ export class BatchChannelManager {
   }
 
   /**
+   * Resync from a seal the facilitator rejected because the channel is no longer
+   * `Closing`. The snapshot is `extra.channelStates`, or a read through the
+   * configured `rpcUrl` when that snapshot is missing or unusable. A sealed
+   * channel is recorded as sealed, so a distribute still sweeps its unpaid
+   * `settled`. A resynced seal is not a new one, so it does not reach `onSeal`.
+   *
+   * @param channel - The channel whose seal was rejected
+   * @param response - The rejection, possibly carrying `extra.channelStates`
+   * @returns Whether the channel is already paid out, which needs no further seal
+   */
+  private async resyncSeal(channel: ChannelState, response: SettleResponse): Promise<boolean> {
+    let observed = this.adoptChannelStates(response, [channel])?.get(channel.channelId);
+    if (!observed && this.configuredRpcUrl() !== undefined) {
+      try {
+        const read = await this.readSettlement(channel.channelId);
+        const status = read ? redemptionStatus(read.status) : undefined;
+        if (read && status) {
+          observed = { payout: read.payoutWatermark, settled: read.settled, status };
+        }
+      } catch (error) {
+        this.config.onError?.(error);
+      }
+    }
+    if (observed?.status === "distributed") {
+      await this.recordObserved(channel.channelId, observed);
+      return true;
+    }
+    if (observed?.status === "sealed") await this.recordObserved(channel.channelId, observed);
+    return false;
+  }
+
+  /**
    * Pay each newly settled delta to `payTo`.
    *
    * @param channels - Channels to consider paying out
@@ -440,7 +543,9 @@ export class BatchChannelManager {
    */
   private async distribute(channels: ChannelState[]): Promise<string[]> {
     const payable = channels.filter(
-      channel => channel.status === "open" && channel.settled > channel.payoutWatermark,
+      channel =>
+        (channel.status === "open" || channel.status === "sealed") &&
+        channel.settled > channel.payoutWatermark,
     );
     const distributed: string[] = [];
     for (const batch of chunk(payable, this.batchSize("maxSettleChannels"))) {
@@ -459,6 +564,12 @@ export class BatchChannelManager {
         this.config.requirements,
       );
       if (!response.success) {
+        if (
+          response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH &&
+          (await this.recordPayouts(batch, this.adoptChannelStates(response, batch))).length > 0
+        ) {
+          continue;
+        }
         this.config.onError?.(
           new Error(
             `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
@@ -474,7 +585,8 @@ export class BatchChannelManager {
       }
       // `extra.channels[]` is the reference facilitator's addition, not a
       // spec field; when present it must name exactly this batch. The paid
-      // watermark is always reconciled from the chain below either way.
+      // watermark comes from `extra.channelStates`, then a configured reader
+      // or `rpcUrl`; without one the channel stays payable.
       const channels = response.extra?.channels;
       if (
         channels !== undefined &&
@@ -488,33 +600,182 @@ export class BatchChannelManager {
         );
         continue;
       }
-      let distributedInBatch = 0;
-      for (const channel of batch) {
-        try {
-          // This response may recover an earlier sweep. A channel ID and a
-          // successful signature do not prove that today's full claim was paid.
-          const paid = await this.readPayoutWatermark(channel.channelId);
-          if (paid === undefined || paid < 0n || paid > channel.deposit)
-            throw new Error("confirmed payout watermark unavailable or invalid");
-          await this.record(channel.channelId, state => ({
-            ...state,
-            onchainSyncedAt: Date.now(),
-            payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
-          }));
-          if (paid >= channel.settled) {
-            distributed.push(channel.channelId);
-            distributedInBatch++;
-          }
-        } catch (error) {
-          // Leave the balance payable for the next pass, including after restart.
-          this.config.onError?.(error);
-        }
-      }
-      if (distributedInBatch > 0) {
+      const paidOut = await this.recordPayouts(batch, this.adoptChannelStates(response, batch));
+      distributed.push(...paidOut);
+      if (paidOut.length > 0) {
         this.config.onSettle?.({ transaction: response.transaction ?? "" });
       }
     }
     return distributed;
+  }
+
+  /**
+   * Record the confirmed payout watermarks of a distribute batch. A response may
+   * recover an earlier sweep that a later claim has passed, so a channel's
+   * payout comes from the facilitator's state, or else a configured reader,
+   * never from the signature alone. Without either, the channel stays payable.
+   *
+   * @param batch - The channels the distribute covered
+   * @param states - The facilitator's adopted `extra.channelStates`, if usable
+   * @returns The channels paid up to their settled value
+   */
+  private async recordPayouts(
+    batch: ChannelState[],
+    states: Map<string, ObservedChannel> | undefined,
+  ): Promise<string[]> {
+    const paidOut: string[] = [];
+    for (const channel of batch) {
+      const observed = await this.observePayout(channel, states);
+      if (!observed) continue;
+      try {
+        await this.recordObserved(channel.channelId, observed);
+        if ((observed.payout ?? 0n) >= channel.settled) paidOut.push(channel.channelId);
+      } catch (error) {
+        // Leave the balance payable for the next pass, including after restart.
+        this.config.onError?.(error);
+      }
+    }
+    return paidOut;
+  }
+
+  /**
+   * A channel's confirmed settled watermark: the facilitator's state, else a
+   * configured reader. An unusable snapshot does not skip the reader.
+   *
+   * @param channelId - Channel whose claimed state is being reconciled
+   * @param states - Adopted `extra.channelStates`, if the response carried a usable set
+   * @returns The settled watermark, or undefined when none was confirmed
+   */
+  private async observeSettled(
+    channelId: string,
+    states: Map<string, ObservedChannel> | undefined,
+  ): Promise<bigint | undefined> {
+    const adopted = states?.get(channelId);
+    if (adopted) return adopted.settled;
+    if (!this.hasSettledReader()) return undefined;
+    try {
+      return await this.readSettledWatermark(channelId);
+    } catch (error) {
+      this.config.onError?.(error);
+      return undefined;
+    }
+  }
+
+  /**
+   * A channel's confirmed payout: the facilitator's state, else a configured
+   * reader. An empty `rpcUrl` is not a reader.
+   *
+   * @param channel - The channel whose payout is being reconciled
+   * @param states - Adopted `extra.channelStates`, if the response carried a usable set
+   * @returns The observed payout, or undefined when none was confirmed
+   */
+  private async observePayout(
+    channel: ChannelState,
+    states: Map<string, ObservedChannel> | undefined,
+  ): Promise<Partial<ObservedChannel> | undefined> {
+    const adopted = states?.get(channel.channelId);
+    if (adopted) return adopted;
+    if (!this.hasPayoutReader()) return undefined;
+    try {
+      const paid = await this.readPayoutWatermark(channel.channelId);
+      if (paid === undefined || paid < 0n || paid > channel.deposit) {
+        this.config.onError?.(new Error("confirmed payout watermark unavailable or invalid"));
+        return undefined;
+      }
+      return { payout: paid };
+    } catch (error) {
+      this.config.onError?.(error);
+      return undefined;
+    }
+  }
+
+  /**
+   * The facilitator's `extra.channelStates` for a batch, or undefined unless the
+   * response is bound to this network and names exactly the batch's channels,
+   * each once, with every amount inside uint64 and
+   * `payoutWatermark <= totalClaimed <= balance`.
+   *
+   * @param response - The facilitator's settle response
+   * @param batch - The channels the request covered
+   * @returns The observed state keyed by channel, or undefined to ignore the field
+   */
+  private adoptChannelStates(
+    response: SettleResponse,
+    batch: ChannelState[],
+  ): Map<string, ObservedChannel> | undefined {
+    const entries = response.extra?.channelStates;
+    if (
+      response.network !== this.config.requirements.network ||
+      !Array.isArray(entries) ||
+      entries.length !== batch.length
+    ) {
+      return undefined;
+    }
+    const observed = new Map<string, ObservedChannel>();
+    for (const entry of entries) {
+      if (!isBatchRedemptionChannelState(entry) || observed.has(entry.channelId)) return undefined;
+      const balance = BigInt(entry.balance);
+      const settled = BigInt(entry.totalClaimed);
+      const payout = BigInt(entry.payoutWatermark);
+      if (
+        balance > U64_MAX ||
+        settled > U64_MAX ||
+        payout > U64_MAX ||
+        payout > settled ||
+        settled > balance
+      ) {
+        return undefined;
+      }
+      observed.set(entry.channelId, { payout, settled, status: entry.status });
+    }
+    return batch.every(channel => observed.has(channel.channelId)) ? observed : undefined;
+  }
+
+  /**
+   * Raise a channel's watermarks to the observed ones and mark it sealed or
+   * distributed once the chain says it is.
+   *
+   * @param channelId - Channel to update
+   * @param observed - What was confirmed; an absent field leaves the stored one alone
+   */
+  private async recordObserved(
+    channelId: string,
+    observed: Partial<ObservedChannel>,
+  ): Promise<void> {
+    await this.record(channelId, state => ({
+      ...state,
+      onchainSyncedAt: Date.now(),
+      payoutWatermark: larger(state.payoutWatermark, observed.payout ?? 0n),
+      settled: larger(state.settled, observed.settled ?? 0n),
+      status: statusAfter(state.status, observed.status),
+    }));
+  }
+
+  /**
+   * Whether a settled watermark can be read without a public RPC.
+   *
+   * @returns True when `readSettledWatermark` or a non-empty `rpcUrl` is set
+   */
+  private hasSettledReader(): boolean {
+    return this.config.readSettledWatermark !== undefined || this.configuredRpcUrl() !== undefined;
+  }
+
+  /**
+   * Whether a payout watermark can be read without a public RPC.
+   *
+   * @returns True when `readPayoutWatermark` or a non-empty `rpcUrl` is set
+   */
+  private hasPayoutReader(): boolean {
+    return this.config.readPayoutWatermark !== undefined || this.configuredRpcUrl() !== undefined;
+  }
+
+  /**
+   * The configured RPC endpoint.
+   *
+   * @returns Non-empty `rpcUrl`, or undefined when chain reads through RPC are off
+   */
+  private configuredRpcUrl(): string | undefined {
+    return this.config.rpcUrl || undefined;
   }
 
   /**
@@ -545,20 +806,33 @@ export class BatchChannelManager {
    * @param channelId - Channel account to read
    * @returns The channel's settlement fields, or undefined if the account is absent
    */
-  private async readSettlement(
-    channelId: string,
-  ): Promise<{ settled: bigint; payoutWatermark: bigint } | undefined> {
-    const rpc = createRpcClient(this.config.requirements.network, this.config.rpcUrl);
+  private async readSettlement(channelId: string): Promise<
+    | {
+        settled: bigint;
+        payoutWatermark: bigint;
+        status: number;
+      }
+    | undefined
+  > {
+    const rpcUrl = this.configuredRpcUrl();
+    if (rpcUrl === undefined) {
+      throw new Error(
+        `${BATCH_SETTLEMENT_SCHEME} watermark read requires rpcUrl or a watermark reader`,
+      );
+    }
+    const rpc = createRpcClient(this.config.requirements.network, rpcUrl);
     const account = await rpc
       .getAccountInfo(address(channelId), { commitment: "confirmed", encoding: "base64" })
       .send();
     if (!account.value) return undefined;
     if (account.value.owner !== PAYMENT_CHANNELS_PROGRAM_ID)
       throw new Error("unexpected channel account owner");
-    const { settled, payoutWatermark } = getChannelDecoder().decode(
-      Buffer.from(account.value.data[0], "base64"),
-    ).settlement;
-    return { settled, payoutWatermark };
+    const decoded = getChannelDecoder().decode(Buffer.from(account.value.data[0], "base64"));
+    return {
+      payoutWatermark: decoded.settlement.payoutWatermark,
+      settled: decoded.settlement.settled,
+      status: decoded.status,
+    };
   }
 
   /**
@@ -613,4 +887,53 @@ function chunk<T>(items: T[], size: number): T[][] {
     batches.push(items.slice(index, index + size));
   }
   return batches;
+}
+
+/**
+ * The greater of two watermarks.
+ *
+ * @param a - A watermark
+ * @param b - Another watermark
+ * @returns The greater one
+ */
+function larger(a: bigint, b: bigint): bigint {
+  return a > b ? a : b;
+}
+
+/**
+ * The redemption status name of an onchain channel status.
+ *
+ * @param status - Decoded channel status byte
+ * @returns The `extra.channelStates` status, or undefined for one this scheme does not know
+ */
+function redemptionStatus(status: number): BatchRedemptionStatus | undefined {
+  switch (status) {
+    case ChannelStatus.Open:
+      return "open";
+    case ChannelStatus.Sealed:
+      return "sealed";
+    case ChannelStatus.Closing:
+      return "closing";
+    case ChannelStatus.Distributed:
+      return "distributed";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The stored status once the chain reports `observed`: a paid-out channel is
+ * final, and a sealed one never replaces it.
+ *
+ * @param current - The stored status
+ * @param observed - The status the facilitator reported, if any
+ * @returns The status to store
+ */
+function statusAfter(
+  current: BatchChannelStatus,
+  observed: BatchRedemptionStatus | undefined,
+): BatchChannelStatus {
+  if (observed === "distributed") return "distributed";
+  if (observed === "sealed" && current !== "distributed") return "sealed";
+  return current;
 }

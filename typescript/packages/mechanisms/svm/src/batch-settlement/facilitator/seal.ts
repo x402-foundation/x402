@@ -49,7 +49,9 @@ import {
 import { distributionsForStore, type BatchPendingSettlementStore } from "./recovery";
 import {
   CHANNEL_BUSY,
+  redemptionSnapshot,
   refundResponse,
+  resyncFailure,
   sealResponse,
   settleFailure,
   settlementPending,
@@ -58,6 +60,13 @@ import type { BatchDelegatedSettleContext, BatchTerms } from "./types";
 
 /** Terms `seal` needs: everything {@link BatchTerms} carries except who signs vouchers. */
 export type SealTerms = Omit<BatchTerms, "voucherSigner">;
+
+const ALL_CHANNEL_STATUSES: readonly ChannelStatus[] = [
+  ChannelStatus.Open,
+  ChannelStatus.Closing,
+  ChannelStatus.Sealed,
+  ChannelStatus.Distributed,
+];
 
 /** A server-authored close: `seal` of a `Closing` channel or cooperative `refund` of an `Open` one. */
 export type CloseIntent = "seal" | "refund";
@@ -284,9 +293,29 @@ export async function settleSeal(
 
   const channel = await deps.fetchChannel(network, channelId);
   const requiredStatus = intent === "seal" ? ChannelStatus.Closing : ChannelStatus.Open;
+  // A refund of a channel the payer already started closing is a plain
+  // close_state error. It is not a resync: the channel is still Closing.
+  if (intent === "refund" && channel.status === ChannelStatus.Closing) {
+    deps.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
+      ChannelStatus.Closing,
+    ]);
+    throw new Error(`${BatchError.CLOSE_STATE}: ${channelId} is already closing`);
+  }
   if (channel.status !== requiredStatus) {
-    throw new Error(
-      `${BatchError.CLOSE_STATE}: ${intent} applies only to a ${ChannelStatus[requiredStatus]} channel; observed status ${channel.status}`,
+    // The channel must be this one before its state is revealed.
+    deps.assertClaimChannel(
+      channel,
+      payload.channelConfig,
+      terms,
+      requirements,
+      ALL_CHANNEL_STATUSES,
+    );
+    return resyncFailure(
+      network,
+      BatchError.CLOSE_STATE,
+      `${intent} applies only to a ${channelStatusName(requiredStatus)} channel; observed status ${channelStatusName(channel.status)}`,
+      [redemptionSnapshot(channelId, channel)],
+      payer,
     );
   }
   deps.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [requiredStatus]);
@@ -297,7 +326,16 @@ export async function settleSeal(
     );
   }
   const settled = channel.settlement.settled;
-  if (cumulative < settled || cumulative > channel.deposit) {
+  if (cumulative < settled) {
+    return resyncFailure(
+      network,
+      BatchError.CLOSE_STATE,
+      `voucher ${cumulative} is below settled ${settled}`,
+      [redemptionSnapshot(channelId, channel)],
+      payer,
+    );
+  }
+  if (cumulative > channel.deposit) {
     throw new Error(
       `${BatchError.CLOSE_STATE}: voucher ${cumulative} must lie within settled ${settled} and deposit ${channel.deposit}`,
     );
@@ -598,4 +636,25 @@ async function authenticateServer(
   throw new Error(
     `${BatchError.CLOSE_AUTHORIZATION}: signature does not bind this close or is outside its validity window`,
   );
+}
+
+/**
+ * The name Go prints for a channel status byte.
+ *
+ * @param status - Onchain channel status
+ * @returns `Open`, `Sealed`, `Closing`, `Distributed`, or `Unknown(n)`
+ */
+function channelStatusName(status: number): string {
+  switch (status) {
+    case ChannelStatus.Open:
+      return "Open";
+    case ChannelStatus.Sealed:
+      return "Sealed";
+    case ChannelStatus.Closing:
+      return "Closing";
+    case ChannelStatus.Distributed:
+      return "Distributed";
+    default:
+      return `Unknown(${status})`;
+  }
 }

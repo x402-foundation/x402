@@ -72,6 +72,7 @@ export type {
   BatchVoucherClaim,
   BatchFacilitatorPayload,
   BatchChannelState,
+  BatchRedemptionChannelState,
 } from "./batch-settlement/types";
 export {
   encodeBatchAuthorizationMessage,
