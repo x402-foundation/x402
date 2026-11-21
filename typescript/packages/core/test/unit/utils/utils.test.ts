@@ -165,6 +165,15 @@ describe("Utils", () => {
 
       expect(result).toBe("evmImpl");
     });
+
+    it("should fall back to a pattern when the exact network lacks the scheme", () => {
+      const map = new Map<string, Map<string, string>>();
+      map.set("eip155:*", new Map([["exact", "evmImpl"]]));
+      map.set("eip155:8453", new Map([["upto", "uptoImpl"]]));
+
+      expect(findByNetworkAndScheme(map, "exact", "eip155:8453" as Network)).toBe("evmImpl");
+      expect(findByNetworkAndScheme(map, "upto", "eip155:8453" as Network)).toBe("uptoImpl");
+    });
   });
 
   describe("findFacilitatorBySchemeAndNetwork", () => {
