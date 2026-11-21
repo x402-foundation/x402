@@ -22,13 +22,16 @@ channel, refunding the remainder.
 
 | Aspect                    | Description                                                                                                               |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Payment authorization** | The payer opens a `PayChannel` funded to at least the maximum and signs an off-ledger claim over `(channelId, maxAmount)` |
-| **Settlement**            | The facilitator submits a `PaymentChannelClaim`, signed by the `payTo` account, carrying the actual amount and `tfClose`  |
+| **Payment authorization** | The payer signs a `PaymentChannelCreate` offline (not submitted), derives `channelId`, and signs an off-ledger claim over `(channelId, maxAmount)` |
+| **Deposit settlement**    | The facilitator decodes `openTransaction`, verifies every field and the claim signature, rejects if the channel already exists, deduplicates on `(network, channelId)`, submits the create, waits for validation, and re-reads the `PayChannel` |
+| **Claim settlement**      | The facilitator submits a `PaymentChannelClaim`, signed by the `payTo` account, carrying the actual amount and `tfClose`  |
 | **Fee payer**             | The payer pays the channel-creation fee; the `payTo` account pays the settlement fee                                      |
 
-The channel is opened before the payment is presented, as the `ticketSequence` asset
-transfer method of [`scheme_exact_xrpl.md`](../exact/scheme_exact_xrpl.md) requires a
-preflight `TicketCreate`.
+XRPL `upto` uses the core `escrow` payment flow
+([x402 v2 §6.1](../../x402-specification-v2.md)): `settle(deposit)` → resource →
+`settle(claim)` → respond. Funds are not committed on ledger until the deposit settle.
+`extra.paymentFlow` MUST be `"escrow"` in `PAYMENT-REQUIRED` so clients can distinguish
+this profile from authorization-first schemes.
 
 XRPL charges a transaction fee to the transaction `Account`, and has no mechanism for a
 second account to co-sign and pay for another account's transaction, so neither the
@@ -36,9 +39,9 @@ channel creation nor the settlement can be fee-sponsored by a facilitator. The `
 amendment (XLS-68) would change this but is not enabled on Mainnet. `extra.areFeesSponsored`
 is therefore always `false`, as in `scheme_exact_xrpl.md`.
 
-No account sequence number is held between verification and settlement: the
-authorization is the channel, so a payer may send other transactions from the same
-account while the metered work runs without invalidating the payment.
+The signed `PaymentChannelCreate` fixes the sequence used in `channelId`. The payer MAY
+send other transactions from the same account before deposit settle only when they do not
+consume that sequence; after the channel exists, the authorization is the channel itself.
 
 ## Network Identifier (CAIP-2)
 
@@ -67,30 +70,41 @@ drops. A facilitator MAY reject an amount it cannot verify without loss of preci
 
 ## Protocol Flow
 
-The protocol flow for `upto` on XRPL is client-driven, and follows the `authorization`
-payment flow of the v2 specification: verification, then the metered work, then
-settlement.
+The protocol flow for `upto` on XRPL is client-driven and follows the `escrow` payment
+flow of the v2 specification: deposit settle, then the metered work, then claim settle.
+Facilitator `/verify` is not part of this ordering; it MAY be offered as a read-only
+preflight of the same static checks as deposit settle without submitting `openTransaction`.
 
 1. **Client** makes a request to a **Resource Server**.
 2. **Resource Server** responds with `PaymentRequired` in the `PAYMENT-REQUIRED` header,
-   with `amount` set to the maximum it may charge.
-3. **Client** submits a `PaymentChannelCreate` to `payTo` with `Amount` set to that
-   maximum, a `CancelAfter` expiry and a `SettleDelay` sized per verification rule 7.
-4. **Client** signs an off-ledger claim over `(channelId, maxAmount)`. This is not a
-   ledger transaction.
+   with `amount` set to the maximum it may charge and `extra.paymentFlow` set to `"escrow"`.
+3. **Client** signs a `PaymentChannelCreate` to `payTo` with `Amount` set to that maximum,
+   a `CancelAfter` expiry, a `SettleDelay` sized per [Time bounds](#time-bounds), an optional
+   `DestinationTag` matching `extra.destinationTag` when present, and a bounded
+   `LastLedgerSequence`. The client does not submit this transaction.
+4. **Client** derives `channelId` as `SHA512Half(0x0078, Account, Destination, Sequence)`
+   from the signed create fields and signs an off-ledger claim over `(channelId, maxAmount)`.
+   This is not a ledger transaction.
 5. **Client** sends a new request with the `PAYMENT-SIGNATURE` header containing the
-   `PaymentPayload`.
-6. **Resource Server** forwards the payload and requirements to a **Facilitator**'s
-   `/verify` endpoint, with `amount` still set to the maximum.
-7. **Resource Server**, upon successful verification, runs the metered work and measures
-   the actual consumption.
-8. **Resource Server** signs a `PaymentChannelClaim` for the actual amount and calls the
-   facilitator's `/settle` endpoint with `amount` set to that actual charge and the signed
-   claim added to the payment payload as `settlementTransaction`.
-9. **Facilitator** re-verifies, submits the claim, and confirms it succeeded in a
-   validated ledger.
-10. **Facilitator** responds with a `SettlementResponse` carrying the settled amount.
-11. **Resource Server** grants access via the `PAYMENT-RESPONSE` header.
+   `PaymentPayload`, including the hex-encoded signed create as `openTransaction`.
+6. **Resource Server** calls the facilitator's `/settle` endpoint with deposit-phase
+   requirements (`amount` still the maximum), `payload.type` set to `"deposit"` (via
+   `enrichSettlementPayload` or equivalent), and the client authorization unchanged.
+7. **Facilitator** validates `openTransaction`, verifies the claim signature, rejects if the
+   channel already exists, deduplicates on `(network, channelId)`, submits the create,
+   waits for validation, and re-reads the `PayChannel`.
+8. **Resource Server** runs the metered work and measures the actual consumption.
+9. **Resource Server** signs a `PaymentChannelClaim` for the actual amount and calls
+   `/settle` again with `amount` set to the actual charge, `payload.type` `"claim"`, and the
+   signed claim in `settlementTransaction`.
+10. **Facilitator** re-verifies against the signed maximum, submits the claim, and confirms
+    it succeeded in a validated ledger.
+11. **Facilitator** responds with a `SettlementResponse` carrying the settled amount.
+12. **Resource Server** grants access via the `PAYMENT-RESPONSE` header.
+
+If metered work fails after a successful deposit settle, the resource server SHOULD settle
+`0` (bare close) promptly rather than leaving the channel funded. See
+[Client recovery](#client-recovery).
 
 ## x402 v2 Headers
 
@@ -116,9 +130,11 @@ client must authorize at verification, and the actual amount to charge at settle
   "amount": "10000000",
   "maxTimeoutSeconds": 300,
   "extra": {
+    "paymentFlow": "escrow",
     "areFeesSponsored": false,
     "minSettleDelay": 600,
-    "validAfter": 1754136000
+    "validAfter": 1754136000,
+    "destinationTag": 12345
   }
 }
 ```
@@ -134,9 +150,11 @@ client must authorize at verification, and the actual amount to charge at settle
   "amount": "2470000",
   "maxTimeoutSeconds": 300,
   "extra": {
+    "paymentFlow": "escrow",
     "areFeesSponsored": false,
     "minSettleDelay": 600,
-    "validAfter": 1754136000
+    "validAfter": 1754136000,
+    "destinationTag": 12345
   }
 }
 ```
@@ -145,9 +163,11 @@ client must authorize at verification, and the actual amount to charge at settle
 
 | Field                         | Type    | Required    | Description                                                                                     |
 | ----------------------------- | ------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| `extra.paymentFlow`           | string  | yes         | MUST be `"escrow"` for this profile                                                             |
 | `extra.areFeesSponsored`      | boolean | yes         | Always `false`; XRPL cannot sponsor either transaction                                          |
 | `extra.minSettleDelay`        | number  | no          | Minimum `SettleDelay` the channel must carry, in seconds                                        |
 | `extra.validAfter`            | number  | no          | Earliest activation time, Unix seconds                                                          |
+| `extra.destinationTag`        | number  | no          | When present, the signed `PaymentChannelCreate` and on-ledger `PayChannel` MUST carry this `DestinationTag` so hosted `payTo` accounts can be paid correctly |
 
 ## `PaymentPayload` for `upto`
 
@@ -164,9 +184,11 @@ client must authorize at verification, and the actual amount to charge at settle
     "amount": "10000000",
     "maxTimeoutSeconds": 300,
     "extra": {
+      "paymentFlow": "escrow",
       "areFeesSponsored": false,
       "minSettleDelay": 600,
-      "validAfter": 1754136000
+      "validAfter": 1754136000,
+      "destinationTag": 12345
     }
   },
   "payload": {
@@ -174,29 +196,39 @@ client must authorize at verification, and the actual amount to charge at settle
     "maxAmount": "10000000",
     "signature": "496630507166941E8D6C693B0E8A45276DD6BD60...",
     "publicKey": "ED9434799226374926EDA3B54B1B461B4ABF7237962EAE18528FEA67595397FA32",
-    "payer": "rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH"
+    "payer": "rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH",
+    "openTransaction": "1200002280000000240000001D61B0F8EDB7FD46CBB8E5E762BDAE7BAF3D9C9..."
   }
 }
 ```
 
-| Field       | Description                                                                 |
-| ----------- | --------------------------------------------------------------------------- |
-| `channelId` | The `PayChannel` ledger object index, 64 hexadecimal characters             |
-| `maxAmount` | Drops authorized by `signature`. MUST equal the verification-phase `amount` |
-| `signature` | The payer's off-ledger claim signature over `(channelId, maxAmount)`        |
-| `publicKey` | Channel `PublicKey`, against which the claim verifies                       |
-| `payer`     | Channel `Account`                                                           |
+| Field              | Description                                                                 |
+| ------------------ | --------------------------------------------------------------------------- |
+| `channelId`        | `SHA512Half(0x0078, Account, Destination, Sequence)` from the signed create, 64 hexadecimal characters |
+| `maxAmount`        | Drops authorized by `signature`. MUST equal the deposit-phase `amount`      |
+| `signature`        | The payer's off-ledger claim signature over `(channelId, maxAmount)`        |
+| `publicKey`        | `PublicKey` in the signed create; against which the claim verifies          |
+| `payer`            | `Account` in the signed create (channel payer)                              |
+| `openTransaction`  | Hex blob of the signed `PaymentChannelCreate`; not submitted by the client  |
 
-At settle time the resource server adds one field to the payload before calling
-`/settle`:
+At settle time the resource server adds fields to the payload before calling `/settle`:
 
 | Field                   | Description                                                                                    |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `settlementTransaction` | Hex blob of the `PaymentChannelClaim` signed by `payTo`; see [Settlement](#settlement) |
+| `type`                  | `"deposit"` or `"claim"`. Set per settle via `enrichSettlementPayload` or equivalent; distinguishes the two escrow settles ([x402 v2 §7.2](../../x402-specification-v2.md)). |
+| `settlementTransaction` | Claim settle only. Hex blob of the `PaymentChannelClaim` signed by `payTo`; see [Claim settlement](#claim-settlement) |
 
-The field is server-authored and settle-only. It MUST be absent from the client's
-`PAYMENT-SIGNATURE`, and a facilitator MUST reject a payment presenting it at `/verify`
-with `invalid_upto_xrpl_payload_unexpected_settlement_transaction`.
+`type` and `settlementTransaction` are server-authored and settle-only. They MUST be absent
+from the client's `PAYMENT-SIGNATURE`. A facilitator MUST reject a client payload
+presenting either field with `invalid_upto_xrpl_payload_unexpected_settlement_transaction`
+or `invalid_upto_xrpl_payload_unexpected_claim_transaction` respectively, and MUST reject
+a client-supplied `type` with `invalid_upto_xrpl_payload_type`.
+
+When `type` is absent, the facilitator MAY infer deposit vs claim from payload shape and
+ledger state ([x402 v2 §7.2](../../x402-specification-v2.md)): no `settlementTransaction`,
+deposit-phase `amount == payload.maxAmount`, and no open channel → deposit; otherwise
+claim. `type` is REQUIRED when the resource server delegates settlement enrichment to a
+facilitator that cannot infer the step reliably.
 
 ## `SettlementResponse`
 
@@ -211,9 +243,11 @@ with `invalid_upto_xrpl_payload_unexpected_settlement_transaction`.
 ```
 
 `amount` carries the settlement-time charge, delivered in full through the channel once
-the settlement validates, and MAY be `"0"`. `transaction` is the hash
-of the validated `PaymentChannelClaim`, including a zero settlement, which is still an
-on-ledger close.
+the claim settlement validates, and MAY be `"0"`. `payer` is the channel `Account` from
+the opened `PayChannel`, not the `PaymentChannelClaim` transaction `Account` (`payTo`).
+`transaction` is the hash of the validated ledger transaction for the settle step: the
+`PaymentChannelCreate` on deposit settle, or the `PaymentChannelClaim` on claim settle
+(including a zero settlement bare close).
 
 ## Account Requirements
 
@@ -226,98 +260,91 @@ on-ledger close.
 The resource server needs an RPC endpoint to build the settlement claim, since the claim
 carries a `LastLedgerSequence` derived from current ledger state.
 
-## Facilitator Verification Rules (MUST)
+## Facilitator checks (MUST)
 
-At `/verify` the facilitator reads the `PayChannel` object from a validated ledger and
-MUST reject unless all of the following hold. There is no transaction to simulate: the
-authorization is an off-ledger claim, and these validated-ledger checks stand in for
-simulation by establishing that a claim against this channel would succeed.
+Escrow `upto` performs authorization at deposit `/settle`. The facilitator MAY expose the
+same static checks at `/verify` as a read-only preflight; `/verify` MUST NOT submit
+`openTransaction` or open a channel.
 
-1. **Envelope** - `x402Version` is `2`, `scheme` is `"upto"` and `network` is a canonical
-   XRPL identifier on both the accepted and required terms, and the accepted terms equal
-   the required terms field by field: `asset`, `amount`, `payTo`, `maxTimeoutSeconds`,
-   `extra.areFeesSponsored`, `extra.minSettleDelay` and `extra.validAfter`. Otherwise a
-   client can echo terms it never agreed to. `maxTimeoutSeconds` MUST be a positive
-   integer and `amount` canonical drops; a present `minSettleDelay` or `validAfter` MUST
-   be a non-negative integer. A malformed value MUST be rejected rather than treated as
-   absent, and an absent one MUST be accepted whether omitted or null.
-2. **Channel** - the ledger object exists and is a `PayChannel`.
-3. **Recipient and payer binding** - `PayChannel.Destination` equals `payTo`, and
-   `PayChannel.Account` equals `payload.payer`.
-4. **Maximum** - `payload.maxAmount` equals `paymentRequirements.amount` exactly and is
-   no greater than `PayChannel.Amount`. The channel MAY hold more than the maximum, since
-   `PaymentChannelFund` can raise `Amount` at any time and the signed claim, not the
-   deposit, is what caps settlement.
-5. **Claim signature** - `payload.publicKey` equals `PayChannel.PublicKey`, and
-   `payload.signature` verifies against it over the claim signing message: the four-byte
-   hash prefix `CLM\0` (`0x434C4D00`), the 32-byte channel id, and `maxAmount` as a
-   big-endian unsigned 64-bit drops value, concatenated in that order. rippled's
-   `channel_verify` RPC and xrpl.js `verifyPaymentChannelClaim` are reference verifiers
-   of this message; note that `channel_verify` takes the amount in drops while
-   `verifyPaymentChannelClaim` takes XRP and converts. The check MUST run here rather
-   than be deferred to the ledger: a resource server that trusts `/verify` runs its
-   metered work before `/settle` is called, so an unverified authorization lets a
-   client obtain the metered work for free.
-   For a secp256k1 key the signature MUST be fully canonical (low-`s`). XRPL signing
-   produces canonical signatures, and rippled rejects a non-canonical claim signature, so
-   a facilitator verifying with a generic library MUST enforce this rather than assume it.
-6. **Unclaimed** - `PayChannel.Balance` is `0`. The scheme is single-use.
+### Shared envelope and claim checks
 
-   A validated-ledger read cannot see a concurrent use: two in-flight payments
-   presenting the same channel both pass this rule, both metered works run, and only
-   one claim can settle, so the payer obtains the other work free. The
-   duplicate-settlement guard below protects settlement only, not this window. A
-   resource server SHOULD NOT run metered work concurrently against one channel id.
+These apply to deposit settle (against the decoded create) and claim settle (against the
+opened `PayChannel`).
 
-   A facilitator SHOULD also keep an advisory in-flight entry on `(network, channelId)`,
-   checked and taken atomically when verification succeeds, and refuse a verification
-   that finds a live entry. Once a settlement attempt arrives the entry follows the
-   release rules of the duplicate-settlement entry below, whose verify-side twin it is;
-   if none arrives, it expires `maxTimeoutSeconds` plus the landing margin of rule 7
-   after verification. It sees only one facilitator's traffic: two payments verifying
-   through different facilitators still pass, so the resource-server rule above remains
-   the primary control.
-7. **Time bound** - `PayChannel.CancelAfter` is present and at least
-   `maxTimeoutSeconds` plus a landing margin beyond the validated ledger's close time,
-   `PayChannel.Expiration` is unset, and `PayChannel.SettleDelay` is at least
-   `maxTimeoutSeconds` plus that margin, and at least `extra.minSettleDelay`.
-   `SettleDelay` must cover the work as well as the landing: a shorter delay would let
-   the payer schedule a close mid-work and expire the channel under the claim the work
-   has earned, the same free close an expired `CancelAfter` produces.
-   If `extra.validAfter` is present the payment MUST
-   be rejected while the ledger close time is before it. Time is compared against the
-   validated ledger's `close_time`, not the facilitator's wall clock, because
-   `CancelAfter` is expressed on the ledger's clock; `validAfter` is Unix seconds and MUST
-   be converted.
+1. **Envelope** — `x402Version` is `2`, `scheme` is `"upto"`, `network` is a canonical XRPL
+   identifier on both sides, and accepted terms equal required terms field by field:
+   `asset`, `amount`, `payTo`, `maxTimeoutSeconds`, `extra.paymentFlow` (`"escrow"`),
+   `extra.areFeesSponsored`, `extra.minSettleDelay`, `extra.validAfter`, and
+   `extra.destinationTag` (present or absent together). `maxTimeoutSeconds` MUST be a
+   positive integer and `amount` canonical drops; present numeric `extra` fields MUST be
+   non-negative integers. Malformed values MUST be rejected; absent optional fields MUST
+   match whether omitted or null.
+2. **Maximum** — at deposit settle, `payload.maxAmount` MUST equal requirements `amount`
+   exactly. At claim settle, re-verify against `payload.maxAmount`, not the settlement-time
+   `amount` (phase-dependent semantics; see [Claim settle-time verification](#claim-settle-time-verification)).
+3. **Claim signature** — `payload.signature` MUST verify against `payload.publicKey` over
+   the claim signing message: prefix `CLM\0` (`0x434C4D00`), 32-byte `channelId`, and
+   `maxAmount` as big-endian unsigned 64-bit drops. rippled `channel_verify` and xrpl.js
+   `verifyPaymentChannelClaim` are reference verifiers. For secp256k1 the signature MUST be
+   fully canonical (low-`s`).
+4. **Destination tag** — when `extra.destinationTag` is present, the signed create MUST
+   include the same `DestinationTag`, and after opening the `PayChannel` MUST carry it.
+   Mismatch MUST fail with `invalid_upto_xrpl_destination_tag_mismatch`.
 
-   `CancelAfter` is required as the authorization's end bound, not as payer
-   protection: the payer can always schedule its own exit, since a source-initiated
-   `tfClose` sets `Expiration` to `SettleDelay` from now, but without `CancelAfter`
-   the signed claim stays redeemable indefinitely, and
-   [`scheme_upto.md`](./scheme_upto.md) requires explicit time bounds on every
-   authorization and places open-ended allowances out of scope. The cost of
-   carrying the bound is the expired-channel close described under
-   [Settlement](#settlement), which the settle-time headroom re-check exists to
-   catch.
+### Time bounds
 
-   The landing margin covers the ledgers a settlement takes to land, and is fixed at
-   **20 seconds**: two ledger closes at a pessimistic 10-second rate. The margin is an
-   admission floor, not a landing guarantee: degraded consensus can close ledgers more
-   slowly than it assumes, and the settlement transaction's `LastLedgerSequence` window
-   is what bounds the actual wait. A facilitator
-   MUST NOT demand more headroom than this rule states, so that a channel built
-   against the spec verifies against any facilitator. A client SHOULD budget slack beyond the
-   minimum, since the bound is checked against the close time when `/verify` runs, not
-   when the channel was built.
+`CancelAfter` on the create MUST be present and MUST leave at least `maxTimeoutSeconds`
+plus the landing margin beyond the validated ledger close time when deposit settle runs.
+`SettleDelay` MUST be at least `maxTimeoutSeconds` plus that margin and at least
+`extra.minSettleDelay` when present. If `extra.validAfter` is present, deposit settle
+MUST be rejected while ledger close time is before it (`validAfter` is Unix seconds;
+`CancelAfter` uses ledger time).
 
-   Every settle-time bound MUST also hold here, with room for the metered work in
-   between: a channel admitted at `/verify` but refused at `/settle` means the work ran
-   unpaid.
+The landing margin is **20 seconds** (two 10-second ledger closes). `LastLedgerSequence`
+on the signed create MUST be strictly greater than the validated ledger index and MUST NOT
+exceed validated ledger index + `openLedgerWindow`, where `openLedgerWindow` MUST be at
+least `ceil((maxTimeoutSeconds + 20) / 10)` ledgers. Violations MUST fail with
+`invalid_upto_xrpl_create_last_ledger_sequence`. The same margin bounds claim
+`LastLedgerSequence` in [Claim settlement](#claim-settlement).
 
-## Settlement
+`CancelAfter` bounds how long a signed claim stays redeemable;
+[`scheme_upto.md`](./scheme_upto.md) requires explicit time bounds. A client SHOULD
+budget slack beyond the minimum checked at deposit settle.
 
-The facilitator submits exactly one transaction, built and signed by the `payTo` account
-and carried in `payload.settlementTransaction`:
+### Deposit settlement (before resource execution)
+
+On `/settle` with `payload.type` `"deposit"` (or inferred deposit), the facilitator MUST,
+in order:
+
+1. Reject client-supplied `settlementTransaction` or `type` (see [PaymentPayload](#paymentpayload-for-upto)).
+2. Run [Shared envelope and claim checks](#shared-envelope-and-claim-checks) for deposit-phase
+   `amount`.
+3. Fully decode `payload.openTransaction` as a signed `PaymentChannelCreate` and verify every
+   binding: `Account` equals `payload.payer`; `Destination` equals `payTo`; `Amount` equals
+   `payload.maxAmount`; `PublicKey` equals `payload.publicKey`; `SettleDelay` and `CancelAfter`
+   satisfy [Time bounds](#time-bounds); no disallowed fields; transaction signature valid;
+   derived `channelId` equals `payload.channelId`. Any violation MUST fail with
+   `invalid_upto_xrpl_open_transaction_mismatch`.
+4. Confirm no `PayChannel` exists for `payload.channelId`. If one exists, MUST fail with
+   `invalid_upto_xrpl_channel_already_open`.
+5. Atomically take the deposit duplicate-settlement entry on `(network, channelId)` (see
+   [Duplicate settlement mitigation](#duplicate-settlement-mitigation)).
+6. Submit `openTransaction`, wait until it appears in a validated ledger, and re-read the
+   `PayChannel`. The opened channel MUST match the decoded create and challenge
+   (`invalid_upto_xrpl_channel_state` on mismatch). `Balance` MUST be `0`.
+
+If the resource server cannot obtain a deposit settle (missing `openTransaction`, failed
+validation, or facilitator unavailable), it SHOULD respond with `412` and
+`CHANNEL_REQUIRED` before serving the resource, matching the SVM `upto` precondition.
+
+Concurrent deposit settles for the same `channelId` MUST NOT each unlock the resource: the
+already-open check and deposit deduplication are authoritative. A resource server SHOULD NOT
+run metered work until deposit settle succeeds.
+
+### Claim settlement
+
+On `/settle` with `payload.type` `"claim"` (or inferred claim), the facilitator submits the
+`PaymentChannelClaim` built and signed by `payTo` in `payload.settlementTransaction`:
 
 ```
 PaymentChannelClaim
@@ -336,13 +363,21 @@ A zero settlement, or a nonzero charge the channel has already delivered, omits
 list below.
 
 The facilitator MUST confirm the transaction succeeded in a validated ledger before
-returning success. A provisional result MUST NOT be reported as settled. A result code
-alone is not evidence of payment: a claim applied to a channel that has already expired
-closes it without delivering and still returns `tesSUCCESS`, so for a claim settlement
-a facilitator SHOULD confirm the delivered amount, the claim's `Balance` less the
-balance the channel already carried, from the transaction metadata.
+returning success, except when returning non-terminal `settlement_pending` (below). A
+provisional result MUST NOT be reported as settled. A result code alone is not evidence
+of payment: a claim applied to a channel that has already expired closes it without
+delivering and still returns `tesSUCCESS`, so for a claim settlement a facilitator SHOULD
+confirm the delivered amount, the claim's `Balance` less the balance the channel already
+carried, from the transaction metadata.
 
-### Settlement Authorization
+If a settlement transaction broadcasts successfully but its confirmation cannot be
+established (for example an RPC error or timeout while waiting for validation), the
+facilitator MAY return `settlement_pending` (see [§9 Error Handling](../../x402-specification-v2.md#9-error-handling))
+with the broadcast hash in `transaction`, so the caller can reconcile on ledger before
+retrying. This applies to both deposit and claim settles, as in
+[`scheme_upto_evm.md`](./scheme_upto_evm.md).
+
+### Claim authorization
 
 Closing a channel atomically requires the transaction to originate from the channel
 `Destination`, so the facilitator cannot settle with its own key. The resource server
@@ -381,35 +416,26 @@ signature covers the maximum; substituting the settlement amount invalidates it.
 (`invalid_upto_xrpl_payload_settlement_exceeds_amount`); `Balance` at most `Amount`
 follows.
 
-### Settle-Time Verification (REQUIRED)
+### Claim settle-time verification (REQUIRED)
 
-Re-verification MUST run against `payload.maxAmount`, not the settlement-time
-`paymentRequirements.amount`, mirroring the EVM rule that the facilitator re-verifies
-against `permitted.amount`. Because `amount` is phase-dependent, a facilitator that
-re-runs its verify logic against the settlement-time requirements applies
-maximum-semantics checks to the actual charge, and silently accepts a channel too small
-to have covered the original authorization.
+Before submitting the claim, the facilitator MUST re-read the `PayChannel` and confirm
+recipient/payer binding, `payload.maxAmount` against channel `Amount`, and the claim
+signature against channel `PublicKey` ([Shared envelope and claim checks](#shared-envelope-and-claim-checks)).
 
-Mechanically: substitute `payload.maxAmount` for `requirements.amount` in the required
-terms before re-running rules 1 and 4; rule 1's field-by-field equality otherwise fails
-on every nonzero settlement.
+Re-verification is not deposit admission replayed unchanged. At claim settle:
 
-Re-verification is not the verification rules run again. Rules 6 and 7 are admission
-control: they decide whether the metered work should begin, and the payer can invalidate
-each of them itself once it has. Re-applying them unchanged at `/settle` refuses claims
-the ledger would accept, and lets the payer obtain the work for free.
+| Check | Deposit settle | Claim settle |
+| ----- | -------------- | ------------ |
+| Channel exists, bindings | from decoded create | from `PayChannel` |
+| Unclaimed / deliverable | `Balance` is `0` after open | for a nonzero charge, `Balance` below settlement amount so the claim delivers the difference; zero settlement is a bare close |
+| Pending close | n/a (channel new) | `Expiration` far enough out for the claim to land |
+| Headroom | `CancelAfter` / `SettleDelay` on create | `CancelAfter` far enough out for the claim to land |
+| `validAfter` | enforced | not re-checked |
 
-| Rule              | At `/verify`                                  | At `/settle`                                                                                                                                                                                                                               |
-| ----------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Unclaimed (6)     | `Balance` is `0`                              | for a nonzero charge, `Balance` below the settlement amount, which is the claim's cumulative delivered total, so the claim delivers the difference; a zero settlement carries no claim. The source can deliver drops unilaterally, with or without a signed claim, so a nonzero `Balance` here only pre-pays part of the bill; a facilitator that refuses over it strands the remainder. At or above the settlement amount, the charge is already delivered and settlement is a bare close |
-| Pending close (7) | `Expiration` unset                            | `Expiration` far enough out for the claim to land. A source-initiated close takes effect only when it elapses, which is what `SettleDelay` buys the destination                                                                            |
-| Headroom (7)      | `maxTimeoutSeconds` plus the margin remaining | `CancelAfter` far enough out for the claim to land; the work has already run, only landing time remains                                                                                                                                    |
-| `validAfter` (7)  | enforced                                      | not re-checked; the authorization already activated                                                                                                                                                                                        |
+The facilitator MUST take the claim duplicate-settlement entry on `(network, channelId)`
+after local claim checks pass and before broadcast.
 
-The bindings in rules 3, 4 and 5 MUST be re-checked in full, since those are properties
-of the authorization rather than of the moment.
-
-### Duplicate Settlement Mitigation (REQUIRED)
+### Duplicate settlement mitigation (REQUIRED)
 
 #### Vulnerability
 
@@ -418,15 +444,16 @@ fails with `tecNO_TARGET` rather than returning a spurious success. But a retry 
 resubmitting an identical signed blob meets XRPL's submission idempotency and would
 report `tesSUCCESS` twice.
 
-#### Required Mitigation
+#### Required mitigation
 
-Facilitators MUST deduplicate settlements on `(network, channelId)`. The channel can be
-drawn only once, so it is the natural settlement identity, and the key carries the
-network because channel ids are network-independent. The check and record MUST be atomic
-with respect to concurrent settlement requests, and the record MUST be taken only after
-every local check on the settlement transaction has passed.
+Facilitators MUST deduplicate **both** escrow settles on `(network, channelId)` using
+distinct keys for deposit and claim (for example `upto:deposit:<network>:<channelId>` and
+`upto:claim:<network>:<channelId>`), so a successful deposit does not block the later
+claim for the same authorization. The check and record MUST be atomic with respect to
+concurrent requests in the same phase, and the record MUST be taken only after every
+local check for that phase has passed.
 
-The entry MUST outlive the submitted claim. A transaction stays landable until its
+Each entry MUST outlive the submitted transaction. A transaction stays landable until its
 `LastLedgerSequence`, so the retention window is derived from that horizon in ledgers and
 converted at a pessimistic close rate, plus a margin.
 
@@ -443,24 +470,50 @@ validated, MUST retain the entry, since the claim may still land. A release MUST
 only to the entry the releasing attempt itself recorded, so that an entry which expired
 and was re-taken by a later attempt continues to protect that attempt's in-flight claim.
 
+## Client recovery
+
+If metered work fails after deposit settle, the resource server SHOULD claim-settle `0`
+(bare close) promptly. The payer MAY also recover funds without server cooperation: a
+source-initiated `PaymentChannelClaim` with `tfClose` schedules expiry after `SettleDelay`;
+after `Expiration` or `CancelAfter` elapses, a final transaction deletes the channel and
+returns the escrowed remainder and owner reserve to the payer.
+
 ## Error Codes
 
 Standard x402 error codes apply. Scheme-specific:
 
-- `invalid_upto_xrpl_payload_settlement_exceeds_amount` - the settlement-time `amount`
-  exceeds the signed `maxAmount`.
-- `invalid_upto_xrpl_missing_settlement_transaction` - the settle-time payload carries
-  no signed `PaymentChannelClaim`.
-- `invalid_upto_xrpl_payload_unexpected_settlement_transaction` - the client's payload
-  carries a `settlementTransaction`; the field is server-added, settle-only.
-- `invalid_upto_xrpl_settlement_transaction_mismatch` - the blob decodes but violates a
-  binding above.
-- `invalid_upto_xrpl_settlement_signer_not_authorized` - the blob's signing key is not
-  currently authorized for `payTo`.
+- `invalid_upto_xrpl_payload_settlement_exceeds_amount` — settlement-time `amount` exceeds
+  signed `maxAmount`.
+- `invalid_upto_xrpl_missing_settlement_transaction` — claim settle payload has no signed
+  `PaymentChannelClaim`.
+- `invalid_upto_xrpl_payload_unexpected_settlement_transaction` — client payload carries
+  `settlementTransaction` (server-added, claim-only).
+- `invalid_upto_xrpl_payload_unexpected_claim_transaction` — deposit settle carries
+  `settlementTransaction`, or client payload includes it at authorization time.
+- `invalid_upto_xrpl_payload_type` — client supplied `type`, or delegated settle missing
+  `type`.
+- `invalid_upto_xrpl_open_transaction_mismatch` — `openTransaction` decodes but violates a
+  deposit binding (payer, payTo, amount, keys, time bounds, signature, or `channelId`).
+- `invalid_upto_xrpl_destination_tag_mismatch` — `DestinationTag` does not match
+  `extra.destinationTag`.
+- `invalid_upto_xrpl_create_last_ledger_sequence` — signed create `LastLedgerSequence` is
+  missing, not ahead of the ledger, or outside the allowed open window.
+- `invalid_upto_xrpl_channel_already_open` — deposit settle found an existing `PayChannel`
+  for `payload.channelId`.
+- `invalid_upto_xrpl_channel_state` — post-create `PayChannel` missing or does not match
+  the challenge.
+- `invalid_upto_xrpl_claim_signature_invalid` — off-ledger claim signature verification
+  failed.
+- `invalid_upto_xrpl_settlement_transaction_mismatch` — claim blob decodes but violates a
+  binding in [Claim authorization](#claim-authorization).
+- `invalid_upto_xrpl_settlement_signer_not_authorized` — claim blob signing key is not
+  authorized for `payTo`.
+- `CHANNEL_REQUIRED` (with `412`) — no open channel and no valid `openTransaction` that can
+  be submitted and confirmed before serving the resource.
 
 Other faults reuse the shapes `scheme_exact_xrpl.md` established, among them:
-`unsupported_scheme`, `duplicate_settlement`, `transaction_failed: <code>`, and
-`invalid_upto_xrpl_facilitator_error` when the facilitator itself fails. An
+`unsupported_scheme`, `duplicate_settlement`, `settlement_pending`, `transaction_failed: <code>`,
+and `invalid_upto_xrpl_facilitator_error` when the facilitator itself fails. An
 infrastructure fault MUST NOT be reported with a payload-blaming code such as a missing
 channel.
 
@@ -468,7 +521,7 @@ channel.
 
 | Requirement (generic spec) | XRPL mechanism                                                                                                                                                                              |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Single-use authorization   | A destination-initiated claim with `tfClose` deletes the channel atomically; a repeat claim returns `tecNO_TARGET`                                                                          |
+| Single-use authorization   | Deposit settle opens the channel for this authorization and MUST reject an already-open `channelId`; a destination claim with `tfClose` deletes the channel atomically; a repeat claim returns `tecNO_TARGET` |
 | Time-bound validity        | `CancelAfter` on the channel is the end bound, enforced in consensus; `validAfter` is verify-time policy, as in the SVM profile                                                             |
 | Recipient binding          | `Destination` is fixed at `PaymentChannelCreate`, so funds can only ever reach it; a claim by an unrelated account is rejected with `tecNO_PERMISSION`                                      |
 | Maximum amount enforcement | The channel `Amount` caps total delivery and the signed claim caps it further; over-claiming returns `tecUNFUNDED_PAYMENT`. A zero settlement is a close without a claim, refunding the undrawn remainder |
@@ -517,8 +570,9 @@ SVM profile also notes.
 **Capital lockup.** The channel escrows the full authorized maximum on-ledger for its
 lifetime; the payer recovers the unused remainder only at settlement or `CancelAfter`.
 
-**Two on-ledger transactions per payment**, one to open the channel and one to settle,
-plus the owner reserve held while the channel is open.
+**Two on-ledger transactions per payment** — `PaymentChannelCreate` at deposit settle and
+`PaymentChannelClaim` at claim settle — plus the owner reserve held while the channel is
+open between those steps.
 
 **Invoice binding.** `PaymentChannelClaim` has no `InvoiceID` field, so a payment is bound
 by channel identity rather than on-ledger, unlike `exact`'s `invoiceId`.
