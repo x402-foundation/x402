@@ -29,8 +29,12 @@ type Config struct {
 	PaywallConfig *x402http.PaywallConfig
 
 	// SyncFacilitatorOnStart fetches supported kinds from facilitators on startup
-	// Default: true
+	// Always enabled when Facilitator or Facilitators is set, unless
+	// SkipFacilitatorSyncOnStart is true
 	SyncFacilitatorOnStart bool
+
+	// SkipFacilitatorSyncOnStart disables the startup sync
+	SkipFacilitatorSyncOnStart bool
 
 	// Timeout for payment operations
 	// Default: 30 seconds
@@ -70,18 +74,8 @@ func X402Payment(config Config) echo.MiddlewareFunc {
 		config.Timeout = 30 * time.Second
 	}
 
-	// Default to sync unless explicitly disabled
-	syncOnStart := config.SyncFacilitatorOnStart
-	if !syncOnStart && config.Facilitator == nil && len(config.Facilitators) == 0 {
-		// If no explicit setting and no facilitators, default to false
-		syncOnStart = false
-	} else if config.Facilitator != nil || len(config.Facilitators) > 0 {
-		// If facilitators provided but SyncFacilitatorOnStart not explicitly set, default to true
-		if config.Timeout != 0 {
-			// User set something, so they're configuring - default to true
-			syncOnStart = true
-		}
-	}
+	hasFacilitators := config.Facilitator != nil || len(config.Facilitators) > 0
+	syncOnStart := (config.SyncFacilitatorOnStart || hasFacilitators) && !config.SkipFacilitatorSyncOnStart
 
 	// Normalize facilitators list
 	var facilitators []x402.FacilitatorClient
