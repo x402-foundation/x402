@@ -82,6 +82,23 @@
       "price": { "usd": "$0.001" },
       "extensions": ["bazaar"],
       "settlementOverride": { "amount": "50%" }
+    },
+    "/auth-capture/svm": {
+      "scheme": "auth-capture",
+      "requiresEnv": "SERVER_SVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+      "sdks": ["typescript"],
+      "paymentFlow": "escrow",
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"],
+      "schemeExtra": {
+        "delegate": "0xDelegateAddress",
+        "captureDeadlineSeconds": 3600,
+        "refundDeadlineSeconds": 7200,
+        "feeRecipient": "0xFeeRecipientAddress",
+        "minFeeBps": 0,
+        "maxFeeBps": 0,
+        "paymentFlow": "escrow"
+      }
     }
   }
 }
