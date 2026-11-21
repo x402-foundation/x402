@@ -1,0 +1,3 @@
+kind: added
+body: '`Config` in the `gin`, `echo` and `nethttp` adapters gains `SkipFacilitatorSyncOnStart`. `X402Payment` always synced with the facilitator on startup when one was configured, so `SyncFacilitatorOnStart: false` had no effect and the struct API had no way to opt out.'
+time: 2026-11-21T12:00:00Z

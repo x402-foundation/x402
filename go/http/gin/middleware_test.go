@@ -2265,3 +2265,44 @@ func TestPaymentMiddleware_StripsSettlementOverridesOnHandlerAbort(t *testing.T)
 		t.Errorf("Expected Settlement-Overrides to be stripped on abort, got %q", got)
 	}
 }
+
+func TestX402Payment_SyncFacilitatorOnStart(t *testing.T) {
+	tests := []struct {
+		name      string
+		sync      bool
+		skip      bool
+		wantCalls int
+	}{
+		{name: "facilitator set, defaults", wantCalls: 1},
+		{name: "explicit sync", sync: true, wantCalls: 1},
+		{name: "skip", skip: true, wantCalls: 0},
+		{name: "skip overrides sync", sync: true, skip: true, wantCalls: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			mockClient := &mockFacilitatorClient{
+				supportedFunc: func(ctx context.Context) (x402.SupportedResponse, error) {
+					calls++
+					return x402.SupportedResponse{
+						Kinds: []x402.SupportedKind{
+							{X402Version: 2, Scheme: "exact", Network: "eip155:1"},
+						},
+					}, nil
+				},
+			}
+
+			X402Payment(Config{
+				Routes:                     x402http.RoutesConfig{},
+				Facilitator:                mockClient,
+				SyncFacilitatorOnStart:     tt.sync,
+				SkipFacilitatorSyncOnStart: tt.skip,
+			})
+
+			if calls != tt.wantCalls {
+				t.Errorf("GetSupported called %d times, want %d", calls, tt.wantCalls)
+			}
+		})
+	}
+}
