@@ -206,6 +206,8 @@ manager.start(60); // seconds between passes
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer.
 
+A facilitator refusal stops only the channel it is about. When the facilitator refuses a claim or distribute batch outright (for example a policy hook answering 403), the worker retries that batch one channel at a time, submits a channel that is still refused on its own in later passes, and goes on with the rest of the pass. A failure that may still land (`settlement_pending`, `duplicate_settlement`, a response naming a transaction, or no response at all) leaves the batch whole for the next pass. Each failure is reported to `onError`; it does not reject `redeem()`.
+
 ## Facilitator Usage
 
 For custom facilitator implementations:

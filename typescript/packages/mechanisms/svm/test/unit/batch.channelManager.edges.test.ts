@@ -1,6 +1,12 @@
 import { generateKeyPairSigner } from "@solana/kit";
-import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
-import { describe, expect, it } from "vitest";
+import { HTTPFacilitatorClient } from "@x402/core/http";
+import {
+  SettleError,
+  type PaymentPayload,
+  type PaymentRequirements,
+  type SettleResponse,
+} from "@x402/core/types";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { verifyCloseAuthorization } from "../../src/batch-settlement/closeAuthorization";
 import { BatchError } from "../../src/batch-settlement/errors";
@@ -442,5 +448,319 @@ describe("batch-settlement redemption worker edge cases", () => {
     const seal = seen.find(payload => payload.type === "seal");
     expect(seal).toMatchObject({ channelId: id, type: "seal" });
     expect(seal).not.toHaveProperty("closeAuthorization");
+  });
+});
+
+describe("batch-settlement redemption worker when the facilitator refuses a channel", () => {
+  const FLAGGED = "chan-flagged";
+  const SANCTIONED = "Forbidden - Sanctioned address detected";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * The channels a redemption payload names, in order.
+   *
+   * @param raw - A claim, distribute or seal payload
+   * @returns Its channel IDs
+   */
+  function named(raw: Payload): string[] {
+    return [
+      ...(raw.claims ?? []).map(claim => claim.voucher.channelId),
+      ...(raw.channels ?? []).map(entry => entry.channelId),
+    ];
+  }
+
+  /**
+   * A bound success for a claim or a distribute.
+   *
+   * @param raw - The payload being answered
+   * @returns The success response
+   */
+  function bound(raw: Payload): SettleResponse {
+    if (raw.type !== "claim") return boundDistribute(raw);
+    return {
+      ...ok(),
+      extra: {
+        accepts: (raw.claims ?? []).map(({ voucher }) => ({
+          channelId: voucher.channelId,
+          totalClaimed: voucher.maxClaimableAmount,
+        })),
+      },
+    };
+  }
+
+  /**
+   * A failure the facilitator answers before broadcasting anything.
+   *
+   * @param errorReason - Why it refused
+   * @returns The failed settle response
+   */
+  function refusal(errorReason: string = SANCTIONED): SettleResponse {
+    return { errorReason, network: SOLANA_DEVNET_CAIP2, success: false, transaction: "" };
+  }
+
+  it("claims and pays out every other channel when one claim gets an HTTP 403", async () => {
+    const store = new MemoryChannelStore();
+    const ids = ["chan-a", FLAGGED, "chan-c", "chan-d", "chan-e", "chan-f"];
+    for (const id of ids) await store.put(channel(id));
+    const seen: Payload[] = [];
+    // A facilitator policy hook refuses every request naming the flagged
+    // channel with a 403, which HTTPFacilitatorClient.settle throws as a
+    // SettleError.
+    vi.stubGlobal("fetch", async (_url: unknown, init: { body: string }) => {
+      const raw = (JSON.parse(init.body) as { paymentPayload: { payload: Payload } }).paymentPayload
+        .payload;
+      seen.push(raw);
+      const refused = named(raw).includes(FLAGGED);
+      return new Response(JSON.stringify(refused ? refusal() : bound(raw)), {
+        headers: { "Content-Type": "application/json" },
+        status: refused ? 403 : 200,
+      });
+    });
+    const client = new HTTPFacilitatorClient({ url: "https://facilitator.example" });
+    const errors: string[] = [];
+    const result = await new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      readPayoutWatermark: async () => 3_000n,
+      receiverAuthorizer,
+      requirements: requirements(),
+      settle: (payload, accepted) => client.settle(payload as unknown as PaymentPayload, accepted),
+      store,
+    }).redeem();
+
+    const clean = ["chan-a", "chan-c", "chan-d", "chan-e", "chan-f"];
+    expect(result).toEqual({ claimed: clean, distributed: clean, sealed: [] });
+    expect(errors).toEqual([`batch-settlement claim failed: ${SANCTIONED}`]);
+    // The refused batch is retried one channel at a time; the next batch and
+    // the payout still run.
+    expect(seen.map(raw => [raw.type, named(raw)])).toEqual([
+      ["claim", ["chan-a", FLAGGED, "chan-c", "chan-d"]],
+      ["claim", ["chan-a"]],
+      ["claim", [FLAGGED]],
+      ["claim", ["chan-c"]],
+      ["claim", ["chan-d"]],
+      ["claim", ["chan-e", "chan-f"]],
+      ["settle", ["chan-a", "chan-c", "chan-d", "chan-e"]],
+      ["settle", ["chan-f"]],
+    ]);
+    expect((await store.get(FLAGGED))?.settled).toBe(0n);
+  });
+
+  it("claims a refused channel on its own on later passes until it is accepted", async () => {
+    const store = new MemoryChannelStore();
+    const ids = ["chan-a", FLAGGED, "chan-c", "chan-d", "chan-e"];
+    for (const id of ids) await store.put(channel(id));
+    let refusing = true;
+    const seen: Payload[] = [];
+    const errors: string[] = [];
+    const manager = new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      readPayoutWatermark: async id => (await store.get(id))?.settled,
+      receiverAuthorizer,
+      requirements: requirements(),
+      // x402Facilitator answers a beforeSettle abort with `success: false`
+      // and the hook's reason.
+      settle: async ({ payload }) => {
+        const raw = payload as Payload;
+        seen.push(raw);
+        return refusing && named(raw).includes(FLAGGED)
+          ? refusal("ofac_sanctioned_address")
+          : bound(raw);
+      },
+      store,
+    });
+    const claims = () => seen.filter(raw => raw.type === "claim").map(named);
+    const newVouchers = async (amount: bigint) => {
+      for (const id of ids) {
+        await store.update(id, state => ({ ...state!, signedMaxClaimable: amount }));
+      }
+      seen.length = 0;
+    };
+
+    expect((await manager.redeem()).claimed).toEqual(["chan-a", "chan-c", "chan-d", "chan-e"]);
+    expect(claims()).toEqual([
+      ["chan-a", FLAGGED, "chan-c", "chan-d"],
+      ["chan-a"],
+      [FLAGGED],
+      ["chan-c"],
+      ["chan-d"],
+      ["chan-e"],
+    ]);
+
+    // The next pass packs the others and sends the refused channel alone,
+    // instead of letting it fail a batch again.
+    await newVouchers(4_000n);
+    expect((await manager.redeem()).claimed).toEqual(["chan-a", "chan-c", "chan-d", "chan-e"]);
+    expect(claims()).toEqual([["chan-a", "chan-c", "chan-d", "chan-e"], [FLAGGED]]);
+    expect(errors).toEqual(Array(2).fill("batch-settlement claim failed: ofac_sanctioned_address"));
+
+    // Once the facilitator accepts it, it is packed with the others again.
+    refusing = false;
+    seen.length = 0;
+    expect((await manager.redeem()).claimed).toEqual([FLAGGED]);
+    expect(claims()).toEqual([[FLAGGED]]);
+    await newVouchers(5_000n);
+    await manager.redeem();
+    expect(claims()).toEqual([["chan-a", FLAGGED, "chan-c", "chan-d"], ["chan-e"]]);
+  });
+
+  it("does not single out channels when the facilitator refuses every one of them", async () => {
+    const store = new MemoryChannelStore();
+    const ids = ["chan-a", "chan-b", "chan-c", "chan-d"];
+    for (const id of ids) await store.put(channel(id));
+    const seen: Payload[] = [];
+    const errors: string[] = [];
+    const manager = new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      readPayoutWatermark: async () => 3_000n,
+      receiverAuthorizer,
+      requirements: requirements(),
+      // A refusal of the request as a whole, not of one channel.
+      settle: async ({ payload }) => {
+        seen.push(payload as Payload);
+        return refusal(BatchError.FEE_PAYER_MISMATCH);
+      },
+      store,
+    });
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      seen.length = 0;
+      errors.length = 0;
+      expect(await manager.redeem()).toEqual({ claimed: [], distributed: [], sealed: [] });
+      // Each pass still starts from the full batch.
+      expect(seen.map(named)).toEqual([ids, ...ids.map(id => [id])]);
+      expect(errors).toEqual(
+        Array(4).fill(`batch-settlement claim failed: ${BatchError.FEE_PAYER_MISMATCH}`),
+      );
+    }
+  });
+
+  const unsplittable: [string, SettleResponse | Error][] = [
+    ["a pending broadcast", { ...refusal("settlement_pending"), transaction: "claim-tx" }],
+    ["a duplicate already in flight", refusal("duplicate_settlement")],
+    [
+      "a failure that names its transaction",
+      { ...refusal(BatchError.SETTLEMENT_SIMULATION), transaction: "claim-tx" },
+    ],
+    [
+      "a thrown pending broadcast",
+      new SettleError(500, { ...refusal("settlement_pending"), transaction: "claim-tx" }),
+    ],
+    ["a transport failure", new Error("fetch failed")],
+  ];
+
+  it.each(unsplittable)(
+    "keeps a batch whole after %s and still runs the rest of the pass",
+    async (_label, outcome) => {
+      const store = new MemoryChannelStore();
+      for (const id of ["chan-a", "chan-b", "chan-c", "chan-d", "chan-e"]) {
+        await store.put(channel(id));
+      }
+      const seen: Payload[] = [];
+      const errors: unknown[] = [];
+      const result = await new BatchChannelManager({
+        onError: error => errors.push(error),
+        readPayoutWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async ({ payload }) => {
+          const raw = payload as Payload;
+          seen.push(raw);
+          if (raw.type === "claim" && named(raw).includes("chan-a")) {
+            if (outcome instanceof Error) throw outcome;
+            return outcome;
+          }
+          return bound(raw);
+        },
+        store,
+      }).redeem();
+
+      // Splitting would put the same vouchers into new requests while the
+      // first one may still land, so the batch waits for the next pass whole.
+      expect(seen.map(raw => [raw.type, named(raw)])).toEqual([
+        ["claim", ["chan-a", "chan-b", "chan-c", "chan-d"]],
+        ["claim", ["chan-e"]],
+        ["settle", ["chan-e"]],
+      ]);
+      expect(result).toEqual({ claimed: ["chan-e"], distributed: ["chan-e"], sealed: [] });
+      expect(errors).toHaveLength(1);
+      expect((await store.get("chan-a"))?.settled).toBe(0n);
+    },
+  );
+
+  it("keeps claiming and paying out when a seal is refused with a thrown error", async () => {
+    const store = new MemoryChannelStore();
+    // A real 32-byte key: the close authorization binds the channel PDA.
+    const closing = (await generateKeyPairSigner()).address;
+    await store.put(channel("chan-a"));
+    await store.put(channel(closing, { status: "closing" }));
+    await store.put(channel("chan-c"));
+    const seen: string[] = [];
+    const errors: string[] = [];
+    const result = await new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      readPayoutWatermark: async () => 3_000n,
+      receiverAuthorizer,
+      requirements: requirements(),
+      settle: async ({ payload }) => {
+        const raw = payload as Payload;
+        seen.push(raw.type);
+        if (raw.type === "seal") throw new SettleError(403, refusal());
+        return bound(raw);
+      },
+      store,
+    }).redeem();
+
+    expect(result).toEqual({
+      claimed: ["chan-a", "chan-c"],
+      distributed: ["chan-a", "chan-c"],
+      sealed: [],
+    });
+    expect(seen).toEqual(["claim", "seal", "settle"]);
+    expect(errors).toEqual([`batch-settlement seal failed: ${SANCTIONED}`]);
+    expect(await store.get(closing)).toMatchObject({ settled: 0n, status: "closing" });
+  });
+
+  it("pays out every other channel when one distribute is refused with a thrown error", async () => {
+    const store = new MemoryChannelStore();
+    const ids = ["chan-a", FLAGGED, "chan-c", "chan-d", "chan-e"];
+    // Claimed before the refusal started; only the payout is left.
+    for (const id of ids) {
+      await store.put(channel(id, { highestVoucherSignature: undefined, settled: 3_000n }));
+    }
+    const seen: Payload[] = [];
+    const errors: string[] = [];
+    const manager = new BatchChannelManager({
+      onError: error => errors.push((error as Error).message),
+      readPayoutWatermark: async () => 3_000n,
+      receiverAuthorizer,
+      requirements: requirements(),
+      settle: async ({ payload }) => {
+        const raw = payload as Payload;
+        seen.push(raw);
+        if (named(raw).includes(FLAGGED)) throw new SettleError(403, refusal());
+        return bound(raw);
+      },
+      store,
+    });
+
+    expect((await manager.redeem()).distributed).toEqual(["chan-a", "chan-c", "chan-d", "chan-e"]);
+    expect(seen.map(named)).toEqual([
+      ["chan-a", FLAGGED, "chan-c", "chan-d"],
+      ["chan-a"],
+      [FLAGGED],
+      ["chan-c"],
+      ["chan-d"],
+      ["chan-e"],
+    ]);
+    expect(errors).toEqual([`batch-settlement distribute failed: ${SANCTIONED}`]);
+    expect((await store.get(FLAGGED))?.payoutWatermark).toBe(0n);
+
+    // The next pass sends the refused channel on its own.
+    seen.length = 0;
+    await manager.redeem();
+    expect(seen.map(named)).toEqual([[FLAGGED]]);
   });
 });

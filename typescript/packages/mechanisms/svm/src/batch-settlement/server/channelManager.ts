@@ -11,12 +11,14 @@ import { address, type MessagePartialSigner } from "@solana/kit";
 import { getChannelDecoder } from "../../payment-channels/generated/accounts/channel";
 import { PAYMENT_CHANNELS_PROGRAM_ID } from "../../payment-channels/onchain";
 import { createRpcClient } from "../../utils";
-import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
+import { SettleError, type PaymentRequirements, type SettleResponse } from "@x402/core/types";
 
+import { ErrSettlementPending } from "../../exact/facilitator/errors";
 import { signCloseAuthorization } from "../closeAuthorization";
 import { BatchError } from "../errors";
 import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "../facilitator/constants";
 import { BATCH_SETTLEMENT_SCHEME, type BatchSealPayload } from "../types";
+import { CHANNEL_BUSY } from "./constants";
 import type { ChannelState, ChannelStore } from "./types";
 
 /**
@@ -25,6 +27,15 @@ import type { ChannelState, ChannelStore } from "./types";
  */
 /** Channels per claim or settle request when the facilitator advertises no capacity. */
 const DEFAULT_CHANNELS_PER_BATCH = 4;
+
+/**
+ * Failure reasons that mean the same request may still land: the facilitator
+ * broadcast it (`settlement_pending`) or is already working on it
+ * (`duplicate_settlement`). Such a batch is resubmitted unchanged on a later
+ * pass, so the facilitator reconciles the transaction it already has, and is
+ * never split into new requests for the same vouchers.
+ */
+const RETRY_UNCHANGED_REASONS: ReadonlySet<string> = new Set([ErrSettlementPending, CHANNEL_BUSY]);
 
 /** Submits a server-authored redemption payload; normally a facilitator. */
 export type RedemptionSettler = (
@@ -81,7 +92,11 @@ export interface BatchChannelManagerConfig {
   onSettle?: ((result: SettleResult) => void) | undefined;
   /** Fires after a successful `seal` on a closing channel. */
   onSeal?: ((result: SealResult) => void) | undefined;
-  /** Reports a pass that failed, so an operator can see it. */
+  /**
+   * Reports a redemption request or pass that failed, so an operator can see
+   * it. A failed or refused request leaves its channels for the next pass and
+   * the rest of the pass continues.
+   */
   onError?: ((error: unknown) => void) | undefined;
   /**
    * Receiver-authorizer key advertised as `extra.receiverAuthorizer`. For a
@@ -115,6 +130,13 @@ export class BatchChannelManager {
   private passInFlight: Promise<unknown> = Promise.resolve();
   private running = false;
   private readonly graceElapsedReported = new Set<string>();
+  /**
+   * Channels the facilitator refused on their own while the rest of their
+   * batch was not, per step. Later passes submit them alone until a request
+   * for them is accepted, so a channel the facilitator keeps refusing does not
+   * fail a batch of other channels every pass.
+   */
+  private readonly isolated = { claim: new Set<string>(), settle: new Set<string>() };
 
   /**
    * Build a worker over a store and a way to submit redemption payloads.
@@ -209,7 +231,7 @@ export class BatchChannelManager {
     const claimable = unclaimed.filter(channel => channel.status === "open");
     const closing = unclaimed.filter(channel => channel.status === "closing");
     const result = { claimed: [] as string[], sealed: [] as string[] };
-    for (const batch of chunk(claimable, this.batchSize("maxClaimChannels"))) {
+    for (const batch of this.batches(claimable, "claim")) {
       await this.claimBatch(batch, result);
     }
     for (const channel of closing) {
@@ -225,31 +247,29 @@ export class BatchChannelManager {
    * @param result - Accumulates the pass outcome
    * @param result.claimed - Channels whose claim landed
    * @param result.sealed - Closing channels finalized through `seal`
+   * @param refusedAlone - Collects this channel when a one-channel batch is refused outright
    */
   private async claimBatch(
     batch: ChannelState[],
     result: { claimed: string[]; sealed: string[] },
+    refusedAlone?: string[],
   ): Promise<void> {
-    const response = await this.config.settle(
-      {
-        accepted: this.config.requirements,
-        payload: {
-          claims: batch.map(channel => ({
-            channelConfig: channel.channelConfig,
-            channelId: channel.channelId,
-            voucher: {
-              channelId: channel.channelId,
-              expiresAt: channel.highestVoucherExpiresAt ?? 0,
-              maxClaimableAmount: channel.signedMaxClaimable.toString(),
-              signature: channel.highestVoucherSignature!,
-            },
-          })),
-          type: "claim",
+    const response = await this.submit({
+      claims: batch.map(channel => ({
+        channelConfig: channel.channelConfig,
+        channelId: channel.channelId,
+        voucher: {
+          channelId: channel.channelId,
+          expiresAt: channel.highestVoucherExpiresAt ?? 0,
+          maxClaimableAmount: channel.signedMaxClaimable.toString(),
+          signature: channel.highestVoucherSignature!,
         },
-        x402Version: 2,
-      },
-      this.config.requirements,
-    );
+      })),
+      type: "claim",
+    });
+    // Unreachable or unreadable facilitator: `submit` reported it, and the
+    // batch is left whole for the next pass.
+    if (response === undefined) return;
     if (!response.success) {
       if (response.errorReason === BatchError.CHANNEL_CLOSING) {
         // The payer started a forced close on at least one channel in the
@@ -263,6 +283,19 @@ export class BatchChannelManager {
         const channel = batch[0]!;
         if (await this.seal(channel)) result.sealed.push(channel.channelId);
         return;
+      }
+      if (refusedBeforeBroadcast(response)) {
+        // The facilitator refused the request outright: a policy hook, or one
+        // voucher it rejects. One such channel must not hold back the others
+        // packed with it, so claim each alone and let the refusal stop only
+        // the channel that caused it.
+        if (batch.length > 1) {
+          const refused: string[] = [];
+          for (const channel of batch) await this.claimBatch([channel], result, refused);
+          this.isolate("claim", batch, refused);
+          return;
+        }
+        refusedAlone?.push(batch[0]!.channelId);
       }
       // A batch that did not land leaves its channels for the next pass;
       // the watermark is monotonic, so a repeat is harmless.
@@ -310,6 +343,8 @@ export class BatchChannelManager {
       }
       let claimedInBatch = 0;
       for (const channel of batch) {
+        // Accepted: pack it with the others again from the next pass on.
+        this.isolated.claim.delete(channel.channelId);
         let settled = channel.signedMaxClaimable;
         if (accepts === undefined) {
           try {
@@ -407,10 +442,8 @@ export class BatchChannelManager {
       },
       ...(closeAuthorization ? { closeAuthorization } : {}),
     };
-    const response = await this.config.settle(
-      { accepted: this.config.requirements, payload, x402Version: 2 },
-      this.config.requirements,
-    );
+    const response = await this.submit(payload);
+    if (response === undefined) return false;
     if (!response.success || response.network !== network) {
       this.config.onError?.(
         new Error(`${BATCH_SETTLEMENT_SCHEME} seal failed: ${response.errorReason ?? "unknown"}`),
@@ -443,78 +476,168 @@ export class BatchChannelManager {
       channel => channel.status === "open" && channel.settled > channel.payoutWatermark,
     );
     const distributed: string[] = [];
-    for (const batch of chunk(payable, this.batchSize("maxSettleChannels"))) {
-      const response = await this.config.settle(
-        {
-          accepted: this.config.requirements,
-          payload: {
-            channels: batch.map(channel => ({
-              channelConfig: channel.channelConfig,
-              channelId: channel.channelId,
-            })),
-            type: "settle",
-          },
-          x402Version: 2,
-        },
-        this.config.requirements,
-      );
-      if (!response.success) {
-        this.config.onError?.(
-          new Error(
-            `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-          ),
-        );
-        continue;
-      }
-      if (response.network !== this.config.requirements.network) {
-        this.config.onError?.(
-          new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
-        );
-        continue;
-      }
-      // `extra.channels[]` is the reference facilitator's addition, not a
-      // spec field; when present it must name exactly this batch. The paid
-      // watermark is always reconciled from the chain below either way.
-      const channels = response.extra?.channels;
-      if (
-        channels !== undefined &&
-        (!Array.isArray(channels) ||
-          channels.length !== batch.length ||
-          new Set(channels).size !== channels.length ||
-          batch.some(channel => !channels.includes(channel.channelId)))
-      ) {
-        this.config.onError?.(
-          new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
-        );
-        continue;
-      }
-      let distributedInBatch = 0;
-      for (const channel of batch) {
-        try {
-          // This response may recover an earlier sweep. A channel ID and a
-          // successful signature do not prove that today's full claim was paid.
-          const paid = await this.readPayoutWatermark(channel.channelId);
-          if (paid === undefined || paid < 0n || paid > channel.deposit)
-            throw new Error("confirmed payout watermark unavailable or invalid");
-          await this.record(channel.channelId, state => ({
-            ...state,
-            onchainSyncedAt: Date.now(),
-            payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
-          }));
-          if (paid >= channel.settled) {
-            distributed.push(channel.channelId);
-            distributedInBatch++;
-          }
-        } catch (error) {
-          // Leave the balance payable for the next pass, including after restart.
-          this.config.onError?.(error);
-        }
-      }
-      if (distributedInBatch > 0) {
-        this.config.onSettle?.({ transaction: response.transaction ?? "" });
-      }
+    for (const batch of this.batches(payable, "settle")) {
+      await this.distributeBatch(batch, distributed);
     }
     return distributed;
+  }
+
+  /**
+   * Distribute one batch, retrying its channels one by one if the facilitator
+   * refuses it outright.
+   *
+   * @param batch - Channels packed into one distribute transaction
+   * @param distributed - Accumulates the channels whose distribution landed
+   * @param refusedAlone - Collects this channel when a one-channel batch is refused outright
+   */
+  private async distributeBatch(
+    batch: ChannelState[],
+    distributed: string[],
+    refusedAlone?: string[],
+  ): Promise<void> {
+    const response = await this.submit({
+      channels: batch.map(channel => ({
+        channelConfig: channel.channelConfig,
+        channelId: channel.channelId,
+      })),
+      type: "settle",
+    });
+    if (response === undefined) return;
+    if (!response.success) {
+      if (refusedBeforeBroadcast(response)) {
+        // As for claims: a channel the facilitator refuses must not hold back
+        // the payout of the others packed with it.
+        if (batch.length > 1) {
+          const refused: string[] = [];
+          for (const channel of batch) await this.distributeBatch([channel], distributed, refused);
+          this.isolate("settle", batch, refused);
+          return;
+        }
+        refusedAlone?.push(batch[0]!.channelId);
+      }
+      this.config.onError?.(
+        new Error(
+          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+        ),
+      );
+      return;
+    }
+    if (response.network !== this.config.requirements.network) {
+      this.config.onError?.(
+        new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
+      );
+      return;
+    }
+    // `extra.channels[]` is the reference facilitator's addition, not a
+    // spec field; when present it must name exactly this batch. The paid
+    // watermark is always reconciled from the chain below either way.
+    const channels = response.extra?.channels;
+    if (
+      channels !== undefined &&
+      (!Array.isArray(channels) ||
+        channels.length !== batch.length ||
+        new Set(channels).size !== channels.length ||
+        batch.some(channel => !channels.includes(channel.channelId)))
+    ) {
+      this.config.onError?.(
+        new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
+      );
+      return;
+    }
+    let distributedInBatch = 0;
+    for (const channel of batch) {
+      // Accepted: pack it with the others again from the next pass on.
+      this.isolated.settle.delete(channel.channelId);
+      try {
+        // This response may recover an earlier sweep. A channel ID and a
+        // successful signature do not prove that today's full claim was paid.
+        const paid = await this.readPayoutWatermark(channel.channelId);
+        if (paid === undefined || paid < 0n || paid > channel.deposit)
+          throw new Error("confirmed payout watermark unavailable or invalid");
+        await this.record(channel.channelId, state => ({
+          ...state,
+          onchainSyncedAt: Date.now(),
+          payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
+        }));
+        if (paid >= channel.settled) {
+          distributed.push(channel.channelId);
+          distributedInBatch++;
+        }
+      } catch (error) {
+        // Leave the balance payable for the next pass, including after restart.
+        this.config.onError?.(error);
+      }
+    }
+    if (distributedInBatch > 0) {
+      this.config.onSettle?.({ transaction: response.transaction ?? "" });
+    }
+  }
+
+  /**
+   * Submit one server-authored redemption payload.
+   *
+   * `HTTPFacilitatorClient.settle` throws a `SettleError` for any non-2xx
+   * answer that carries a settle response, such as a 403 from a policy hook.
+   * That is turned back into the failed response it carries, so one refused
+   * request is handled like any other failure instead of ending the pass.
+   * Anything else thrown (a timeout, a network error, an unreadable body)
+   * says nothing about whether the request reached the chain: it is reported
+   * here and `undefined` is returned, and the caller leaves the batch whole
+   * for the next pass.
+   *
+   * @param payload - The claim, settle or seal payload
+   * @returns The facilitator's response, or undefined when there was none
+   */
+  private async submit(payload: unknown): Promise<SettleResponse | undefined> {
+    try {
+      return await this.config.settle(
+        { accepted: this.config.requirements, payload, x402Version: 2 },
+        this.config.requirements,
+      );
+    } catch (error) {
+      if (isSettleError(error)) {
+        return {
+          errorReason: error.errorReason,
+          network: error.network,
+          success: false,
+          transaction: error.transaction ?? "",
+        };
+      }
+      this.config.onError?.(error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Remember the channels a split batch narrowed a refusal down to, so later
+   * passes submit them alone. When every channel was refused, the refusal
+   * belonged to the request (a facilitator outage or misconfiguration), not to
+   * one channel, and nothing is remembered.
+   *
+   * @param step - `claim` or `settle` (distribute)
+   * @param batch - The batch that was split
+   * @param refused - Its channels the facilitator refused again on their own
+   */
+  private isolate(step: "claim" | "settle", batch: ChannelState[], refused: string[]): void {
+    if (refused.length === batch.length) return;
+    for (const channelId of refused) this.isolated[step].add(channelId);
+  }
+
+  /**
+   * Pack channels into redemption batches: the others in batches of the
+   * advertised capacity, then each channel the facilitator refused on its own
+   * in an earlier pass, alone.
+   *
+   * @param channels - Channels to redeem in this step
+   * @param step - `claim` or `settle` (distribute)
+   * @returns The batches, in submission order
+   */
+  private batches(channels: ChannelState[], step: "claim" | "settle"): ChannelState[][] {
+    const isolated = this.isolated[step];
+    const packable = channels.filter(channel => !isolated.has(channel.channelId));
+    const alone = channels.filter(channel => isolated.has(channel.channelId));
+    const size = this.batchSize(step === "claim" ? "maxClaimChannels" : "maxSettleChannels");
+    return [...chunk(packable, size), ...alone.map(channel => [channel])];
   }
 
   /**
@@ -598,6 +721,32 @@ export class BatchChannelManager {
         : DEFAULT_CHANNELS_PER_BATCH;
     return Math.min(capacity, Math.max(1, this.config.maxChannelsPerBatch ?? capacity));
   }
+}
+
+/**
+ * Whether a failed redemption was refused before anything was broadcast, so
+ * its channels can safely be resubmitted in smaller batches. A failure that
+ * names a transaction, or says the same request is pending or already in
+ * flight, may still land and is left whole.
+ *
+ * @param response - The failed settle response
+ * @returns Whether the batch can be split
+ */
+function refusedBeforeBroadcast(response: SettleResponse): boolean {
+  return !response.transaction && !RETRY_UNCHANGED_REASONS.has(response.errorReason ?? "");
+}
+
+/**
+ * Whether a thrown value is a facilitator's failed settle response.
+ *
+ * Matched by name as well, since the facilitator client may come from another
+ * copy of `@x402/core` than this package's.
+ *
+ * @param error - The thrown value
+ * @returns Whether it carries a settle response
+ */
+function isSettleError(error: unknown): error is SettleError {
+  return error instanceof SettleError || (error instanceof Error && error.name === "SettleError");
 }
 
 /**
