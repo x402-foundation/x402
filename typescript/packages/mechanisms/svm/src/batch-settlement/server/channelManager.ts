@@ -49,6 +49,8 @@ interface RedemptionAnswer {
   response: SettleResponse;
   /** HTTP status when the answer was thrown as a `SettleError`; absent when it was returned. */
   status?: number | undefined;
+  /** The `SettleError` the answer was thrown as, kept for the report. */
+  thrown?: SettleError | undefined;
 }
 
 /** Submits a server-authored redemption payload; normally a facilitator. */
@@ -270,7 +272,7 @@ export class BatchChannelManager {
     result: { claimed: string[]; sealed: string[] },
     refusedAlone?: string[],
   ): Promise<void> {
-    const { response, status } = await this.submit({
+    const answer = await this.submit({
       claims: batch.map(channel => ({
         channelConfig: channel.channelConfig,
         channelId: channel.channelId,
@@ -283,7 +285,9 @@ export class BatchChannelManager {
       })),
       type: "claim",
     });
+    const { response, status } = answer;
     if (!response.success) {
+      const failed = `${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`;
       if (response.errorReason === BatchError.CHANNEL_CLOSING) {
         // The payer started a forced close on at least one channel in the
         // batch, so program `settle` is no longer available for it. Claim the
@@ -305,6 +309,9 @@ export class BatchChannelManager {
         if (batch.length > 1) {
           const refused: string[] = [];
           for (const channel of batch) await this.claimBatch([channel], result, refused);
+          // No channel was refused on its own, so the refusal was about the
+          // batch as a whole: report it once.
+          if (refused.length === 0) this.config.onError?.(failure(failed, answer));
           this.isolate("claim", batch, refused);
           return;
         }
@@ -312,9 +319,7 @@ export class BatchChannelManager {
       }
       // A batch that did not land leaves its channels for the next pass;
       // the watermark is monotonic, so a repeat is harmless.
-      this.config.onError?.(
-        new Error(`${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`),
-      );
+      this.config.onError?.(failure(failed, answer));
       return;
     }
     if (response.network !== this.config.requirements.network) {
@@ -455,10 +460,14 @@ export class BatchChannelManager {
       },
       ...(closeAuthorization ? { closeAuthorization } : {}),
     };
-    const { response } = await this.submit(payload);
+    const answer = await this.submit(payload);
+    const { response } = answer;
     if (!response.success || response.network !== network) {
       this.config.onError?.(
-        new Error(`${BATCH_SETTLEMENT_SCHEME} seal failed: ${response.errorReason ?? "unknown"}`),
+        failure(
+          `${BATCH_SETTLEMENT_SCHEME} seal failed: ${response.errorReason ?? "unknown"}`,
+          answer,
+        ),
       );
       return false;
     }
@@ -507,30 +516,29 @@ export class BatchChannelManager {
     distributed: string[],
     refusedAlone?: string[],
   ): Promise<void> {
-    const { response, status } = await this.submit({
+    const answer = await this.submit({
       channels: batch.map(channel => ({
         channelConfig: channel.channelConfig,
         channelId: channel.channelId,
       })),
       type: "settle",
     });
+    const { response, status } = answer;
     if (!response.success) {
+      const failed = `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`;
       if (refusedOutright(response, status)) {
         // As for claims: a channel the facilitator refuses must not hold back
         // the payout of the others packed with it.
         if (batch.length > 1) {
           const refused: string[] = [];
           for (const channel of batch) await this.distributeBatch([channel], distributed, refused);
+          if (refused.length === 0) this.config.onError?.(failure(failed, answer));
           this.isolate("settle", batch, refused);
           return;
         }
         refusedAlone?.push(batch[0]!.channelId);
       }
-      this.config.onError?.(
-        new Error(
-          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-        ),
-      );
+      this.config.onError?.(failure(failed, answer));
       return;
     }
     if (response.network !== this.config.requirements.network) {
@@ -616,6 +624,7 @@ export class BatchChannelManager {
           transaction: error.transaction ?? "",
         },
         status: error.statusCode,
+        thrown: error,
       };
     }
   }
@@ -753,6 +762,19 @@ function refusedOutright(response: SettleResponse, status: number | undefined): 
   return (
     status === undefined || (status >= 400 && status < 500 && !RETRY_LATER_STATUSES.has(status))
   );
+}
+
+/**
+ * The error reported for a failed request. A thrown `SettleError` is kept as
+ * its `cause`, so the facilitator's message, status and payer reach `onError`.
+ *
+ * @param message - What failed and why
+ * @param answer - The facilitator's answer
+ * @returns The error to report
+ */
+function failure(message: string, answer: RedemptionAnswer): Error {
+  const error = new Error(message);
+  return answer.thrown ? Object.assign(error, { cause: answer.thrown }) : error;
 }
 
 /**
