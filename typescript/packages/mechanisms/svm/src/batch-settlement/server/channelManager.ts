@@ -31,11 +31,25 @@ const DEFAULT_CHANNELS_PER_BATCH = 4;
 /**
  * Failure reasons that mean the same request may still land: the facilitator
  * broadcast it (`settlement_pending`) or is already working on it
- * (`duplicate_settlement`). Such a batch is resubmitted unchanged on a later
- * pass, so the facilitator reconciles the transaction it already has, and is
- * never split into new requests for the same vouchers.
+ * (`duplicate_settlement`). Such a batch is not split into new requests for
+ * the same vouchers; it is left for a later pass.
  */
 const RETRY_UNCHANGED_REASONS: ReadonlySet<string> = new Set([ErrSettlementPending, CHANNEL_BUSY]);
+
+/**
+ * 4xx statuses that ask the client to retry later rather than refuse the
+ * request: 408 Request Timeout and 425 Too Early (RFC 9110 15.5.9, RFC 8470),
+ * 429 Too Many Requests (RFC 6585). With every 5xx, they are not evidence that
+ * nothing was broadcast, so a batch answered with one is not split.
+ */
+const RETRY_LATER_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
+
+/** A facilitator's answer to one redemption request. */
+interface RedemptionAnswer {
+  response: SettleResponse;
+  /** HTTP status when the answer was thrown as a `SettleError`; absent when it was returned. */
+  status?: number | undefined;
+}
 
 /** Submits a server-authored redemption payload; normally a facilitator. */
 export type RedemptionSettler = (
@@ -94,8 +108,10 @@ export interface BatchChannelManagerConfig {
   onSeal?: ((result: SealResult) => void) | undefined;
   /**
    * Reports a redemption request or pass that failed, so an operator can see
-   * it. A failed or refused request leaves its channels for the next pass and
-   * the rest of the pass continues.
+   * it. When the facilitator answers a request with a failure or a refusal,
+   * the request's channels are left for the next pass and the rest of the
+   * pass continues. A request that gets no answer (a timeout, a network
+   * error) still ends the pass and rejects `redeem()`.
    */
   onError?: ((error: unknown) => void) | undefined;
   /**
@@ -254,7 +270,7 @@ export class BatchChannelManager {
     result: { claimed: string[]; sealed: string[] },
     refusedAlone?: string[],
   ): Promise<void> {
-    const response = await this.submit({
+    const { response, status } = await this.submit({
       claims: batch.map(channel => ({
         channelConfig: channel.channelConfig,
         channelId: channel.channelId,
@@ -267,9 +283,6 @@ export class BatchChannelManager {
       })),
       type: "claim",
     });
-    // Unreachable or unreadable facilitator: `submit` reported it, and the
-    // batch is left whole for the next pass.
-    if (response === undefined) return;
     if (!response.success) {
       if (response.errorReason === BatchError.CHANNEL_CLOSING) {
         // The payer started a forced close on at least one channel in the
@@ -284,7 +297,7 @@ export class BatchChannelManager {
         if (await this.seal(channel)) result.sealed.push(channel.channelId);
         return;
       }
-      if (refusedBeforeBroadcast(response)) {
+      if (refusedOutright(response, status)) {
         // The facilitator refused the request outright: a policy hook, or one
         // voucher it rejects. One such channel must not hold back the others
         // packed with it, so claim each alone and let the refusal stop only
@@ -442,8 +455,7 @@ export class BatchChannelManager {
       },
       ...(closeAuthorization ? { closeAuthorization } : {}),
     };
-    const response = await this.submit(payload);
-    if (response === undefined) return false;
+    const { response } = await this.submit(payload);
     if (!response.success || response.network !== network) {
       this.config.onError?.(
         new Error(`${BATCH_SETTLEMENT_SCHEME} seal failed: ${response.errorReason ?? "unknown"}`),
@@ -495,16 +507,15 @@ export class BatchChannelManager {
     distributed: string[],
     refusedAlone?: string[],
   ): Promise<void> {
-    const response = await this.submit({
+    const { response, status } = await this.submit({
       channels: batch.map(channel => ({
         channelConfig: channel.channelConfig,
         channelId: channel.channelId,
       })),
       type: "settle",
     });
-    if (response === undefined) return;
     if (!response.success) {
-      if (refusedBeforeBroadcast(response)) {
+      if (refusedOutright(response, status)) {
         // As for claims: a channel the facilitator refuses must not hold back
         // the payout of the others packed with it.
         if (batch.length > 1) {
@@ -578,33 +589,34 @@ export class BatchChannelManager {
    *
    * `HTTPFacilitatorClient.settle` throws a `SettleError` for any non-2xx
    * answer that carries a settle response, such as a 403 from a policy hook.
-   * That is turned back into the failed response it carries, so one refused
-   * request is handled like any other failure instead of ending the pass.
-   * Anything else thrown (a timeout, a network error, an unreadable body)
-   * says nothing about whether the request reached the chain: it is reported
-   * here and `undefined` is returned, and the caller leaves the batch whole
-   * for the next pass.
+   * That answer is turned back into the failed response it carries, so one
+   * refused request is handled like any other failure instead of ending the
+   * pass. Anything else thrown (a timeout, a network error, an unreadable
+   * body) means there was no answer at all; it is rethrown and ends the pass,
+   * as before.
    *
    * @param payload - The claim, settle or seal payload
-   * @returns The facilitator's response, or undefined when there was none
+   * @returns The facilitator's answer, with its HTTP status when it was thrown
    */
-  private async submit(payload: unknown): Promise<SettleResponse | undefined> {
+  private async submit(payload: unknown): Promise<RedemptionAnswer> {
     try {
-      return await this.config.settle(
-        { accepted: this.config.requirements, payload, x402Version: 2 },
-        this.config.requirements,
-      );
+      return {
+        response: await this.config.settle(
+          { accepted: this.config.requirements, payload, x402Version: 2 },
+          this.config.requirements,
+        ),
+      };
     } catch (error) {
-      if (isSettleError(error)) {
-        return {
+      if (!isSettleError(error)) throw error;
+      return {
+        response: {
           errorReason: error.errorReason,
           network: error.network,
           success: false,
           transaction: error.transaction ?? "",
-        };
-      }
-      this.config.onError?.(error);
-      return undefined;
+        },
+        status: error.statusCode,
+      };
     }
   }
 
@@ -724,16 +736,23 @@ export class BatchChannelManager {
 }
 
 /**
- * Whether a failed redemption was refused before anything was broadcast, so
- * its channels can safely be resubmitted in smaller batches. A failure that
- * names a transaction, or says the same request is pending or already in
- * flight, may still land and is left whole.
+ * Whether the facilitator refused a redemption outright, before anything was
+ * broadcast, so its channels can safely be resubmitted in smaller batches.
+ * A failure that names a transaction, says the same request is pending or
+ * already in flight, or was thrown with a 5xx or retry-later status may
+ * still land or pass on its own, and is not split.
  *
  * @param response - The failed settle response
+ * @param status - HTTP status of a thrown `SettleError`; absent for a returned response
  * @returns Whether the batch can be split
  */
-function refusedBeforeBroadcast(response: SettleResponse): boolean {
-  return !response.transaction && !RETRY_UNCHANGED_REASONS.has(response.errorReason ?? "");
+function refusedOutright(response: SettleResponse, status: number | undefined): boolean {
+  if (response.transaction || RETRY_UNCHANGED_REASONS.has(response.errorReason ?? "")) {
+    return false;
+  }
+  return (
+    status === undefined || (status >= 400 && status < 500 && !RETRY_LATER_STATUSES.has(status))
+  );
 }
 
 /**

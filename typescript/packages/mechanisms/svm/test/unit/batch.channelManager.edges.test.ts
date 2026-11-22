@@ -648,7 +648,10 @@ describe("batch-settlement redemption worker when the facilitator refuses a chan
       "a thrown pending broadcast",
       new SettleError(500, { ...refusal("settlement_pending"), transaction: "claim-tx" }),
     ],
-    ["a transport failure", new Error("fetch failed")],
+    ...[500, 503, 408, 425, 429].map((status): [string, SettleError] => [
+      `a thrown ${status}`,
+      new SettleError(status, refusal("unexpected_settle_error")),
+    ]),
   ];
 
   it.each(unsplittable)(
@@ -730,17 +733,18 @@ describe("batch-settlement redemption worker when the facilitator refuses a chan
     for (const id of ids) {
       await store.put(channel(id, { highestVoucherSignature: undefined, settled: 3_000n }));
     }
+    let refusing = true;
     const seen: Payload[] = [];
     const errors: string[] = [];
     const manager = new BatchChannelManager({
       onError: error => errors.push((error as Error).message),
-      readPayoutWatermark: async () => 3_000n,
+      readPayoutWatermark: async id => (await store.get(id))?.settled,
       receiverAuthorizer,
       requirements: requirements(),
       settle: async ({ payload }) => {
         const raw = payload as Payload;
         seen.push(raw);
-        if (named(raw).includes(FLAGGED)) throw new SettleError(403, refusal());
+        if (refusing && named(raw).includes(FLAGGED)) throw new SettleError(403, refusal());
         return bound(raw);
       },
       store,
@@ -762,5 +766,54 @@ describe("batch-settlement redemption worker when the facilitator refuses a chan
     seen.length = 0;
     await manager.redeem();
     expect(seen.map(named)).toEqual([[FLAGGED]]);
+
+    // Once the facilitator accepts it, it is packed with the others again.
+    refusing = false;
+    seen.length = 0;
+    expect((await manager.redeem()).distributed).toEqual([FLAGGED]);
+    expect(seen.map(named)).toEqual([[FLAGGED]]);
+    for (const id of ids) {
+      await store.update(id, state => ({ ...state!, settled: 4_000n }));
+    }
+    seen.length = 0;
+    await manager.redeem();
+    expect(seen.map(named)).toEqual([["chan-a", FLAGGED, "chan-c", "chan-d"], ["chan-e"]]);
   });
+
+  it.each(["claim", "seal", "settle"])(
+    "still ends the pass when a %s request gets no answer at all",
+    async step => {
+      const store = new MemoryChannelStore();
+      // A real 32-byte key: the close authorization binds the channel PDA.
+      const closing = (await generateKeyPairSigner()).address;
+      await store.put(channel("chan-a"));
+      await store.put(channel(closing, { status: "closing" }));
+      // Claimed earlier; only the payout is left.
+      await store.put(
+        channel("chan-paid", { highestVoucherSignature: undefined, settled: 3_000n }),
+      );
+      const seen: string[] = [];
+      const errors: unknown[] = [];
+      const manager = new BatchChannelManager({
+        onError: error => errors.push(error),
+        readPayoutWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async ({ payload }) => {
+          const raw = payload as Payload;
+          seen.push(raw.type);
+          // A timeout or a network error: nothing says whether it was sent.
+          if (raw.type === step) throw new Error("fetch failed");
+          return bound(raw);
+        },
+        store,
+      });
+
+      await expect(manager.redeem()).rejects.toThrow("fetch failed");
+      // Nothing after the unanswered request is attempted in this pass.
+      const order = ["claim", "seal", "settle"];
+      expect(seen).toEqual(order.slice(0, order.indexOf(step) + 1));
+      expect(errors).toEqual([]);
+    },
+  );
 });
