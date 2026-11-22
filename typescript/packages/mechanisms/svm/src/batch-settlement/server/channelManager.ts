@@ -302,6 +302,18 @@ export class BatchChannelManager {
     const { response, status } = answer;
     if (!response.success) {
       const failed = `${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`;
+      if (response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH) {
+        // The chain already holds a voucher this batch names, most likely
+        // from an earlier request that landed without this worker seeing it
+        // confirmed. Record what the chain shows and claim the rest again;
+        // each retry is smaller, so this ends.
+        const behind = await this.resyncClaim(batch);
+        if (behind.length < batch.length) {
+          this.unresolved.claim.delete(batchKey(batch));
+          if (behind.length > 0) await this.claimBatch(behind, result, refusedAlone);
+          return;
+        }
+      }
       const outright = refusedOutright(response, status);
       // Answered for good: these channels need not travel together again.
       if (outright || response.errorReason === BatchError.CHANNEL_CLOSING) {
@@ -415,6 +427,38 @@ export class BatchChannelManager {
         });
       }
     }
+  }
+
+  /**
+   * Record each channel of a batch whose voucher the chain has already
+   * settled. Like a confirmed claim, the confirmed `settled` watermark is
+   * what gets recorded. These channels were claimed by an earlier request, so
+   * they do not count as claimed in this pass or reach `onClaim`.
+   *
+   * @param batch - Channels whose claim was answered `cumulative_amount_mismatch`
+   * @returns The channels the chain shows still behind their voucher
+   */
+  private async resyncClaim(batch: ChannelState[]): Promise<ChannelState[]> {
+    const behind: ChannelState[] = [];
+    for (const channel of batch) {
+      let observed: bigint | undefined;
+      try {
+        observed = await this.readSettledWatermark(channel.channelId);
+      } catch (error) {
+        this.config.onError?.(error);
+      }
+      if (observed === undefined || observed < channel.signedMaxClaimable) {
+        behind.push(channel);
+        continue;
+      }
+      const settled = observed;
+      await this.record(channel.channelId, state => ({
+        ...state,
+        onchainSyncedAt: Date.now(),
+        settled: state.settled > settled ? state.settled : settled,
+      }));
+    }
+    return behind;
   }
 
   /**
@@ -549,6 +593,17 @@ export class BatchChannelManager {
     const { response, status } = answer;
     if (!response.success) {
       const failed = `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`;
+      // Nothing in the batch is left to pay out, most likely because an
+      // earlier distribute landed without this worker seeing it confirmed.
+      // Channels the chain shows paid up need nothing more; as with claims,
+      // they do not count as distributed in this pass or reach `onSettle`.
+      if (
+        response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH &&
+        (await this.recordPayouts(batch)).length > 0
+      ) {
+        this.unresolved.settle.delete(batchKey(batch));
+        return;
+      }
       if (refusedOutright(response, status)) {
         this.unresolved.settle.delete(batchKey(batch));
         // As for claims: a channel the facilitator refuses must not hold back
@@ -590,13 +645,27 @@ export class BatchChannelManager {
     // Accepted and bound to this batch: each channel's payout is reconciled
     // from the chain below, and a balance still owed is re-packed freely.
     this.unresolved.settle.delete(batchKey(batch));
-    let distributedInBatch = 0;
+    // Accepted: pack these with the others again from the next pass on.
+    for (const channel of batch) this.isolated.settle.delete(channel.channelId);
+    // This response may recover an earlier sweep. A channel ID and a
+    // successful signature do not prove that today's full claim was paid.
+    const paidOut = await this.recordPayouts(batch);
+    distributed.push(...paidOut);
+    if (paidOut.length > 0) {
+      this.config.onSettle?.({ transaction: response.transaction ?? "" });
+    }
+  }
+
+  /**
+   * Record each channel's confirmed payout watermark.
+   *
+   * @param batch - Channels a distribute named
+   * @returns The channels the chain shows paid up to their settled value
+   */
+  private async recordPayouts(batch: ChannelState[]): Promise<string[]> {
+    const paidOut: string[] = [];
     for (const channel of batch) {
-      // Accepted: pack it with the others again from the next pass on.
-      this.isolated.settle.delete(channel.channelId);
       try {
-        // This response may recover an earlier sweep. A channel ID and a
-        // successful signature do not prove that today's full claim was paid.
         const paid = await this.readPayoutWatermark(channel.channelId);
         if (paid === undefined || paid < 0n || paid > channel.deposit)
           throw new Error("confirmed payout watermark unavailable or invalid");
@@ -605,18 +674,13 @@ export class BatchChannelManager {
           onchainSyncedAt: Date.now(),
           payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
         }));
-        if (paid >= channel.settled) {
-          distributed.push(channel.channelId);
-          distributedInBatch++;
-        }
+        if (paid >= channel.settled) paidOut.push(channel.channelId);
       } catch (error) {
         // Leave the balance payable for the next pass, including after restart.
         this.config.onError?.(error);
       }
     }
-    if (distributedInBatch > 0) {
-      this.config.onSettle?.({ transaction: response.transaction ?? "" });
-    }
+    return paidOut;
   }
 
   /**

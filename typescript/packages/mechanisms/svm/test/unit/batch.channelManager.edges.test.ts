@@ -994,4 +994,203 @@ describe("batch-settlement redemption worker when the facilitator refuses a chan
       expect(errors).toEqual([]);
     },
   );
+
+  describe("after a request that landed without the worker seeing it", () => {
+    /**
+     * A facilitator over a fake chain. Like the reference facilitator, it
+     * answers `cumulative_amount_mismatch` for a claim of a voucher the chain
+     * has already settled and for a distribute with nothing left to pay.
+     * While `pending` is set, a request lands onchain but is answered only
+     * as broadcast.
+     *
+     * @returns The facilitator, its chain and the requests it saw
+     */
+    function chain() {
+      const settled = new Map<string, bigint>();
+      const paid = new Map<string, bigint>();
+      const seen: Payload[] = [];
+      const state = { pending: true, refuse: undefined as string | undefined };
+      const settle = async ({ payload }: { payload: unknown }): Promise<SettleResponse> => {
+        const raw = payload as Payload;
+        seen.push(raw);
+        if (state.refuse !== undefined && named(raw).includes(state.refuse)) {
+          return refusal("ofac_sanctioned_address");
+        }
+        if (raw.type === "claim") {
+          const claims = (raw.claims ?? []).map(
+            ({ voucher }) => [voucher.channelId, BigInt(voucher.maxClaimableAmount)] as const,
+          );
+          if (claims.some(([id, amount]) => amount <= (settled.get(id) ?? 0n))) {
+            return refusal(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          }
+          for (const [id, amount] of claims) settled.set(id, amount);
+        } else {
+          const owed = named(raw).filter(id => (paid.get(id) ?? 0n) < (settled.get(id) ?? 0n));
+          if (owed.length === 0) return refusal(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          for (const id of owed) paid.set(id, settled.get(id)!);
+        }
+        return state.pending ? { ...refusal("settlement_pending"), transaction: "tx" } : bound(raw);
+      };
+      const requests = (type: string) => seen.filter(raw => raw.type === type).map(named);
+      return { paid, requests, seen, settle, settled, state };
+    }
+
+    /**
+     * A worker over `store` and the fake chain.
+     *
+     * @param store - The server's channels
+     * @param fake - The facilitator and chain from {@link chain}
+     * @param errors - Collects what the worker reports
+     * @returns The worker
+     */
+    function worker(
+      store: ChannelStore,
+      fake: ReturnType<typeof chain>,
+      errors: unknown[],
+    ): BatchChannelManager {
+      return new BatchChannelManager({
+        onError: error => errors.push(error),
+        readPayoutWatermark: async id => fake.paid.get(id) ?? 0n,
+        readSettledWatermark: async id => fake.settled.get(id) ?? 0n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: fake.settle,
+        store,
+      });
+    }
+
+    const messages = (errors: unknown[]) => errors.map(error => (error as Error).message);
+
+    it("records an earlier claim when its batch is claimed again with a newer voucher", async () => {
+      const store = new MemoryChannelStore();
+      for (const id of ["chan-a", "chan-b"]) await store.put(channel(id));
+      const fake = chain();
+      const errors: unknown[] = [];
+      const manager = worker(store, fake, errors);
+      await manager.redeem();
+
+      // chan-a's payer pays again before the claim is confirmed, so the
+      // retry is a new claim the facilitator cannot match to the first.
+      await store.update("chan-a", state => ({ ...state!, signedMaxClaimable: 4_000n }));
+      fake.state.pending = false;
+      fake.seen.length = 0;
+      errors.length = 0;
+      const result = await manager.redeem();
+      expect(fake.requests("claim")).toEqual([["chan-a", "chan-b"], ["chan-a"]]);
+      expect(result.claimed).toEqual(["chan-a"]);
+      expect((await store.get("chan-b"))?.settled).toBe(3_000n);
+      expect(messages(errors)).toEqual([]);
+
+      fake.seen.length = 0;
+      await manager.redeem();
+      expect(fake.requests("claim")).toEqual([]);
+    });
+
+    it("records an earlier claim when its batch no longer goes out whole", async () => {
+      const store = new MemoryChannelStore();
+      for (const id of ["chan-a", "chan-b"]) await store.put(channel(id));
+      const fake = chain();
+      const errors: unknown[] = [];
+      const manager = worker(store, fake, errors);
+      await manager.redeem();
+
+      // Another reader brings chan-a up to date, so only chan-b is claimed.
+      await store.update("chan-a", state => ({ ...state!, settled: 3_000n }));
+      fake.state.pending = false;
+      fake.seen.length = 0;
+      errors.length = 0;
+      await manager.redeem();
+      expect(fake.requests("claim")).toEqual([["chan-b"]]);
+      expect((await store.get("chan-b"))?.settled).toBe(3_000n);
+      expect(messages(errors)).toEqual([]);
+
+      fake.seen.length = 0;
+      await manager.redeem();
+      expect(fake.requests("claim")).toEqual([]);
+    });
+
+    it("records an earlier claim when the retry of its batch is refused and split", async () => {
+      const store = new MemoryChannelStore();
+      for (const id of ["chan-a", "chan-b"]) await store.put(channel(id));
+      const fake = chain();
+      const errors: unknown[] = [];
+      const manager = worker(store, fake, errors);
+      await manager.redeem();
+
+      fake.state.refuse = "chan-a";
+      fake.state.pending = false;
+      fake.seen.length = 0;
+      errors.length = 0;
+      await manager.redeem();
+      expect(fake.requests("claim")).toEqual([["chan-a", "chan-b"], ["chan-a"], ["chan-b"]]);
+      expect((await store.get("chan-b"))?.settled).toBe(3_000n);
+      expect(messages(errors)).toEqual(["batch-settlement claim failed: ofac_sanctioned_address"]);
+
+      fake.seen.length = 0;
+      await manager.redeem();
+      expect(fake.requests("claim")).toEqual([["chan-a"]]);
+    });
+
+    it("records an earlier payout when the retry of its batch is refused and split", async () => {
+      const store = new MemoryChannelStore();
+      const fake = chain();
+      for (const id of ["chan-a", "chan-b"]) {
+        // Claimed earlier; only the payout is left.
+        await store.put(channel(id, { highestVoucherSignature: undefined, settled: 3_000n }));
+        fake.settled.set(id, 3_000n);
+      }
+      const errors: unknown[] = [];
+      const manager = worker(store, fake, errors);
+      await manager.redeem();
+
+      fake.state.refuse = "chan-a";
+      fake.state.pending = false;
+      fake.seen.length = 0;
+      errors.length = 0;
+      await manager.redeem();
+      expect(fake.requests("settle")).toEqual([["chan-a", "chan-b"], ["chan-a"], ["chan-b"]]);
+      expect((await store.get("chan-b"))?.payoutWatermark).toBe(3_000n);
+      expect(messages(errors)).toEqual([
+        "batch-settlement distribute failed: ofac_sanctioned_address",
+      ]);
+
+      fake.seen.length = 0;
+      await manager.redeem();
+      expect(fake.requests("settle")).toEqual([["chan-a"]]);
+    });
+
+    it("still reports a mismatch the chain does not explain", async () => {
+      const store = new MemoryChannelStore();
+      for (const id of ["chan-a", "chan-b"]) await store.put(channel(id));
+      const fake = chain();
+      fake.state.pending = false;
+      // The facilitator says chan-a's voucher is behind; the chain disagrees.
+      const settle = fake.settle;
+      const errors: unknown[] = [];
+      const manager = new BatchChannelManager({
+        onError: error => errors.push(error),
+        readPayoutWatermark: async id => fake.paid.get(id) ?? 0n,
+        readSettledWatermark: async id => fake.settled.get(id) ?? 0n,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async request => {
+          const raw = request.payload as Payload;
+          if (raw.type === "claim" && named(raw).includes("chan-a")) {
+            fake.seen.push(raw);
+            return refusal(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          }
+          return settle(request);
+        },
+        store,
+      });
+
+      const result = await manager.redeem();
+      expect(fake.requests("claim")).toEqual([["chan-a", "chan-b"], ["chan-a"], ["chan-b"]]);
+      expect(result.claimed).toEqual(["chan-b"]);
+      expect((await store.get("chan-a"))?.settled).toBe(0n);
+      expect(messages(errors)).toEqual([
+        `batch-settlement claim failed: ${BatchError.CUMULATIVE_AMOUNT_MISMATCH}`,
+      ]);
+    });
+  });
 });
