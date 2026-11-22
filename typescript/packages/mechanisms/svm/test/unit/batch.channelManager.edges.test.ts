@@ -719,6 +719,94 @@ describe("batch-settlement redemption worker when the facilitator refuses a chan
     },
   );
 
+  it.each(["claim", "settle"] as const)(
+    "sends a pending %s again with the same channels instead of re-packing it",
+    async step => {
+      const store = new MemoryChannelStore();
+      for (const id of [FLAGGED, "chan-b", "chan-c"]) {
+        // For `settle`, claimed earlier: only the payout is left.
+        await store.put(
+          channel(
+            id,
+            step === "settle" ? { highestVoucherSignature: undefined, settled: 3_000n } : {},
+          ),
+        );
+      }
+      let pending = true;
+      const seen: Payload[] = [];
+      const manager = new BatchChannelManager({
+        readPayoutWatermark: async id => (await store.get(id))?.settled,
+        receiverAuthorizer,
+        requirements: requirements(),
+        settle: async ({ payload }) => {
+          const raw = payload as Payload;
+          seen.push(raw);
+          if (raw.type !== step) return bound(raw);
+          if (named(raw).includes(FLAGGED)) return refusal("ofac_sanctioned_address");
+          // Broadcast, but not confirmed yet.
+          return pending ? { ...refusal("settlement_pending"), transaction: "tx" } : bound(raw);
+        },
+        store,
+      });
+      const requests = () => seen.filter(raw => raw.type === step).map(named);
+
+      await manager.redeem();
+      expect(requests()).toEqual([
+        [FLAGGED, "chan-b", "chan-c"],
+        [FLAGGED],
+        ["chan-b"],
+        ["chan-c"],
+      ]);
+
+      // The facilitator keys its retry on the exact channel set, so the two
+      // pending single-channel requests go again as they were, not as one.
+      pending = false;
+      seen.length = 0;
+      const result = await manager.redeem();
+      expect(requests()).toEqual([["chan-b"], ["chan-c"], [FLAGGED]]);
+      expect(step === "claim" ? result.claimed : result.distributed).toEqual(["chan-b", "chan-c"]);
+    },
+  );
+
+  it("keeps a pending batch together when a channel ahead of it gets a new voucher", async () => {
+    const store = new MemoryChannelStore();
+    // Nothing to claim on chan-x yet.
+    await store.put(channel("chan-x", { settled: 3_000n }));
+    for (const id of ["chan-a", "chan-b", "chan-c", "chan-d"]) await store.put(channel(id));
+    let pending = true;
+    const seen: Payload[] = [];
+    const manager = new BatchChannelManager({
+      readPayoutWatermark: async id => (await store.get(id))?.settled,
+      receiverAuthorizer,
+      requirements: requirements(),
+      settle: async ({ payload }) => {
+        const raw = payload as Payload;
+        seen.push(raw);
+        return raw.type === "claim" && pending && named(raw).includes("chan-a")
+          ? { ...refusal("settlement_pending"), transaction: "tx" }
+          : bound(raw);
+      },
+      store,
+    });
+    const claims = () => seen.filter(raw => raw.type === "claim").map(named);
+
+    await manager.redeem();
+    expect(claims()).toEqual([["chan-a", "chan-b", "chan-c", "chan-d"]]);
+
+    // Packing from scratch would now give [x, a, b, c] and [d].
+    await store.update("chan-x", state => ({ ...state!, signedMaxClaimable: 4_000n }));
+    pending = false;
+    seen.length = 0;
+    expect((await manager.redeem()).claimed).toEqual([
+      "chan-a",
+      "chan-b",
+      "chan-c",
+      "chan-d",
+      "chan-x",
+    ]);
+    expect(claims()).toEqual([["chan-a", "chan-b", "chan-c", "chan-d"], ["chan-x"]]);
+  });
+
   it("reports a refusal of the batch as a whole once when every channel is accepted alone", async () => {
     const store = new MemoryChannelStore();
     const ids = ["chan-a", "chan-b", "chan-c", "chan-d"];

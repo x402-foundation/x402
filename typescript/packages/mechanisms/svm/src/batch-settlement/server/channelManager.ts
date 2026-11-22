@@ -155,6 +155,19 @@ export class BatchChannelManager {
    * fail a batch of other channels every pass.
    */
   private readonly isolated = { claim: new Set<string>(), settle: new Set<string>() };
+  /**
+   * Batches sent but not yet answered for good, per step: each channel set
+   * stays here from submission until the facilitator accepts it, refuses it
+   * outright or reports a closing channel. The facilitator keys claim and
+   * distribute retries on a batch's exact channel set, so a batch whose
+   * outcome is still open (pending, in flight, a 5xx, no answer) is sent
+   * again with the same channels on later passes instead of being re-packed
+   * into a new request for the same vouchers.
+   */
+  private readonly unresolved = {
+    claim: new Map<string, string[]>(),
+    settle: new Map<string, string[]>(),
+  };
 
   /**
    * Build a worker over a store and a way to submit redemption payloads.
@@ -272,6 +285,7 @@ export class BatchChannelManager {
     result: { claimed: string[]; sealed: string[] },
     refusedAlone?: string[],
   ): Promise<void> {
+    this.unresolved.claim.set(batchKey(batch), ids(batch));
     const answer = await this.submit({
       claims: batch.map(channel => ({
         channelConfig: channel.channelConfig,
@@ -288,6 +302,11 @@ export class BatchChannelManager {
     const { response, status } = answer;
     if (!response.success) {
       const failed = `${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`;
+      const outright = refusedOutright(response, status);
+      // Answered for good: these channels need not travel together again.
+      if (outright || response.errorReason === BatchError.CHANNEL_CLOSING) {
+        this.unresolved.claim.delete(batchKey(batch));
+      }
       if (response.errorReason === BatchError.CHANNEL_CLOSING) {
         // The payer started a forced close on at least one channel in the
         // batch, so program `settle` is no longer available for it. Claim the
@@ -301,7 +320,7 @@ export class BatchChannelManager {
         if (await this.seal(channel)) result.sealed.push(channel.channelId);
         return;
       }
-      if (refusedOutright(response, status)) {
+      if (outright) {
         // The facilitator refused the request outright: a policy hook, or one
         // voucher it rejects. One such channel must not hold back the others
         // packed with it, so claim each alone and let the refusal stop only
@@ -386,6 +405,9 @@ export class BatchChannelManager {
         result.claimed.push(channel.channelId);
         claimedInBatch++;
       }
+      // Every channel recorded: the batch is resolved. Otherwise it stays
+      // pinned, so the facilitator can replay the same claim next pass.
+      if (claimedInBatch === batch.length) this.unresolved.claim.delete(batchKey(batch));
       if (claimedInBatch > 0) {
         this.config.onClaim?.({
           transaction: response.transaction ?? "",
@@ -516,6 +538,7 @@ export class BatchChannelManager {
     distributed: string[],
     refusedAlone?: string[],
   ): Promise<void> {
+    this.unresolved.settle.set(batchKey(batch), ids(batch));
     const answer = await this.submit({
       channels: batch.map(channel => ({
         channelConfig: channel.channelConfig,
@@ -527,6 +550,7 @@ export class BatchChannelManager {
     if (!response.success) {
       const failed = `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`;
       if (refusedOutright(response, status)) {
+        this.unresolved.settle.delete(batchKey(batch));
         // As for claims: a channel the facilitator refuses must not hold back
         // the payout of the others packed with it.
         if (batch.length > 1) {
@@ -563,6 +587,9 @@ export class BatchChannelManager {
       );
       return;
     }
+    // Accepted and bound to this batch: each channel's payout is reconciled
+    // from the chain below, and a balance still owed is re-packed freely.
+    this.unresolved.settle.delete(batchKey(batch));
     let distributedInBatch = 0;
     for (const channel of batch) {
       // Accepted: pack it with the others again from the next pass on.
@@ -645,20 +672,36 @@ export class BatchChannelManager {
   }
 
   /**
-   * Pack channels into redemption batches: the others in batches of the
-   * advertised capacity, then each channel the facilitator refused on its own
-   * in an earlier pass, alone.
+   * Pack channels into redemption batches: first each unresolved batch from
+   * an earlier pass, with the same channels, then the others in batches of
+   * the advertised capacity, then each channel the facilitator refused on its
+   * own in an earlier pass, alone. An unresolved batch with a channel that no
+   * longer needs this step cannot be sent unchanged, so it is dropped and its
+   * other channels are packed like the rest.
    *
    * @param channels - Channels to redeem in this step
    * @param step - `claim` or `settle` (distribute)
    * @returns The batches, in submission order
    */
   private batches(channels: ChannelState[], step: "claim" | "settle"): ChannelState[][] {
+    const byId = new Map(channels.map(channel => [channel.channelId, channel]));
+    const kept: ChannelState[][] = [];
+    const taken = new Set<string>();
+    for (const [key, members] of this.unresolved[step]) {
+      const batch = members.map(channelId => byId.get(channelId));
+      if (batch.some(channel => channel === undefined) || members.some(id => taken.has(id))) {
+        this.unresolved[step].delete(key);
+        continue;
+      }
+      kept.push(batch as ChannelState[]);
+      for (const channelId of members) taken.add(channelId);
+    }
+    const rest = channels.filter(channel => !taken.has(channel.channelId));
     const isolated = this.isolated[step];
-    const packable = channels.filter(channel => !isolated.has(channel.channelId));
-    const alone = channels.filter(channel => isolated.has(channel.channelId));
+    const packable = rest.filter(channel => !isolated.has(channel.channelId));
+    const alone = rest.filter(channel => isolated.has(channel.channelId));
     const size = this.batchSize(step === "claim" ? "maxClaimChannels" : "maxSettleChannels");
-    return [...chunk(packable, size), ...alone.map(channel => [channel])];
+    return [...kept, ...chunk(packable, size), ...alone.map(channel => [channel])];
   }
 
   /**
@@ -788,6 +831,26 @@ function failure(message: string, answer: RedemptionAnswer): Error {
  */
 function isSettleError(error: unknown): error is SettleError {
   return error instanceof SettleError || (error instanceof Error && error.name === "SettleError");
+}
+
+/**
+ * The channel IDs of a batch, in order.
+ *
+ * @param batch - Channels packed into one request
+ * @returns Their IDs
+ */
+function ids(batch: ChannelState[]): string[] {
+  return batch.map(channel => channel.channelId);
+}
+
+/**
+ * A batch's identity regardless of order, as the facilitator keys it.
+ *
+ * @param batch - Channels packed into one request
+ * @returns The sorted channel IDs, joined
+ */
+function batchKey(batch: ChannelState[]): string {
+  return ids(batch).sort().join(",");
 }
 
 /**
