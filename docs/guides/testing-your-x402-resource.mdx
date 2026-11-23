@@ -73,3 +73,36 @@ Rows 2–5 of the refusal checklist can be exercised the same way by mutating th
 ### CI-scale testing
 
 A curl smoke test covers the first few rows of each table; the full matrix (replays, stale prices, verify/settle splits, per-scheme flow variants) is a job for automation. The community tooling in this space runs such batteries in CI as check runs — for example, [Argus battery](https://github.com/marketplace/actions/argus-battery) (open source, scenario families for bad-client and bad-seller roles). Whichever tool you use, keep the artifacts: JSONL ledgers and settled responses are the evidence you will want when a dispute or an integration question comes back months later.
+A minimal wiring looks like this. Declare how to start your resource in `argus.sut.json`:
+
+```json
+{
+  "schema": "argus.sut.v0",
+  "start": "npm run start",
+  "ready": { "url": "http://127.0.0.1:5071/health", "timeout_ms": 30000 },
+  "env": { "PORT": "5071", "FACILITATOR_URL": "http://127.0.0.1:5070" },
+  "battery": "x402-core"
+}
+```
+
+Then add the action to your workflow (the negative scenarios in the refusal checklist cost nothing onchain, so the battery can run on every push):
+
+```yaml
+name: x402 protocol tests
+on: [push]
+permissions:
+  contents: read
+jobs:
+  x402:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: igor-vii/argus-action@v1
+        with:
+          console-url: https://console.argus-lab.tech
+          console-api-key: ${{ secrets.ARGUS_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The engine raises a local facilitator, drives your service over `127.0.0.1`, and posts a session table with per-session evidence to the step summary and the check run. Pin a previous `argus-result.json` as `baseline-fixture` and any verdict that changed between runs is annotated on the PR — that is the drift signal for the checklist rows above.
+
