@@ -723,18 +723,14 @@ func (m *BatchChannelManager) submit(ctx context.Context, payload any) (*x402.Se
 	return response, err
 }
 
-// claimBatchSize is how many channels one claim request carries: the
-// facilitator's advertised maxClaimChannels (4 when absent, at most
-// V1MaxClaimChannels), lowered by
-// MaxChannelsPerBatch when set.
+// claimBatchSize is the number of channels in one claim. It uses advertised
+// maxClaimChannels (4 when absent, at most V1MaxClaimChannels), then MaxChannelsPerBatch when that is lower.
 func (m *BatchChannelManager) claimBatchSize() int {
 	return m.batchSize(batchsettlement.ExtraMaxClaimChannels, batchsettlement.V1MaxClaimChannels)
 }
 
-// settleBatchSize is how many channels one settle request carries: the
-// facilitator's advertised maxSettleChannels (4 when absent, at most
-// V1MaxSettleChannels), lowered by
-// MaxChannelsPerBatch when set.
+// settleBatchSize is the number of channels in one settle. It uses advertised
+// maxSettleChannels (4 when absent, at most V1MaxSettleChannels), then MaxChannelsPerBatch when that is lower.
 func (m *BatchChannelManager) settleBatchSize() int {
 	return m.batchSize(batchsettlement.ExtraMaxSettleChannels, batchsettlement.V1MaxSettleChannels)
 }

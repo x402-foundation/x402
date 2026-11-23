@@ -9,9 +9,7 @@ import (
 )
 
 // PendingRetention is how long the default PendingSettlementStore keeps an entry.
-// With OnDistributionConfirmed set, it bounds how long a failing hook can still be
-// replayed its payout. x402.NewInMemoryPendingSettlementStore keeps entries only
-// five minutes.
+// The shared in-memory store keeps entries for five minutes, which is too short for a failing payout hook.
 const PendingRetention = 24 * time.Hour
 
 // retainedSweepInterval bounds how often the default store sweeps expired
