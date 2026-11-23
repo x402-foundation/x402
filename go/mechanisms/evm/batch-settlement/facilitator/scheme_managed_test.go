@@ -545,6 +545,55 @@ func TestScheme_SelfManagedRefundRequiresConsent(t *testing.T) {
 	}
 }
 
+func TestScheme_SelfManagedRefundVerifyRejectsVoucherStoreChannel(t *testing.T) {
+	auth := managedAuthorizer()
+	cfg := managedConfig(auth.addr, "00")
+	channelId := mustChannelId(t, cfg)
+	cases := []struct {
+		name       string
+		noStore    bool
+		managedRow bool
+		getErr     error
+		wantReason string
+	}{
+		{name: "managed row", managedRow: true, wantReason: ErrVoucherStoreModeMismatch},
+		{name: "voucher store lookup fails", getErr: errors.New("down"), wantReason: ErrVoucherStoreUnavailable},
+		{name: "no managed row"},
+		{name: "no voucher store", noStore: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := &BatchSettlementEvmSchemeConfig{}
+			if !tc.noStore {
+				store := &hookStore{inner: storage.NewInMemoryChannelStorage[*FacilitatorChannel](), getErr: tc.getErr}
+				if tc.managedRow {
+					seedManagedChannel(t, store.inner, storedManagedChannel(cfg, channelId, &channelFields{ChargedCumulativeAmount: "1000"}))
+				}
+				config.VoucherStore = &VoucherStoreConfig{Storage: store}
+			}
+			scheme, err := NewBatchSettlementEvmSchemeWithConfig(newManagedSigner(t, nil), auth, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := managedEnvelope((&batchsettlement.BatchSettlementRefundPayload{
+				Type:          "refund",
+				ChannelConfig: cfg,
+				Voucher:       voucherFields(channelId, "1000", dummySig),
+			}).ToMap())
+			reqs := managedRequirements(auth.addr)
+			delete(reqs.Extra, "voucherManager")
+
+			resp, err := scheme.Verify(context.Background(), payload, reqs, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.IsValid != (tc.wantReason == "") || resp.InvalidReason != tc.wantReason {
+				t.Fatalf("got %+v", resp)
+			}
+		})
+	}
+}
+
 func TestScheme_DirectModeDispatchesUnsignedClaim(t *testing.T) {
 	auth := managedAuthorizer()
 	submitter := newManagedSigner(t, nil)

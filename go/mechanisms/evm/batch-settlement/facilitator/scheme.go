@@ -246,7 +246,14 @@ func (f *BatchSettlementEvmScheme) Verify(
 			return nil, x402.NewVerifyError(ErrInvalidRefundPayload, "",
 				fmt.Sprintf("failed to parse refund payload: %s", err))
 		}
-		return VerifyRefundVoucher(ctx, f.signer, refundPayload, requirements, refundPayload.ChannelConfig)
+		resp, err := VerifyRefundVoucher(ctx, f.signer, refundPayload, requirements, refundPayload.ChannelConfig)
+		if err != nil || !resp.IsValid {
+			return resp, err
+		}
+		if storeErr := f.voucherStoreRefundError(ctx, refundPayload.Voucher.ChannelId); storeErr != "" {
+			return &x402.VerifyResponse{IsValid: false, InvalidReason: storeErr, Payer: resp.Payer}, nil
+		}
+		return resp, nil
 	}
 
 	return &x402.VerifyResponse{IsValid: false, InvalidReason: ErrInvalidPayload}, nil
@@ -483,14 +490,8 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 	if bindErr := batchsettlement.ChannelIdBindingError(raw.ChannelConfig, raw.Voucher.ChannelId, requirements.Network); bindErr != "" {
 		return bindErr
 	}
-	if f.voucherStore != nil {
-		stored, err := f.voucherStore.storage.Get(ctx, raw.Voucher.ChannelId)
-		if err != nil {
-			return ErrVoucherStoreUnavailable
-		}
-		if stored != nil {
-			return ErrVoucherStoreModeMismatch
-		}
+	if storeErr := f.voucherStoreRefundError(ctx, raw.Voucher.ChannelId); storeErr != "" {
+		return storeErr
 	}
 	if raw.RefundAuthorizerSignature != "" {
 		return ""
@@ -500,4 +501,20 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 	}
 	deps := RefundConsentDeps{ResolveCallerIdentity: f.resolveCallerIdentity, DelegatedAuthStore: f.delegatedAuthStore}
 	return checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx)
+}
+
+// voucherStoreRefundError rejects a self-managed refund on a channel held in the voucher store.
+// A lookup error fails closed so a store outage cannot route a managed channel around custody.
+func (f *BatchSettlementEvmScheme) voucherStoreRefundError(ctx context.Context, channelId string) string {
+	if f.voucherStore == nil {
+		return ""
+	}
+	stored, err := f.voucherStore.storage.Get(ctx, channelId)
+	if err != nil {
+		return ErrVoucherStoreUnavailable
+	}
+	if stored != nil {
+		return ErrVoucherStoreModeMismatch
+	}
+	return ""
 }
