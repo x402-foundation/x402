@@ -158,11 +158,17 @@ export class BatchChannelManager {
   /**
    * Batches sent but not yet answered for good, per step: each channel set
    * stays here from submission until the facilitator accepts it, refuses it
-   * outright or reports a closing channel. The facilitator keys claim and
-   * distribute retries on a batch's exact channel set, so a batch whose
-   * outcome is still open (pending, in flight, a 5xx, no answer) is sent
-   * again with the same channels on later passes instead of being re-packed
-   * into a new request for the same vouchers.
+   * outright or reports a closing channel. A batch whose outcome is still
+   * open (pending, in flight, a 5xx, no answer) is sent again with the same
+   * channels on later passes instead of being re-packed into a new request
+   * for the same vouchers. The reference facilitator keys a distribute retry
+   * on the channel set and a claim retry on each channel's id and voucher
+   * amount. The retry is rebuilt from the store, not replayed, so a newer
+   * voucher, a channel leaving the step or an outright refusal of the retry
+   * makes the next request new to the facilitator; while the first
+   * transaction is in flight both can be broadcast. The onchain watermark
+   * only moves forward, so that costs at most a failed transaction, and the
+   * `cumulative_amount_mismatch` resync records the one that landed.
    */
   private readonly unresolved = {
     claim: new Map<string, string[]>(),
