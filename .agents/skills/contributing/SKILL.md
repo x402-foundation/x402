@@ -27,9 +27,9 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 
 ## SDK design
 
-- Core packages never import mechanism or extension packages. Do not add logic specific to one extension, network, or facilitator to core.
+- Do not add imports of mechanism or extension packages, or logic specific to one extension, network, or facilitator, to core packages.
 - Hooks may add data but never change data the protocol owns. Extension hooks run only on routes that declare the extension. A `before*` hook that throws fails closed; a throwing `after*` or failure hook is logged and cannot change the outcome (`AfterSettleAbortError` is the one deliberate exception).
-- A facilitator answers malformed client input with `isValid: false` and a stable reason code, never an HTTP 5xx. Payer-facing messages never include internal error text such as RPC URLs or storage errors.
+- A facilitator answers malformed client input with `isValid: false` and a stable reason code, never an HTTP 5xx. When a hook throws or an unexpected error occurs, return a fixed code and message and keep the detail in the log.
 - Error and reason codes are a wire contract. Don't rename existing ones (a rename is a breaking change and goes in its own PR), and give a new code the same string in all three SDKs.
 - In the `authorization` flow, a handler declines a paid request by returning a status of 400 or higher; any lower status settles.
 - On HTTP, protocol data travels in headers. The response body is the server's to define.
@@ -78,7 +78,7 @@ Follow the repository AI-assisted contribution policy in [CONTRIBUTING.md](../..
 - Justify design decisions where there were ambiguities and discuss the tradeoffs of the approach you picked against the alternatives you considered.
 - Resolve conflicts with `main` before asking for review.
 - Reviewers run examples and e2e tests, so set realistic timeouts.
-- Don't commit binaries, planning notes, or unrelated lockfile changes. Don't edit release workflows, apart from adding the publish workflow for a new package.
+- Don't commit binaries, planning notes, or unrelated lockfile changes. Don't edit release workflows, apart from the publishing steps in the [mechanism checklist](references/new-mechanism.md).
 - Respond to review; inactive PRs are closed. To resume, ask in the closed PR rather than opening a new one.
 
 ## Per-language
@@ -100,7 +100,7 @@ uvx ruff format && uvx ruff check && uv run pytest
 
 ### Per PR: changelog
 
-Add a changelog fragment for the SDK you changed. In TypeScript changesets, new default assets are `patch`, and breaking changes within an x402 version ship as `minor` with a **Breaking** line in the fragment (including changes to storage interfaces that operators implement). `major` is reserved for x402 major versions.
+Add a changelog fragment for the SDK you changed. Mark breaking changes with a **Breaking** line in the fragment, including changes to storage interfaces that operators implement; maintainers set the final release level.
 
 ```bash
 # TypeScript (from typescript/)

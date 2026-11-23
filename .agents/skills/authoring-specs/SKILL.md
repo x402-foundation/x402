@@ -28,7 +28,7 @@ These apply to every spec type (scheme, extension). The references below add typ
 - Every field a spec defines on the wire must be consumed by a downstream role. Do not include human-readable or otherwise purely informational fields.
 - Reuse field names, patterns, and conventions established by existing specs instead of coining new ones.
 - Do not define fields a role can derive from other fields, and give each field one canonical encoding.
-- Keep normative text SDK-agnostic: no SDK package or type names, and no test data or measurements. Put those in the PR description.
+- Keep normative text SDK-agnostic: no SDK package or type names, and no empirical test results or measurements. Put those in the PR description.
 - List every scheme- or extension-specific error code in the spec, so third-party SDKs emit the same codes.
 
 ### Roles and payment flow
