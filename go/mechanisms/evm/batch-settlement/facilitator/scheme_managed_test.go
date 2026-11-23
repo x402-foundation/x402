@@ -3,6 +3,7 @@ package facilitator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -473,6 +474,74 @@ func TestScheme_SelfManagedRefundMalformedAmount(t *testing.T) {
 	}
 	if resp.Success || resp.ErrorReason != ErrRefundAmountInvalid {
 		t.Fatalf("got %+v", resp)
+	}
+}
+
+func TestScheme_SelfManagedRefundRequiresConsent(t *testing.T) {
+	auth := managedAuthorizer()
+	sellerKeyCfg := managedConfigWithRefundAuthorizer(t, auth.addr, addressOfKey(t, serverRefundKeyHex))
+	cases := []struct {
+		name       string
+		cfg        batchsettlement.ChannelConfig
+		managedRow bool
+		getErr     error
+		identity   bool
+		signature  string
+		wantReason string
+	}{
+		{name: "managed row without caller auth", cfg: sellerKeyCfg, managedRow: true, wantReason: ErrVoucherStoreModeMismatch},
+		{name: "managed row with caller bound to the payer", cfg: sellerKeyCfg, managedRow: true, identity: true, wantReason: ErrVoucherStoreModeMismatch},
+		{name: "managed row with refund signature", cfg: sellerKeyCfg, managedRow: true, signature: dummySig, wantReason: ErrVoucherStoreModeMismatch},
+		{name: "voucher store lookup fails", cfg: sellerKeyCfg, getErr: errors.New("down"), identity: true, wantReason: ErrVoucherStoreUnavailable},
+		{name: "unsigned without caller auth", cfg: managedConfig(auth.addr, "00"), wantReason: ErrRefundAuthorizerSignature},
+		{name: "signed without caller auth", cfg: managedConfig(auth.addr, "00"), signature: dummySig},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			channelId := mustChannelId(t, tc.cfg)
+			store := &hookStore{inner: storage.NewInMemoryChannelStorage[*FacilitatorChannel](), getErr: tc.getErr}
+			if tc.managedRow {
+				seedManagedChannel(t, store.inner, storedManagedChannel(tc.cfg, channelId, &channelFields{ChargedCumulativeAmount: "1000"}))
+			}
+			config := &BatchSettlementEvmSchemeConfig{VoucherStore: &VoucherStoreConfig{Storage: store}}
+			if tc.identity {
+				config.DelegatedAuthStore = storage.NewInMemoryDelegatedAuthStore()
+				bindManagedIdentity(t, config.DelegatedAuthStore, channelId, "payer")
+				config.ResolveCallerIdentity = func(DelegatedSettleContext) (string, error) { return "payer", nil }
+			}
+			signer := newManagedSigner(t, nil)
+			scheme, err := NewBatchSettlementEvmSchemeWithConfig(signer, auth, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := managedEnvelope((&batchsettlement.BatchSettlementEnrichedRefundPayload{
+				Type:                      "refund",
+				ChannelConfig:             tc.cfg,
+				Voucher:                   voucherFields(channelId, "0", dummySig),
+				Amount:                    "1000",
+				RefundNonce:               "0",
+				RefundAuthorizerSignature: tc.signature,
+			}).ToMap())
+			reqs := managedRequirements(auth.addr)
+			delete(reqs.Extra, "voucherManager")
+
+			resp, err := scheme.Settle(context.Background(), payload, reqs, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantReason == "" {
+				if !resp.Success {
+					t.Fatalf("got %+v", resp)
+				}
+				return
+			}
+			if resp.Success || resp.ErrorReason != tc.wantReason {
+				t.Fatalf("got %+v", resp)
+			}
+			if signer.writeCalls != 0 {
+				t.Fatalf("writes = %d, want none", signer.writeCalls)
+			}
+		})
 	}
 }
 

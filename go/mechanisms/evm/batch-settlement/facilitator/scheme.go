@@ -483,8 +483,20 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 	if bindErr := batchsettlement.ChannelIdBindingError(raw.ChannelConfig, raw.Voucher.ChannelId, requirements.Network); bindErr != "" {
 		return bindErr
 	}
-	if raw.RefundAuthorizerSignature != "" || f.resolveCallerIdentity == nil {
+	if f.voucherStore != nil {
+		stored, err := f.voucherStore.storage.Get(ctx, raw.Voucher.ChannelId)
+		if err != nil {
+			return ErrVoucherStoreUnavailable
+		}
+		if stored != nil {
+			return ErrVoucherStoreModeMismatch
+		}
+	}
+	if raw.RefundAuthorizerSignature != "" {
 		return ""
+	}
+	if f.resolveCallerIdentity == nil {
+		return ErrRefundAuthorizerSignature
 	}
 	deps := RefundConsentDeps{ResolveCallerIdentity: f.resolveCallerIdentity, DelegatedAuthStore: f.delegatedAuthStore}
 	return checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx)
