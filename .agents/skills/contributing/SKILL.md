@@ -16,7 +16,7 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 - Address a single issue per contribution, not multiple.
 - Targeted edits, minimal diff, atomic commits.
 - No abstractions or boilerplate that were not explicitly requested.
-- No edits to legacy/v1 code; it is effectively frozen (security patches, and fixes that bring one SDK back in line with the others). This includes the paths `typescript/packages/legacy/`, `go/legacy`, `python/legacy` and the `java/` SDK.
+- No edits to legacy/v1 code; it is effectively frozen (security patches only). This includes the paths `typescript/packages/legacy/`, `go/legacy`, `python/legacy` and the `java/` SDK.
 
 ## Code style
 
@@ -27,23 +27,23 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 
 ## SDK design
 
-- Core packages never import mechanism or extension packages, and core holds no logic specific to one extension, network, or facilitator.
-- Hooks may add data but never change data the protocol owns, and they run only for routes that opted in. A `before*` hook that throws fails closed; `after*` and failure hooks cannot change the outcome.
+- Core packages never import mechanism or extension packages. Do not add logic specific to one extension, network, or facilitator to core.
+- Hooks may add data but never change data the protocol owns. Extension hooks run only on routes that declare the extension. A `before*` hook that throws fails closed; a throwing `after*` or failure hook is logged and cannot change the outcome (`AfterSettleAbortError` is the one deliberate exception).
 - A facilitator answers malformed client input with `isValid: false` and a stable reason code, never an HTTP 5xx. Payer-facing messages never include internal error text such as RPC URLs or storage errors.
 - Reason codes are shared across SDKs: never change one without changing it in all three.
 - A handler declines a paid request by returning a status of 400 or higher; any lower status settles.
 - Protocol data travels in headers. The response body is the server's to define.
 - New options keep the current behavior as the default. Anything with a tradeoff is opt-in, and a changed default needs an opt-out and a note in the changeset.
-- No implicit fallbacks to public RPC or indexer endpoints; make them configurable.
+- Make RPC and indexer endpoints configurable; do not add new hard-coded public endpoints.
+- Stores ship an in-memory default behind an interface operators can replace, unless the spec requires a durable store. The interface states its atomicity requirements, so a shared store such as Redis or Postgres stays correct across replicas.
 - The same payload must produce the same outcome in TypeScript, Go and Python. Port fixes to shared behavior to the other SDKs (one SDK per PR is fine).
 
 ## Neutrality
 
-- Keep code, docs, examples and e2e tests free of any specific facilitator, vendor, or third-party service. Limits or behavior specific to one facilitator belong in that facilitator's docs, not in the SDK.
+- Keep code, docs, examples and e2e tests free of any specific facilitator, vendor, or third-party service, apart from the listings in `docs/dev-tools/`. Limits or behavior specific to one facilitator belong in that facilitator's docs, not in the SDK.
 - Third-party SDKs are not added to the e2e harness.
 - The public `x402.org` facilitator is for testnets only.
-- The ecosystem page no longer accepts submissions. Third-party extensions and utilities are listed in [`docs/dev-tools/third-party-extensions.md`](../../../docs/dev-tools/third-party-extensions.md): only packages that read or write `extensions` go in the extensions table.
-- Supporting a new EVM chain needs no code change. To enable `$` prices on it, add a USD-pegged default asset in all three SDKs per [DEFAULT_ASSETS.md](../../../DEFAULT_ASSETS.md), with values checked against the deployed contract.
+- The ecosystem page no longer accepts submissions. Third-party facilitators, SDKs, extensions and utilities are listed in [`docs/dev-tools/`](../../../docs/dev-tools/); only packages that read or write `extensions` go in the [extensions table](../../../docs/dev-tools/third-party-extensions.md).
 
 ## Comments
 
@@ -57,15 +57,12 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 
 Follow the repository AI-assisted contribution policy in [CONTRIBUTING.md](../../../CONTRIBUTING.md#ai-assisted-contributions). Review all AI-generated output before requesting maintainer review.
 
-- Say in the PR description who verified the change and how.
-- Open a few verified PRs, not many generated ones. Batch submissions and automated status comments get PRs closed.
-
 ## Working on an Issue
 
-- Search open PRs and issues first. Duplicates are closed; if a PR already covers the change, review or comment there instead.
+- Duplicates are closed: if an open PR already covers the change, review or comment there instead.
 - Independently reproduce and verify the Issue first, on current `main`.
 - Hardening, diagnostics, or options without a demonstrated problem are not merged.
-- For spec-shaped or cross-cutting changes, make the case in an Issue before writing code, then open one minimal, standalone PR rather than several linked ones.
+- For spec-shaped or cross-cutting work, open one minimal, standalone PR rather than several linked ones.
 - When in doubt, ask clarifying questions on the Issue before writing code.
 
 ## Bug fixes
@@ -79,9 +76,9 @@ Follow the repository AI-assisted contribution policy in [CONTRIBUTING.md](../..
 - Verifying (signing) ALL commits is strictly required; maintainers will not check a PR otherwise. See [GitHub: about commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification).
 - PR description: short and matching the diff; explain what and why; link relevant issues; state the root cause in one paragraph, citing file and line.
 - Justify design decisions where there were ambiguities and discuss the tradeoffs of the approach you picked against the alternatives you considered.
-- Keep the branch up to date with `main` by rebasing locally; resolving conflicts in the GitHub UI creates an unsigned merge commit.
+- Resolve conflicts with `main` before asking for review.
 - Reviewers run examples and e2e tests: document faucets, environment variables, and realistic timeouts.
-- Don't commit binaries, planning notes, or unrelated lockfile changes, and leave release workflows alone.
+- Don't commit binaries, planning notes, or unrelated lockfile changes. Don't edit release workflows, apart from adding the publish workflow for a new package.
 - Respond to review; inactive PRs are closed. To resume, ask in the closed PR rather than opening a new one.
 
 ## Per-language
@@ -103,7 +100,7 @@ uvx ruff format && uvx ruff check && uv run pytest
 
 ### Per PR: changelog
 
-Add a changelog fragment for the SDK you changed. Use `patch` for non-breaking changes (including new default assets) and `minor` for breaking changes within an x402 version; `major` is reserved for x402 major versions. Mark breaking changes as breaking in the fragment, including changes to storage interfaces that operators implement.
+Add a changelog fragment for the SDK you changed. In TypeScript changesets, new default assets are `patch`, and breaking changes within an x402 version ship as `minor` with a **Breaking** line in the fragment (including changes to storage interfaces that operators implement). `major` is reserved for x402 major versions.
 
 ```bash
 # TypeScript (from typescript/)

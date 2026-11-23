@@ -8,7 +8,7 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 - The spec must be approved by maintainers (merged into upstream `main`). If it is not, open a PR with the spec only first (`specs/schemes/...`).
 - The implementation must follow the spec file exactly. Facilitator verification rules are security-critical. 
 - The wire formats `PAYMENT-REQUIRED` (in particular the `extra` field), `PAYMENT-RESPONSE` and facilitator `supported/` output must match the spec strictly. Include only fields actually consumed downstream or required by the scheme. Don't add purely informational fields.
-- Spec amendments and edits are allowed, but must be well justified. Amendments found while implementing land in the same PR as the code, so spec and implementation never disagree.
+- Spec amendments and edits are allowed, but must be well justified.
 
 ## Scope
 
