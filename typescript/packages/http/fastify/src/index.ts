@@ -12,6 +12,7 @@ import {
   prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  VerifiedPayment,
   checkIfBazaarNeeded,
   PaymentCancellationDispatcher,
   CompletedSettlement,
@@ -42,6 +43,7 @@ interface X402PaymentContext {
   beforeHandlerSettlement?: CompletedSettlement;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
+  payer?: string;
   declaredExtensions?: Record<string, unknown>;
   requestContext: HTTPRequestContext;
 }
@@ -245,6 +247,21 @@ function decodedRoutePath(path: string): string {
 }
 
 /**
+ * Get the payment the middleware verified for this request.
+ *
+ * @param request - Fastify request passed to the route handler
+ * @returns The verified payment, or undefined if the request did not carry a verified payment
+ */
+export function getVerifiedPayment(request: FastifyRequest): VerifiedPayment | undefined {
+  const context = request.x402Context;
+  if (!context) {
+    return undefined;
+  }
+  const { paymentPayload, paymentRequirements, payer } = context;
+  return { paymentPayload, paymentRequirements, payer };
+}
+
+/**
  * Configuration for registering a payment scheme with a specific network.
  */
 export interface SchemeRegistration {
@@ -391,6 +408,7 @@ export function paymentMiddlewareFromHTTPServer(
           beforeHandlerSettlement: result.beforeHandlerSettlement,
           paymentPayload: result.paymentPayload,
           paymentRequirements: result.paymentRequirements,
+          payer: result.payer,
           declaredExtensions: result.declaredExtensions,
           requestContext: context,
         };
@@ -629,7 +647,7 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig } from "@x402/core/server";
+export type { PaywallProvider, PaywallConfig, VerifiedPayment } from "@x402/core/server";
 
 export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 

@@ -103,6 +103,7 @@ export {
   HTTPTransportContext,
   HTTPResponseInstructions,
   HTTPProcessResult,
+  VerifiedPayment,
   PaywallConfig,
   PaywallProvider,
   PaymentOption,

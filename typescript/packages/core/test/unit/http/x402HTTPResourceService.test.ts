@@ -1011,6 +1011,47 @@ describe("x402HTTPResourceServer", () => {
       expect(paymentRequired.resource.tags).toEqual(["weather", "api"]);
     });
 
+    it("returns the verified payment with the facilitator-reported payer", async () => {
+      mockFacilitator.setVerifyResponse(buildVerifyResponse({ isValid: true, payer: "0xpayer" }));
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+        payTo: "0xabc",
+        amount: "1000000",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        maxTimeoutSeconds: 300,
+        extra: {},
+      });
+      const payload = buildPaymentPayload({ accepted: requirements });
+      const { encodePaymentSignatureHeader } = await import("../../../src/http");
+
+      const result = await httpServer.processHTTPRequest({
+        adapter: new MockHTTPAdapter({
+          "payment-signature": encodePaymentSignatureHeader(payload),
+        }),
+        path: "/api/test",
+        method: "GET",
+      });
+
+      expect(result).toMatchObject({
+        type: "payment-verified",
+        paymentPayload: payload,
+        paymentRequirements: requirements,
+        payer: "0xpayer",
+      });
+    });
+
     it("should return 412 Precondition Failed for permit2_allowance_required error", async () => {
       // Override mock to simulate permit2 allowance required error
       mockFacilitator.setVerifyResponse({

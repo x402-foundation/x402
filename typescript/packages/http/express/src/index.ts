@@ -11,6 +11,7 @@ import {
   prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  VerifiedPayment,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
 } from "@x402/core/server";
@@ -27,6 +28,18 @@ import { ExpressAdapter } from "./adapter";
  */
 export function setSettlementOverrides(res: Response, overrides: SettlementOverrides): void {
   res.setHeader(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
+
+const verifiedPayments = new WeakMap<Request, VerifiedPayment>();
+
+/**
+ * Get the payment the middleware verified for this request.
+ *
+ * @param req - Express request passed to the route handler
+ * @returns The verified payment, or undefined if the request did not carry a verified payment
+ */
+export function getVerifiedPayment(req: Request): VerifiedPayment | undefined {
+  return verifiedPayments.get(req);
 }
 
 /**
@@ -230,8 +243,10 @@ export function paymentMiddlewareFromHTTPServer(
           beforeHandlerSettlement,
           paymentPayload,
           paymentRequirements,
+          payer,
           declaredExtensions,
         } = result;
+        verifiedPayments.set(req, { paymentPayload, paymentRequirements, payer });
 
         // Intercept and buffer all core methods that can commit response to client
         const originalWriteHead = res.writeHead.bind(res);
@@ -537,7 +552,12 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig, SettlementOverrides } from "@x402/core/server";
+export type {
+  PaywallProvider,
+  PaywallConfig,
+  SettlementOverrides,
+  VerifiedPayment,
+} from "@x402/core/server";
 
 export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 

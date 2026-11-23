@@ -85,6 +85,7 @@ export type {
   HTTPTransportContext,
   HTTPResponseInstructions,
   HTTPProcessResult,
+  VerifiedPayment,
   PaywallConfig,
   PaywallProvider,
   RouteConfig,

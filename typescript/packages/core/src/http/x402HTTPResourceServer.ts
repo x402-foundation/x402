@@ -299,18 +299,29 @@ export interface HTTPResponseInstructions {
 }
 
 /**
+ * A payment the middleware has verified, as exposed to the protected route handler.
+ */
+export interface VerifiedPayment {
+  paymentPayload: PaymentPayload;
+  paymentRequirements: PaymentRequirements;
+  /**
+   * Payer reported by the facilitator: from the verify response, or from the
+   * before-handler settlement for flows that settle before the handler. Undefined if not reported.
+   */
+  payer?: string;
+}
+
+/**
  * Result of processing an HTTP request for payment
  */
 export type HTTPProcessResult =
   | { type: "no-payment-required" }
-  | {
+  | ({
       type: "payment-verified";
       cancellationDispatcher: PaymentCancellationDispatcher;
       beforeHandlerSettlement?: CompletedSettlement;
-      paymentPayload: PaymentPayload;
-      paymentRequirements: PaymentRequirements;
       declaredExtensions?: Record<string, unknown>;
-    }
+    } & VerifiedPayment)
   | { type: "payment-error"; response: HTTPResponseInstructions };
 
 /**
@@ -757,6 +768,7 @@ export class x402HTTPResourceServer {
         beforeHandlerSettlement,
         paymentPayload,
         paymentRequirements: matchingRequirements,
+        payer: verifyResult.payer ?? beforeHandlerSettlement?.result.payer,
         declaredExtensions: extensions,
       };
     } catch (error) {

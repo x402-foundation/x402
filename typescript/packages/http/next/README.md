@@ -172,6 +172,19 @@ withX402(
 5. **`paywall`** (optional): Custom paywall provider
 6. **`syncFacilitatorOnStart`** (optional): Whether to sync with facilitator on startup (defaults to true)
 
+#### Reading the Verified Payment
+
+Inside a handler wrapped by `withX402`, `getVerifiedPayment(request)` returns the payment that was verified for the request: `paymentPayload`, the matched `paymentRequirements`, and the `payer` reported by the facilitator (if it returned one). It returns `undefined` when the request carried no verified payment, and is not available behind `paymentProxy`. With the default `authorization` flow, the payment is settled only after the handler responds, so settlement can still fail.
+
+```typescript
+import { getVerifiedPayment, withX402 } from "@x402/next";
+
+const handler = async (request: NextRequest) => {
+  const payment = getVerifiedPayment(request);
+  return NextResponse.json({ payer: payment?.payer });
+};
+```
+
 ## API Reference
 
 ### NextAdapter

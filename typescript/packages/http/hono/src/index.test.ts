@@ -21,7 +21,9 @@ import {
   paymentMiddlewareFromConfig,
   paymentMiddlewareFromHTTPServer,
   setSettlementOverrides,
+  getVerifiedPayment,
   type SchemeRegistration,
+  type VerifiedPayment,
 } from "./index";
 
 // --- Test Fixtures ---
@@ -508,6 +510,61 @@ describe("paymentMiddleware", () => {
       undefined,
     );
     expect(context.res?.headers.get("PAYMENT-RESPONSE")).toBe("settled");
+  });
+
+  it("exposes the verified payment to a handler in a mounted sub-app", async () => {
+    setupMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+        payer: "0xpayer",
+      },
+      { success: true, headers: { "PAYMENT-RESPONSE": "settled" } },
+    );
+
+    let seen: VerifiedPayment | undefined;
+    const api = new Hono();
+    api.get("/test", c => {
+      seen = getVerifiedPayment(c);
+      return c.json({ ok: true });
+    });
+    const app = new Hono();
+    app.use(
+      paymentMiddleware(
+        mockRoutes,
+        {} as unknown as x402ResourceServer,
+        undefined,
+        undefined,
+        false,
+      ),
+    );
+    app.route("/api", api);
+
+    const res = await app.request("/api/test");
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
+  });
+
+  it("does not expose a payment when none is required", async () => {
+    setupMockHttpServer({ type: "no-payment-required" });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const context = createMockContext();
+    await middleware(context, vi.fn().mockResolvedValue(undefined));
+
+    expect(getVerifiedPayment(context)).toBeUndefined();
   });
 
   it("returns the protected body after a delayed settlement", async () => {
