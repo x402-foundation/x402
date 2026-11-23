@@ -1,7 +1,7 @@
 # [DRAFT] Card acceptance on `x402`
 
 - **Status**: Draft
-- **Version**: 0.2.0
+- **Version**: 0.3.0
 - **Date**: 2026-08-08
 - **Author(s)**: Stefano Amorelli ([@stefanoamorelli](https://github.com/stefanoamorelli))
 - **Contributor(s)**: Erik Reppel ([@erikreppel](https://github.com/erikreppel)), Steve Kaliski (Stripe, [@sjkaliski](https://github.com/sjkaliski)), Carson Roscoe (Coinbase, [@CarsonRoscoe](https://github.com/CarsonRoscoe)), Adam Krochak (American Express)
@@ -14,7 +14,6 @@
 | 1 | What goes in v1 | Whether v1 is only for agents paying for requests, with card checkout for a person in a browser, agent spending permissions, bundled micropayments, bank verification (3DS), post-payment updates, statement text and refunds handled later as separate proposals (§9). | TBD | (a) agents only, extras later; (b) also support a person paying in a browser; (c) bring one of the other extras back into v1 |
 | 2 | What card token does an agent pay with? | A token usually works only with the PSP account that created it, and an agent pays many merchants it has never used before, so it needs a token each merchant's PSP account can charge (§4.2 and §4.4). | TBD | (a) network agent tokens; (b) a token the PSP shares with the merchant; (c) leave it out of the spec |
 | 3 | How do card networks recognise an agent's x402 payment? | An agent payment fits neither card-network category, cardholder-initiated (CIT) or merchant-initiated (MIT), so the spec has to say what the authorization carries for the network to handle it correctly (§4.4 and §4.7). | TBD | (a) the network agent token carries it; (b) submit it as a payment without the cardholder present (e.g. Stripe `off_session`) and let the PSP set the rest; (c) a dedicated `x402` or agent marker, once a network defines one |
-| 4 | Which ID ties the hold and the charge together? | The `payment-identifier` extension rejects a second message with the same ID and different contents, which is exactly what the charge after a hold is, so the draft uses its own `paymentId` (§4.4). | TBD | (a) `paymentId` on every message; (b) reuse `payment-identifier` with a rule that allows the charge message |
 
 ## Motivation
 
@@ -171,13 +170,13 @@ The PSP is named in `extra.psp` (§4.3), not in the identifier. A token is redee
 | Field | Required | Description |
 |---|---|---|
 | `token` | Yes | Opaque PSP token for the card. MUST NOT be a PAN or contain card data (§8.1) |
-| `paymentId` | Yes | Client-generated identity of the payment, 16 to 128 characters, alphanumeric, hyphens and underscores. Reused unchanged on every retry of the same payment |
+| `paymentId` | Yes | Client-generated identity of the logical payment, 16 to 128 characters, alphanumeric, hyphens and underscores. Reused unchanged throughout the payment lifecycle |
 
 The token is the whole client authorization. The binding does not say how the client obtained it (hosted fields, a card on file, a wallet, a network or agentic token), nor whether an agent may use it. The PSP and the issuer decide that when they receive the authorization.
 
 NOTE: Whether the payload carries more than the token depends on open items 2 and 3. A field is added once a party that consumes it is identified.
 
-`paymentId` identifies the payment through its whole lifecycle, on the client payload and on every lifecycle payload (§4.6). It serves the same idempotency purpose as the `payment-identifier` extension, but is part of the payload so that the binding does not depend on an optional extension.
+The client MUST generate a fresh `paymentId` for each logical payment and preserve it across retries. `paymentId` identifies the payment through its whole lifecycle: the authorization carries it on the client payload, and the resource server copies it into the corresponding `capture` or `void` payload (§4.6).
 
 ### 4.5 Payment flow and settlement
 
@@ -193,7 +192,7 @@ Cards therefore bind to the `escrow` payment flow, the default of the parent sch
 
 The resource server MAY capture during the request or later from durable state, as the parent scheme allows. Either way:
 
-- the facilitator MUST deduplicate authorizations on `payTo` and `paymentId`. A retry with the same `paymentId` and the same token resumes the existing PSP intent instead of opening a second hold. A retry with the same `paymentId` and a different token or amount MUST be rejected;
+- the facilitator MUST scope `paymentId` to the authenticated merchant and the PSP named in `extra.psp`, and MUST bind it to the original authorization terms. A retry with the same `paymentId` and the same terms resumes the existing PSP intent instead of opening a second hold. Reusing the same `paymentId` with different authorization terms MUST be rejected;
 - the facilitator MUST void any authorization it will not capture, and at the latest at `captureDeadline`, since an open authorization blocks the buyer's funds. A hold nobody touches lapses at the issuer when the authorization expires. That lapse is the card equivalent of `reclaim` and needs no action from the client; and
 - the capture amount MUST NOT exceed the authorized amount. A capture for less releases the remainder of the hold.
 
@@ -258,10 +257,25 @@ The `auth-capture` scheme lists eight things every network binding MUST specify.
 | Client authorization format | an opaque PSP token; the payment's identity is `paymentId` (§4.4) |
 | Operator model | the facilitator, through its PSP integration, drives every relayed operation; the resource server initiates `capture` and `void`; refunds run out of band at the PSP (§4.6) |
 | Server consent | authenticated identity of the resource server on each lifecycle settle (§4.6) |
-| Replay protection | one authorization, and then one `capture` or `void`, per `payTo` and `paymentId` (§4.5 and §4.6) |
+| Replay protection | one authorization, and then one `capture` or `void`, per authenticated merchant, PSP and `paymentId` (§4.5 and §4.6) |
 | Per-operation verification and settlement | amount ceilings and PSP calls (§4.5 and §4.6), decline classes (§7.3) |
 | Refund funding | the merchant's PSP balance, out of band (§4.6) |
 | Sync capture-and-void | a single `capture` for the final amount releases the remainder of the hold (§4.5) |
+
+### 4.9 Clarifying idempotency in spec vs extension
+
+`payload.paymentId` is required by this card binding. It identifies one logical payment across authorization, capture or void, and retries.
+
+[`payment-identifier`](../../extensions/payment_identifier.md) is a general, optional extension that resource servers or facilitators MAY support across their payment schemes. Its ID is an idempotency key for one request operation and its retries; it does not follow the payment through its lifecycle. Each lifecycle operation therefore uses a new extension ID while retaining the same `payload.paymentId`.
+
+| Operation | `payload.paymentId` | Extension ID, if included |
+| :---- | :---- | :---- |
+| Authorize \$1.00 | P | A |
+| Retry authorization | P | A |
+| Capture \$0.73 | P | B |
+| Retry capture | P | B |
+
+*P, A, and B are symbolic identifiers.*
 
 ## 5 Client integration
 
@@ -379,7 +393,7 @@ The complexity of card acceptance is mostly on the facilitator, by design. The c
 
 A facilitator for a `card:<card-network>` network:
 
-- MUST deduplicate authorizations on `payTo` and `paymentId` (§4.5);
+- MUST scope `paymentId` to the authenticated merchant and PSP, bind it to the original authorization terms, and deduplicate authorization retries (§4.5);
 - MUST authenticate the resource server on every lifecycle settle and bind lifecycle payloads to the payment's `payTo` (§4.6);
 - MUST void any authorization it will not capture (§4.5);
 - MUST rate-limit authorizations and collapse hard-decline detail (§8.2); and
@@ -457,5 +471,6 @@ The following were drafted in earlier revisions of this document and are left ou
 
 | Version | Date | Changes | Authors |
 |---|---|---|---|
+| 0.3.0 | 2026-11-16 | Hardened and clarified idempotency without changing the binding: distinguished lifecycle-wide `payload.paymentId` from the per-operation `payment-identifier` extension and scoped replay protection to the authenticated merchant and PSP | @CarsonRoscoe |
 | 0.2.0 | 2026-10-06 | Reduced to the base binding. `network` stays CAIP-2 with the PSP in `extra.psp`; the payload is the token and a `paymentId`; refunds run at the PSP. Provenance, micropayments, step-up and payment events move to follow-ups (§9) | @stefanoamorelli |
 | 0.1.0 | 2026-08-08 | Initial draft | @stefanoamorelli |
