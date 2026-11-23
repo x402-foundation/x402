@@ -42,7 +42,7 @@ These apply to every spec type (scheme, extension). The references below add typ
 ### Settlement outcomes
 
 - `/settle` returns `success: true` at most once per payload and settle step. A replay is rejected, never answered from a stored success. Idempotent retries belong to the `payment-identifier` extension, not to schemes.
-- When a transaction was broadcast but its outcome is unknown, return `settlement_pending` with the transaction hash. Never report it as a failure the client may retry by signing again.
+- When a transaction was broadcast but its outcome is unknown, never report it as a failure the client may retry by signing again; use `settlement_pending` with the transaction hash (core spec §9).
 - Use separate error codes for retryable infrastructure failures (RPC, storage, timeouts) and for terminal rejections of the payload.
 
 ## References

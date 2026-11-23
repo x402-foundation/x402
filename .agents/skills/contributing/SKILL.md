@@ -40,7 +40,7 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 
 ## Neutrality
 
-- Keep code, docs, examples and e2e tests free of any specific facilitator, vendor, or third-party service, apart from the listings in `docs/dev-tools/`. Limits or behavior specific to one facilitator belong in that facilitator's docs, not in the SDK.
+- Do not add references to a specific facilitator, vendor, or third-party service to code, docs, examples or e2e tests, apart from the listings in `docs/dev-tools/`. Limits or behavior specific to one facilitator belong in that facilitator's docs, not in the SDK.
 - Third-party SDKs are not added to the e2e harness.
 - The public `x402.org` facilitator is for testnets only.
 - The ecosystem page no longer accepts submissions. Third-party facilitators, SDKs, extensions and utilities are listed in [`docs/dev-tools/`](../../../docs/dev-tools/); only packages that read or write `extensions` go in the [extensions table](../../../docs/dev-tools/third-party-extensions.md).

@@ -19,13 +19,13 @@ Checklist for authoring a new per-network scheme spec file (`scheme_<name>_<chai
 
 - Fee sponsorship is strongly preferred; clients and servers should not need to pay gas or hold the native token.
 - The server should not need an RPC; the client may use an RPC; a facilitator RPC can be considered a given.
-- If the network cannot sponsor fees, say so in the spec and advertise `extra.areFeesSponsored: false`.
+- If the facilitator submits the transaction but the payer must fund the fee, say so in the spec and advertise `extra.areFeesSponsored: false` (as the XRPL and Cardano specs do).
 
 ## Statelessness
 
 - Stateless design is strongly preferred for client and server, and especially the facilitator. A short-lived cache is acceptable but needs to be well justified (see the duplicate-settlement mitigation in [`scheme_exact_svm.md`](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended)). Persistent storage warrants discussion with maintainers.
 - The reason is portability: if a scheme needs state held by one facilitator, a server can no longer switch facilitators, spread load across several, or self-facilitate.
-- When state is unavoidable, prefer state held by the resource server (see `batch-settlement`). Facilitator-side state should be rebuildable from onchain data and bounded by an onchain fact rather than by `maxTimeoutSeconds`, which the server controls. Justify it in a dedicated section of the spec.
+- When state is unavoidable, prefer state held by the resource server (see `batch-settlement`). Facilitator-side state should be rebuildable from onchain data, and a replay key is kept until its payment can no longer land. Justify it in a dedicated section of the spec.
 - Where the network offers no onchain record to rely on and facilitators must share a store, the spec must say so, as [`scheme_exact_lnbtc.md`](../../../../specs/schemes/exact/scheme_exact_lnbtc.md) does for its replay store.
 - A mode in which the facilitator holds custody state (for example `extra.voucherManager: "facilitator"` in [`scheme_batch_settlement_evm.md`](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md)) is opt-in, advertised on `/supported`, and never the default.
 
