@@ -28,7 +28,6 @@ Checklist for authoring a new per-network scheme spec file (`scheme_<name>_<chai
 - When state is unavoidable, prefer state held by the resource server (see `batch-settlement`). Facilitator-side state should be rebuildable from onchain data and bounded by an onchain fact rather than by `maxTimeoutSeconds`, which the server controls. Justify it in a dedicated section of the spec.
 - Where the network offers no onchain record to rely on and facilitators must share a store, the spec must say so, as [`scheme_exact_lnbtc.md`](../../../../specs/schemes/exact/scheme_exact_lnbtc.md) does for its replay store.
 - A mode in which the facilitator holds custody state (for example `extra.voucherManager: "facilitator"` in [`scheme_batch_settlement_evm.md`](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md)) is opt-in, advertised on `/supported`, and never the default.
-- A store may remember a consumed payload in order to reject a replay, but it never stores or serves a success result.
 
 ## Nonces
 
@@ -43,7 +42,7 @@ Checklist for authoring a new per-network scheme spec file (`scheme_<name>_<chai
 - The facilitator must protect its own funds and bound its fee exposure. Its signature must authorize only the network fee: the facilitator must not appear as the authority, source, or sender of any value-moving instruction (fee-payer isolation), so it cannot be induced to transfer its own funds. It must also cap the fees it pays against client-controlled parameters (e.g. explicit gas limits, compute-unit and priority-fee caps), so a client cannot inflate them.
 - Evaluate fee caps with non-wrapping arithmetic (arbitrary precision, or at least 128-bit integers).
 - If the facilitator would sign a transaction that calls code the client chose, reject anything that neither the spec enumerates nor the operator has allowlisted.
-- A transaction the client broadcasts itself is a client-submitted payment proof. Declare the matching payment flow (`upfront` or `escrow`, not `authorization`), and bind the proof to the requirements as Request binding in [`scheme_exact.md`](../../../../specs/schemes/exact/scheme_exact.md) requires, so the same proof cannot be redeemed twice.
+- When the payment itself is a transaction the client already broadcast, it is a client-submitted payment proof. Under `exact` it uses the `upfront` flow and needs both Request binding (so it cannot pay for another request) and Single-use claim (so it cannot be redeemed twice) from [`scheme_exact.md`](../../../../specs/schemes/exact/scheme_exact.md).
 
 ## Trust model
 

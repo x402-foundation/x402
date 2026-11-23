@@ -33,15 +33,15 @@ These apply to every spec type (scheme, extension). The references below add typ
 
 ### Roles and payment flow
 
-- Facilitators are optional and interchangeable: a client never needs an account, registration, or infrastructure tied to one, and which facilitator a server uses stays opaque to the client. Anything that binds a server or payment to one facilitator, or to one shared store, must be justified and documented in the spec (see Statelessness in the [network scheme reference](references/new-network-scheme-spec.md#statelessness)).
+- Facilitators are optional and interchangeable: on onchain networks a client never needs an account, registration, or infrastructure tied to one, and which facilitator a server uses stays opaque to the client. Anything that binds a server or payment to one facilitator, or to one shared store, must be justified and documented in the spec (see Statelessness in the [network scheme reference](references/new-network-scheme-spec.md#statelessness)).
 - In the `authorization` flow the order is verify, then the resource handler, then settle. A design that needs funds committed before the handler runs declares `extra.paymentFlow` (`upfront` or `escrow`) instead of reordering an existing flow.
 - A new way of moving the asset is a new `extra.assetTransferMethod` on an existing scheme. A change in who bears the risk, or in when verify and settle run, is a new scheme or payment flow.
 - Put behavior the protocol cannot enforce in an extension rather than a scheme or the core spec.
-- Advertise facilitator capabilities and limits that servers copy into `PaymentRequirements` in `/supported` `extra`, and state what an absent field means. Servers may narrow advertised lists and numeric bounds but never widen them. A network or facilitator that does not implement or advertise a capability must reject requirements that use it, not ignore them.
+- Advertise facilitator capabilities and limits that servers copy into `PaymentRequirements` in `/supported` `extra`, and state what an absent field means. Servers never exceed what the facilitator advertises, and the spec states per field whether a value may be narrowed or must be copied verbatim. A network or facilitator that does not implement or advertise a capability must reject requirements that use it, not ignore them.
 
 ### Settlement outcomes
 
-- `/settle` returns `success: true` at most once per payload. A replay is rejected, not answered with a second success. Idempotent retries belong to the `payment-identifier` extension, not to schemes.
+- `/settle` returns `success: true` at most once per payload and settle step. A replay is rejected, never answered from a stored success. Idempotent retries belong to the `payment-identifier` extension, not to schemes.
 - When a transaction was broadcast but its outcome is unknown, return `settlement_pending` with the transaction hash. Never report it as a failure the client may retry by signing again.
 - Use separate error codes for retryable infrastructure failures (RPC, storage, timeouts) and for terminal rejections of the payload.
 
