@@ -403,6 +403,12 @@ func TestLosingReservationAnswersDuplicateSettlement(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestNewBatchSvmSchemeDefaultsToAPendingStoreRetainedForPendingRetention(t *testing.T) {
+	scheme := NewBatchSvmScheme(context.Background(), newScriptedSigner(t, 1), &Config{})
+	assert.Equal(t, x402.NewInMemoryPendingSettlementStore(x402.WithPendingSettlementTTL(PendingRetention)), scheme.pendingStore)
+	assert.NotEqual(t, x402.NewInMemoryPendingSettlementStore(), scheme.pendingStore, "a payout must outlive the shared store's five-minute TTL so a failing hook can be retried")
+}
+
 func TestDistributionKeys(t *testing.T) {
 	prepared := []PreparedDistribution{{ChannelID: "chan-b"}, {ChannelID: "chan-a"}}
 	key := distributionKey("net", prepared)

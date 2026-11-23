@@ -26,6 +26,10 @@ import (
 // is unset.
 const DefaultFacilitatorTransactionVersion = paymentchannels.FacilitatorTransactionVersion1
 
+// PendingRetention is how long the default PendingSettlementStore keeps an entry.
+// The shared in-memory store keeps entries for five minutes, which is too short for a failing payout hook.
+const PendingRetention = 24 * time.Hour
+
 // Config is the optional configuration of the batch-settlement SVM facilitator.
 type Config struct {
 	// PaymentChannelsTreasuryOwner overrides the treasury owner the
@@ -165,7 +169,7 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	}
 	pending := config.PendingSettlementStore
 	if pending == nil {
-		pending = newRetainedPendingStore()
+		pending = x402.NewInMemoryPendingSettlementStore(x402.WithPendingSettlementTTL(PendingRetention))
 	}
 	duplicates := config.DuplicateSettlementStore
 	if duplicates == nil {

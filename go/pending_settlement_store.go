@@ -9,8 +9,13 @@ import (
 // PendingSettlementTTL is the TTL applied by the default in-memory
 // PendingSettlementStore implementation. A store implementation backed by a
 // different mechanism (e.g. Redis, for a multi-instance facilitator) is free
-// to use its own TTL — this constant only governs InMemoryPendingSettlementStore.
+// to use its own TTL — this constant only governs InMemoryPendingSettlementStore,
+// and WithPendingSettlementTTL overrides it per store.
 const PendingSettlementTTL = 5 * time.Minute
+
+// pendingSettlementSweepInterval bounds how often Set sweeps expired entries,
+// so Get and Set cost one lookup rather than a scan of the map.
+const pendingSettlementSweepInterval = time.Minute
 
 // PendingSettlementStore lets a facilitator-side mechanism remember a
 // broadcast-but-not-yet-confirmed transaction hash, keyed by a deterministic
@@ -50,23 +55,39 @@ type pendingSettlementEntry struct {
 // InMemoryPendingSettlementStore is the default PendingSettlementStore
 // implementation: a mutex-protected, per-process map with lazy TTL pruning
 // (mirrors the shape of go/mechanisms/svm/settlement_cache.go). It never
-// performs network I/O — Get additionally prunes expired entries (O(n) in
-// the number of currently-stored entries, which stays small since entries
-// only exist while a settlement is genuinely pending), so every call adds no
+// performs network I/O — Get checks only the requested entry's age and Set
+// sweeps the whole map at most once per minute, so every call adds no
 // meaningful latency to the settle hot path. Suitable for single-instance
 // facilitators; multi-instance deployments should inject a shared,
 // network-backed PendingSettlementStore implementation instead (e.g. Redis).
 type InMemoryPendingSettlementStore struct {
-	mu      sync.Mutex
-	entries map[string]pendingSettlementEntry
+	mu        sync.Mutex
+	entries   map[string]pendingSettlementEntry
+	ttl       time.Duration
+	lastSwept time.Time
+}
+
+// InMemoryPendingSettlementStoreOption configures an InMemoryPendingSettlementStore.
+type InMemoryPendingSettlementStoreOption func(*InMemoryPendingSettlementStore)
+
+// WithPendingSettlementTTL sets how long the store keeps an entry, in place of PendingSettlementTTL.
+func WithPendingSettlementTTL(ttl time.Duration) InMemoryPendingSettlementStoreOption {
+	return func(s *InMemoryPendingSettlementStore) {
+		s.ttl = ttl
+	}
 }
 
 // NewInMemoryPendingSettlementStore creates a new, empty
 // InMemoryPendingSettlementStore.
-func NewInMemoryPendingSettlementStore() *InMemoryPendingSettlementStore {
-	return &InMemoryPendingSettlementStore{
+func NewInMemoryPendingSettlementStore(opts ...InMemoryPendingSettlementStoreOption) *InMemoryPendingSettlementStore {
+	s := &InMemoryPendingSettlementStore{
 		entries: make(map[string]pendingSettlementEntry),
+		ttl:     PendingSettlementTTL,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Get implements PendingSettlementStore.
@@ -74,10 +95,12 @@ func (s *InMemoryPendingSettlementStore) Get(_ context.Context, key string) (str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.prune()
-
 	entry, ok := s.entries[key]
 	if !ok {
+		return "", false, nil
+	}
+	if s.expired(entry, time.Now()) {
+		delete(s.entries, key)
 		return "", false, nil
 	}
 	return entry.txHash, true, nil
@@ -88,7 +111,9 @@ func (s *InMemoryPendingSettlementStore) Set(_ context.Context, key string, txHa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.entries[key] = pendingSettlementEntry{txHash: txHash, storedAt: time.Now()}
+	now := time.Now()
+	s.sweep(now)
+	s.entries[key] = pendingSettlementEntry{txHash: txHash, storedAt: now}
 	return nil
 }
 
@@ -113,11 +138,19 @@ func (s *InMemoryPendingSettlementStore) Entries() map[string]string {
 	return out
 }
 
-// prune removes entries older than PendingSettlementTTL. Caller must hold mu.
-func (s *InMemoryPendingSettlementStore) prune() {
-	cutoff := time.Now().Add(-PendingSettlementTTL)
+func (s *InMemoryPendingSettlementStore) expired(entry pendingSettlementEntry, now time.Time) bool {
+	return entry.storedAt.Before(now.Add(-s.ttl))
+}
+
+// sweep removes entries older than the store's TTL at most once per
+// pendingSettlementSweepInterval. Caller must hold mu.
+func (s *InMemoryPendingSettlementStore) sweep(now time.Time) {
+	if now.Sub(s.lastSwept) < pendingSettlementSweepInterval {
+		return
+	}
+	s.lastSwept = now
 	for key, entry := range s.entries {
-		if entry.storedAt.Before(cutoff) {
+		if s.expired(entry, now) {
 			delete(s.entries, key)
 		}
 	}
