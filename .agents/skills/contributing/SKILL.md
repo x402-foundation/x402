@@ -32,7 +32,7 @@ description: Guidelines and conventions for contributing to the x402 codebase. U
 - A facilitator answers malformed client input with `isValid: false` and a stable reason code, never an HTTP 5xx. Payer-facing messages never include internal error text such as RPC URLs or storage errors.
 - Reason codes are shared across SDKs: never change one without changing it in all three.
 - A handler declines a paid request by returning a status of 400 or higher; any lower status settles.
-- Protocol data travels in headers. The response body is the server's to define.
+- On HTTP, protocol data travels in headers. The response body is the server's to define.
 - New options keep the current behavior as the default. Anything with a tradeoff is opt-in, and a changed default needs an opt-out and a note in the changeset.
 - Make RPC and indexer endpoints configurable; do not add new hard-coded public endpoints.
 - Stores ship an in-memory default behind an interface operators can replace, unless the spec requires a durable store. The interface states its atomicity requirements, so a shared store such as Redis or Postgres stays correct across replicas.

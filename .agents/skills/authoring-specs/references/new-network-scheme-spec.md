@@ -26,9 +26,9 @@ Checklist for authoring a new per-network scheme spec file (`scheme_<name>_<chai
 - Stateless design is strongly preferred for client and server, and especially the facilitator. A short-lived cache is acceptable but needs to be well justified (see the duplicate-settlement mitigation in [`scheme_exact_svm.md`](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended)). Persistent storage warrants discussion with maintainers.
 - The reason is portability: if a scheme needs state held by one facilitator, a server can no longer switch facilitators, spread load across several, or self-facilitate.
 - When state is unavoidable, prefer state held by the resource server (see `batch-settlement`). Facilitator-side state should be rebuildable from onchain data and bounded by an onchain fact rather than by `maxTimeoutSeconds`, which the server controls. Justify it in a dedicated section of the spec.
-- Prefer binding the payment to the request, so the settling facilitator needs no store beyond its own (see Request binding in [`scheme_exact.md`](../../../../specs/schemes/exact/scheme_exact.md)). Where the network offers no onchain record to rely on, the spec must say so, as [`scheme_exact_lnbtc.md`](../../../../specs/schemes/exact/scheme_exact_lnbtc.md) does for its shared replay store.
+- Where the network offers no onchain record to rely on and facilitators must share a store, the spec must say so, as [`scheme_exact_lnbtc.md`](../../../../specs/schemes/exact/scheme_exact_lnbtc.md) does for its replay store.
 - A mode in which the facilitator holds custody state (for example `extra.voucherManager: "facilitator"` in [`scheme_batch_settlement_evm.md`](../../../../specs/schemes/batch-settlement/scheme_batch_settlement_evm.md)) is opt-in, advertised on `/supported`, and never the default.
-- A store may remember a consumed payload in order to reject a replay, but it never stores or serves a success result: a replayed payload would get a second `success: true`.
+- A store may remember a consumed payload in order to reject a replay, but it never stores or serves a success result.
 
 ## Nonces
 
@@ -42,15 +42,15 @@ Checklist for authoring a new per-network scheme spec file (`scheme_<name>_<chai
 - The facilitator must confirm onchain that the expected transfer happened, not only that the transaction did not revert, before returning success to the server.
 - The facilitator must protect its own funds and bound its fee exposure. Its signature must authorize only the network fee: the facilitator must not appear as the authority, source, or sender of any value-moving instruction (fee-payer isolation), so it cannot be induced to transfer its own funds. It must also cap the fees it pays against client-controlled parameters (e.g. explicit gas limits, compute-unit and priority-fee caps), so a client cannot inflate them.
 - Evaluate fee caps with non-wrapping arithmetic (arbitrary precision, or at least 128-bit integers).
-- If the facilitator would sign a transaction that calls code the client chose, require an operator allowlist that is empty by default. On SVM, match foreign-program instructions by program and instruction, not by program alone.
-- A transaction the client broadcasts itself is a client-submitted payment proof. Declare the matching payment flow (`upfront` or `escrow`, not `authorization`), and make sure the same proof cannot be redeemed twice.
+- If the facilitator would sign a transaction that calls code the client chose, reject anything that neither the spec enumerates nor the operator has allowlisted.
+- A transaction the client broadcasts itself is a client-submitted payment proof. Declare the matching payment flow (`upfront` or `escrow`, not `authorization`), and bind the proof to the requirements as Request binding in [`scheme_exact.md`](../../../../specs/schemes/exact/scheme_exact.md) requires, so the same proof cannot be redeemed twice.
 
 ## Trust model
 
 - The client must treat all server-provided fields as untrusted and must not rely on a server value for anything it can determine authoritatively itself. For example, if a scheme placed token `decimals` in `extra` and the client trusted it, a misconfigured or malicious server could report a wrong value, causing the client to compute too large an atomic `amount` and overpay; the client must instead read `decimals` (and similar token metadata) from onchain state.
 - The server and facilitator must consider the client payload untrusted.
 - The client should never interact with the facilitator directly, always via the server as proxy.
-- By default the facilitator holds only a key that pays network fees, not a role that can redirect, withhold, or refund value. A mode that gives it such a role (for example the `delegated` operator in `auth-capture`, or a facilitator-provided `receiverAuthorizer` in `batch-settlement`) is a trust choice the server opts into, and the spec must say what the server gives up.
+- Prefer designs where the facilitator holds only a key that pays network fees, not a role that can redirect, withhold, or refund value. Where a scheme gives it such a role (for example the `delegated` operator in `auth-capture`, or a facilitator-provided `receiverAuthorizer` in `batch-settlement`), the spec must say what the server gives up by trusting it.
 - Having the facilitator fund accounts a counterparty can close and reclaim (for example token accounts) is a griefing risk. Allow it only as an explicit opt-in that the facilitator advertises on `/supported`.
 
 ## Account requirements

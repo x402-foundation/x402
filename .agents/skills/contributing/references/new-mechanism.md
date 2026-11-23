@@ -28,7 +28,7 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 ### Unit tests
 
 - Pure-logic tests that run offline with no live RPC or network calls. Add them with comparable coverage to the EVM reference under **TS** `typescript/packages/mechanisms/<chain>/test/unit/`; **Go** `go/mechanisms/<chain>/` or **Py** `python/x402/tests/unit/mechanisms/<chain>/`. Run them and confirm all pass.
-- New additions must have **>80%** line coverage. Copy the coverage thresholds and the `max-lines` and complexity lint limits from an existing mechanism package.
+- New additions must have **>80%** line coverage. Set the package's coverage thresholds to at least 80%, and its `max-lines` and complexity lint limits to its current values plus a little slack.
 
 ```bash
 # typescript/
