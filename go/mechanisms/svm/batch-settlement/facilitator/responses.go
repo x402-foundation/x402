@@ -86,7 +86,7 @@ func PendingSignatureOf(err error) (string, bool) {
 	return "", false
 }
 
-func snapshotChannel(channelID string, channel *generated.Channel, charged *uint64) batchsettlement.BatchChannelState {
+func snapshotChannel(channelID string, channel *generated.Channel) batchsettlement.BatchChannelState {
 	snapshot := batchsettlement.BatchChannelState{
 		ChannelID:    channelID,
 		Balance:      strconv.FormatUint(channel.Deposit, 10),
@@ -94,9 +94,6 @@ func snapshotChannel(channelID string, channel *generated.Channel, charged *uint
 	}
 	if generated.ChannelStatus(channel.Status) == generated.ChannelStatus_Closing {
 		snapshot.WithdrawRequestedAt = channel.ClosureStartedAt
-	}
-	if charged != nil {
-		snapshot.ChargedCumulativeAmount = strconv.FormatUint(*charged, 10)
 	}
 	return snapshot
 }
@@ -137,7 +134,7 @@ func ResyncFailure(network x402.Network, reason, message string, states []batchs
 
 // VerifiedChannelExtra projects a channel onto the flat verify response extra.
 func VerifiedChannelExtra(channelID string, channel *generated.Channel) map[string]any {
-	snapshot := snapshotChannel(channelID, channel, nil)
+	snapshot := snapshotChannel(channelID, channel)
 	return map[string]any{
 		"channelId":           snapshot.ChannelID,
 		"balance":             snapshot.Balance,
@@ -155,7 +152,7 @@ func DepositResponse(channelID string, channel *generated.Channel, network x402.
 		Network:     network,
 		Amount:      strconv.FormatUint(amount, 10),
 		Extra: map[string]any{
-			"channelState": snapshotChannel(channelID, channel, nil),
+			"channelState": snapshotChannel(channelID, channel),
 		},
 	}
 }
@@ -185,7 +182,7 @@ func RefundResponse(channelID string, channel *generated.Channel, network x402.N
 		Transaction: transaction,
 		Network:     network,
 		Extra: map[string]any{
-			"channelState": snapshotChannel(channelID, channel, nil),
+			"channelState": snapshotChannel(channelID, channel),
 		},
 	}
 }

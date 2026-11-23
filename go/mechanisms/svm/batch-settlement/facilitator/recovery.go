@@ -39,11 +39,8 @@ func recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) 
 // and a signature:blockhash pair are also valid records.
 const broadcastRecordSeparator = ":"
 
-// encodeBroadcastRecord is the value held under an operation key while a broadcast
-// is unresolved. The blockhash lets a retry tell a broadcast that can no longer
-// land from one still in flight. The wire, kept only once a confirmation timed
-// out, lets that retry send the same transaction again. Empty trailing parts are
-// omitted.
+// encodeBroadcastRecord holds the signature, its blockhash, and the signed
+// transaction after a confirmation timeout, so a retry can resend it or see that it expired.
 func encodeBroadcastRecord(signature, blockhash, wire string) string {
 	switch {
 	case wire != "":
