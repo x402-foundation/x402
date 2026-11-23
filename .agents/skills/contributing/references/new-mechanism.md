@@ -8,7 +8,7 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 - The spec must be approved by maintainers (merged into upstream `main`). If it is not, open a PR with the spec only first (`specs/schemes/...`).
 - The implementation must follow the spec file exactly. Facilitator verification rules are security-critical. 
 - The wire formats `PAYMENT-REQUIRED` (in particular the `extra` field), `PAYMENT-RESPONSE` and facilitator `supported/` output must match the spec strictly. Include only fields actually consumed downstream or required by the scheme. Don't add purely informational fields.
-- Spec amendments and edits are allowed, but must be well justified.
+- Spec amendments and edits are allowed, but must be well justified. Amendments found while implementing land in the same PR as the code, so spec and implementation never disagree.
 
 ## Scope
 
@@ -28,7 +28,7 @@ Checklist for adding a new payment mechanism / scheme. Follow the [general contr
 ### Unit tests
 
 - Pure-logic tests that run offline with no live RPC or network calls. Add them with comparable coverage to the EVM reference under **TS** `typescript/packages/mechanisms/<chain>/test/unit/`; **Go** `go/mechanisms/<chain>/` or **Py** `python/x402/tests/unit/mechanisms/<chain>/`. Run them and confirm all pass.
-- New additions must have **>80%** line coverage.
+- New additions must have **>80%** line coverage. Copy the coverage thresholds and the `max-lines` and complexity lint limits from an existing mechanism package.
 
 ```bash
 # typescript/
@@ -71,6 +71,7 @@ pnpm install:all && pnpm test --testnet --min --families=<chain> --versions=2
 
 - Add network to server, client and facilitator examples under `examples/<sdk>/*/advanced/all_networks`. 
 - Manually confirm a successful payment by running facilitator, server and client examples locally.
+- Keep example code inline in the existing entry file; examples have no test files.
 
 ## Docs
 
