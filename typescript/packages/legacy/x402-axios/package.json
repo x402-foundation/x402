@@ -35,7 +35,7 @@
     "typescript": "^5.7.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.1.12",
-    "vite": "^6.4.5"
+    "vite": "^6.4.6"
   },
   "dependencies": {
     "axios": "^1.20.0",

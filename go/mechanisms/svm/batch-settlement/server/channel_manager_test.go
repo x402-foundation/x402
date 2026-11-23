@@ -202,6 +202,7 @@ func TestBatchSettlementRedemptionWorker(t *testing.T) {
 		options := withPayout(managerOptions(store, receiverAuthorizer, func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
 			return okResponse(), nil
 		}), 3000)
+		options.ReadSettledWatermark = func(context.Context, string) (uint64, bool, error) { return 0, false, nil }
 		options.OnError = func(err error) { errors = append(errors, err) }
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)

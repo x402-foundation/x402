@@ -118,15 +118,11 @@ export function handleSimulationResult(
 }
 
 /**
- * Returns the address credentials carried by a Soroban credential union, for
- * both the legacy V1 `sorobanCredentialsAddress` arm and the CAP-71 V2
- * `sorobanCredentialsAddressV2` arm, which networks accept from Protocol 28
- * onward. Both arms wrap the same `SorobanAddressCredentials` structure and
- * differ only in the preimage the signer commits to. Returns `undefined` for
- * every other arm (source-account, delegated).
+ * V1 (`address`) and CAP-71 V2 (`addressV2`) both carry `SorobanAddressCredentials`.
+ * Source-account and delegated arms return undefined.
  *
- * @param credentials - The credential union from an auth entry
- * @returns The address credentials, or undefined for non-address arms
+ * @param credentials - Auth-entry credential union
+ * @returns Address credentials, or undefined for other arms
  */
 export function getAddressCredentials(
   credentials: xdr.SorobanCredentials,
@@ -219,18 +215,13 @@ export function gatherAuthEntrySignatureStatus({
   const pendingSignature: string[] = [];
 
   for (const entry of invokeOp.auth ?? []) {
-    // Handle address-based credentials, both legacy V1 and CAP-71 V2 (accepted
-    // by the network from Protocol 28 onward). Source-account credentials are
-    // skipped - these use the transaction source.
+    // V1 or CAP-71 V2 address credentials. Source-account entries use the transaction source.
     const addressCredentials = getAddressCredentials(entry.credentials);
     if (addressCredentials) {
       const address = Address.fromScAddress(addressCredentials.address).toString();
       const signature = addressCredentials.signature;
 
-      // Check if already signed (signature is not scvVoid)
-      const isSigned = signature.type !== "scvVoid";
-
-      if (isSigned) {
+      if (signature.type !== "scvVoid") {
         alreadySigned.push(address);
       } else {
         pendingSignature.push(address);
@@ -239,7 +230,7 @@ export function gatherAuthEntrySignatureStatus({
   }
 
   return {
-    alreadySigned: [...new Set(alreadySigned)], // Remove duplicates
+    alreadySigned: [...new Set(alreadySigned)],
     pendingSignature: [...new Set(pendingSignature)],
   };
 }

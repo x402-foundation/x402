@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import threading
@@ -12,7 +13,7 @@ import pytest
 
 # Skip all tests if flask not installed
 pytest.importorskip("flask")
-from flask import Flask, redirect
+from flask import Flask, redirect, send_file
 from werkzeug.datastructures import Headers, ImmutableMultiDict
 
 from x402 import x402FacilitatorSync, x402ResourceServerSync
@@ -921,6 +922,123 @@ class TestFlaskMiddlewareIntegration:
                 data = json.loads(response.data)
                 assert data == {}
                 assert "PAYMENT-RESPONSE" in response.headers
+
+    def test_closes_handler_response_after_settlement(self):
+        """Test that the buffered handler response is closed so call_on_close callbacks run."""
+        app = Flask(__name__)
+        closed: list[str] = []
+
+        @app.route("/api/protected")
+        def protected_route():
+            response = app.response_class("Protected content")
+            response.call_on_close(lambda: closed.append("protected"))
+            return response
+
+        mock_server = MagicMock()
+        routes = {}
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=make_v2_payload(),
+                payment_requirements=make_payment_requirements(),
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=True,
+                headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 200
+                assert response.data == b"Protected content"
+                assert "PAYMENT-RESPONSE" in response.headers
+
+        assert closed == ["protected"]
+
+    def test_closes_send_file_handle_after_settlement(self):
+        """Test that a file served with send_file is closed on a paid route."""
+        app = Flask(__name__)
+        file_handle = io.BytesIO(b"%PDF paid content")
+
+        @app.route("/api/protected")
+        def protected_route():
+            return send_file(file_handle, mimetype="application/pdf")
+
+        mock_server = MagicMock()
+        routes = {}
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=make_v2_payload(),
+                payment_requirements=make_payment_requirements(),
+            )
+            mock_http_server_instance.process_settlement.return_value = ProcessSettleResult(
+                success=True,
+                headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 200
+                assert response.data == b"%PDF paid content"
+
+        assert file_handle.closed
+
+    def test_closes_handler_response_on_error_status(self):
+        """Test that the handler response is closed when the payment is cancelled."""
+        app = Flask(__name__)
+        closed: list[str] = []
+
+        @app.route("/api/protected")
+        def protected_route():
+            response = app.response_class("Upstream failed", status=500)
+            response.call_on_close(lambda: closed.append("protected"))
+            return response
+
+        mock_server = MagicMock()
+        routes = {}
+
+        with patch("x402.http.middleware.flask.x402HTTPResourceServerSync") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request.return_value = HTTPProcessResult(
+                type="payment-verified",
+                payment_payload=make_v2_payload(),
+                payment_requirements=make_payment_requirements(),
+            )
+            mock_http_server_instance.create_failure_path_settlement_headers.return_value = None
+            mock_http_server.return_value = mock_http_server_instance
+
+            PaymentMiddleware(app, routes, mock_server, sync_facilitator_on_start=False)
+
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 500
+                assert response.data == b"Upstream failed"
+                mock_http_server_instance.process_settlement.assert_not_called()
+
+        assert closed == ["protected"]
 
     def test_sends_declared_text_plain_settlement_failure_body_without_json_encoding(self):
         """A declared text/plain settlement-failure string is sent as raw text."""

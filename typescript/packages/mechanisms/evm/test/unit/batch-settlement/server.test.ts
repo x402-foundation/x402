@@ -470,8 +470,8 @@ describe("BatchSettlementEvmScheme — enhancePaymentRequirements", () => {
 
   it("does not throw for a network absent from the default-asset registry when asset is explicit", async () => {
     const server = new BatchSettlementEvmScheme(RECEIVER, { withdrawDelay: 1800 });
-    const unlistedNetwork = "eip155:10" as Network;
-    const explicitAsset = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
+    const unlistedNetwork = "eip155:56" as Network;
+    const explicitAsset = "0x2222222222222222222222222222222222222222";
     const enhanced = await server.enhancePaymentRequirements(
       makeRequirements({
         network: unlistedNetwork,
@@ -670,16 +670,16 @@ describe("BatchSettlementEvmScheme — createChannelManager", () => {
   it("throws for a network absent from the default-asset registry when no token is given", () => {
     const server = new BatchSettlementEvmScheme(RECEIVER);
     expect(() =>
-      server.createChannelManager({} as FacilitatorClient, "eip155:10" as Network),
+      server.createChannelManager({} as FacilitatorClient, "eip155:56" as Network),
     ).toThrow(/No default asset configured/);
   });
 
   it("uses an explicit token for a network absent from the default-asset registry", () => {
     const server = new BatchSettlementEvmScheme(RECEIVER);
-    const explicitToken = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as `0x${string}`;
+    const explicitToken = "0x2222222222222222222222222222222222222222" as `0x${string}`;
     const manager = server.createChannelManager(
       {} as FacilitatorClient,
-      "eip155:10" as Network,
+      "eip155:56" as Network,
       explicitToken,
     );
     expect(manager).toBeInstanceOf(BatchSettlementChannelManager);
