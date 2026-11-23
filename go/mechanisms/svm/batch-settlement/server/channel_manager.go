@@ -789,9 +789,6 @@ func (m *BatchChannelManager) report(err error) {
 }
 
 func chunk(items []ChannelState, size int) [][]ChannelState {
-	if size < 1 {
-		size = 1
-	}
 	var batches [][]ChannelState
 	for index := 0; index < len(items); index += size {
 		end := index + size
