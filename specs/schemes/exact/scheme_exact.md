@@ -97,7 +97,14 @@ While implementation details vary by network, facilitators MUST enforce security
 - Executor admission (`transferExecutor`): the executor is client-chosen contract code, so admission MUST be default deny, the call MUST be built by the facilitator rather than from client calldata, and the gas limit MUST be the facilitator's own.
 - Outcome from the record (`transferExecutor`): settlement success MUST be established from the merged parent and child consensus records, never from the receipt status.
 
-Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet), `scheme_exact_lnbtc.md` (Bitcoin Lightning), `scheme_exact_hedera.md` (Hedera).
+### bb84
+
+- Recipient from calldata: the recipient named in the transfer or credit-line-draw calldata MUST equal `payTo`. A `Transfer` event crediting `payTo` is not sufficient on its own, because a goods-and-services payment also emits a fee-collector leg.
+- Request binding: the on-chain memo MUST match `extra.memo` after normalization, and the resource server MUST accept only memos it issued for these terms.
+- Amount: the `Transfer` events of `asset` to `payTo` MUST sum to at least `amount`, or to at least 99 % of it for a goods-and-services payment whose declared amount is at least `amount`.
+- Proof age and binding: a transaction older than 180 days MUST be rejected; a transaction already bound to another `payTo`, `asset` or memo MUST be rejected, and an identical binding MUST settle idempotently (the proof is public).
+
+Network-specific rules are in per-network documents: `scheme_exact_svm.md` (Solana), `scheme_exact_stellar.md` (Stellar), `scheme_exact_evm.md` (EVM), `scheme_exact_sui.md` (SUI), `scheme_exact_ton.md` (TON), `scheme_exact_starknet.md` (Starknet), `scheme_exact_lnbtc.md` (Bitcoin Lightning), `scheme_exact_hedera.md` (Hedera), `scheme_exact_bb84.md` (bb84).
 
 ## Multi-Payee Splits (Optional Extension)
 
