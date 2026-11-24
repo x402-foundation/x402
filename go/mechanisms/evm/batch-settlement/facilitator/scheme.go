@@ -112,6 +112,9 @@ func NewBatchSettlementEvmSchemeWithConfig(
 		s.logger = config.Logger
 		s.onStorageError = config.OnStorageError
 		if config.VoucherStore != nil {
+			if config.VoucherStore.Storage == nil {
+				return nil, fmt.Errorf("voucherStore.storage is required")
+			}
 			lockStorage := channelLockStorage(config.VoucherStore.LockStorage, config.VoucherStore.Storage)
 			if lockStorage == nil {
 				return nil, fmt.Errorf("voucherStore.lockStorage is required when storage does not implement ChannelLockStorage")

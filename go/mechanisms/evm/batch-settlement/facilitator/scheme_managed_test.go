@@ -81,6 +81,19 @@ func TestScheme_VoucherStoreRequiresAuthorizer(t *testing.T) {
 	}
 }
 
+func TestScheme_VoucherStoreRequiresStorage(t *testing.T) {
+	_, err := NewBatchSettlementEvmSchemeWithConfig(
+		newManagedSigner(t, nil),
+		managedAuthorizer(),
+		&BatchSettlementEvmSchemeConfig{
+			VoucherStore: &VoucherStoreConfig{LockStorage: storage.NewInMemoryChannelStorage[*FacilitatorChannel]()},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "voucherStore.storage is required") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestScheme_ManagedVerifyUnavailableWithoutStore(t *testing.T) {
 	scheme := NewBatchSettlementEvmScheme(newManagedSigner(t, nil), managedAuthorizer())
 	auth := managedAuthorizer()
