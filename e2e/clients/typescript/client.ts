@@ -269,15 +269,13 @@ export async function createE2EClient(options: E2EClientOptions = {}): Promise<E
 
   let hederaClientSigner: ReturnType<typeof createClientHederaSigner> | undefined;
   if (wants("hedera") && process.env.CLIENT_HEDERA_ACCOUNT_ID && process.env.CLIENT_HEDERA_PRIVATE_KEY) {
+    const hederaClientKey = HederaPrivateKey.fromStringECDSA(process.env.CLIENT_HEDERA_PRIVATE_KEY);
     hederaClientSigner = withTransferExecutorAuthorization(
-      createClientHederaSigner(
-        process.env.CLIENT_HEDERA_ACCOUNT_ID,
-        HederaPrivateKey.fromStringECDSA(process.env.CLIENT_HEDERA_PRIVATE_KEY),
-        {
-          network: resolveNetworkCaip2("hedera"),
-          nodeUrl: process.env.HEDERA_RPC_URL || undefined,
-        },
-      ),
+      createClientHederaSigner(process.env.CLIENT_HEDERA_ACCOUNT_ID, hederaClientKey, {
+        network: resolveNetworkCaip2("hedera"),
+        nodeUrl: process.env.HEDERA_RPC_URL || undefined,
+      }),
+      hederaClientKey,
     );
   }
 

@@ -72,7 +72,10 @@ import {
   createHederaVerifyPayerSignature,
   toFacilitatorHederaSigner,
 } from "@x402/hedera";
-import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
+import {
+  ExactHederaScheme,
+  type HederaTransferExecutorConfig,
+} from "@x402/hedera/exact/facilitator";
 import { toFacilitatorSvmSigner } from "@x402/svm";
 import {
   BatchSvmScheme as BatchSettlementSvmScheme,
@@ -132,7 +135,6 @@ import { resolveNetworkCaip2 } from "./catalog-network.js";
 import { toFacilitatorCardanoSigner } from "@x402/cardano";
 import { ExactCardanoScheme as ExactCardanoFacilitatorScheme } from "@x402/cardano/exact/facilitator";
 import { BazaarCatalog } from "./bazaar.js";
-import { hederaTransferExecutorOptions } from "./hedera-transfer-executor.js";
 
 dotenv.config();
 
@@ -345,7 +347,16 @@ if (
 // Initialize the Hedera signer from account + private key (optional)
 let hederaSigner: ReturnType<typeof toFacilitatorHederaSigner> | undefined;
 // transferExecutor is on only when HEDERA_TE_EXECUTOR_ID is set; it admits that one executor.
-const hederaTransferExecutor = hederaTransferExecutorOptions(HEDERA_NETWORK);
+// HEDERA_TE_GAS_LIMIT is the gas for simulating and submitting `executeTransfer`; the scheme
+// constructor checks its range.
+const hederaTeExecutor = process.env.HEDERA_TE_EXECUTOR_ID?.trim();
+const hederaTeGasLimit = process.env.HEDERA_TE_GAS_LIMIT?.trim() || "400000";
+if (hederaTeExecutor && !/^\d+$/.test(hederaTeGasLimit)) {
+  throw new Error(`HEDERA_TE_GAS_LIMIT must be a whole number, got "${hederaTeGasLimit}"`);
+}
+const hederaTransferExecutor: HederaTransferExecutorConfig | undefined = hederaTeExecutor
+  ? { executors: { [HEDERA_NETWORK]: [hederaTeExecutor] }, gasLimit: Number(hederaTeGasLimit) }
+  : undefined;
 if (
   process.env.FACILITATOR_HEDERA_ACCOUNT_ID &&
   process.env.FACILITATOR_HEDERA_PRIVATE_KEY

@@ -19,6 +19,9 @@ importers:
       '@concordium/web-sdk':
         specifier: ^12.0.0
         version: 12.0.2(@protobuf-ts/runtime-rpc@2.11.1)(cbor2@1.12.0)
+      '@hiero-ledger/sdk':
+        specifier: 2.90.1
+        version: 2.90.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@keetanetwork/keetanet-client':
         specifier: ^0.18.1
         version: 0.18.1
