@@ -98,18 +98,30 @@ export function findMatchingRoute(
 
   const pathWithoutQuery = path.split(/[?#]/)[0];
 
-  // Use raw path directly to avoid double-decoding issues with encoded slashes (%2F) and backslashes (%5C)
-  // Express/Hono already decode the path before passing to middleware
-  const normalizedPath = pathWithoutQuery
-    .replace(/\\/g, "/") // replace backslashes
-    .replace(/\/+/g, "/") // collapse slashes
-    .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
+  const normalize = (value: string): string =>
+    value
+      .replace(/\\/g, "/") // replace backslashes
+      .replace(/\/+/g, "/") // collapse slashes
+      .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
+
+  // Express/Hono decode route params but pass the raw target path to this
+  // middleware. Match BOTH the raw path and a decoded fallback so that:
+  //  - encoded static paths (%2F, %5C) still match their configured route
+  //  - encoded separators inside a param (issue #3850) do NOT drop the match,
+  //    which would let the request reach the handler without a paywall.
+  const candidates = new Set<string>([normalize(pathWithoutQuery)]);
+  try {
+    candidates.add(normalize(decodeURIComponent(pathWithoutQuery)));
+  } catch {
+    // Malformed percent-encoding: keep the raw candidate only.
+  }
 
   const upperMethod = method.toUpperCase();
   const findMatchingRoutes = (candidateMethod: string): RoutePattern[] =>
     routePatterns.filter(
       ({ pattern, verb }) =>
-        pattern.test(normalizedPath) && (verb === "*" || candidateMethod === verb),
+        (verb === "*" || candidateMethod === verb) &&
+        [...candidates].some((candidate) => pattern.test(candidate)),
     );
 
   // HTTP routers commonly dispatch HEAD through GET. Preserve an explicit

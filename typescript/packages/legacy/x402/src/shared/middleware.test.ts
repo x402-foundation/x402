@@ -361,24 +361,32 @@ describe("findMatchingRoute", () => {
     });
   });
 
-  describe("parameterized route encoded slash/backslash bypass fix", () => {
+  describe("parameterized route encoded slash/backslash bypass (issue #3850)", () => {
     const paramRoutes = {
       "GET /api/[id]/premium-content": "$0.01",
       "GET /api/[id]": "$0.01",
     };
     const paramPatterns = computeRoutePatterns(paramRoutes);
 
-    it("should NOT match parameterized route with encoded slash in param (%2F)", () => {
-      // This is the bypass from issue #3850: /api/4%2F2/premium-content
-      // Before fix: decoded to /api/4/2/premium-content and matched
-      // After fix: stays as /api/4%2F2/premium-content and does NOT match
-      const result = findMatchingRoute(paramPatterns, "/api/4%2F2/premium-content", "GET");
-      expect(result).toBeUndefined();
+    it("should still paywall a param containing an encoded slash (%2F)", () => {
+      // Issue #3850: /api/4%2f2/premium-content previously decoded to
+      // /api/4/2/premium-content, stopped matching the route, and reached the
+      // Express/Hono handler without a paywall. The raw path must still match.
+      const result = findMatchingRoute(paramPatterns, "/api/4%2f2/premium-content", "GET");
+      expect(result).toBeDefined();
+      expect(result?.config.price).toBe("$0.01");
     });
 
-    it("should NOT match parameterized route with encoded backslash in param (%5C)", () => {
+    it("should still paywall a param containing an encoded backslash (%5C)", () => {
       const result = findMatchingRoute(paramPatterns, "/api/4%5C2/premium-content", "GET");
-      expect(result).toBeUndefined();
+      expect(result).toBeDefined();
+      expect(result?.config.price).toBe("$0.01");
+    });
+
+    it("should still paywall a shorter param route with encoded slash", () => {
+      const result = findMatchingRoute(paramPatterns, "/api/4%2f2", "GET");
+      expect(result).toBeDefined();
+      expect(result?.config.price).toBe("$0.01");
     });
 
     it("should still match parameterized route with normal param value", () => {
