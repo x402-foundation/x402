@@ -360,6 +360,39 @@ describe("findMatchingRoute", () => {
       expect(result).toBeDefined();
     });
   });
+
+  describe("parameterized route encoded slash/backslash bypass fix", () => {
+    const paramRoutes = {
+      "GET /api/[id]/premium-content": "$0.01",
+      "GET /api/[id]": "$0.01",
+    };
+    const paramPatterns = computeRoutePatterns(paramRoutes);
+
+    it("should NOT match parameterized route with encoded slash in param (%2F)", () => {
+      // This is the bypass from issue #3850: /api/4%2F2/premium-content
+      // Before fix: decoded to /api/4/2/premium-content and matched
+      // After fix: stays as /api/4%2F2/premium-content and does NOT match
+      const result = findMatchingRoute(paramPatterns, "/api/4%2F2/premium-content", "GET");
+      expect(result).toBeUndefined();
+    });
+
+    it("should NOT match parameterized route with encoded backslash in param (%5C)", () => {
+      const result = findMatchingRoute(paramPatterns, "/api/4%5C2/premium-content", "GET");
+      expect(result).toBeUndefined();
+    });
+
+    it("should still match parameterized route with normal param value", () => {
+      const result = findMatchingRoute(paramPatterns, "/api/42/premium-content", "GET");
+      expect(result).toBeDefined();
+      expect(result?.config.price).toBe("$0.01");
+    });
+
+    it("should still match parameterized route with alphanumeric param", () => {
+      const result = findMatchingRoute(paramPatterns, "/api/abc123/premium-content", "GET");
+      expect(result).toBeDefined();
+      expect(result?.config.price).toBe("$0.01");
+    });
+  });
 });
 
 describe("getDefaultAsset", () => {

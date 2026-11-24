@@ -98,14 +98,9 @@ export function findMatchingRoute(
 
   const pathWithoutQuery = path.split(/[?#]/)[0];
 
-  let decodedOrRawPath: string;
-  try {
-    decodedOrRawPath = decodeURIComponent(pathWithoutQuery);
-  } catch {
-    decodedOrRawPath = pathWithoutQuery;
-  }
-
-  const normalizedPath = decodedOrRawPath
+  // Use raw path directly to avoid double-decoding issues with encoded slashes (%2F) and backslashes (%5C)
+  // Express/Hono already decode the path before passing to middleware
+  const normalizedPath = pathWithoutQuery
     .replace(/\\/g, "/") // replace backslashes
     .replace(/\/+/g, "/") // collapse slashes
     .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
