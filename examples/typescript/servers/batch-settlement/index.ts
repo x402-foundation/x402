@@ -150,55 +150,21 @@ async function main() {
     });
     resourceServer = resourceServer.register(SVM_NETWORK, batchedSvmScheme);
 
-    // The redemption worker claims accumulated vouchers and distributes what
-    // they settle. It redeems against the same terms the 402 advertises, so
-    // build them the way the resource server does: route requirements plus
-    // the facilitator's /supported kind (which carries feePayer and the idle
-    // window maxIdleSecs the server must claim inside).
-    const supported = await facilitatorClient.getSupported();
-    const svmKind = supported.kinds.find(
-      kind => kind.scheme === "batch-settlement" && kind.network === SVM_NETWORK,
-    );
-    if (svmKind) {
-      const svmRequirements = await batchedSvmScheme.enhancePaymentRequirements(
-        {
-          scheme: "batch-settlement",
-          network: SVM_NETWORK,
-          // $0.01 in USDC atomic units: the worker only reads network, asset,
-          // payTo and extra.feePayer from these terms.
-          amount: "10000",
-          asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-          payTo: svmAddress,
-          maxTimeoutSeconds: 300,
-          extra: {},
-        },
-        svmKind,
-        [],
-      );
-      svmChannelManager = batchedSvmScheme.createChannelManager(
-        facilitatorClient,
-        svmRequirements,
-        {
-          onClaim: (r: { vouchers: number; transaction: string }) =>
-            console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
-          onSettle: (r: { transaction: string }) =>
-            console.log(`[SVM] Settled to ${svmAddress} (tx: ${r.transaction})`),
-          onSeal: (r: { channel: string; transaction: string }) =>
-            console.log(`[SVM] Sealed channel ${r.channel} (tx: ${r.transaction})`),
-          onError: (e: unknown) => console.error("[SVM] Settlement error:", e),
-        },
-      );
-      const svmRedemptionIntervalSecs = 60;
-      // Well inside the facilitator's idle window (default seven days).
-      svmChannelManager.start(svmRedemptionIntervalSecs);
-      console.log(
-        `[SVM] Redeeming every ${svmRedemptionIntervalSecs}s; facilitator idle window: ${String(svmKind.extra?.maxIdleSecs ?? "none")}s`,
-      );
-    } else {
-      console.warn(
-        "[SVM] facilitator does not advertise batch-settlement; no redemption worker started",
-      );
-    }
+    // Claims accumulated vouchers and distributes what they settle. Redemption
+    // terms come from each stored channel; batch capacity from the facilitator.
+    svmChannelManager = batchedSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
+      onClaim: (r: { vouchers: number; transaction: string }) =>
+        console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+      onSettle: (r: { transaction: string }) =>
+        console.log(`[SVM] Settled to ${svmAddress} (tx: ${r.transaction})`),
+      onSeal: (r: { channel: string; transaction: string }) =>
+        console.log(`[SVM] Sealed channel ${r.channel} (tx: ${r.transaction})`),
+      onError: (e: unknown) => console.error("[SVM] Settlement error:", e),
+    });
+    const svmRedemptionIntervalSecs = 60;
+    // Well inside the facilitator's idle window (default seven days).
+    svmChannelManager.start(svmRedemptionIntervalSecs);
+    console.log(`[SVM] Redeeming every ${svmRedemptionIntervalSecs}s`);
   }
 
   if (channelManager || svmChannelManager) {

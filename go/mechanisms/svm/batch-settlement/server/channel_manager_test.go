@@ -295,32 +295,17 @@ func TestBatchSettlementRedemptionWorker(t *testing.T) {
 	})
 }
 
-func managerRequirements() types.PaymentRequirements {
-	return types.PaymentRequirements{
-		Amount: "1000",
-		Asset:  svm.USDCDevnetAddress,
-		Extra: map[string]any{
-			"feePayer":      svm.USDCMainnetAddress,
-			"tokenProgram":  svm.TokenProgramAddress,
-			"withdrawDelay": 900,
-		},
-		MaxTimeoutSeconds: 300,
-		Network:           svm.SolanaDevnetCAIP2,
-		PayTo:             svm.USDCMainnetAddress,
-		Scheme:            batchsettlement.Scheme,
-	}
-}
-
 func newChannel(id string) server.ChannelState {
 	return server.ChannelState{
 		ChannelConfig: batchsettlement.BatchChannelConfig{
-			OpenSlot:        1,
-			Payer:           svm.USDCDevnetAddress,
-			PayerAuthorizer: svm.USDCDevnetAddress,
-			Receiver:        svm.USDCMainnetAddress,
-			Salt:            "0",
-			Token:           svm.USDCDevnetAddress,
-			WithdrawDelay:   900,
+			OpenSlot:           1,
+			Payer:              svm.USDCDevnetAddress,
+			PayerAuthorizer:    svm.USDCDevnetAddress,
+			Receiver:           svm.USDCMainnetAddress,
+			ReceiverAuthorizer: svm.TokenProgramAddress,
+			Salt:               "0",
+			Token:              svm.USDCDevnetAddress,
+			WithdrawDelay:      900,
 		},
 		ChannelID:               id,
 		ChargedCumulativeAmount: 3000,
@@ -346,7 +331,7 @@ func newChannel(id string) server.ChannelState {
 func managerOptions(store server.ChannelStore, authorizer testSigner, settle server.RedemptionSettler) server.BatchChannelManagerConfig {
 	return server.BatchChannelManagerConfig{
 		ReceiverAuthorizer: authorizer,
-		Requirements:       managerRequirements(),
+		Network:            svm.SolanaDevnetCAIP2,
 		Settle:             settle,
 		Store:              store,
 	}

@@ -11,4 +11,8 @@ const (
 	assetTransferMethodChannel                     = "channel"
 	// maxChannelsPerBatch is the claim and settle capacity when the facilitator advertises none.
 	maxChannelsPerBatch = batchsettlement.DefaultBatchChannels
+	// redemptionTimeoutSeconds is maxTimeoutSeconds of every redemption request and the
+	// validBefore window of a seal's CloseAuthorization. Below MinWithdrawDelay, so the
+	// facilitator's withdrawDelay >= maxTimeoutSeconds check holds for any channel.
+	redemptionTimeoutSeconds = 300
 )

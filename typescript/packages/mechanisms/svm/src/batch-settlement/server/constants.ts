@@ -9,3 +9,10 @@ export const DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER = 10n;
  * min-deposit hint stays near the client-side minimum.
  */
 export const DEFAULT_SERVER_SIGNED_MIN_DEPOSIT_MULTIPLIER = 3n;
+
+/**
+ * `maxTimeoutSeconds` of every redemption request, and the `validBefore`
+ * window of a seal's `CloseAuthorization`. Below `MIN_WITHDRAW_DELAY`, so the
+ * facilitator's `withdrawDelay >= maxTimeoutSeconds` check holds for any channel.
+ */
+export const REDEMPTION_TIMEOUT_SECONDS = 300;
