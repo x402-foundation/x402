@@ -848,6 +848,169 @@ For testnet funds, get test ADA from the [Cardano testnets faucet](https://docs.
 
 The `exact` scheme has network specifications for EVM, SVM, AVM, Stellar, Aptos, Casper, Hedera, TON, Canton, Cardano, Keeta, Sui, Concordium, NEAR, XRPL, and Bitcoin Lightning (`lnbtc`).
 
+### SVM Multi-Payee Splits
+
+The `exact` scheme on Solana supports distributing a single payment across the merchant and up to eight additional recipients in one atomic transaction. This is useful for platform fees, revenue sharing, referral commissions, or fee-payer cost recovery.
+
+Splits are declared by the server in `extra.splits` and must be within the limits the facilitator advertises. The facilitator pays transaction fees and, optionally, ATA creation rent for marked recipients.
+
+**Server: declaring splits**
+
+Add `splits` to the route's `extra` config. Each split is an absolute carve-out from the total `amount`; `payTo` receives the remainder.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    app.use(
+      paymentMiddleware(
+        {
+          "GET /weather": {
+            accepts: [
+              {
+                scheme: "exact",
+                price: "$0.001",
+                network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                payTo: "YourSolanaAddress",
+                extra: {
+                  splits: [
+                    {
+                      payTo: "PlatformFeeAddress",
+                      amount: "50000",
+                      memo: "platform fee",
+                    },
+                  ],
+                },
+              },
+            ],
+            description: "Weather data",
+            mimeType: "application/json",
+          },
+        },
+        resourceServer,
+      ),
+    );
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    routes := x402http.RoutesConfig{
+        "GET /weather": {
+            Accepts: x402http.PaymentOptions{
+                {
+                    Scheme:  "exact",
+                    Price:   "$0.001",
+                    Network: x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+                    PayTo:   "YourSolanaAddress",
+                    Extra: map[string]interface{}{
+                        "splits": []map[string]interface{}{
+                            {
+                                "payTo":  "PlatformFeeAddress",
+                                "amount": "50000",
+                                "memo":   "platform fee",
+                            },
+                        },
+                    },
+                },
+            },
+            Description: "Weather data",
+            MimeType:    "application/json",
+        },
+    }
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    routes = {
+        "GET /weather": RouteConfig(
+            accepts=[
+                PaymentOption(
+                    scheme="exact",
+                    price="$0.001",
+                    network="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    pay_to="YourSolanaAddress",
+                    extra={
+                        "splits": [
+                            {
+                                "payTo": "PlatformFeeAddress",
+                                "amount": "50000",
+                                "memo": "platform fee",
+                            }
+                        ]
+                    },
+                ),
+            ],
+            description="Weather data",
+            mime_type="application/json",
+        ),
+    }
+    ```
+  </Tab>
+</Tabs>
+
+**Facilitator: advertising split support**
+
+Splits are off by default. Pass `maxSplits` (1–8) to accept them. Optionally set `ataCreationSponsored` to fund ATA creation for recipients whose token account may not exist yet (costs ~0.002 SOL per creation, funded by the facilitator).
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { ExactSvmScheme } from "@x402/svm/exact/facilitator";
+    import { toFacilitatorSvmSigner } from "@x402/svm";
+
+    const svmSigner = toFacilitatorSvmSigner(svmAccount);
+
+    facilitator.register(
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      new ExactSvmScheme(svmSigner, undefined, {
+        maxSplits: 8,
+        ataCreationSponsored: true, // optional: fund ATA creation for marked recipients
+      }),
+    );
+    ```
+  </Tab>
+  <Tab title="Go">
+    ```go
+    import (
+        svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+        svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+    )
+
+    settlementCache := svmmech.NewSettlementCache()
+
+    facilitator.Register(
+        []x402.Network{"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"},
+        svm.NewExactSvmScheme(svmSigner, &svm.Config{
+            SettlementCache:      settlementCache,
+            MaxSplits:            8,
+            AtaCreationSponsored: true, // optional: fund ATA creation for marked recipients
+        }),
+    )
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme
+
+    facilitator.register(
+        ["solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"],
+        ExactSvmFacilitatorScheme(
+            signer=svm_signer,
+            max_splits=8,
+            ata_creation_sponsored=True,  # optional: fund ATA creation for marked recipients
+        ),
+    )
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+When `ataCreationSponsored` is enabled, a recipient can close its ATA, reclaim the rent, and trigger sponsorship again on the next charge. Operators should enforce out-of-band limits per owner and mint before enabling this option.
+</Warning>
+
+The facilitator advertises `maxSplits` and `ataCreationSponsored` in its `/supported` response. The server's `enhancePaymentRequirements` throws if a route requests more splits, or ATA sponsorship, than the selected facilitator advertises. Clients accept valid split requirements by default; applications can inspect `selectedRequirements.extra.splits` in `x402Client.onBeforePaymentCreation` to screen recipients before transaction construction.
+
+For full protocol details, see the [`exact` SVM spec §5](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md#5-multi-payee-splits-optional).
+
 ### SVM Smart Wallet Support
 
 By default, the SVM facilitator only accepts transactions from standard (EOA) wallets using static instruction-layout validation. To also accept payments from Solana smart wallets (Squads, Swig, SPL Governance, etc.), enable simulation-based verification when constructing `ExactSvmScheme` on your facilitator:
