@@ -1,5 +1,21 @@
 # @x402/evm Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- [035d954](https://github.com/x402-foundation/x402/commit/035d954): Batch-settlement voucher verification (facilitator `verifyVoucher` and the server's local check) rejects ECDSA signatures that `x402BatchSettlement` cannot recover: anything other than 65 bytes with a low `s` and `v` of 27 or 28. Previously a high-s or `v` = 0/1 voucher signature verified off-chain, and the later claim reverted. ([#4316](https://github.com/x402-foundation/x402/pull/4316)) - Thanks [@erikreppel](https://github.com/erikreppel) and [@erkancamli](https://github.com/erkancamli)!
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/core@2.32.0
+
+- [057590e](https://github.com/x402-foundation/x402/commit/057590e): Add Circle-issued USDC as the default stablecoin on OP Mainnet (chain ID 10), Unichain (130), Sonic (146), HyperEVM (999), Ink (57073), Linea (59144), Codex (81224) and Plume (98866), so `price: "$0.01"` resolves on these networks and clients recognize the token under default spend controls. ([#4337](https://github.com/x402-foundation/x402/pull/4337)) - Thanks [@Shikhyy](https://github.com/Shikhyy)!
+- [f8ba292](https://github.com/x402-foundation/x402/commit/f8ba292): Add Sperax USD (USDs) on Arbitrum One (`eip155:42161`) as a Permit2 default asset, so `"$0.10 USDs"` resolves and clients recognize USDs under default spend controls. Bare `"$0.10"` still resolves to USDC. USDs has no EIP-3009 and its `permit()` does not set allowances, so the entry omits `supportsEip2612` and first payments use ERC-20 approval gas sponsoring. ([#3514](https://github.com/x402-foundation/x402/pull/3514)) - Thanks [@nirholas](https://github.com/nirholas) and [@claude](https://github.com/claude)!
+- [29f0983](https://github.com/x402-foundation/x402/commit/29f0983): Batch-settlement client recovery rejects a corrective-402 voucher signature that `x402BatchSettlement` cannot recover. A high-s or `v` of 0/1 signature no longer overwrites local channel state. ([#4319](https://github.com/x402-foundation/x402/pull/4319)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [5511054](https://github.com/x402-foundation/x402/commit/5511054): The `exact` EVM facilitator now reports a recipient mismatch as `invalid_exact_evm_payload_recipient_mismatch`, the reason listed in the x402 v2 specification and emitted by the Python facilitator, instead of `invalid_exact_evm_recipient_mismatch`. The legacy `x402` client already accepts only the specified reason. ([#4174](https://github.com/x402-foundation/x402/pull/4174)) - Thanks [@shlee1223](https://github.com/shlee1223)!
+- [b38d3be](https://github.com/x402-foundation/x402/commit/b38d3be): The exact EVM facilitator rejects a non-canonical `PaymentRequirements.amount` during verify and settle with `invalid_exact_evm_required_amount`. The exact server rejects the same strings in `parsePrice` and after `enhancePaymentRequirements` converts a dotted human amount on a known asset. ([#4303](https://github.com/x402-foundation/x402/pull/4303)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [4e12019](https://github.com/x402-foundation/x402/commit/4e12019): Fixed `x402Client.createPaymentPayload` throwing `TypeError` when a payment option has a missing or non-string `asset`. The client drops that option and pays a remaining valid option. If none remain, it throws an error that the payment requirement is missing `asset`. EVM `findDefaultAsset` returns undefined for a non-string asset. ([#4290](https://github.com/x402-foundation/x402/pull/4290)) - Thanks [@PhilBot402](https://github.com/PhilBot402) and [@phdargen](https://github.com/phdargen)!
+- [0a4c6df](https://github.com/x402-foundation/x402/commit/0a4c6df): Add World Chain (`eip155:480`) and World Chain Sepolia (`eip155:4801`) USDC as default assets, matching the Go SDK, so `"$0.01"` prices resolve there and default client spend controls accept World Chain USDC. ([#4331](https://github.com/x402-foundation/x402/pull/4331)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+
 ## 2.31.0
 
 ### Minor Changes

@@ -43,9 +43,13 @@ func ExecuteClaimWithSignature(
 			"no claims provided")
 	}
 
+	claimArgs, err := buildVoucherClaimArgs(payload.Claims)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "", err.Error())
+	}
+
 	var sigBytes []byte
 	if payload.ClaimAuthorizerSignature != "" {
-		var err error
 		sigBytes, err = evm.HexToBytes(payload.ClaimAuthorizerSignature)
 		if err != nil {
 			return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", network, "",
@@ -63,7 +67,6 @@ func ExecuteClaimWithSignature(
 						claim.Voucher.Channel.ReceiverAuthorizer, authorizerSigner.Address()))
 			}
 		}
-		var err error
 		sigBytes, err = authorizerSigner.SignClaimBatch(ctx, payload.Claims, string(network))
 		if err != nil {
 			return nil, x402.NewSettleError(ErrClaimTransactionFailed, "", network, "",
@@ -73,7 +76,7 @@ func ExecuteClaimWithSignature(
 
 	return submitClaimTransaction(ctx, signer, string(network), "claimWithSignature",
 		batchsettlement.BatchSettlementClaimWithSignatureABI,
-		[]interface{}{buildVoucherClaimArgs(payload.Claims), sigBytes},
+		[]interface{}{claimArgs, sigBytes},
 		dataSuffix, firstOnClaimed(onClaimed))
 }
 
@@ -87,9 +90,13 @@ func ExecuteClaim(
 	dataSuffix []byte,
 	onClaimed ...OnClaimedRows,
 ) (*x402.SettleResponse, error) {
+	claimArgs, err := buildVoucherClaimArgs(payload.Claims)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrInvalidClaimPayload, "", x402.Network(network), "", err.Error())
+	}
 	return submitClaimTransaction(ctx, signer, network, "claim",
 		batchsettlement.BatchSettlementClaimABI,
-		[]interface{}{buildVoucherClaimArgs(payload.Claims)},
+		[]interface{}{claimArgs},
 		dataSuffix, firstOnClaimed(onClaimed))
 }
 
@@ -161,7 +168,7 @@ func submitClaimTransaction(
 }
 
 // buildVoucherClaimArgs builds the Solidity-compatible VoucherClaim[] argument for claim calls.
-func buildVoucherClaimArgs(claims []batchsettlement.BatchSettlementVoucherClaim) interface{} {
+func buildVoucherClaimArgs(claims []batchsettlement.BatchSettlementVoucherClaim) (interface{}, error) {
 	type VoucherStruct struct {
 		Channel            ContractChannelConfigTuple
 		MaxClaimableAmount *big.Int
@@ -176,7 +183,10 @@ func buildVoucherClaimArgs(claims []batchsettlement.BatchSettlementVoucherClaim)
 	for i, claim := range claims {
 		maxClaimable, _ := new(big.Int).SetString(claim.Voucher.MaxClaimableAmount, 10)
 		totalClaimed, _ := new(big.Int).SetString(claim.TotalClaimed, 10)
-		sigBytes, _ := evm.HexToBytes(claim.Signature)
+		sigBytes, err := evm.HexToBytes(claim.Signature)
+		if err != nil {
+			return nil, fmt.Errorf("invalid voucher signature in claim %d: %w", i, err)
+		}
 
 		channelTuple := ToContractChannelConfig(claim.Voucher.Channel)
 
@@ -189,5 +199,5 @@ func buildVoucherClaimArgs(claims []batchsettlement.BatchSettlementVoucherClaim)
 			TotalClaimed: totalClaimed,
 		}
 	}
-	return result
+	return result, nil
 }

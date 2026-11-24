@@ -13,7 +13,7 @@ import {
   type SearchDiscoveryResourcesParams,
   type SearchDiscoveryResourcesResponse,
 } from "../src/bazaar/facilitatorClient";
-import { HTTPFacilitatorClient } from "@x402/core/http";
+import { FacilitatorTimeoutError, HTTPFacilitatorClient } from "@x402/core/http";
 
 describe("Bazaar Client Extension - facilitatorClient", () => {
   describe("Type definitions", () => {
@@ -355,6 +355,24 @@ describe("Bazaar Client Extension - facilitatorClient", () => {
 
       await expect(extendedClient.extensions.bazaar.listResources()).rejects.toThrow(
         /http response body too large/,
+      );
+    });
+
+    it("aborts discovery requests after the client's timeoutMs", async () => {
+      mockFetch.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) =>
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+          ),
+      );
+
+      const { bazaar } = withBazaar(
+        new HTTPFacilitatorClient({ url: "https://x402.org/facilitator", timeoutMs: 20 }),
+      ).extensions;
+
+      await expect(bazaar.listResources()).rejects.toBeInstanceOf(FacilitatorTimeoutError);
+      await expect(bazaar.search({ query: "weather" })).rejects.toBeInstanceOf(
+        FacilitatorTimeoutError,
       );
     });
 

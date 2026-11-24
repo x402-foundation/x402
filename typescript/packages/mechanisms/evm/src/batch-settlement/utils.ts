@@ -1,13 +1,4 @@
-import {
-  concat,
-  getAddress,
-  hashTypedData,
-  isAddressEqual,
-  padHex,
-  recoverAddress,
-  slice,
-  toHex,
-} from "viem";
+import { concat, getAddress, hashTypedData, isHex, padHex, slice, toHex } from "viem";
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import {
   BATCH_SETTLEMENT_ADDRESS,
@@ -24,6 +15,7 @@ import type {
   ChannelConfig,
 } from "./types";
 import { getEvmChainId } from "../utils";
+import { isCanonicalEcdsaSignature, verifyECDSA } from "../shared/verifySignature";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -201,6 +193,20 @@ export function unpackRefundAuthorizer(salt: `0x${string}`): `0x${string}` {
 }
 
 /**
+ * x402BatchSettlement recovers only a 65-byte low-s signature with `v` of 27 or 28.
+ *
+ * @param signature - r || s || v bytes to inspect
+ * @returns Whether contract ECDSA recovery accepts this form
+ */
+export function isContractRecoverableSignature(signature: `0x${string}`): boolean {
+  if (!isHex(signature) || signature.length !== 132 || !isCanonicalEcdsaSignature(signature)) {
+    return false;
+  }
+  const v = parseInt(signature.slice(130, 132), 16);
+  return v === 27 || v === 28;
+}
+
+/**
  * Verifies an EOA voucher via `ecrecover`, matching
  * `x402BatchSettlement._processVoucherClaim`. Does not need a channel row.
  *
@@ -212,6 +218,7 @@ export async function verifyEoaVoucherSignature(
   raw: BatchSettlementVoucherPayload,
   network: string,
 ): Promise<boolean> {
+  if (!isContractRecoverableSignature(raw.voucher.signature)) return false;
   try {
     const digest = hashTypedData({
       domain: getBatchSettlementEip712Domain(getEvmChainId(network)),
@@ -222,11 +229,11 @@ export async function verifyEoaVoucherSignature(
         maxClaimableAmount: BigInt(raw.voucher.maxClaimableAmount),
       },
     });
-    const recovered = await recoverAddress({
-      hash: digest,
-      signature: raw.voucher.signature,
-    });
-    return isAddressEqual(recovered, getAddress(raw.channelConfig.payerAuthorizer));
+    return verifyECDSA(
+      getAddress(raw.channelConfig.payerAuthorizer),
+      digest,
+      raw.voucher.signature,
+    );
   } catch {
     return false;
   }

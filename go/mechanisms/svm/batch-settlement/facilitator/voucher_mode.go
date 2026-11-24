@@ -27,7 +27,7 @@ func AssertServerModeProof(
 ) error {
 	charged, err := paymentchannels.ParseU64(requirements.Amount, "amount")
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", InvalidPaymentRequirements, err)
 	}
 	return serverModeProof(payload.Authorization, payload.ChannelConfig, channelID, charged, bound, false, nowSeconds)
 }

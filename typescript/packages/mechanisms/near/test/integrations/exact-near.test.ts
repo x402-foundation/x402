@@ -77,23 +77,29 @@ function buildNearPaymentRequirements(
   };
 }
 
+// FIXTURE.asset ("usdc.testnet") is a test token, not a default asset. Since spend
+// controls (#3124) the client rejects non-default assets unless they are allowlisted.
 const buildClient = (): x402Client =>
-  new x402Client().register(
-    FIXTURE.network,
-    new ExactNearClient({
-      async createSignedDelegateAction({ paymentRequirements }) {
-        const { b64 } = await buildSignedDelegateB64({
-          amount: paymentRequirements.amount,
-          ftReceiver: paymentRequirements.payTo,
-          maxBlockHeight: FIXTURE.maxBlockHeight,
-          nonce: FIXTURE.nonce,
-          receiverId: paymentRequirements.asset,
-          senderId: FIXTURE.senderId,
-        });
-        return b64;
-      },
-    }),
-  );
+  new x402Client()
+    .setSpendControls({
+      allowedAssets: [{ network: FIXTURE.network, asset: FIXTURE.asset }],
+    })
+    .register(
+      FIXTURE.network,
+      new ExactNearClient({
+        async createSignedDelegateAction({ paymentRequirements }) {
+          const { b64 } = await buildSignedDelegateB64({
+            amount: paymentRequirements.amount,
+            ftReceiver: paymentRequirements.payTo,
+            maxBlockHeight: FIXTURE.maxBlockHeight,
+            nonce: FIXTURE.nonce,
+            receiverId: paymentRequirements.asset,
+            senderId: FIXTURE.senderId,
+          });
+          return b64;
+        },
+      }),
+    );
 
 const buildResourceServer = async (
   nearServer: ExactNearServer = new ExactNearServer(),

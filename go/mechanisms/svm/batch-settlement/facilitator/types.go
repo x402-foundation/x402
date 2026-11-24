@@ -12,7 +12,6 @@ import (
 // durableResult is a broadcast that landed, or a terminal settle response.
 type durableResult struct {
 	OK        bool
-	Replayed  bool
 	Signature string
 	Response  *x402.SettleResponse
 }
@@ -133,6 +132,8 @@ type ReceiverBindingHistoryReader interface {
 	GetTransaction(ctx context.Context, network, signature string) (string, error)
 }
 
-// OnDistributionConfirmed runs before a payout is marked complete. It also runs for a cooperative seal or refund.
-// Implementations must deduplicate by transaction, including a repeat call after a crash before the recorded marker is saved.
+// OnDistributionConfirmed runs before a payout record is deleted. It also runs for a cooperative seal or refund.
+// Implementations must deduplicate by transaction: a retry runs it again when the record could not be deleted or the process stopped after it ran.
+// A payout whose confirmation was never observed, because the process stopped after sending and before a
+// confirmation or a timeout record, does not reach the hook; reconcile such payouts from chain history.
 type OnDistributionConfirmed func(ctx context.Context, response *x402.SettleResponse, requirements types.PaymentRequirements) error

@@ -288,10 +288,18 @@ func VerifyEoaVoucherSignature(raw *BatchSettlementVoucherPayload, network strin
 	if err != nil {
 		return false
 	}
-	ok, err = evm.VerifyEOASignature(
-		hash, common.FromHex(raw.Voucher.Signature), common.HexToAddress(raw.ChannelConfig.PayerAuthorizer),
-	)
+	signature, err := evm.HexToBytes(raw.Voucher.Signature)
+	if err != nil || !IsContractRecoverableSignature(signature) {
+		return false
+	}
+	ok, err = evm.VerifyEOASignature(hash, signature, common.HexToAddress(raw.ChannelConfig.PayerAuthorizer))
 	return err == nil && ok
+}
+
+// IsContractRecoverableSignature reports whether x402BatchSettlement's OpenZeppelin ECDSA
+// recovery accepts signature: 65 bytes, low-s, and v of 27 or 28.
+func IsContractRecoverableSignature(signature []byte) bool {
+	return evm.IsCanonicalECDSASignature(signature) && (signature[64] == 27 || signature[64] == 28)
 }
 
 // ValidateChannelConfig checks that a ChannelConfig is consistent with the

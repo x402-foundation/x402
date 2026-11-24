@@ -10,6 +10,7 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
 
 const maxSafeInteger int64 = 1<<53 - 1
@@ -166,6 +167,35 @@ type BatchChannelState struct {
 	TotalClaimed            string `json:"totalClaimed"`
 	WithdrawRequestedAt     int64  `json:"withdrawRequestedAt"`
 	ChargedCumulativeAmount string `json:"chargedCumulativeAmount,omitempty"`
+}
+
+// BatchRedemptionChannelState is the onchain channel snapshot a facilitator
+// attaches to a settle success or to a redemption rejected as already applied,
+// so the server resyncs without reading the chain.
+type BatchRedemptionChannelState struct {
+	ChannelID           string `json:"channelId"`
+	Status              string `json:"status"`
+	Balance             string `json:"balance"`
+	TotalClaimed        string `json:"totalClaimed"`
+	PayoutWatermark     string `json:"payoutWatermark"`
+	WithdrawRequestedAt int64  `json:"withdrawRequestedAt"`
+}
+
+// RedemptionStatus is the BatchRedemptionChannelState.Status of an onchain
+// status, or "" for one this scheme does not know.
+func RedemptionStatus(status generated.ChannelStatus) string {
+	switch status {
+	case generated.ChannelStatus_Open:
+		return ChannelStatusOpen
+	case generated.ChannelStatus_Closing:
+		return ChannelStatusClosing
+	case generated.ChannelStatus_Sealed:
+		return ChannelStatusSealed
+	case generated.ChannelStatus_Distributed:
+		return ChannelStatusDistributed
+	default:
+		return ""
+	}
 }
 
 // ProofOf returns the client voucher or server authorization a payload spends.

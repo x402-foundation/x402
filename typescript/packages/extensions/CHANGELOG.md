@@ -1,5 +1,16 @@
 # @x402/extensions Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/core@2.32.0
+
+### Patch Changes
+
+- [bf3908f](https://github.com/x402-foundation/x402/commit/bf3908f): Apply the facilitator client's `timeoutMs` to `withBazaar` `listResources()` and `search()`. An unresponsive facilitator now rejects with `FacilitatorTimeoutError` instead of leaving discovery calls pending indefinitely. ([#4349](https://github.com/x402-foundation/x402/pull/4349)) - Thanks [@mortezashojaei](https://github.com/mortezashojaei)!
+
 ## 2.31.0
 
 ### Minor Changes
