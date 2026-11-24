@@ -162,6 +162,69 @@ describe("ExactEvmScheme (Server)", () => {
         ).rejects.toThrow("Asset address must be specified");
       });
 
+      describe("default asset extra", () => {
+        const enhance = (network: string, asset: string, extra: Record<string, unknown>) =>
+          server.enhancePaymentRequirements(
+            {
+              scheme: "exact",
+              network,
+              asset,
+              amount: "10000",
+              payTo: "0x1234567890123456789012345678901234567890",
+              maxTimeoutSeconds: 300,
+              extra,
+            } as never,
+            { x402Version: 2, scheme: "exact", network: network as never },
+            [],
+          );
+
+        it("fills the EIP-712 domain for an atomic amount of a default asset", async () => {
+          const network = "eip155:84532";
+          const asset = DEFAULT_ASSETS[network]![0]!;
+
+          const result = await enhance(network, asset.asset.toLowerCase(), {});
+
+          expect(result.amount).toBe("10000");
+          expect(result.extra).toEqual({ name: asset.name, version: asset.version });
+        });
+
+        it("keeps extra values the caller set", async () => {
+          const network = "eip155:84532";
+          const asset = DEFAULT_ASSETS[network]![0]!;
+
+          const result = await enhance(network, asset.asset, {
+            name: "Custom",
+            assetTransferMethod: "permit2",
+          });
+
+          expect(result.extra).toEqual({
+            name: "Custom",
+            version: asset.version,
+            assetTransferMethod: "permit2",
+          });
+        });
+
+        it("adds only assetTransferMethod for a permit2 asset without EIP-2612", async () => {
+          const [network, asset] = Object.entries(DEFAULT_ASSETS)
+            .flatMap(([n, assets]) => assets.map(a => [n, a] as const))
+            .find(([, a]) => a.assetTransferMethod === "permit2" && !a.supportsEip2612)!;
+
+          const result = await enhance(network, asset.asset, {});
+
+          expect(result.extra).toEqual({ assetTransferMethod: "permit2" });
+        });
+
+        it("leaves extra alone for an asset that is not a known default", async () => {
+          const result = await enhance(
+            "eip155:84532",
+            "0x1234567890123456789012345678901234567890",
+            {},
+          );
+
+          expect(result.extra).toEqual({});
+        });
+      });
+
       it.each(["1e4", "0x2710", "1_000", "+1000", " 1000 "])(
         "rejects non-canonical atomic amount %s",
         async amount => {
@@ -308,6 +371,7 @@ describe("ExactEvmScheme (Server)", () => {
       );
 
       expect(result.amount).toBe("10000");
+      expect(result.extra).toEqual({ name: asset.name, version: asset.version });
     });
 
     it("rejects a dotted amount when the asset is not a known default", async () => {
