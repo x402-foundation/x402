@@ -45,7 +45,7 @@
     "zod": "^4.6.6"
   },
   "peerDependencies": {
-    "next": ">=15.5.28 <16 || >=16.4.1"
+    "next": ">=15.5.29 <16 || >=16.4.6"
   },
   "type": "module",
   "exports": {

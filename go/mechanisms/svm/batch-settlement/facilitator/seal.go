@@ -255,11 +255,7 @@ type closeAmounts struct {
 func (a closeAmounts) response(channelID, payer string, network x402.Network, signature string, intent CloseIntent) *x402.SettleResponse {
 	response := SealResponse(channelID, payer, network, signature, a.Paid, a.Deposit, a.Cumulative)
 	if intent == CloseIntentRefund {
-		refunded := uint64(0)
-		if a.Deposit >= a.Cumulative {
-			refunded = a.Deposit - a.Cumulative
-		}
-		response.Amount = fmt.Sprintf("%d", refunded)
+		response.Amount = fmt.Sprintf("%d", a.Deposit-a.Cumulative)
 	}
 	return response
 }
@@ -575,9 +571,6 @@ func completeSealDistribution(
 	requirements types.PaymentRequirements,
 	intent CloseIntent,
 ) *x402.SettleResponse {
-	if hook == nil {
-		return response
-	}
 	if err := notifySealDistribution(ctx, hook, response, requirements, intent); err != nil {
 		return SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
 	}

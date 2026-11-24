@@ -6,20 +6,11 @@ import (
 	"time"
 )
 
-// DuplicateSettlementStore keeps two workers from broadcasting one operation at
-// the same time. A worker reserves an operation key with the signature of the
-// transaction it is about to broadcast, after signing and before sending. A
-// worker that loses the reservation does not broadcast and rejects the settle as
-// a duplicate; the holder's signature is returned for the caller to inspect, and
-// the holder's own pending record is what a retry later reconciles.
-//
-// A reservation is a lock, not a result: it expires after ttl, once the
-// blockhash can no longer land, and the chain answers from then on.
-// Implementations must be safe for concurrent use.
+// DuplicateSettlementStore is a lock on one in-flight broadcast, not a stored result.
+// Reserve holds the signature about to be sent until ttl. Implementations must be safe for concurrent use.
 type DuplicateSettlementStore interface {
-	// Reserve records signature under key for ttl when key is free. When key
-	// is held it returns the holder's signature and reserved=false. The store
-	// treats signature as an opaque string and returns it unchanged.
+	// Reserve records signature under key for ttl when key is free, and returns
+	// the holder's signature unchanged with reserved=false when the key is held.
 	Reserve(ctx context.Context, key, signature string, ttl time.Duration) (existing string, reserved bool, err error)
 	// Release removes key only while it still holds signature, so a failed
 	// broadcast can be retried before ttl and a later holder is never evicted.
