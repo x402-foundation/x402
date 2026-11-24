@@ -517,6 +517,20 @@ describe("batch facilitator lifecycle", () => {
     await expect(
       scheme.verify({ ...payment, accepted: { ...core } }, { ...core, extra: {} }),
     ).resolves.toMatchObject({ isValid: true });
+    // The facilitator's redemption capacity is not compared either: each
+    // server process copies it from `/supported` at its own time.
+    const larger = { ...core, extra: { ...extra, maxClaimChannels: 18, maxSettleChannels: 13 } };
+    for (const accepted of [
+      { ...core, extra },
+      { ...core, extra: { ...extra, maxClaimChannels: 4, maxSettleChannels: 4 } },
+    ]) {
+      await expect(scheme.verify({ ...payment, accepted }, larger)).resolves.toMatchObject({
+        isValid: true,
+      });
+      await expect(
+        scheme.verify({ ...payment, accepted: larger }, accepted),
+      ).resolves.toMatchObject({ isValid: true });
+    }
   });
 
   it("routes verify variants and classifies validation failures", async () => {

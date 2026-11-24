@@ -92,7 +92,8 @@ func (s *BatchSvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
 	}
 }
 
-// DynamicExtraFields returns extra keys regenerated on each PaymentRequired response.
+// DynamicExtraFields returns the extra keys left out of requirements matching
+// (batchsettlement.DynamicExtraFields).
 func (s *BatchSvmScheme) DynamicExtraFields() []string {
 	return append([]string(nil), batchsettlement.DynamicExtraFields...)
 }

@@ -29,10 +29,9 @@ var transientPattern = regexp.MustCompile(`(?i)\b429\b|\b503\b|too many requests
 const extraPaidToReceiver = "paidToReceiver"
 
 // EnvelopeFailure checks the request envelope: paymentPayload.accepted MUST
-// equal paymentRequirements (spec 4.5). The extra fields a server regenerates
-// for every PaymentRequired are left out, since the forwarded requirements
-// carry this response's values while accepted echoes the client's. It returns
-// the failure reason, or "" when the envelope matches.
+// equal paymentRequirements (spec 4.5), apart from the extra keys left out of
+// requirements matching (batchsettlement.DynamicExtraFields). It returns the
+// failure reason, or "" when the envelope matches.
 func EnvelopeFailure(accepted, requirements types.PaymentRequirements) string {
 	if accepted.Scheme != batchsettlement.Scheme || requirements.Scheme != batchsettlement.Scheme {
 		return "unsupported_scheme"

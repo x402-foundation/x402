@@ -36,9 +36,8 @@ export const INVALID_PAYMENT_REQUIREMENTS = "invalid_payment_requirements";
 
 /**
  * Check the request envelope: `paymentPayload.accepted` MUST equal
- * `paymentRequirements` (spec 4.5). The `extra` fields a server regenerates
- * for every `PaymentRequired` are left out, since the forwarded requirements
- * carry this response's values while `accepted` echoes the client's.
+ * `paymentRequirements` (spec 4.5), apart from the `extra` keys left out of
+ * requirements matching (`DYNAMIC_EXTRA_FIELDS`).
  *
  * @param accepted - The requirements the client signed against
  * @param requirements - The requirements the server forwarded
