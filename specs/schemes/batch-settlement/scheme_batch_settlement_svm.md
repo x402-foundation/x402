@@ -253,8 +253,8 @@ and `SettlementResponse` types are defined in
 | `minDeposit` | string | no | Atomic deposit target. When present, MUST be a positive integer greater than or equal to `amount`. |
 | `maxIdleSecs` | number | no | Facilitator idle window in seconds, copied from the facilitator's `/supported` `extra`. After this long with no facilitator-visible lifecycle activity on an `Open` channel, the facilitator MAY abandon-close it at the onchain `settled` watermark (see Phase 4). Absent means the facilitator does not idle-close. |
 | `transactionVersions` | array | no | Transaction message versions the facilitator accepts, as an array of `0` and/or `1`, copied from the facilitator's `/supported` `extra`. Absent means `[0]`. See [Transaction versions](#transaction-versions). |
-| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
-| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. |
+| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. Not part of requirements matching (section 4.5). See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
+| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. Not part of requirements matching (section 4.5). |
 | `channelState` | object | no | Corrective-only server channel snapshot for cumulative amount resynchronization. |
 | `voucherState` | object | no | Corrective-only signed voucher proof for cumulative amount resynchronization. |
 
@@ -729,7 +729,10 @@ A successful voucher-only response is:
 
 The standard x402 `POST /verify` and `POST /settle` request envelope contains
 `x402Version`, `paymentPayload`, and `paymentRequirements`. For every request,
-`paymentPayload.accepted` MUST equal `paymentRequirements`.
+`paymentPayload.accepted` MUST equal `paymentRequirements`, ignoring
+`extra.recentBlockhash`, `extra.recentSlot`, `extra.maxClaimChannels` and
+`extra.maxSettleChannels`. The server leaves the same fields out when it
+matches a payment to its accepts.
 
 | Request field | Type | Required | Notes |
 |---|---|---|---|
@@ -1768,6 +1771,10 @@ choice:
   `PaymentRequirements.extra`. If a request within that capacity still does
   not fit (an unusual channel shape), the facilitator MUST fail it rather than
   truncate it.
+
+`maxClaimChannels` and `maxSettleChannels` are not part of requirements
+matching (section 4.5): no message the payer signs includes them, and a server
+whose processes copy `/supported` at different times may hold different values.
 
 The table is informative. Per-channel costs are the bytes a further channel
 adds to the message once the shared accounts (fee payer, programs, sysvars,

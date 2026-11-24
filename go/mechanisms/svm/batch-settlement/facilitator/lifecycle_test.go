@@ -662,6 +662,23 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		result, err = scheme.Verify(ctx, stale, fresh, nil)
 		require.NoError(t, err)
 		require.True(t, result.IsValid, result.InvalidReason)
+		// Neither is the facilitator's redemption capacity, which each server
+		// process copies from /supported at its own time.
+		larger := requirements(withExtra(batchsettlement.ExtraMaxClaimChannels, 18), withExtra(batchsettlement.ExtraMaxSettleChannels, 13))
+		for _, held := range []types.PaymentRequirements{
+			requirements(),
+			requirements(withExtra(batchsettlement.ExtraMaxClaimChannels, 4), withExtra(batchsettlement.ExtraMaxSettleChannels, 4)),
+		} {
+			voucherPayload := batchsettlement.BatchVoucherPayload{
+				Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
+			}
+			result, err = scheme.Verify(ctx, payment(voucherPayload, held), larger, nil)
+			require.NoError(t, err)
+			require.True(t, result.IsValid, result.InvalidReason)
+			result, err = scheme.Verify(ctx, payment(voucherPayload, larger), held, nil)
+			require.NoError(t, err)
+			require.True(t, result.IsValid, result.InvalidReason)
+		}
 		require.Empty(t, EnvelopeFailure(
 			requirements(func(r *types.PaymentRequirements) { r.Extra = nil }),
 			requirements(func(r *types.PaymentRequirements) { r.Extra = map[string]any{} }),
