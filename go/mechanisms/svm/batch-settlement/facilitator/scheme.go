@@ -101,10 +101,17 @@ type schemeHooks struct {
 	broadcastDurably      func(context.Context, string, string, string, func(func(string, string) error) (string, error)) (durableResult, error)
 }
 
+// batchFacilitatorSigner is the payment-channel signer narrowed to the caps batch
+// settlement also requires: the confirmed-transaction read payout attribution uses.
+type batchFacilitatorSigner interface {
+	paymentchannels.PaymentChannelFacilitatorSigner
+	svm.FacilitatorConfirmedTransactionReader
+}
+
 // BatchSvmScheme is the facilitator role of SVM batch settlement.
 type BatchSvmScheme struct {
 	config         Config
-	raw            paymentchannels.PaymentChannelFacilitatorSigner
+	raw            batchFacilitatorSigner
 	signer         *recordingSigner
 	channelStorage paymentchannels.PaymentChannelStorage
 	pendingStore   x402.PendingSettlementStore
@@ -132,7 +139,11 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	if config == nil {
 		config = &Config{}
 	}
-	raw := paymentchannels.AssertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme")
+	channelSigner := paymentchannels.AssertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme")
+	raw, ok := channelSigner.(batchFacilitatorSigner)
+	if !ok {
+		panic("BatchSvmScheme requires GetConfirmedTransaction on the signer")
+	}
 	if len(raw.GetAddresses(ctx, "")) == 0 {
 		panic("BatchSvmScheme requires at least one fee payer signer")
 	}
