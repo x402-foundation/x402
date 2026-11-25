@@ -510,8 +510,17 @@ describe("batch facilitator lifecycle", () => {
     const { extra, ...core } = requirements();
     await expect(
       scheme.verify(
-        { ...payment, accepted: { ...requirements(), extra: { ...extra, recentSlot: "1" } } },
-        { extra: { recentBlockhash: "fresh", recentSlot: "2", ...extra }, ...core },
+        {
+          ...payment,
+          accepted: {
+            ...requirements(),
+            extra: { ...extra, lastValidBlockHeight: "1", recentSlot: "1" },
+          },
+        },
+        {
+          extra: { recentBlockhash: "fresh", lastValidBlockHeight: "2", recentSlot: "2", ...extra },
+          ...core,
+        },
       ),
     ).resolves.toMatchObject({ isValid: true });
     await expect(
