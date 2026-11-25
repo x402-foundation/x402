@@ -163,6 +163,23 @@ func TestInMemoryPendingSettlementStore_WithPendingSettlementTTLOverridesTheDefa
 	assert.False(t, ok, "entries are still bounded")
 }
 
+func TestInMemoryPendingSettlementStore_NonPositiveTTLKeepsTheDefault(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -time.Second} {
+		store := NewInMemoryPendingSettlementStore(WithPendingSettlementTTL(ttl))
+		require.NoError(t, store.Set(context.Background(), "key-1", "0xabc"))
+		backdate(store, "key-1", PendingSettlementTTL-time.Second)
+
+		_, ok, err := store.Get(context.Background(), "key-1")
+		require.NoError(t, err)
+		assert.True(t, ok, "ttl %s", ttl)
+
+		backdate(store, "key-1", PendingSettlementTTL+time.Second)
+		_, ok, err = store.Get(context.Background(), "key-1")
+		require.NoError(t, err)
+		assert.False(t, ok, "ttl %s", ttl)
+	}
+}
+
 func TestInMemoryPendingSettlementStore_GetRemovesOnlyTheRequestedExpiredEntry(t *testing.T) {
 	store := NewInMemoryPendingSettlementStore()
 	require.NoError(t, store.Set(context.Background(), "a", "0xaaa"))
@@ -173,7 +190,8 @@ func TestInMemoryPendingSettlementStore_GetRemovesOnlyTheRequestedExpiredEntry(t
 	_, ok, err := store.Get(context.Background(), "a")
 	require.NoError(t, err)
 	assert.False(t, ok)
-	assert.Equal(t, map[string]string{"b": "0xbbb"}, store.Entries())
+	assert.NotContains(t, store.entries, "a")
+	assert.Contains(t, store.entries, "b")
 }
 
 func TestInMemoryPendingSettlementStore_SetSweepsAtMostOncePerInterval(t *testing.T) {
@@ -182,11 +200,21 @@ func TestInMemoryPendingSettlementStore_SetSweepsAtMostOncePerInterval(t *testin
 	backdate(store, "a", PendingSettlementTTL+time.Second)
 
 	require.NoError(t, store.Set(context.Background(), "b", "0xbbb"))
-	assert.Contains(t, store.Entries(), "a", "an expired entry survives until the next due sweep")
+	assert.Contains(t, store.entries, "a", "an expired entry survives until the next due sweep")
 
 	store.lastSwept = store.lastSwept.Add(-pendingSettlementSweepInterval)
 	require.NoError(t, store.Set(context.Background(), "c", "0xccc"))
-	assert.Equal(t, map[string]string{"b": "0xbbb", "c": "0xccc"}, store.Entries())
+	assert.NotContains(t, store.entries, "a")
+	assert.Len(t, store.entries, 2)
+}
+
+func TestInMemoryPendingSettlementStore_EntriesOmitsExpiredEntries(t *testing.T) {
+	store := NewInMemoryPendingSettlementStore()
+	require.NoError(t, store.Set(context.Background(), "expired", "0xabc"))
+	require.NoError(t, store.Set(context.Background(), "fresh", "0xdef"))
+	backdate(store, "expired", PendingSettlementTTL+time.Second)
+
+	assert.Equal(t, map[string]string{"fresh": "0xdef"}, store.Entries())
 }
 
 func TestInMemoryPendingSettlementStore_EntriesReturnsATxHashOnlySnapshot(t *testing.T) {

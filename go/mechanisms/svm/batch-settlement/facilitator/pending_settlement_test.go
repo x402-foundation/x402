@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -301,6 +302,7 @@ func TestSettleStorageOperationCounts(t *testing.T) {
 		t.Helper()
 		counts := &opCounts{}
 		cfg.PendingSettlementStore = &countingPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore(), counts: counts}
+		cfg.PayoutStore = cfg.PendingSettlementStore
 		cfg.DuplicateSettlementStore = &countingDuplicateStore{DuplicateSettlementStore: svm.NewInMemoryDuplicateSettlementStore(), counts: counts}
 		signer := &confirmingSigner{scriptedSigner: newScriptedSigner(t, 1), slot: 1}
 		return NewBatchSvmScheme(context.Background(), signer, cfg), counts
@@ -335,7 +337,7 @@ func TestSettleStorageOperationCounts(t *testing.T) {
 
 	t.Run("a payout record is stored before the hook and deleted after it, in two writes", func(t *testing.T) {
 		scheme, counts := counted(t, &Config{})
-		store := scheme.pendingStore
+		store := scheme.payoutStore
 		var hookRuns int
 		scheme.config.OnDistributionConfirmed = func(ctx context.Context, _ *x402.SettleResponse, _ types.PaymentRequirements) error {
 			_, stored, err := store.Get(ctx, resultKey("k"))
@@ -357,7 +359,7 @@ func TestSettleStorageOperationCounts(t *testing.T) {
 
 	t.Run("a failing hook keeps the payout record for a retry", func(t *testing.T) {
 		scheme, counts := counted(t, &Config{})
-		store := scheme.pendingStore
+		store := scheme.payoutStore
 		scheme.config.OnDistributionConfirmed = func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
 			return assert.AnError
 		}
@@ -403,10 +405,34 @@ func TestLosingReservationAnswersDuplicateSettlement(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestNewBatchSvmSchemeDefaultsToAPendingStoreRetainedForPendingRetention(t *testing.T) {
-	scheme := NewBatchSvmScheme(context.Background(), newScriptedSigner(t, 1), &Config{})
-	assert.Equal(t, x402.NewInMemoryPendingSettlementStore(x402.WithPendingSettlementTTL(PendingRetention)), scheme.pendingStore)
-	assert.NotEqual(t, x402.NewInMemoryPendingSettlementStore(), scheme.pendingStore, "a payout must outlive the shared store's five-minute TTL so a failing hook can be retried")
+func TestNewBatchSvmSchemeDefaultStores(t *testing.T) {
+	t.Run("the pending store keeps the shared five-minute TTL and a payout record outlives it", func(t *testing.T) {
+		hook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error { return nil }
+		scheme := NewBatchSvmScheme(context.Background(), newScriptedSigner(t, 1), &Config{OnDistributionConfirmed: hook})
+		synctest.Test(t, func(t *testing.T) {
+			ctx := context.Background()
+			require.NoError(t, scheme.pendingStore.Set(ctx, "batch:seal:k", "sig"))
+			require.NoError(t, scheme.payoutStore.Set(ctx, resultKey("batch:seal:k"), `{"success":true}`))
+
+			time.Sleep(x402.PendingSettlementTTL + time.Second)
+			_, ok, err := scheme.pendingStore.Get(ctx, "batch:seal:k")
+			require.NoError(t, err)
+			assert.False(t, ok)
+			_, ok, err = scheme.payoutStore.Get(ctx, resultKey("batch:seal:k"))
+			require.NoError(t, err)
+			assert.True(t, ok, "a payout must outlive the pending TTL so a failing hook can be retried")
+
+			time.Sleep(PayoutRetention)
+			_, ok, err = scheme.payoutStore.Get(ctx, resultKey("batch:seal:k"))
+			require.NoError(t, err)
+			assert.False(t, ok, "payout records are still bounded")
+		})
+	})
+
+	t.Run("no payout store without OnDistributionConfirmed", func(t *testing.T) {
+		scheme := NewBatchSvmScheme(context.Background(), newScriptedSigner(t, 1), &Config{})
+		assert.Nil(t, scheme.payoutStore)
+	})
 }
 
 func TestDistributionKeys(t *testing.T) {

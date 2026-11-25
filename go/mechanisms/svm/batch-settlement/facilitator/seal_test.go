@@ -290,7 +290,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.Equal(t, signature, calls[0].response.Transaction)
 		assert.Equal(t, requirements, calls[0].requirements)
 
-		_, stored, err := fixture.scheme.pendingStore.Get(context.Background(), resultKey("batch:seal:"+network+":"+channelID+":3000"))
+		_, stored, err := fixture.scheme.payoutStore.Get(context.Background(), resultKey("batch:seal:"+network+":"+channelID+":3000"))
 		require.NoError(t, err)
 		assert.False(t, stored, "the payout record is deleted once the hook has run")
 
@@ -379,7 +379,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 		store.fail.Store(true)
 		payouts := &payoutLog{}
 		fixture := facilitator(t, nil, true, func(cfg *Config) {
-			cfg.PendingSettlementStore = store
+			cfg.PayoutStore = store
 			cfg.OnDistributionConfirmed = payouts.record
 		})
 		payload := sealPayload(t, 3_000)
@@ -712,10 +712,13 @@ func TestBatchSettlementSeal(t *testing.T) {
 					require.Len(t, calls, 1)
 					assert.Equal(t, "2500", calls[0].response.Amount)
 				}
-				for _, remaining := range []string{key, resultKey(key)} {
-					_, stored, err := fixture.scheme.pendingStore.Get(ctx, remaining)
+				_, stored, err := fixture.scheme.pendingStore.Get(ctx, key)
+				require.NoError(t, err)
+				assert.False(t, stored)
+				if withHook {
+					_, stored, err = fixture.scheme.payoutStore.Get(ctx, resultKey(key))
 					require.NoError(t, err)
-					assert.False(t, stored, remaining)
+					assert.False(t, stored)
 				}
 
 				again := settle(t, fixture.scheme, payload)
@@ -735,9 +738,9 @@ func TestBatchSettlementSeal(t *testing.T) {
 			payouts := &payoutLog{}
 			fixture := facilitator(t, channel, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
 			attributing(fixture, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: 7_000}, nil)
-			store := &resultSetFailingStore{PendingSettlementStore: fixture.scheme.pendingStore}
+			store := &resultSetFailingStore{PendingSettlementStore: fixture.scheme.payoutStore}
 			store.fail.Store(true)
-			fixture.scheme.pendingStore = store
+			fixture.scheme.payoutStore = store
 			ctx := context.Background()
 			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
 			distributed := func() *generated.Channel {
@@ -754,7 +757,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 			assert.Equal(t, x402.ErrSettlementPending, first.ErrorReason)
 			assert.Equal(t, signature, first.Transaction)
 			assert.Empty(t, payouts.calls())
-			stored, found, err := store.Get(ctx, key)
+			stored, found, err := fixture.scheme.pendingStore.Get(ctx, key)
 			require.NoError(t, err)
 			require.True(t, found, "the confirmed close keeps its signature for a retry")
 			assert.Equal(t, signature, stored)
@@ -776,11 +779,12 @@ func TestBatchSettlementSeal(t *testing.T) {
 			calls := payouts.calls()
 			require.Len(t, calls, 1)
 			assert.Equal(t, "2500", calls[0].response.Amount)
-			for _, remaining := range []string{key, resultKey(key)} {
-				_, stored, err := store.Get(ctx, remaining)
-				require.NoError(t, err)
-				assert.False(t, stored, remaining)
-			}
+			_, found, err = fixture.scheme.pendingStore.Get(ctx, key)
+			require.NoError(t, err)
+			assert.False(t, found)
+			_, found, err = store.Get(ctx, resultKey(key))
+			require.NoError(t, err)
+			assert.False(t, found)
 
 			again := settle(t, fixture.scheme, payload)
 			assert.False(t, again.Success)
@@ -886,7 +890,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 			pending := settleThrown(t, fixture.scheme, payload)
 			assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
-			encoded, stored, err := fixture.scheme.pendingStore.Get(context.Background(), resultKey(key))
+			encoded, stored, err := fixture.scheme.payoutStore.Get(context.Background(), resultKey(key))
 			require.NoError(t, err)
 			require.True(t, stored)
 			var record x402.SettleResponse
@@ -920,7 +924,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 			pending := settleThrown(t, fixture.scheme, payload)
 			assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
 			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
-			encoded, stored, err := fixture.scheme.pendingStore.Get(context.Background(), resultKey(key))
+			encoded, stored, err := fixture.scheme.payoutStore.Get(context.Background(), resultKey(key))
 			require.NoError(t, err)
 			require.True(t, stored)
 			var record x402.SettleResponse
@@ -954,7 +958,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, stored, "the confirmed close is remembered for the retry")
 			assert.Equal(t, confirmedSignature, recorded)
-			_, stored, err = fixture.scheme.pendingStore.Get(ctx, resultKey(key))
+			_, stored, err = fixture.scheme.payoutStore.Get(ctx, resultKey(key))
 			require.NoError(t, err)
 			assert.False(t, stored)
 
@@ -991,11 +995,12 @@ func TestBatchSettlementSeal(t *testing.T) {
 			assert.Equal(t, confirmedSignature, failed.Transaction)
 			assert.Empty(t, payouts.calls())
 			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
-			for _, remaining := range []string{key, resultKey(key)} {
-				_, stored, err := fixture.scheme.pendingStore.Get(context.Background(), remaining)
-				require.NoError(t, err)
-				assert.False(t, stored, remaining)
-			}
+			_, stored, err := fixture.scheme.pendingStore.Get(context.Background(), key)
+			require.NoError(t, err)
+			assert.False(t, stored)
+			_, stored, err = fixture.scheme.payoutStore.Get(context.Background(), resultKey(key))
+			require.NoError(t, err)
+			assert.False(t, stored)
 		})
 	}
 
@@ -1075,7 +1080,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 		require.NoError(t, store.Set(context.Background(), key, string(encoded)))
 		calls := 0
 		fixture := facilitator(t, openLive, true, func(cfg *Config) {
-			cfg.PendingSettlementStore = store
+			cfg.PayoutStore = store
 			cfg.OnDistributionConfirmed = func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
 				calls++
 				return nil
@@ -1113,6 +1118,7 @@ func TestBatchSettlementSeal(t *testing.T) {
 			}}
 			configure := func(cfg *Config) {
 				cfg.PendingSettlementStore = store
+				cfg.PayoutStore = store
 				cfg.OnDistributionConfirmed = payouts.record
 			}
 			first := facilitator(t, channel, true, configure)

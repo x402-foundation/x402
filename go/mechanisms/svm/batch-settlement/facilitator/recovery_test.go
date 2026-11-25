@@ -180,6 +180,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		cfg := &Config{}
 		if store != nil {
 			cfg.PendingSettlementStore = store
+			cfg.PayoutStore = store
 		}
 		if onDist != nil {
 			cfg.OnDistributionConfirmed = onDist
@@ -1077,6 +1078,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 				DuplicateSettlementStore: &countingDuplicateStore{DuplicateSettlementStore: svm.NewInMemoryDuplicateSettlementStore(), counts: counts},
 			}
 			if withHook {
+				cfg.PayoutStore = cfg.PendingSettlementStore
 				cfg.OnDistributionConfirmed = func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error { return nil }
 			}
 			scheme := NewBatchSvmScheme(context.Background(), signer, cfg)
@@ -1702,6 +1704,7 @@ func TestAmbiguousPayoutAttribution(t *testing.T) {
 		}
 		return NewBatchSvmScheme(context.Background(), signer, &Config{
 			PendingSettlementStore:  store,
+			PayoutStore:             store,
 			OnDistributionConfirmed: hook,
 		})
 	}

@@ -1,3 +1,0 @@
-kind: added
-body: '`x402.NewInMemoryPendingSettlementStore` accepts options, and `x402.WithPendingSettlementTTL` sets the store''s TTL (default `PendingSettlementTTL`, 5 minutes). `Get` now checks only the requested entry and `Set` sweeps expired entries at most once a minute. The SVM batch-settlement facilitator''s default store is now this store with `PendingRetention` (24 hours) instead of its own copy.'
-time: 2026-11-23T20:00:00.000000+00:00

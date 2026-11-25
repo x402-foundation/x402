@@ -9,8 +9,8 @@ import (
 // PendingSettlementTTL is the TTL applied by the default in-memory
 // PendingSettlementStore implementation. A store implementation backed by a
 // different mechanism (e.g. Redis, for a multi-instance facilitator) is free
-// to use its own TTL — this constant only governs InMemoryPendingSettlementStore,
-// and WithPendingSettlementTTL overrides it per store.
+// to use its own TTL — this constant only governs InMemoryPendingSettlementStore.
+// WithPendingSettlementTTL overrides it per store.
 const PendingSettlementTTL = 5 * time.Minute
 
 // pendingSettlementSweepInterval bounds how often Set sweeps expired entries,
@@ -55,7 +55,7 @@ type pendingSettlementEntry struct {
 // InMemoryPendingSettlementStore is the default PendingSettlementStore
 // implementation: a mutex-protected, per-process map with lazy TTL pruning
 // (mirrors the shape of go/mechanisms/svm/settlement_cache.go). It never
-// performs network I/O — Get checks only the requested entry's age and Set
+// performs network I/O; Get checks only the requested entry's age and Set
 // sweeps the whole map at most once per minute, so every call adds no
 // meaningful latency to the settle hot path. Suitable for single-instance
 // facilitators; multi-instance deployments should inject a shared,
@@ -70,9 +70,13 @@ type InMemoryPendingSettlementStore struct {
 // InMemoryPendingSettlementStoreOption configures an InMemoryPendingSettlementStore.
 type InMemoryPendingSettlementStoreOption func(*InMemoryPendingSettlementStore)
 
-// WithPendingSettlementTTL sets how long the store keeps an entry, in place of PendingSettlementTTL.
+// WithPendingSettlementTTL sets how long the store keeps an entry, in place of
+// PendingSettlementTTL. A ttl <= 0 is ignored and keeps the default.
 func WithPendingSettlementTTL(ttl time.Duration) InMemoryPendingSettlementStoreOption {
 	return func(s *InMemoryPendingSettlementStore) {
+		if ttl <= 0 {
+			return
+		}
 		s.ttl = ttl
 	}
 }
@@ -126,13 +130,17 @@ func (s *InMemoryPendingSettlementStore) Delete(_ context.Context, key string) e
 	return nil
 }
 
-// Entries returns a snapshot of the underlying map — use only in tests.
+// Entries returns a snapshot of the unexpired entries; use only in tests.
 func (s *InMemoryPendingSettlementStore) Entries() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now()
 	out := make(map[string]string, len(s.entries))
 	for k, v := range s.entries {
+		if s.expired(v, now) {
+			continue
+		}
 		out[k] = v.txHash
 	}
 	return out
