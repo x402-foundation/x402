@@ -848,7 +848,7 @@ A server can make claims depend on a proof that each request was computed as agr
    "extra": {
      "receiverAuthorizer": "0xGateAddress",
      "withdrawDelay": 900,
-     "claimCondition": { "type": "proof", "verifierId": "0x…" },
+     "claimCondition": { "type": "proof", "verifierId": "0x...verifierId" },
      // …
    }
    ```
