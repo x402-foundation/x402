@@ -668,6 +668,175 @@ const facilitator = new x402Facilitator()
 
 Canton Coin (`CC`) is the native unit (1 CC = 1e10 atomic units). Dollar-string pricing (`"$0.01"`) is not supported for Canton — always specify an explicit `amount` and `asset`. The `extra.instrumentId` field identifies the payment instrument: for Canton Coin, `{ admin: "<DSO-party>", id: "Amulet" }`.
 
+### Hedera Setup
+
+The Hedera implementation supports two asset transfer methods:
+
+| Method | Description |
+|--------|-------------|
+| `cryptoTransfer` | The payer signs a `TransferTransaction`; the facilitator pays the fee and submits it. Default. |
+| `transferExecutor` | An admitted executor contract moves funds a contract controls (smart accounts, vaults, multisigs, or HIP-336 allowances). The client provides an opaque `authorization`; the facilitator builds and submits a `ContractExecuteTransaction`. |
+
+Install the Hedera package:
+
+```bash
+npm install @x402/hedera
+```
+
+**Server**
+
+```typescript
+import { x402ResourceServer } from "@x402/core/server";
+import { ExactHederaScheme } from "@x402/hedera/exact/server";
+
+const resourceServer = new x402ResourceServer(facilitatorClient);
+resourceServer.register(
+  "hedera:testnet",
+  new ExactHederaScheme({
+    defaultAssets: {
+      "hedera:testnet": { asset: "0.0.429274", decimals: 6 }, // testnet USDC
+    },
+  }),
+);
+
+// cryptoTransfer route (default)
+const routes = {
+  "GET /data": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: { amount: "10000", asset: "0.0.429274" },
+        network: "hedera:testnet",
+        payTo: "0.0.7001",
+      },
+    ],
+  },
+};
+
+// transferExecutor route — quote each method in its own accepts[] entry
+const routesWithExecutor = {
+  "GET /premium": {
+    accepts: [
+      {
+        scheme: "exact",
+        price: { amount: "10000", asset: "0.0.429274" },
+        network: "hedera:testnet",
+        payTo: "0.0.7001",
+        extra: {
+          assetTransferMethod: "transferExecutor",
+          executors: ["0.0.7000"], // narrows the facilitator's admitted list
+        },
+      },
+      // list cryptoTransfer entry first so clients without the hook fall back to it
+      {
+        scheme: "exact",
+        price: { amount: "10000", asset: "0.0.429274" },
+        network: "hedera:testnet",
+        payTo: "0.0.7001",
+      },
+    ],
+  },
+};
+```
+
+**Client**
+
+```typescript
+import { x402Client } from "@x402/core/client";
+import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
+import { ExactHederaScheme } from "@x402/hedera/exact/client";
+import type { ClientHederaSigner } from "@x402/hedera";
+
+// Standard cryptoTransfer signer
+const signer = createClientHederaSigner(
+  process.env.HEDERA_ACCOUNT_ID!,
+  PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY!),
+  { network: "hedera:testnet" },
+);
+
+const client = new x402Client().register("hedera:*", new ExactHederaScheme(signer));
+
+// transferExecutor signer — implement createTransferExecutorAuthorization
+const transferExecutorSigner: ClientHederaSigner = {
+  accountId: "0.0.4242", // the account the executor debits (vault or smart account)
+  createPartiallySignedTransferTransaction: async () => {
+    throw new Error("this payer pays with transferExecutor only");
+  },
+  createTransferExecutorAuthorization: async (requirements) => ({
+    executor: "0.0.7000", // one of requirements.extra.executors
+    authorization: await myExecutor.authorize(requirements), // 0x-hex
+  }),
+};
+```
+
+**Facilitator**
+
+```typescript
+import { x402Facilitator } from "@x402/core/facilitator";
+import {
+  AccountId,
+  Client,
+  PrivateKey,
+  createHederaGetTokenCustomFees,
+  createHederaGetTransactionRecord,
+  createHederaPreflightTransfer,
+  createHederaResolveEvmAddress,
+  createHederaSignAndSubmitTransaction,
+  createHederaSimulateContractCall,
+  createHederaSubmitContractExecute,
+  createHederaVerifyPayerSignature,
+  type FacilitatorHederaSigner,
+} from "@x402/hedera";
+import { ExactHederaScheme } from "@x402/hedera/exact/facilitator";
+
+const feePayer = "0.0.5001";
+const feePayerKey = PrivateKey.fromStringECDSA(process.env.HEDERA_FACILITATOR_PRIVATE_KEY!);
+const buildClient = (network: string) =>
+  (network === "hedera:mainnet" ? Client.forMainnet() : Client.forTestnet()).setOperator(
+    AccountId.fromString(feePayer),
+    feePayerKey,
+  );
+
+// Base signer (cryptoTransfer)
+const facilitatorSigner: FacilitatorHederaSigner = {
+  getAddresses: () => [feePayer],
+  signAndSubmitTransaction: createHederaSignAndSubmitTransaction(buildClient, feePayerKey),
+  verifyPayerSignature: createHederaVerifyPayerSignature(),
+  preflightTransfer: createHederaPreflightTransfer(),
+};
+
+// Add transferExecutor capabilities
+const transferExecutorSigner: FacilitatorHederaSigner = {
+  ...facilitatorSigner,
+  resolveEvmAddress: createHederaResolveEvmAddress(),
+  getTokenCustomFees: createHederaGetTokenCustomFees(),
+  simulateContractCall: createHederaSimulateContractCall(),
+  submitContractExecute: createHederaSubmitContractExecute(buildClient, feePayerKey),
+  getTransactionRecord: createHederaGetTransactionRecord(),
+};
+
+// Register concrete networks (not "hedera:*") so each network's executor list is advertised
+const facilitator = new x402Facilitator().register(
+  ["hedera:testnet", "hedera:mainnet"],
+  new ExactHederaScheme(transferExecutorSigner, {
+    transferExecutor: {
+      executors: { "hedera:testnet": ["0.0.7000"] },
+      gasLimit: 400_000,
+    },
+  }),
+);
+```
+
+`transferExecutor` is enabled on a network only when `transferExecutor` options are set, the network's executor list is non-empty, and the signer has all five capabilities (`resolveEvmAddress`, `getTokenCustomFees`, `simulateContractCall`, `submitContractExecute`, `getTransactionRecord`). When enabled, the facilitator's `/supported` kind advertises `assetTransferMethods: ["cryptoTransfer", "transferExecutor"]` and the admitted `executors` list.
+
+| `transferExecutor` option | Meaning |
+|---------------------------|---------|
+| `executors` | Admitted executor contract ids (`0.0.x`) per CAIP-2 network. A `"*"` entry admits any contract (not recommended). |
+| `gasLimit` | Required. Integer from 1 to 15,000,000. Used for both simulation and submission. |
+| `simulationGasCeiling` | Optional. When set, rejects payments whose simulated gas exceeds this ceiling (`simulation_gas_exceeded`). Recommended in production. |
+
+For full protocol details, see the [`exact` Hedera spec](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_hedera.md).
+
 ### Cardano Setup
 
 The Cardano implementation uses a client-signed, facilitator-submitted model: the client builds and signs the complete transaction but never broadcasts it. The facilitator verifies and submits it after the resource handler runs.
