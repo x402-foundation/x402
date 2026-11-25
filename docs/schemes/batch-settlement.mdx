@@ -836,7 +836,7 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
   </Tab>
   <Tab title="Go">
     ```go
-    manager, err := scheme.CreateChannelManager(facilitatorClient, svmNetwork, batchserver.BatchChannelManagerConfig{
+    manager := scheme.CreateChannelManager(facilitatorClient, svmNetwork, batchserver.BatchChannelManagerConfig{
         RPCURL: os.Getenv("SVM_RPC_URL"),
     })
     ```

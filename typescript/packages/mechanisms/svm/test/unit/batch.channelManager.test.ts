@@ -431,14 +431,26 @@ describe("batch-settlement redemption worker", () => {
     });
 
     it.each([
-      ["receiver", { receiver: TOKEN_PROGRAM_ADDRESS }, { payTo: TOKEN_PROGRAM_ADDRESS }],
-      ["mint", { mint: USDC_MAINNET_ADDRESS }, { asset: USDC_MAINNET_ADDRESS }],
+      [
+        "receiver",
+        { channelConfig: { ...channel("x").channelConfig, receiver: TOKEN_PROGRAM_ADDRESS } },
+        { payTo: TOKEN_PROGRAM_ADDRESS },
+      ],
+      [
+        "mint",
+        { channelConfig: { ...channel("x").channelConfig, token: USDC_MAINNET_ADDRESS } },
+        { asset: USDC_MAINNET_ADDRESS },
+      ],
       [
         "token program",
         { tokenProgram: TOKEN_2022_PROGRAM_ADDRESS },
         { extra: { tokenProgram: TOKEN_2022_PROGRAM_ADDRESS } },
       ],
-      ["withdraw delay", { withdrawDelay: 1_800 }, { extra: { withdrawDelay: 1_800 } }],
+      [
+        "withdraw delay",
+        { channelConfig: { ...channel("x").channelConfig, withdrawDelay: 1_800 } },
+        { extra: { withdrawDelay: 1_800 } },
+      ],
     ] as const)(
       "never mixes channels with a different %s in one batch",
       async (_name, override, expected) => {
@@ -460,6 +472,35 @@ describe("batch-settlement redemption worker", () => {
         expect(claims[1]!.accepted).toMatchObject(expected);
       },
     );
+
+    it("ignores top-level copies that drifted from the channel config", async () => {
+      const store = new MemoryChannelStore();
+      await store.put(channel("chan-a"));
+      await store.put(
+        channel("chan-b", {
+          mint: USDC_MAINNET_ADDRESS,
+          receiver: TOKEN_PROGRAM_ADDRESS,
+          withdrawDelay: 1_800,
+        }),
+      );
+      const { settle, submitted } = termsRecorder();
+
+      await new BatchChannelManager({
+        network: SOLANA_DEVNET_CAIP2,
+        readPayoutWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        settle,
+        store,
+      }).redeem();
+
+      const claims = submitted.filter(entry => entry.type === "claim");
+      expect(claims.map(entry => entry.channels)).toEqual([["chan-a", "chan-b"]]);
+      expect(claims[0]!.accepted).toMatchObject({
+        asset: USDC_DEVNET_ADDRESS,
+        payTo: RECEIVER,
+        extra: { withdrawDelay: 900 },
+      });
+    });
 
     it("authors requirements from stored channel state", async () => {
       const store = new MemoryChannelStore();

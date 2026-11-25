@@ -588,7 +588,10 @@ export class BatchChannelManager {
   /**
    * Redemption terms for one channel, read from its stored state rather than
    * from route requirements, so a channel opened under any fee payer is
-   * redeemed against the terms it was opened with.
+   * redeemed against the terms it was opened with. Receiver, mint and withdraw
+   * delay come from `channelConfig`, the fields the facilitator checks, so a
+   * record whose top-level copies drifted cannot pull healthy channels into a
+   * bad batch.
    *
    * @param channel - The channel to redeem
    * @returns Requirements the facilitator re-derives the channel's terms from
@@ -599,14 +602,14 @@ export class BatchChannelManager {
     return {
       scheme: BATCH_SETTLEMENT_SCHEME,
       network: this.config.network,
-      asset: channel.mint,
-      payTo: channel.receiver,
+      asset: channelConfig.token,
+      payTo: channelConfig.receiver,
       amount: "0",
       maxTimeoutSeconds: REDEMPTION_TIMEOUT_SECONDS,
       extra: {
         feePayer: channel.feePayer,
         tokenProgram: channel.tokenProgram,
-        withdrawDelay: channel.withdrawDelay,
+        withdrawDelay: channelConfig.withdrawDelay,
         receiverAuthorizer: channelConfig.receiverAuthorizer,
         ...(serverSigned
           ? { operator: channelConfig.payerAuthorizer, voucherSigner: "server" }

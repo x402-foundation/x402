@@ -129,11 +129,11 @@ func TestBatchSettlementRedemptionTermsComeFromChannelState(t *testing.T) {
 		expected func(types.PaymentRequirements) bool
 	}{
 		"receiver": {
-			mutate:   func(c *server.ChannelState) { c.Receiver = svm.TokenProgramAddress },
+			mutate:   func(c *server.ChannelState) { c.ChannelConfig.Receiver = svm.TokenProgramAddress },
 			expected: func(r types.PaymentRequirements) bool { return r.PayTo == svm.TokenProgramAddress },
 		},
 		"mint": {
-			mutate:   func(c *server.ChannelState) { c.Mint = svm.USDCMainnetAddress },
+			mutate:   func(c *server.ChannelState) { c.ChannelConfig.Token = svm.USDCMainnetAddress },
 			expected: func(r types.PaymentRequirements) bool { return r.Asset == svm.USDCMainnetAddress },
 		},
 		"token program": {
@@ -143,7 +143,7 @@ func TestBatchSettlementRedemptionTermsComeFromChannelState(t *testing.T) {
 			},
 		},
 		"withdraw delay": {
-			mutate: func(c *server.ChannelState) { c.WithdrawDelay = 1800 },
+			mutate: func(c *server.ChannelState) { c.ChannelConfig.WithdrawDelay = 1800 },
 			expected: func(r types.PaymentRequirements) bool {
 				return r.Extra[batchsettlement.ExtraWithdrawDelay] == 1800
 			},
@@ -166,6 +166,26 @@ func TestBatchSettlementRedemptionTermsComeFromChannelState(t *testing.T) {
 			assert.True(t, tc.expected(claims[1].requirements), "%+v", claims[1].requirements)
 		})
 	}
+
+	t.Run("ignores top-level copies that drifted from the channel config", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		drifted := newChannel("chan-b")
+		drifted.Receiver = svm.TokenProgramAddress
+		drifted.Mint = svm.USDCMainnetAddress
+		drifted.WithdrawDelay = 1800
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		require.NoError(t, store.Put(drifted))
+		recorder := &termsRecorder{}
+
+		redeemWithTerms(t, store, recorder, receiverAuthorizer)
+
+		claims := recorder.of(batchsettlement.PayloadTypeClaim)
+		require.Len(t, claims, 1)
+		assert.ElementsMatch(t, []string{"chan-a", "chan-b"}, claims[0].channels)
+		assert.Equal(t, svm.USDCMainnetAddress, claims[0].requirements.PayTo)
+		assert.Equal(t, svm.USDCDevnetAddress, claims[0].requirements.Asset)
+		assert.Equal(t, 900, claims[0].requirements.Extra[batchsettlement.ExtraWithdrawDelay])
+	})
 
 	t.Run("authors requirements from stored channel state", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()

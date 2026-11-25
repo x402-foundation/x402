@@ -818,12 +818,14 @@ type redemptionTerms struct {
 
 // termsFor is a channel's redemption requirements, read from its stored state
 // rather than from route requirements, so a channel opened under any fee payer
-// is redeemed against the terms it was opened with.
+// is redeemed against the terms it was opened with. Receiver, mint and withdraw
+// delay come from ChannelConfig, the fields the facilitator checks, so a record
+// whose top-level copies drifted cannot pull healthy channels into a bad batch.
 func (m *BatchChannelManager) termsFor(channel ChannelState) types.PaymentRequirements {
 	extra := map[string]interface{}{
 		batchsettlement.ExtraFeePayer:           channel.FeePayer,
 		batchsettlement.ExtraTokenProgram:       channel.TokenProgram,
-		batchsettlement.ExtraWithdrawDelay:      channel.WithdrawDelay,
+		batchsettlement.ExtraWithdrawDelay:      channel.ChannelConfig.WithdrawDelay,
 		batchsettlement.ExtraReceiverAuthorizer: channel.ChannelConfig.ReceiverAuthorizer,
 	}
 	if channel.ChannelConfig.VoucherSigner == batchsettlement.VoucherSignerServer {
@@ -833,9 +835,9 @@ func (m *BatchChannelManager) termsFor(channel ChannelState) types.PaymentRequir
 	return types.PaymentRequirements{
 		Scheme:            batchsettlement.Scheme,
 		Network:           m.config.Network,
-		Asset:             channel.Mint,
+		Asset:             channel.ChannelConfig.Token,
 		Amount:            "0",
-		PayTo:             channel.Receiver,
+		PayTo:             channel.ChannelConfig.Receiver,
 		MaxTimeoutSeconds: redemptionTimeoutSeconds,
 		Extra:             extra,
 	}
