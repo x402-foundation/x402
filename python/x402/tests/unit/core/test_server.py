@@ -372,6 +372,48 @@ class TestHasRegisteredScheme:
         assert server.has_registered_scheme("solana:mainnet", "exact") is False
 
 
+class TestWildcardSchemeOnNetworkWithOtherRegistration:
+    """A wildcard scheme stays reachable when another scheme has an exact registration."""
+
+    @staticmethod
+    def _server():
+        return (
+            x402ResourceServer()
+            .register("eip155:*", MockSchemeServer("exact"))
+            .register("eip155:*", MockSchemeServer("upto"))
+            .register("eip155:1", MockSchemeServer("exact"))
+        )
+
+    def test_get_registered_scheme_falls_back_to_pattern(self):
+        server = self._server()
+
+        assert server.get_registered_scheme("eip155:1", "exact").scheme == "exact"
+        assert server.get_registered_scheme("eip155:1", "upto").scheme == "upto"
+
+    def test_build_payment_requirements_uses_wildcard_scheme(self):
+        kinds = [
+            SupportedKind(x402_version=2, scheme="exact", network="eip155:1"),
+            SupportedKind(x402_version=2, scheme="upto", network="eip155:1"),
+        ]
+        server = x402ResourceServerSync(MockFacilitatorClientSync(kinds))
+        server.register("eip155:*", MockSchemeServer("exact"))
+        server.register("eip155:*", MockSchemeServer("upto"))
+        server.register("eip155:1", MockSchemeServer("exact"))
+        server.initialize()
+
+        requirements = server.build_payment_requirements(
+            ResourceConfig(
+                scheme="upto",
+                pay_to="0xmerchant",
+                price="$1.00",
+                network="eip155:1",
+            )
+        )
+
+        assert len(requirements) == 1
+        assert requirements[0].scheme == "upto"
+
+
 # =============================================================================
 # Hook Registration Tests
 # =============================================================================
