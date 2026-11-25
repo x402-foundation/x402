@@ -17,6 +17,7 @@
     "permit2:revoke": "tsx scripts/permit2-approval.ts revoke",
     "swig:setup": "tsx scripts/swig-setup.ts",
     "canton:setup": "tsx scripts/canton-setup.ts",
+    "hedera:te:setup": "tsx scripts/hedera-te-setup.ts",
     "xrpl:iou:setup": "tsx scripts/xrpl-iou-setup.ts",
     "wallet:status": "tsx scripts/print-wallet-status.ts",
     "results:summary": "tsx scripts/print-e2e-summary.ts"
@@ -24,6 +25,7 @@
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@concordium/web-sdk": "^12.0.0",
+    "@hiero-ledger/sdk": "2.90.1",
     "@keetanetwork/keetanet-client": "^0.18.1",
     "@modelcontextprotocol/sdk": "^1.32.0",
     "@scure/base": "^1.2.6",
