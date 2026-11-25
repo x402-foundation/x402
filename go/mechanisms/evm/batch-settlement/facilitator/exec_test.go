@@ -1856,7 +1856,10 @@ func TestComputeRefundSettlementDetails_NoPreState(t *testing.T) {
 
 func TestBuildVoucherClaimArgs_Length(t *testing.T) {
 	claims := []batchsettlement.BatchSettlementVoucherClaim{sampleClaim(), sampleClaim()}
-	out := buildVoucherClaimArgs(claims)
+	out, err := buildVoucherClaimArgs(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The result is a slice of unexported struct values; assert via reflection.
 	if v, ok := out.([]struct {
 		Voucher struct {

@@ -13,7 +13,7 @@ import {
   CHANNEL_STATE_POLL_INTERVAL_MS,
 } from "../constants";
 import { computeChannelId } from "../utils";
-import { signClaimBatch, signRefund } from "../authorizerSigner";
+import { signClaimBatch } from "../authorizerSigner";
 import * as Errors from "../errors";
 import { truncateErrorMessage } from "../../utils";
 import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
@@ -179,10 +179,10 @@ function buildRefundExtraFromPostState(
 /**
  * Executes a cooperative refund via `refundWithSignature`.
  *
- * When `refundAuthorizerSignature` / `claimAuthorizerSignature` are present they are used
- * directly.  When absent the facilitator signs the missing digests using
- * `authorizerSigner`, after verifying that `config.receiverAuthorizer` matches
- * `authorizerSigner.address`.
+ * `refundAuthorizerSignature` is required: the facilitator has no caller authentication, so
+ * it never signs a refund on the server's behalf and rejects an unsigned refund with
+ * {@link Errors.ErrRefundAuthorizerSignature}. When `claimAuthorizerSignature` is absent the
+ * facilitator signs the claim digest using `authorizerSigner`.
  *
  * If `payload.claims` is non-empty, the claim and refund are batched atomically via
  * the contract's `multicall`.
@@ -205,6 +205,16 @@ export async function executeRefundWithSignature(
   const network = requirements.network;
 
   try {
+    const refundSig = payload.refundAuthorizerSignature;
+    if (!refundSig) {
+      return {
+        success: false,
+        errorReason: Errors.ErrRefundAuthorizerSignature,
+        transaction: "",
+        network,
+      };
+    }
+
     const channelId = computeChannelId(payload.channelConfig, network);
     const preState = await readChannelState(signer, channelId);
     const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
@@ -219,40 +229,6 @@ export async function executeRefundWithSignature(
         network,
       };
     }
-
-    const hasClientSig = payload.refundAuthorizerSignature !== undefined;
-
-    if (!hasClientSig && !authorizerSigner) {
-      return {
-        success: false,
-        errorReason: Errors.ErrAuthorizerNotConfigured,
-        transaction: "",
-        network,
-      };
-    }
-
-    if (
-      !hasClientSig &&
-      authorizerSigner &&
-      getAddress(payload.channelConfig.receiverAuthorizer) !== getAddress(authorizerSigner.address)
-    ) {
-      return {
-        success: false,
-        errorReason: Errors.ErrAuthorizerAddressMismatch,
-        transaction: "",
-        network,
-      };
-    }
-
-    const refundSig =
-      payload.refundAuthorizerSignature ??
-      (await signRefund(
-        authorizerSigner!,
-        channelId,
-        payload.amount,
-        payload.refundNonce,
-        network,
-      ));
 
     const refundCalldata = encodeFunctionData({
       abi: batchSettlementABI,

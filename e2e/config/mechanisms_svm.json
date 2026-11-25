@@ -51,6 +51,15 @@
       "price": { "usd": "$0.001" },
       "extensions": ["bazaar"]
     },
+    "/exact/svm/splits": {
+      "scheme": "exact",
+      "sdks": ["typescript", "go", "python"],
+      "price": { "usd": "$0.001" },
+      "extensions": ["bazaar"],
+      "requirementsExtra": {
+        "splits": [{ "payTo": "4AdS22kC7xzb4bcqg9JATuCfAMNcQYcZa1u5eWzs6cSJ", "amount": "100", "ataCreationRequired": true }]
+      }
+    },
     "/exact/svm/upfront": {
       "scheme": "exact",
       "sdks": ["typescript", "go", "python"],

@@ -276,7 +276,20 @@ def test_core_client_carries_resource_for_registry_and_accepts_json_null(wallet,
 
 @pytest.mark.parametrize("method", ["default", "script", "masumi"])
 @pytest.mark.parametrize("asset", ["lovelace", ASSET])
-def test_full_core_flow_verifies_and_reconciles_each_transfer_method(wallet, method, asset):
+def test_full_core_flow_verifies_and_reconciles_each_transfer_method(
+    wallet, method, asset, monkeypatch
+):
+    import time
+
+    # Start 1 ms before a second boundary and advance 250 ms per read, so the
+    # flow always crosses at least one boundary between its clock reads.
+    clock = [1_800_000_000.999]
+
+    def stepping_time():
+        clock[0] += 1.0
+        return clock[0]
+
+    monkeypatch.setattr(time, "time", stepping_time)
     from x402 import x402ClientSync, x402FacilitatorSync, x402ResourceServerSync
     from x402.mechanisms.cardano.exact import (
         ExactCardanoFacilitatorScheme,
@@ -288,7 +301,10 @@ def test_full_core_flow_verifies_and_reconciles_each_transfer_method(wallet, met
 
     buyer, _ = wallet
     chain = Chain(buyer.get_address())
-    chain.slot = buyer._provider.last_block_slot
+    # Read the clock on every call, like a real chain tip, so a second boundary
+    # between building the transaction and verifying it cannot make the TTL
+    # look further away than max_timeout_seconds.
+    chain.get_current_slot = lambda network: buyer._provider.last_block_slot
     chain.get_utxo = lambda ref, network: CardanoUtxoSnapshot(
         chain.exists, buyer.get_address(), 20_000_000, {ASSET: 100}
     )

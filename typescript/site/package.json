@@ -19,7 +19,7 @@
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@keetanetwork/keetanet-client": "^0.18.1",
     "@scure/base": "^1.2.6",
-    "@solana/kit": "^6.1.0",
+    "@solana/kit": ">=8.0.0",
     "@x402/aptos": "workspace:*",
     "@x402/avm": "workspace:*",
     "@x402/core": "workspace:*",
@@ -32,7 +32,7 @@
     "@x402/stellar": "workspace:*",
     "@x402/svm": "workspace:*",
     "@x402/xrpl": "workspace:*",
-    "next": "^16.4.1",
+    "next": "^16.4.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "viem": "^2.48.11"
@@ -51,7 +51,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "prettier": "3.5.2",
     "typescript": "^5.7.3",
-    "vite": "^6.4.5",
+    "vite": "^6.4.6",
     "vitest": "^4.1.12"
   }
 }

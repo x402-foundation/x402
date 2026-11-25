@@ -92,7 +92,8 @@ func (s *BatchSvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
 	}
 }
 
-// DynamicExtraFields returns extra keys regenerated on each PaymentRequired response.
+// DynamicExtraFields returns the extra keys left out of requirements matching
+// (batchsettlement.DynamicExtraFields).
 func (s *BatchSvmScheme) DynamicExtraFields() []string {
 	return append([]string(nil), batchsettlement.DynamicExtraFields...)
 }
@@ -577,7 +578,7 @@ func (s *BatchSvmScheme) prepareVerify(ctx x402.VerifyContext, raw map[string]an
 	// further paid request is refused (spec 4.5: a voucher or authorization
 	// against a Closing channel fails with channel_closing).
 	if (parsed.Type == batchsettlement.PayloadTypeVoucher || parsed.Type == batchsettlement.PayloadTypeAuthorization) &&
-		state != nil && (state.Status == ChannelStatusClosing || state.CloseRequestedAt != 0) {
+		state != nil && (state.Status == ChannelStatusClosing || state.Status == ChannelStatusSealed || state.CloseRequestedAt != 0) {
 		return errors.New(batchsettlement.ErrChannelClosing)
 	}
 	if parsed.Type == batchsettlement.PayloadTypeDeposit && state == nil {

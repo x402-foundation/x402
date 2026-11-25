@@ -18,14 +18,13 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import CallToolResult
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
-from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.mcp import (
     MCPToolResult,
     ResourceInfo,
     SyncPaymentWrapperConfig,
     create_payment_wrapper_sync,
-    wrap_fastmcp_tool_sync,
 )
+from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import ResourceConfig
 from x402.server import x402ResourceServerSync
 
@@ -46,6 +45,30 @@ def get_weather_data(city: str) -> dict[str, Any]:
     weather = random.choice(conditions)
     temperature = random.randint(40, 80)
     return {"city": city, "weather": weather, "temperature": temperature}
+
+
+def call_paid_tool(
+    paid_tool: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    ctx: Context,
+) -> CallToolResult:
+    """Call a sync payment-wrapped handler from a FastMCP tool.
+
+    The payment wrapper takes ``(arguments, extra)`` where ``extra["_meta"]`` is
+    the request metadata carrying the client's payment payload. FastMCP hands the
+    tool a ``Context`` instead, so this adapter reads the metadata off it and
+    converts the wrapper's ``MCPToolResult`` back into a ``CallToolResult``.
+    """
+    request_meta = ctx.request_context.meta
+    meta = dict(request_meta.model_extra or {}) if request_meta is not None else {}
+    result = paid_tool(arguments, {"_meta": meta, "toolName": tool_name})
+    return CallToolResult(
+        content=result.content,
+        isError=result.is_error,
+        structuredContent=result.structured_content,
+        _meta=result.meta,
+    )
 
 
 def run_existing() -> None:
@@ -70,16 +93,20 @@ def run_existing() -> None:
     # ========================================================================
     weather_accepts = resource_server.build_payment_requirements(
         ResourceConfig(
-            scheme="exact", network="eip155:84532",
-            pay_to=EVM_ADDRESS, price="$0.001",
+            scheme="exact",
+            network="eip155:84532",
+            pay_to=EVM_ADDRESS,
+            price="$0.001",
             extra={"name": "USDC", "version": "2"},
         )
     )
 
     forecast_accepts = resource_server.build_payment_requirements(
         ResourceConfig(
-            scheme="exact", network="eip155:84532",
-            pay_to=EVM_ADDRESS, price="$0.005",
+            scheme="exact",
+            network="eip155:84532",
+            pay_to=EVM_ADDRESS,
+            price="$0.005",
             extra={"name": "USDC", "version": "2"},
         )
     )
@@ -89,35 +116,44 @@ def run_existing() -> None:
     # ========================================================================
     paid_weather = create_payment_wrapper_sync(
         resource_server,
-        SyncPaymentWrapperConfig(accepts=weather_accepts, resource=ResourceInfo(url="mcp://tool/get_weather")),
+        SyncPaymentWrapperConfig(
+            accepts=weather_accepts,
+            resource=ResourceInfo(url="mcp://tool/get_weather"),
+        ),
     )
 
     paid_forecast = create_payment_wrapper_sync(
         resource_server,
-        SyncPaymentWrapperConfig(accepts=forecast_accepts, resource=ResourceInfo(url="mcp://tool/get_forecast")),
+        SyncPaymentWrapperConfig(
+            accepts=forecast_accepts,
+            resource=ResourceInfo(url="mcp://tool/get_forecast"),
+        ),
     )
 
     # ========================================================================
     # STEP 5: Register tools - wrap handlers with payment
     # ========================================================================
 
-    paid_weather_tool = wrap_fastmcp_tool_sync(
-        paid_weather,
-        lambda args, _: MCPToolResult(
-            content=[{"type": "text", "text": json.dumps(get_weather_data(args["city"]), indent=2)}],
-        ),
-        tool_name="get_weather",
-    )
+    def weather_handler(args: dict[str, Any], _context: Any) -> MCPToolResult:
+        """Tool body - only runs after the payment has been verified."""
+        return MCPToolResult(
+            content=[
+                {
+                    "type": "text",
+                    "text": json.dumps(get_weather_data(args["city"]), indent=2),
+                }
+            ],
+        )
 
-    paid_forecast_tool = wrap_fastmcp_tool_sync(
-        paid_forecast,
-        lambda args, _: MCPToolResult(
-            content=[{"type": "text", "text": json.dumps(
-                [{**get_weather_data(args["city"]), "day": i + 1} for i in range(7)], indent=2,
-            )}],
-        ),
-        tool_name="get_forecast",
-    )
+    def forecast_handler(args: dict[str, Any], _context: Any) -> MCPToolResult:
+        """Tool body - only runs after the payment has been verified."""
+        forecast = [{**get_weather_data(args["city"]), "day": day + 1} for day in range(7)]
+        return MCPToolResult(
+            content=[{"type": "text", "text": json.dumps(forecast, indent=2)}],
+        )
+
+    paid_weather_tool = paid_weather(weather_handler)
+    paid_forecast_tool = paid_forecast(forecast_handler)
 
     # Free tool - works exactly as before, no changes needed
     @mcp_server.tool()
@@ -128,12 +164,12 @@ def run_existing() -> None:
     @mcp_server.tool()
     def get_weather(city: str, ctx: Context) -> CallToolResult:
         """Get current weather for a city. Requires payment of $0.001."""
-        return paid_weather_tool({"city": city}, ctx)
+        return call_paid_tool(paid_weather_tool, "get_weather", {"city": city}, ctx)
 
     @mcp_server.tool()
     def get_forecast(city: str, ctx: Context) -> CallToolResult:
         """Get 7-day weather forecast. Requires payment of $0.005."""
-        return paid_forecast_tool({"city": city}, ctx)
+        return call_paid_tool(paid_forecast_tool, "get_forecast", {"city": city}, ctx)
 
     # Run server with SSE transport (interoperable with Go/TypeScript clients)
     print(f"Existing MCP Server with x402 running on http://localhost:{PORT}")

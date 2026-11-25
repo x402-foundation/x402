@@ -803,7 +803,8 @@ To make paid MCP tools discoverable, pass the discovery extension in your paymen
   </Tab>
   <Tab title="Python">
     ```python
-    from x402.mcp import create_payment_wrapper
+    from x402.mcp import create_payment_wrapper, PaymentWrapperConfig
+    from x402.schemas import ResourceInfo
     from x402.extensions.bazaar import DeclareMcpDiscoveryConfig, declare_mcp_discovery_extension
 
     weather_discovery = declare_mcp_discovery_extension(
@@ -821,12 +822,14 @@ To make paid MCP tools discoverable, pass the discovery extension in your paymen
 
     weather_wrapper = create_payment_wrapper(
         resource_server,
-        accepts=weather_accepts,
-        resource=ResourceInfo(
-            url="mcp://tool/get_weather",
-            description="Get current weather for a city",
+        PaymentWrapperConfig(
+            accepts=weather_accepts,
+            resource=ResourceInfo(
+                url="mcp://tool/get_weather",
+                description="Get current weather for a city",
+            ),
+            extensions=weather_discovery,
         ),
-        extensions=weather_discovery,
     )
 
     @mcp.tool(name="get_weather", description="Get current weather ($0.001)")

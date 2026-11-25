@@ -6,12 +6,14 @@ import {
   fetchMint,
   findAssociatedTokenPda,
   getTransferCheckedInstruction,
+  getCreateAssociatedTokenIdempotentInstruction,
 } from "@solana-program/token-2022";
 import {
   addSignersToTransactionMessage,
   appendTransactionMessageInstructions,
   createSolanaRpc,
   createTransactionMessage,
+  createNoopSigner,
   getBase64EncodedWireTransaction,
   partiallySignTransactionMessageWithSigners,
   pipe,
@@ -23,7 +25,7 @@ import {
   type KeyPairSigner,
 } from "@solana/kit";
 import { fetchSwig, getSignInstructions, getSwigWalletAddress } from "@swig-wallet/kit";
-import { findDefaultAsset } from "@x402/svm";
+import { findDefaultAsset, parsePaymentLegs } from "@x402/svm";
 import type { PaymentPayload, PaymentRequirements, SchemeNetworkClient } from "@x402/core/types";
 
 const DEVNET_RPC_URL = "https://api.devnet.solana.com";
@@ -69,7 +71,11 @@ export class ExactSwigSvmScheme implements SchemeNetworkClient {
     const rpc = createSolanaRpc(this.rpcUrl ?? DEVNET_RPC_URL);
     const mint = paymentRequirements.asset as Address;
     const amount = BigInt(paymentRequirements.amount);
-    const payTo = paymentRequirements.payTo as Address;
+    const legs = parsePaymentLegs(paymentRequirements);
+    const feePayer = paymentRequirements.extra?.feePayer as Address | undefined;
+    if (!feePayer) {
+      throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
+    }
 
     const swig = await fetchSwig(rpc as never, this.swigAccountAddress);
     const swigWalletAddress = await getSwigWalletAddress(swig);
@@ -84,11 +90,6 @@ export class ExactSwigSvmScheme implements SchemeNetworkClient {
     const [sourceAta] = await findAssociatedTokenPda({
       mint,
       owner: swigWalletAddress,
-      tokenProgram,
-    });
-    const [destinationAta] = await findAssociatedTokenPda({
-      mint,
-      owner: payTo,
       tokenProgram,
     });
 
@@ -109,27 +110,55 @@ export class ExactSwigSvmScheme implements SchemeNetworkClient {
       );
     }
 
-    const transferIx = getTransferCheckedInstruction(
-      {
-        source: sourceAta,
+    const feePayerSigner = createNoopSigner(feePayer);
+    const transfers: Instruction[] = [];
+    const creations: Instruction[] = [];
+    for (const leg of legs) {
+      const [destination] = await findAssociatedTokenPda({
         mint,
-        destination: destinationAta,
-        authority: swigWalletAddress,
-        amount,
-        decimals: mintInfo.data.decimals,
-      },
-      { programAddress: tokenProgram },
-    );
-
-    const feePayer = paymentRequirements.extra?.feePayer as Address | undefined;
-    if (!feePayer) {
-      throw new Error("feePayer is required in paymentRequirements.extra for SVM transactions");
+        owner: leg.owner as Address,
+        tokenProgram,
+      });
+      if (leg.ataCreationRequired) {
+        let exists = false;
+        try {
+          exists = (await rpc.getAccountInfo(destination).send()).value !== null;
+        } catch {
+          // Creation is idempotent; include it when existence cannot be confirmed.
+        }
+        if (!exists) {
+          creations.push(
+            getCreateAssociatedTokenIdempotentInstruction({
+              payer: feePayerSigner,
+              ata: destination,
+              owner: leg.owner as Address,
+              mint,
+              tokenProgram,
+            }),
+          );
+        }
+      }
+      transfers.push(
+        getTransferCheckedInstruction(
+          {
+            source: sourceAta,
+            mint,
+            destination,
+            authority: swigWalletAddress,
+            amount: leg.amount,
+            decimals: mintInfo.data.decimals,
+          },
+          { programAddress: tokenProgram },
+        ),
+      );
     }
 
     const refreshedSwig = await fetchSwig(rpc as never, this.swigAccountAddress);
-    const signIxs = (await getSignInstructions(refreshedSwig, rootRole.id, [
-      transferIx as never,
-    ])) as Instruction[];
+    const signIxs = (await getSignInstructions(
+      refreshedSwig,
+      rootRole.id,
+      transfers as never,
+    )) as Instruction[];
 
     const sellerMemo = paymentRequirements.extra?.memo as string | undefined;
     let memoData: Uint8Array;
@@ -164,10 +193,12 @@ export class ExactSwigSvmScheme implements SchemeNetworkClient {
       message => setTransactionMessageFeePayer(feePayer, message),
       message =>
         prependTransactionMessageInstruction(
-          getSetComputeUnitLimitInstruction({ units: SMART_WALLET_COMPUTE_UNIT_LIMIT }),
+          getSetComputeUnitLimitInstruction({
+            units: SMART_WALLET_COMPUTE_UNIT_LIMIT,
+          }),
           message,
         ),
-      message => appendTransactionMessageInstructions([...signIxs, memoIx], message),
+      message => appendTransactionMessageInstructions([...creations, ...signIxs, memoIx], message),
       message => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, message),
       message => addSignersToTransactionMessage([this.authority], message),
     );

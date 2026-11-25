@@ -443,7 +443,9 @@ type AssetInfo struct {
 	Decimals int    // Token decimals
 }
 
-// ClientConfig contains optional client configuration
+// ClientConfig contains optional client configuration.
+// Valid splits distribute the quoted total among multiple recipients by default.
+// Applications can screen recipients with x402Client.OnBeforePaymentCreation.
 type ClientConfig struct {
 	RPCURL string // Custom RPC URL
 	// TransactionVersions narrows the transaction message versions this client

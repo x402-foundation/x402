@@ -6,6 +6,7 @@ from typing import Any
 
 try:
     from eth_account.messages import encode_typed_data
+    from eth_keys.constants import SECPK1_N
     from eth_utils import keccak, to_checksum_address
 except ImportError as e:
     raise ImportError(
@@ -51,6 +52,15 @@ def channel_id_binding_error(
     if computed.lower() != claimed_channel_id.lower():
         return ERR_CHANNEL_ID_MISMATCH
     return None
+
+
+def is_contract_recoverable_signature(signature: bytes) -> bool:
+    """Whether x402BatchSettlement's ECDSA recovery accepts this signature."""
+    return (
+        len(signature) == 65
+        and int.from_bytes(signature[32:64], "big") <= SECPK1_N // 2
+        and signature[64] in (27, 28)
+    )
 
 
 def get_batch_settlement_eip712_domain(chain_id: int) -> dict[str, Any]:
@@ -138,6 +148,7 @@ __all__ = [
     "channel_config_to_signing_message",
     "coerce_bytes32",
     "is_canonical_channel_id",
+    "is_contract_recoverable_signature",
     "normalize_channel_id",
     "channel_id_binding_error",
 ]

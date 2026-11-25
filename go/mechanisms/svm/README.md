@@ -160,3 +160,9 @@ See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for more details.
 - **[EVM Mechanisms](../evm/README.md)** - Ethereum implementations
 - **[Exact Scheme Specification](../../../specs/schemes/exact/)** - Exact scheme specifications
 - **[Upto SVM Scheme Specification](../../../specs/schemes/upto/scheme_upto_svm.md)** - Payment-channel scheme specification
+
+## Multi-payee splits
+
+Valid SVM exact requirements with `extra.splits` are accepted by default. The quoted total is distributed among the primary `payTo` and the declared split recipients; splits do not add to that total. The facilitator pays transaction fees and any authorized ATA rent.
+
+Applications that screen recipients can inspect all split terms in the core client's `OnBeforePaymentCreation` hook and abort before construction or signing, just as for `payTo`. Recipient policy is optional; schema, amount, transfer-matching, and sponsorship validation remain mandatory.

@@ -1,0 +1,3 @@
+kind: fixed
+body: 'EVM batch-settlement self-managed refunds are rejected at `/verify` and `/settle` for channels held in the voucher store (`invalid_batch_settlement_evm_voucher_store_mode_mismatch`; a store read failure returns `invalid_batch_settlement_evm_voucher_store_unavailable`), and unsigned ones are rejected at `/settle` when no `ResolveCallerIdentity` is configured, matching `delegatedRefund: false`.'
+time: 2026-11-23T19:00:00Z

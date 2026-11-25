@@ -240,23 +240,23 @@ Hooks allow you to run custom logic during payment creation.
 ### Available Hooks
 
 ```go
-client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationResult, error) {
+client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
     // Called before payment creation
-    // Can abort by returning: &BeforePaymentCreationResult{Abort: true, Reason: "..."}
-    fmt.Printf("Creating payment for %s\n", ctx.Requirements.Network)
+    // Can abort by returning: &x402.BeforePaymentCreationHookResult{Abort: true, Reason: "..."}
+    fmt.Printf("Creating payment for %s\n", ctx.SelectedRequirements.GetNetwork())
     return nil, nil
 })
 
-client.OnAfterPaymentCreation(func(ctx x402.PaymentCreationResultContext) error {
+client.OnAfterPaymentCreation(func(ctx x402.PaymentCreatedContext) error {
     // Called after successful payment creation
     // Use for logging, metrics, etc.
-    fmt.Printf("Payment created: %d bytes\n", len(ctx.PayloadBytes))
+    fmt.Printf("Payment created: %s on %s\n", ctx.Payload.GetScheme(), ctx.Payload.GetNetwork())
     return nil
 })
 
-client.OnPaymentCreationFailure(func(ctx x402.PaymentCreationFailureContext) (*x402.PaymentCreationFailureResult, error) {
+client.OnPaymentCreationFailure(func(ctx x402.PaymentCreationFailureContext) (*x402.PaymentCreationFailureHookResult, error) {
     // Called when payment creation fails
-    // Can recover by returning: &PaymentCreationFailureResult{Recovered: true, Payload: ...}
+    // Can recover by returning: &x402.PaymentCreationFailureHookResult{Recovered: true, Payload: ...}
     fmt.Printf("Payment failed: %v\n", ctx.Error)
     return nil, nil
 })
@@ -266,18 +266,18 @@ client.OnPaymentCreationFailure(func(ctx x402.PaymentCreationFailureContext) (*x
 
 **Logging:**
 ```go
-client.OnAfterPaymentCreation(func(ctx PaymentCreationResultContext) error {
-    log.Printf("Payment created for %s: %s", ctx.Requirements.Network, ctx.Requirements.Scheme)
+client.OnAfterPaymentCreation(func(ctx x402.PaymentCreatedContext) error {
+    log.Printf("Payment created for %s: %s", ctx.SelectedRequirements.GetNetwork(), ctx.SelectedRequirements.GetScheme())
     return nil
 })
 ```
 
 **Metrics:**
 ```go
-client.OnAfterPaymentCreation(func(ctx PaymentCreationResultContext) error {
+client.OnAfterPaymentCreation(func(ctx x402.PaymentCreatedContext) error {
     metrics.IncrementCounter("payments.created", map[string]string{
-        "network": string(ctx.Requirements.Network),
-        "scheme": ctx.Requirements.Scheme,
+        "network": ctx.SelectedRequirements.GetNetwork(),
+        "scheme": ctx.SelectedRequirements.GetScheme(),
     })
     return nil
 })
@@ -285,10 +285,10 @@ client.OnAfterPaymentCreation(func(ctx PaymentCreationResultContext) error {
 
 **Aborting Payments:**
 ```go
-client.OnBeforePaymentCreation(func(ctx PaymentCreationContext) (*BeforePaymentCreationResult, error) {
+client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
     // Don't pay for resources over a certain price
-    if exceedsLimit(ctx.Requirements.Amount) {
-        return &BeforePaymentCreationResult{
+    if exceedsLimit(ctx.SelectedRequirements.GetAmount()) {
+        return &x402.BeforePaymentCreationHookResult{
             Abort: true,
             Reason: "Price exceeds user limit",
         }, nil
@@ -442,7 +442,7 @@ if err != nil {
 Use hooks to implement custom error recovery:
 
 ```go
-client.OnPaymentCreationFailure(func(ctx PaymentCreationFailureContext) (*PaymentCreationFailureResult, error) {
+client.OnPaymentCreationFailure(func(ctx x402.PaymentCreationFailureContext) (*x402.PaymentCreationFailureHookResult, error) {
     // Log error
     log.Printf("Payment failed: %v", ctx.Error)
     

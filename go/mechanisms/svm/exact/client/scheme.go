@@ -67,6 +67,17 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
+	// Validate payment terms before RPC work. Recipient screening belongs in
+	// the core client payment-creation hook.
+	var legs []svm.PaymentLeg
+	if svm.UsesSplitTerms(requirements) {
+		parsed, err := svm.ParsePaymentLegs(requirements)
+		if err != nil {
+			return types.PaymentPayload{}, err
+		}
+		legs = parsed
+	}
+
 	// Get network configuration
 	config, err := svm.GetNetworkConfig(networkStr)
 	if err != nil {
@@ -115,16 +126,13 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveSourceATA+": %w", err)
 	}
 
-	// Find destination ATA (recipient's token account)
-	destinationATA, err := findAssociatedTokenAddress(payToPubkey, tokenProgramID, mintPubkey)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveDestinationATA+": %w", err)
-	}
-
-	// Parse amount
-	amount, err := strconv.ParseUint(requirements.Amount, 10, 64)
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAmount+": %w", err)
+	if legs == nil {
+		// Single payee: one leg of the full amount, built exactly as before.
+		amount, err := strconv.ParseUint(requirements.Amount, 10, 64)
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAmount+": %w", err)
+		}
+		legs = []svm.PaymentLeg{{Owner: payToPubkey, Amount: amount, IsPrimary: true}}
 	}
 
 	// Get fee payer from requirements.extra
@@ -143,24 +151,42 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	// Build final transfer instruction
-	transferIx, err := token.NewTransferCheckedInstructionBuilder().
-		SetAmount(amount).
-		SetDecimals(mintMetadata.Decimals).
-		SetSourceAccount(sourceATA).
-		SetMintAccount(mintPubkey).
-		SetDestinationAccount(destinationATA).
-		SetOwnerAccount(c.signer.Address()).
-		ValidateAndBuild()
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
+	// One TransferChecked per leg: the primary remainder to payTo, then each
+	// split in extra.splits order (§5.7). A recipient marked
+	// ataCreationRequired gets a fee-payer-funded CreateIdempotent unless its
+	// ATA is confirmed to exist (§5.4).
+	var createIxs, transferIxs []solana.Instruction
+	for _, leg := range legs {
+		destinationATA, err := svm.DeriveATA(leg.Owner, mintPubkey, tokenProgramID)
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveDestinationATA+": %w", err)
+		}
+		if leg.AtaCreationRequired && !accountExists(ctx, rpcClient, destinationATA) {
+			createIxs = append(createIxs, svm.NewCreateIdempotentInstruction(
+				feePayer, destinationATA, leg.Owner, mintPubkey, tokenProgramID,
+			))
+		}
+		transferIx, err := token.NewTransferCheckedInstructionBuilder().
+			SetAmount(leg.Amount).
+			SetDecimals(mintMetadata.Decimals).
+			SetSourceAccount(sourceATA).
+			SetMintAccount(mintPubkey).
+			SetDestinationAccount(destinationATA).
+			SetOwnerAccount(c.signer.Address()).
+			ValidateAndBuild()
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
+		}
+		transferData, err := transferIx.Data()
+		if err != nil {
+			return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
+		}
+		// Bind the mint's program to this instruction without changing token.ProgramID globally.
+		transferIxs = append(transferIxs, solana.NewInstruction(tokenProgramID, transferIx.Accounts(), transferData))
 	}
-	transferData, err := transferIx.Data()
-	if err != nil {
-		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToBuildTransferIx+": %w", err)
-	}
-	// Bind the mint's program to this instruction without changing token.ProgramID globally.
-	transferInstruction := solana.NewInstruction(tokenProgramID, transferIx.Accounts(), transferData)
+	computeUnitLimit := min(svm.DefaultMaxComputeUnits, svm.DefaultComputeUnitLimit+
+		uint32(len(legs)-1)*svm.SplitTransferComputeUnits+
+		uint32(len(createIxs))*svm.AtaCreationComputeUnits)
 
 	// Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
 	var memoPayload []byte
@@ -185,12 +211,13 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	// Build the highest message version shared with extra.transactionVersions
 	// (version 0 when absent). Version 0 carries the compute budget as
 	// ComputeBudget instructions; version 1 carries it in the message config.
+	instructions := append(append(createIxs, transferIxs...), memoIx)
 	tx, err := svm.BuildClientTransaction(
 		version,
 		feePayer,
 		recentBlockhash,
-		[]solana.Instruction{transferInstruction, memoIx},
-		svm.DefaultComputeUnitLimit,
+		instructions,
+		computeUnitLimit,
 		svm.DefaultComputeUnitPriceMicrolamports,
 	)
 	if err != nil {
@@ -206,6 +233,14 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	base64Tx, err := svm.EncodeTransaction(tx)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToEncodeTransaction+": %w", err)
+	}
+
+	// Each split adds a transfer and possibly an ATA creation (§5.2); refuse a
+	// transaction over its version's size limit (1232 bytes for version 0, 4096
+	// for version 1) rather than fail at the facilitator.
+	if size, limit, exceeded := svm.TransactionSizeExceeded(base64Tx, version); exceeded {
+		return types.PaymentPayload{}, fmt.Errorf("%s: transaction is %d bytes, over the %d-byte limit; reduce extra.splits or ATA creations",
+			ErrTransactionTooLarge, size, limit)
 	}
 
 	// Create SVM payload
@@ -245,4 +280,15 @@ func (c *ExactSvmScheme) resolveRecentBlockhash(
 		return solana.Hash{}, fmt.Errorf(ErrFailedToGetLatestBlockhash+": %w", err)
 	}
 	return latestBlockhash.Value.Blockhash, nil
+}
+
+// accountExists reports whether an account is confirmed to exist. An RPC
+// failure counts as "not confirmed", so the caller includes the idempotent
+// creation rather than risk a transfer to a missing ATA.
+func accountExists(ctx context.Context, rpcClient *rpc.Client, address solana.PublicKey) bool {
+	out, err := rpcClient.GetAccountInfoWithOpts(ctx, address, &rpc.GetAccountInfoOpts{
+		Encoding:   solana.EncodingBase64,
+		Commitment: rpc.CommitmentConfirmed,
+	})
+	return err == nil && out != nil && out.Value != nil
 }

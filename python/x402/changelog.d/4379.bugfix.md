@@ -1,0 +1,1 @@
+The HTTP resource server now answers `412 Precondition Failed` when verification fails with `permit2_allowance_required`, as the exact and upto EVM specs and the TypeScript server do. Previously it returned `402`, so clients could not tell that a one-time Permit2 approval is needed before retrying.

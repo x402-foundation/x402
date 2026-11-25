@@ -1,0 +1,3 @@
+kind: fixed
+body: 'Resolve client scheme lookups through wildcard registrations when the exact network has a different scheme registered. With `eip155:*` registered for exact and upto and `eip155:1` registered for exact, an upto payment on `eip155:1` failed with `unsupported_scheme`, and the scheme''s `OnPaymentResponse` handler was skipped.'
+time: 2026-11-24T12:00:00Z
