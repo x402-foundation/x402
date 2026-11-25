@@ -148,3 +148,8 @@ The cache rejects concurrent `/settle` calls that carry the same transaction pay
 
 For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
 
+## Multi-payee splits
+
+Valid SVM exact requirements with `extra.splits` are accepted by default. The quoted total is distributed among the primary `payTo` and the declared split recipients; splits do not add to that total. The facilitator pays transaction fees and any authorized ATA rent.
+
+Applications that screen recipients can inspect all split terms in the core client's `on_before_payment_creation` hook and abort before construction or signing, just as for `payTo`. Recipient policy is optional; schema, amount, transfer-matching, and sponsorship validation remain mandatory.

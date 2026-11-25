@@ -167,6 +167,28 @@ def _is_fee_payer_isolated(
     return True
 
 
+def strip_assertion_guards(
+    static_accounts: list[Pubkey],
+    instructions: list[CompiledInstruction],
+    fee_payer: Pubkey,
+) -> list[CompiledInstruction]:
+    """Apply the assertion-only guard policy shared by both static layouts."""
+    # Validate all Lighthouse instructions before tuples or a recoverable layout
+    # error can bypass assertion-only guard policy.
+    for ix in instructions:
+        if ix.program_id_index >= len(static_accounts):
+            raise LayoutError(ERR_UNKNOWN_INSTRUCTION)
+        if static_accounts[ix.program_id_index] != _LIGHTHOUSE:
+            continue
+        if _classify(static_accounts, ix) is not InstructionRole.GUARD:
+            raise LayoutError(ERR_INVALID_LIGHTHOUSE_INSTRUCTION)
+        if not _is_fee_payer_isolated(static_accounts, [ix], fee_payer):
+            raise LayoutError(ERR_FEE_PAYER_TRANSFERRING)
+    return [
+        ix for ix in instructions if _classify(static_accounts, ix) is not InstructionRole.GUARD
+    ]
+
+
 def resolve_protocol_layout(
     static_accounts: list[Pubkey],
     instructions: list[CompiledInstruction],
@@ -187,15 +209,7 @@ def resolve_protocol_layout(
     Raises:
         LayoutError: with the invalid reason.
     """
-    # Validate all Lighthouse instructions before tuples or a recoverable layout
-    # error can bypass assertion-only guard policy.
-    for ix in instructions:
-        if static_accounts[ix.program_id_index] != _LIGHTHOUSE:
-            continue
-        if _classify(static_accounts, ix) is not InstructionRole.GUARD:
-            raise LayoutError(ERR_INVALID_LIGHTHOUSE_INSTRUCTION)
-        if not _is_fee_payer_isolated(static_accounts, [ix], fee_payer):
-            raise LayoutError(ERR_FEE_PAYER_TRANSFERRING)
+    instructions = strip_assertion_guards(static_accounts, instructions, fee_payer)
     if version == 1 and any(
         static_accounts[ix.program_id_index] == _COMPUTE_BUDGET for ix in instructions
     ):

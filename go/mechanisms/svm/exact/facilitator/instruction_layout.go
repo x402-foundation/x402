@@ -170,19 +170,10 @@ func matchTuple(
 // verification and the settle-time path re-derivation.
 func (f *ExactSvmScheme) resolveProtocolLayout(tx *solana.Transaction, feePayer solana.PublicKey) (*partitionedInstructions, error) {
 	instructions := tx.Message.Instructions
-	// Validate every Lighthouse instruction before tuple matching so an allowlist
-	// or recoverable layout error cannot bypass assertion-only guard policy.
-	for _, inst := range instructions {
-		progID, err := tx.Message.Program(inst.ProgramIDIndex)
-		if err != nil || !progID.Equals(lighthouseProgramID) {
-			continue
-		}
-		if classifyProtocolInstruction(tx, inst) != kindGuard {
-			return nil, errors.New(ErrInvalidLighthouseInstruction)
-		}
-		if err := assertFeePayerIsolatedFromInstructions(tx, []solana.CompiledInstruction{inst}, feePayer); err != nil {
-			return nil, errors.New(ErrFeePayerTransferringFunds)
-		}
+	var err error
+	instructions, err = stripAssertionGuards(tx, instructions, feePayer)
+	if err != nil {
+		return nil, err
 	}
 	if tx.Message.GetVersion() == solana.MessageVersionV1 {
 		for _, inst := range instructions {
@@ -218,4 +209,29 @@ func (f *ExactSvmScheme) resolveProtocolLayout(tx *solana.Transaction, feePayer 
 		}
 	}
 	return partitionProtocolInstructions(tx, instructions)
+}
+
+// stripAssertionGuards enforces the shared assertion-only, fee-payer-isolated guard policy.
+func stripAssertionGuards(tx *solana.Transaction, instructions []solana.CompiledInstruction, feePayer solana.PublicKey) ([]solana.CompiledInstruction, error) {
+	// Validate every Lighthouse instruction before tuple matching so an allowlist
+	// or recoverable layout error cannot bypass assertion-only guard policy.
+	for _, inst := range instructions {
+		progID, err := tx.Message.Program(inst.ProgramIDIndex)
+		if err != nil || !progID.Equals(lighthouseProgramID) {
+			continue
+		}
+		if classifyProtocolInstruction(tx, inst) != kindGuard {
+			return nil, errors.New(ErrInvalidLighthouseInstruction)
+		}
+		if err := assertFeePayerIsolatedFromInstructions(tx, []solana.CompiledInstruction{inst}, feePayer); err != nil {
+			return nil, errors.New(ErrFeePayerTransferringFunds)
+		}
+	}
+	protocol := make([]solana.CompiledInstruction, 0, len(instructions))
+	for _, instruction := range instructions {
+		if classifyProtocolInstruction(tx, instruction) != kindGuard {
+			protocol = append(protocol, instruction)
+		}
+	}
+	return protocol, nil
 }

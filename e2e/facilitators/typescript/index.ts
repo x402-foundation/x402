@@ -772,6 +772,8 @@ if (svmSigner) {
       SVM_NETWORK as Network,
       new ExactSvmScheme(svmSigner, undefined, {
         enableSmartWalletVerification: true,
+        maxSplits: 8,
+        ataCreationSponsored: true,
       }),
     )
     .register(SVM_NETWORK as Network, new UptoSvmScheme(svmSigner))

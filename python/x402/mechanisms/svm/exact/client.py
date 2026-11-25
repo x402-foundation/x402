@@ -15,9 +15,17 @@ except ImportError as e:
 
 from ....schemas import PaymentRequirements
 from ..constants import (
+    ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
+    ATA_CREATION_COMPUTE_UNITS,
+    DEFAULT_COMPUTE_UNIT_LIMIT,
+    DEFAULT_MAX_COMPUTE_UNITS,
     MAX_MEMO_BYTES,
+    MAX_TRANSACTION_SIZE_V0,
+    MAX_TRANSACTION_SIZE_V1,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
+    SPLIT_TRANSFER_COMPUTE_UNITS,
+    SYSTEM_PROGRAM_ADDRESS,
 )
 from ..default_assets import find_default_asset
 from ..mint_cache import MintMetadataCache, get_cached_mint_metadata
@@ -33,14 +41,18 @@ from ..utils import (
     normalize_network,
     resolve_blockhash,
     resolve_transaction_version,
+    transaction_size_exceeded,
 )
+from .splits import parse_payment_legs, uses_split_terms
 
 
 class ExactSvmScheme:
     """SVM client implementation for the Exact payment scheme (V2).
 
     Implements SchemeNetworkClient protocol. Returns the inner payload dict,
-    which x402Client wraps into a full PaymentPayload.
+    which x402Client wraps into a full PaymentPayload. Valid ``extra.splits``
+    distribute the quoted total among multiple recipients by default. Applications
+    can screen recipients with the core client's ``on_before_payment_creation`` hook.
 
     Attributes:
         scheme: The scheme identifier ("exact").
@@ -112,6 +124,10 @@ class ExactSvmScheme:
         network = str(requirements.network)
         extra = requirements.extra or {}
         transaction_version = resolve_transaction_version(extra, self._transaction_versions)
+
+        # Validate all payment terms before RPC work; recipient policy is application-defined.
+        split_terms = uses_split_terms(requirements)
+        legs = parse_payment_legs(requirements) if split_terms else []
         client = self._get_client(network)
 
         # Facilitator must provide feePayer to cover transaction fees
@@ -129,24 +145,51 @@ class ExactSvmScheme:
 
         # Derive ATAs
         source_ata_str = derive_ata(self._signer.address, requirements.asset, str(token_program))
-        dest_ata_str = derive_ata(requirements.pay_to, requirements.asset, str(token_program))
         source_ata = Pubkey.from_string(source_ata_str)
-        dest_ata = Pubkey.from_string(dest_ata_str)
 
-        # TransferChecked instruction
-        # Data: [12 (discriminator), u64 amount (little-endian), u8 decimals]
-        amount = int(requirements.amount)
-        transfer_data = bytes([12]) + amount.to_bytes(8, "little") + bytes([decimals])
-        transfer_ix = Instruction(
-            program_id=token_program,
-            accounts=[
-                AccountMeta(source_ata, is_signer=False, is_writable=True),
-                AccountMeta(mint, is_signer=False, is_writable=False),
-                AccountMeta(dest_ata, is_signer=False, is_writable=True),
-                AccountMeta(payer_pubkey, is_signer=True, is_writable=False),
-            ],
-            data=transfer_data,
-        )
+        def transfer_checked(owner: str, amount: int) -> Instruction:
+            # Data: [12 (discriminator), u64 amount (little-endian), u8 decimals]
+            dest_ata = Pubkey.from_string(derive_ata(owner, requirements.asset, str(token_program)))
+            return Instruction(
+                program_id=token_program,
+                accounts=[
+                    AccountMeta(source_ata, is_signer=False, is_writable=True),
+                    AccountMeta(mint, is_signer=False, is_writable=False),
+                    AccountMeta(dest_ata, is_signer=False, is_writable=True),
+                    AccountMeta(payer_pubkey, is_signer=True, is_writable=False),
+                ],
+                data=bytes([12]) + amount.to_bytes(8, "little") + bytes([decimals]),
+            )
+
+        if split_terms:
+            # One TransferChecked per leg: the primary remainder to payTo, then
+            # each split in extra.splits order (§5.7). A recipient marked
+            # ataCreationRequired gets a fee-payer-funded CreateIdempotent
+            # unless its ATA is confirmed to exist (§5.4).
+            create_ixs: list[Instruction] = []
+            transfer_ixs: list[Instruction] = []
+            for leg in legs:
+                if leg.ata_creation_required:
+                    ata = Pubkey.from_string(
+                        derive_ata(leg.owner, requirements.asset, str(token_program))
+                    )
+                    if not self._account_exists(client, ata):
+                        create_ixs.append(
+                            self._create_ata_idempotent_ix(
+                                fee_payer, ata, Pubkey.from_string(leg.owner), mint, token_program
+                            )
+                        )
+                transfer_ixs.append(transfer_checked(leg.owner, leg.amount))
+            payment_ixs = create_ixs + transfer_ixs
+            compute_unit_limit = min(
+                DEFAULT_MAX_COMPUTE_UNITS,
+                DEFAULT_COMPUTE_UNIT_LIMIT
+                + (len(legs) - 1) * SPLIT_TRANSFER_COMPUTE_UNITS
+                + len(create_ixs) * ATA_CREATION_COMPUTE_UNITS,
+            )
+        else:
+            payment_ixs = [transfer_checked(requirements.pay_to, int(requirements.amount))]
+            compute_unit_limit = DEFAULT_COMPUTE_UNIT_LIMIT
 
         # Memo instruction: use seller-defined memo from extra.memo, or random nonce for uniqueness
         seller_memo = extra.get("memo")
@@ -168,15 +211,63 @@ class ExactSvmScheme:
         message = compile_payment_message(
             transaction_version,
             payer=fee_payer,
-            instructions=[transfer_ix, memo_ix],
+            instructions=[*payment_ixs, memo_ix],
             recent_blockhash=blockhash,
+            compute_unit_limit=compute_unit_limit,
         )
 
         # Partially sign as the token authority; the facilitator fills the
         # fee-payer slot (index 0) at settlement.
         tx_base64 = encode_partially_signed_transaction(message, self._signer.keypair)
 
+        # Each split adds a transfer and possibly an ATA creation (§5.2); fail
+        # here with the reason rather than send a transaction that cannot land.
+        size_limit = (
+            MAX_TRANSACTION_SIZE_V1 if transaction_version == 1 else MAX_TRANSACTION_SIZE_V0
+        )
+        if transaction_size_exceeded(tx_base64, transaction_version):
+            raise ValueError(
+                f"Transaction is over the {size_limit}-byte limit; reduce extra.splits or "
+                "ATA creations"
+            )
+
         payload = ExactSvmPayload(transaction=tx_base64)
 
         # Return inner payload dict - x402Client wraps this
         return payload.to_dict()
+
+    @staticmethod
+    def _account_exists(client: SvmRpcClient, address: Pubkey) -> bool:
+        """Whether an account exists.
+
+        An RPC failure counts as "not confirmed", so the caller includes the
+        idempotent creation rather than risk a transfer to a missing ATA.
+        """
+        try:
+            return client.get_account_info(address).value is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _create_ata_idempotent_ix(
+        fee_payer: Pubkey,
+        ata: Pubkey,
+        owner: Pubkey,
+        mint: Pubkey,
+        token_program: Pubkey,
+    ) -> Instruction:
+        """Associated Token Account ``CreateIdempotent`` funded by the fee payer."""
+        return Instruction(
+            program_id=Pubkey.from_string(ASSOCIATED_TOKEN_PROGRAM_ADDRESS),
+            accounts=[
+                AccountMeta(fee_payer, is_signer=True, is_writable=True),
+                AccountMeta(ata, is_signer=False, is_writable=True),
+                AccountMeta(owner, is_signer=False, is_writable=False),
+                AccountMeta(mint, is_signer=False, is_writable=False),
+                AccountMeta(
+                    Pubkey.from_string(SYSTEM_PROGRAM_ADDRESS), is_signer=False, is_writable=False
+                ),
+                AccountMeta(token_program, is_signer=False, is_writable=False),
+            ],
+            data=bytes([1]),
+        )
