@@ -170,14 +170,18 @@ r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
 Configure with custom authentication:
 
 ```go
+type facilitatorAuth struct{}
+
+func (facilitatorAuth) GetAuthHeaders(ctx context.Context) (x402http.AuthHeaders, error) {
+	return x402http.AuthHeaders{
+		Verify: map[string]string{"Authorization": "Bearer verify-token"},
+		Settle: map[string]string{"Authorization": "Bearer settle-token"},
+	}, nil
+}
+
 facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-	URL: "https://your-facilitator.com",
-	CreateAuthHeaders: func() (*x402http.FacilitatorAuthHeaders, error) {
-		return &x402http.FacilitatorAuthHeaders{
-			Verify: map[string]string{"Authorization": "Bearer verify-token"},
-			Settle: map[string]string{"Authorization": "Bearer settle-token"},
-		}, nil
-	},
+	URL:          "https://your-facilitator.com",
+	AuthProvider: facilitatorAuth{},
 })
 ```
 
@@ -335,12 +339,12 @@ r.Use(ginmw.X402Payment(ginmw.Config{
 }))
 ```
 
-### SimplePaymentMiddleware
+### SimpleX402Payment
 
 Apply payment requirements to all routes:
 
 ```go
-r.Use(ginmw.SimplePaymentMiddleware(
+r.Use(ginmw.SimpleX402Payment(
 	"0xYourAddress",
 	"$0.10",
 	"eip155:84532",
