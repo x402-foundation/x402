@@ -67,6 +67,7 @@ __all__ = [
     "is_object",
     "create_payment_required_error",
     "extract_payment_required_from_error",
+    "is_payment_required_error",
 ]
 
 
@@ -139,6 +140,7 @@ def __getattr__(name: str):
         "is_object",
         "create_payment_required_error",
         "extract_payment_required_from_error",
+        "is_payment_required_error",
     ):
         from . import utils as _utils
 
