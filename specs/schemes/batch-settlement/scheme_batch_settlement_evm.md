@@ -831,6 +831,24 @@ The recovery baseline is:
 
 ---
 
+## Proposal: Proof Claim Condition
+
+> **Non-normative.** Proposed in [#4390](https://github.com/x402-foundation/x402/issues/4390). Nothing in this section is a requirement of the scheme.
+
+A server can make claims depend on a proof that each request was computed as agreed. The channel's `receiver` and `receiverAuthorizer` are both a gate contract. The voucher format is unchanged.
+
+1. **Commitment root, signed once per batch.** The client signs, in the gate's EIP-712 domain, `CommitmentRoot(bytes32 channelId,bytes32 verifierId,bytes32 root,uint32 count,uint128 unitPrice,uint128 baseClaimed)`. `root` is a Merkle root over the batch's ordered leaves `Leaf { bytes32 inputCommitment; address payee; }`. Leaf `i` is hashed with its position.
+2. **Claim.** Anyone calls the gate with the voucher claim, the signed root, one leaf with its position and inclusion path, and a proof for `leaf.inputCommitment`. The gate checks the root signature, the inclusion and the proof, claims exactly one `unitPrice` more on the voucher (never more than `baseClaimed + provenCount * unitPrice`), calls `settle`, and transfers that unit to `leaf.payee`. The claim takes no payout argument: changing the payee changes the leaf, which then fails inclusion.
+3. **The gate must also be the `receiver`.** `claim` accepts the `receiver` as well as the `receiverAuthorizer`, so a different receiver could claim without a proof.
+4. **Exactly one unit per claim.** With a payee per leaf, a claim that moved less or more than one unit would shift value between payees.
+5. **Exits.** The gate implements no ERC-1271, so `claimWithSignature` and `refundWithSignature` are unavailable; the client exits through the timed withdrawal.
+
+A prototype gate is tested against `x402BatchSettlement` from this repository (commit `d7d0a435`): [`ProofClaimGate.sol`](https://github.com/achemperety/exactzk-zk-inference-escrow/blob/5890cf62e0f444ab5331a8731f5dcaf50069d13b/test/experimental/batch-gate/ProofClaimGate.sol). Gas per claim (Osaka, test token, accounts cold): 793,491 steady, 841,297 for a channel's first claim, of which about 590,000 is the proof check.
+
+Open points: how positions are ordered; a per-leaf price; how a 402 signals the condition; whether `baseClaimed` should give way to chained roots; several requests per proof.
+
+---
+
 ## Security and Trust
 
 1. **Capital risk and cumulative replay protection**: Clients bear risk up to the signed `maxClaimableAmount`; the receiver authorizer determines actual `totalClaimed` onchain within that bound. Over-claiming is a trust violation, not a protocol violation. The cumulative model makes nonces unnecessary. As `totalClaimed` only increases, and old vouchers are naturally superseded.
