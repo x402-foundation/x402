@@ -7,4 +7,4 @@ Please report non-sensitive bugs through [GitHub Issues][1].
 If you discover a potential vulnerability or other sensitive security issue, do not open a public GitHub issue or post the details in a public Slack channel. Instead, join the [x402 Slack workspace][2] and privately contact a member of the x402 Technical Steering Committee or a primary x402 maintainer.
 
 [1]: https://github.com/x402-foundation/x402/issues
-[2]: http://slack.x402.org/
+[2]: https://slack.x402.org/
