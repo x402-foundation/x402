@@ -61,7 +61,7 @@ type SealDependencies struct {
 	DistributeInstruction    func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
 	SubmitRedemption         func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
 	// AttributeClose reads what a confirmed close transaction paid the receiver and returned to the payer
-	// (signature, requirements, terms, payer). Nil leaves a retry to the channel-state checks.
+	// (signature, requirements, terms, payer).
 	AttributeClose func(context.Context, string, types.PaymentRequirements, BatchTerms, string) (CloseAttribution, error)
 	// ReconcileBroadcast awaits the confirmation of a close broadcast that a retry
 	// finds under its key (key, record, network, payer). Nil leaves such a retry to the channel-state checks.
@@ -230,10 +230,6 @@ func settleSeal(
 		return nil, err
 	}
 	instructions = append(instructions, distribute)
-	amounts := closeAmounts{Deposit: channel.Deposit, Cumulative: cumulative}
-	if cumulative >= channel.Settlement.PayoutWatermark {
-		amounts.Paid = cumulative - channel.Settlement.PayoutWatermark
-	}
 	submitted, err := deps.SubmitRedemption(ctx, terms.FeePayer, network, instructions, key, payer)
 	if err != nil {
 		return nil, err
@@ -241,11 +237,18 @@ func settleSeal(
 	if !submitted.OK {
 		return submitted.Response, nil
 	}
+	// A sweep may have moved the payout watermark since the channel was read, so the
+	// payout comes from the confirmed transaction, not from that read.
+	attribution, err := deps.AttributeClose(ctx, submitted.Signature, requirements, terms, payer)
+	if err != nil {
+		return run.unattributed(ctx, err, submitted.Signature, payer, false), nil
+	}
+	amounts := closeAmounts{Paid: attribution.PaidToReceiver, Deposit: channel.Deposit, Cumulative: cumulative}
 	return run.finish(ctx, amounts.response(channelID, payer, x402.Network(network), submitted.Signature, intent), false), nil
 }
 
-// closeAmounts is what a seal or cooperative refund pays the receiver and leaves
-// of the deposit, as read from the channel before the close was sent.
+// closeAmounts is what a seal or cooperative refund paid the receiver, as attributed
+// from the confirmed transaction, and the deposit and voucher it was sent against.
 type closeAmounts struct {
 	Paid       uint64
 	Deposit    uint64
@@ -284,7 +287,7 @@ type closeRun struct {
 // landed, so the channel no longer shows what it paid: the amounts are read from the
 // confirmed transaction instead.
 func (r closeRun) recoverPending(ctx context.Context, payer string) (*x402.SettleResponse, bool, error) {
-	if r.deps.ReconcileBroadcast == nil || r.deps.AttributeClose == nil {
+	if r.deps.ReconcileBroadcast == nil {
 		return nil, false, nil
 	}
 	record, found, err := r.deps.PendingStore.Get(ctx, r.key)
@@ -308,16 +311,30 @@ func (r closeRun) recoverPending(ctx context.Context, payer string) (*x402.Settl
 		}
 	}
 	if err != nil {
-		var ambiguous *PayoutAttributionAmbiguousError
-		if !errors.As(err, &ambiguous) {
-			return SettlementPending(network, payer, recovered.Signature, err.Error()), true, nil
-		}
-		// Nothing can attribute this close; the record is not kept for a retry.
-		_ = r.deps.PendingStore.Delete(ctx, r.key)
-		return SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, payer, err.Error(), recovered.Signature), true, nil
+		return r.unattributed(ctx, err, recovered.Signature, payer, true), true, nil
 	}
 	amounts := closeAmounts{Paid: attribution.PaidToReceiver, Deposit: deposit, Cumulative: r.cumulative}
 	return r.finish(ctx, amounts.response(r.channelID, payer, network, recovered.Signature, r.intent), true), true, nil
+}
+
+// unattributed answers a confirmed close whose payout could not be attributed. One
+// that may still become readable stays pending under its key, which a fresh close
+// records and a recovered one already holds. One that nothing can attribute fails.
+func (r closeRun) unattributed(ctx context.Context, cause error, signature, payer string, fromPending bool) *x402.SettleResponse {
+	network := x402.Network(r.requirements.Network)
+	var ambiguous *PayoutAttributionAmbiguousError
+	switch {
+	case errors.As(cause, &ambiguous):
+		// The record is not kept for a retry.
+		_ = r.deps.PendingStore.Delete(ctx, r.key)
+		return SettleFailureWithTransaction(network, batchsettlement.ErrPayoutAttributionAmbiguous, payer, cause.Error(), signature)
+	case fromPending:
+		return SettlementPending(network, payer, signature, cause.Error())
+	default:
+		recoveryCtx, cancel := recoveryContext(ctx)
+		defer cancel()
+		return RecordPendingOrTerminal(recoveryCtx, r.deps.PendingStore, r.key, signature, payer, network, cause)
+	}
 }
 
 // finish delivers a close that confirmed onchain. fromPending means the close was
