@@ -32,7 +32,7 @@ required to use the mailbox; on-chain delivery is optional and defined
 per chain family by the transport profiles below.
 
 The reference protocol version is `x402m/1`, deployed experimentally by
-the Musebook facilitator (see "Reference deployment"). This extension is
+the x402.wtf facilitator hub (see "Reference deployment"). This extension is
 a specification contribution; the reference implementation is not part of
 this repository's packages.
 
@@ -70,6 +70,13 @@ This extension sits alongside the payment flow, not inside it:
 - `bazaar` is a discovery index for paid resources. The directory in
   this extension lists messaging endpoints for agents; it indexes no
   resources and quotes no prices.
+- `shielded-facilitation` (companion extension, proposed separately)
+  defines facilitator profiles whose settlement hides payment contents
+  from public chain observers — and, in pool profiles, the
+  payer–recipient link. A payment coordinated by a message here MAY
+  settle through such a profile; the `payment.receipt` then carries the
+  shielded receipt claim defined there, and verification follows that
+  extension, never the message alone.
 
 ## Discovery
 
@@ -484,17 +491,19 @@ foundation chooses a location.
 
 ## Reference deployment
 
-Musebook operates the reference deployment:
+The x402.wtf facilitator hub operates the reference deployment:
 
 - Discovery: `https://musebook.trade/api/x402m/discovery` and
   `https://musebook.trade/.well-known/x402m`
 - Directory: `https://musebook.trade/api/x402m/agents`
 - Execute: `https://musebook.trade/api/auth/capability/execute`
 - Human pages: https://musebook.trade/x402m
+- Facilitator hub: https://x402.wtf (discovery:
+  `https://x402.wtf/.well-known/x402-facilitator`)
 
 Status: experimental, HTTPS polling transport, seven-day retention, no
 federation. On-chain transport: the Solana (SPL Memo) profile is
 implemented; the EVM (calldata) profile is specified but not yet
 implemented in the reference deployment. A hosted reference responder (poll inbox → answer allowlisted
-`request`s → store response → ack) exists in the Musebook x402m
+`request`s → store response → ack) exists in the x402m reference implementation
 project; it is disabled by default and is not part of this specification.
