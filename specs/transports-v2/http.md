@@ -117,9 +117,11 @@ request that discovered it. A server declares it in `resource.method` (see
 
 - A resource that accepts payment on a single method SHOULD declare that method
   in `resource.method`.
-- A client that has read a declaration SHOULD send the payment on the declared
-  method. A client that has not SHOULD re-send the request that received the
-  402, unchanged except for the `PAYMENT-SIGNATURE` header.
+- A client SHOULD send the payment on the method declared in `resource.method`.
+  Where the 402 has no `resource.method`, a client MAY use
+  `extensions.bazaar.info.input.method` from the same 402. A client with
+  neither SHOULD re-send the request that received the 402, unchanged except
+  for the `PAYMENT-SIGNATURE` header.
 - A resource server SHOULD accept payment on any method whose response can
   carry the resource. A server that refuses on method grounds MUST respond `405`
   with an `Allow` header naming the methods it accepts, MUST NOT respond `400`,
@@ -132,9 +134,10 @@ request that discovered it. A server declares it in `resource.method` (see
   A resource delivered entirely in response header fields MAY accept payment on
   `HEAD`.
 - Where `resource.method` and `extensions.bazaar.info.input.method` are both
-  present they MUST be equal. `resource.method` is authoritative, being rendered
-  per request rather than read from a catalogue whose freshness the client
-  cannot determine.
+  present in a 402 they MUST be equal, and where they differ `resource.method`
+  is authoritative. A client uses the Bazaar value only from the 402 it
+  received, never from a discovery catalogue's copy, whose freshness it cannot
+  determine.
 - Clients echo the `resource` block into `PaymentPayload`, so the echoed
   `method` is client-controlled. A resource server MUST ignore it and use the
   value it rendered itself. A facilitator that catalogues from `PaymentPayload`
