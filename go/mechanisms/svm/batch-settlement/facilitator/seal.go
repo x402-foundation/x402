@@ -237,18 +237,17 @@ func settleSeal(
 	if !submitted.OK {
 		return submitted.Response, nil
 	}
-	// A sweep may have moved the payout watermark since the channel was read, so the
-	// payout comes from the confirmed transaction, not from that read.
-	attribution, err := deps.AttributeClose(ctx, submitted.Signature, requirements, terms, payer)
+	// A sweep or top-up may have changed the channel since it was read, so the amounts
+	// come from the confirmed transaction, not from that read.
+	amounts, err := run.attribute(ctx, submitted.Signature, payer)
 	if err != nil {
 		return run.unattributed(ctx, err, submitted.Signature, payer, false), nil
 	}
-	amounts := closeAmounts{Paid: attribution.PaidToReceiver, Deposit: channel.Deposit, Cumulative: cumulative}
 	return run.finish(ctx, amounts.response(channelID, payer, x402.Network(network), submitted.Signature, intent), false), nil
 }
 
-// closeAmounts is what a seal or cooperative refund paid the receiver, as attributed
-// from the confirmed transaction, and the deposit and voucher it was sent against.
+// closeAmounts is what a seal or cooperative refund paid the receiver and left of
+// the deposit, as attributed from the confirmed transaction.
 type closeAmounts struct {
 	Paid       uint64
 	Deposit    uint64
@@ -302,19 +301,25 @@ func (r closeRun) recoverPending(ctx context.Context, payer string) (*x402.Settl
 	if !recovered.OK {
 		return recovered.Response, true, nil
 	}
-	attribution, err := r.deps.AttributeClose(ctx, recovered.Signature, r.requirements, r.terms, payer)
-	var deposit uint64
-	if err == nil {
-		var ok bool
-		if deposit, ok = batchsettlement.AddU64(r.cumulative, attribution.RefundedToPayer); !ok {
-			err = unattributable(errors.New("close attribution overflows the deposit"))
-		}
-	}
+	amounts, err := r.attribute(ctx, recovered.Signature, payer)
 	if err != nil {
 		return r.unattributed(ctx, err, recovered.Signature, payer, true), true, nil
 	}
-	amounts := closeAmounts{Paid: attribution.PaidToReceiver, Deposit: deposit, Cumulative: r.cumulative}
 	return r.finish(ctx, amounts.response(r.channelID, payer, network, recovered.Signature, r.intent), true), true, nil
+}
+
+// attribute reads what the confirmed close paid the receiver and returned to the payer.
+// The deposit it closed is the voucher plus that refund.
+func (r closeRun) attribute(ctx context.Context, signature, payer string) (closeAmounts, error) {
+	attribution, err := r.deps.AttributeClose(ctx, signature, r.requirements, r.terms, payer)
+	if err != nil {
+		return closeAmounts{}, err
+	}
+	deposit, ok := batchsettlement.AddU64(r.cumulative, attribution.RefundedToPayer)
+	if !ok {
+		return closeAmounts{}, unattributable(errors.New("close attribution overflows the deposit"))
+	}
+	return closeAmounts{Paid: attribution.PaidToReceiver, Deposit: deposit, Cumulative: r.cumulative}, nil
 }
 
 // unattributed answers a confirmed close whose payout could not be attributed. One

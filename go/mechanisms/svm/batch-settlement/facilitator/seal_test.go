@@ -906,6 +906,36 @@ func TestBatchSettlementSeal(t *testing.T) {
 			assert.Len(t, fixture.submits, 1)
 		})
 
+		t.Run(fmt.Sprintf("reports the deposit and refund of a fresh %s from the confirmed transaction when a top-up raised the deposit after the channel read", intent), func(t *testing.T) {
+			channel, payload := closeCase(t, intent)
+			payouts := &payoutLog{onFirst: func() error { return errors.New("ledger unavailable") }}
+			fixture := facilitator(t, channel, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+			attributeFromChain(fixture, func() *svm.FacilitatorConfirmedTransaction {
+				evidence := closeEvidence(t)
+				evidence.Meta.PostTokenBalances[1].UITokenAmount.Amount = "12050"
+				return evidence
+			})
+			wantAmount := map[CloseIntent]string{CloseIntentSeal: "2000", CloseIntentRefund: "12000"}[intent]
+
+			pending := settleThrown(t, fixture.scheme, payload)
+			assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
+			encoded, stored, err := fixture.scheme.pendingStore.Get(context.Background(), resultKey(key))
+			require.NoError(t, err)
+			require.True(t, stored)
+			var record x402.SettleResponse
+			require.NoError(t, json.Unmarshal([]byte(encoded), &record))
+			assert.Equal(t, wantAmount, record.Amount)
+			assert.Equal(t, "15000", record.Extra["channelState"].(map[string]any)["balance"], "the stored balance is the deposit the close paid out")
+
+			recovered := settle(t, fixture.scheme, payload)
+			assert.True(t, recovered.Success)
+			assert.Equal(t, wantAmount, recovered.Amount)
+			assert.Equal(t, "2000", recovered.Extra["paidToReceiver"])
+			assert.Equal(t, "15000", recovered.Extra["channelState"].(map[string]any)["balance"])
+			assert.Len(t, payouts.calls(), 2)
+		})
+
 		t.Run(fmt.Sprintf("keeps a fresh %s pending while its transaction metadata is not visible and attributes it from the transaction on retry", intent), func(t *testing.T) {
 			channel, payload := closeCase(t, intent)
 			payouts := &payoutLog{}
