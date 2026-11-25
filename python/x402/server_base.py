@@ -72,8 +72,8 @@ from .schemas import (
     VerifyFailureContext,
     VerifyResponse,
     VerifyResultContext,
-    find_schemes_by_network,
 )
+from .schemas.helpers import find_by_network_and_scheme
 
 logger = logging.getLogger("x402")
 
@@ -694,11 +694,9 @@ class x402ResourceServerBase:
             raise RuntimeError("Server not initialized. Call initialize() first.")
 
         # Find scheme server
-        schemes = find_schemes_by_network(self._schemes, config.network)
-        if schemes is None or config.scheme not in schemes:
+        server = find_by_network_and_scheme(self._schemes, config.scheme, config.network)
+        if server is None:
             raise SchemeNotFoundError(config.scheme, config.network)
-
-        server = schemes[config.scheme]
 
         # Get supported kind
         supported = self._supported_responses.get(config.network, {}).get(config.scheme)
@@ -1071,10 +1069,7 @@ class x402ResourceServerBase:
         settle_result.extra = merge_additive_settlement_extra(extra, enrichment)
 
     def _find_registered_scheme(self, scheme: str, network: Network) -> SchemeNetworkServer | None:
-        schemes = find_schemes_by_network(self._schemes, network)
-        if schemes is None:
-            return None
-        return schemes.get(scheme)
+        return find_by_network_and_scheme(self._schemes, scheme, network)
 
     @staticmethod
     def _run_enrich_hook_sync(hook: Any, *args: Any) -> Any:
