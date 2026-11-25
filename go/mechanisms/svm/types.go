@@ -356,9 +356,10 @@ type FacilitatorConfirmedTransaction struct {
 }
 
 // FacilitatorConfirmedTransactionReader is the optional read a facilitator
-// signer provides so batch payout accounting can attribute a landed sweep.
-// Assert it the same way as SmartWalletRPCCapabilities: present when the
-// facilitator settles distributions, absent on exact-only signers.
+// signer provides so batch payout accounting can attribute a landed sweep, seal
+// or cooperative refund. Assert it the same way as SmartWalletRPCCapabilities:
+// present when the facilitator settles batch-settlement, absent on exact-only
+// signers. ConfirmedTransactionEvidence implements it over an rpc.Client.
 type FacilitatorConfirmedTransactionReader interface {
 	// GetConfirmedTransaction returns the confirmed transaction, or (nil, nil)
 	// when the signature is unknown.

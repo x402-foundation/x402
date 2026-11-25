@@ -266,6 +266,14 @@ func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx 
 	return svm.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
 }
 
+func (s *realFacilitatorSvmSigner) GetConfirmedTransaction(ctx context.Context, signature solana.Signature, network string) (*svm.FacilitatorConfirmedTransaction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svm.ConfirmedTransactionEvidence(ctx, rpcClient, signature)
+}
+
 func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
 	rpcClient, err := s.getRPC(ctx, network)
 	if err != nil {
