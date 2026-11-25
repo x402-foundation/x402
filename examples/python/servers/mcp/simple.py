@@ -18,14 +18,12 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import CallToolResult
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClientSync
-from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.mcp import (
     MCPToolResult,
-    ResourceInfo,
     SyncPaymentWrapperConfig,
     create_payment_wrapper_sync,
-    wrap_fastmcp_tool_sync,
 )
+from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import ResourceConfig
 from x402.server import x402ResourceServerSync
 
@@ -50,6 +48,30 @@ def get_weather_data(city: str) -> dict[str, Any]:
     weather = random.choice(conditions)
     temperature = random.randint(40, 80)
     return {"city": city, "weather": weather, "temperature": temperature}
+
+
+def call_paid_tool(
+    paid_tool: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+    ctx: Context,
+) -> CallToolResult:
+    """Call a sync payment-wrapped handler from a FastMCP tool.
+
+    The payment wrapper takes ``(arguments, extra)`` where ``extra["_meta"]`` is
+    the request metadata carrying the client's payment payload. FastMCP hands the
+    tool a ``Context`` instead, so this adapter reads the metadata off it and
+    converts the wrapper's ``MCPToolResult`` back into a ``CallToolResult``.
+    """
+    request_meta = ctx.request_context.meta
+    meta = dict(request_meta.model_extra or {}) if request_meta is not None else {}
+    result = paid_tool(arguments, {"_meta": meta, "toolName": tool_name})
+    return CallToolResult(
+        content=result.content,
+        isError=result.is_error,
+        structuredContent=result.structured_content,
+        _meta=result.meta,
+    )
 
 
 def run_simple() -> None:
@@ -94,20 +116,19 @@ def run_simple() -> None:
     # STEP 5: Register tools - wrap handler with payment
     # ========================================================================
 
-    # Create the paid tool bridge (SDK handles _meta extraction + CallToolResult conversion)
-    paid_weather_tool = wrap_fastmcp_tool_sync(
-        paid_weather,
-        lambda args, _: MCPToolResult(
+    def weather_handler(args: dict[str, Any], _context: Any) -> MCPToolResult:
+        """Tool body - only runs after the payment has been verified."""
+        return MCPToolResult(
             content=[{"type": "text", "text": json.dumps(get_weather_data(args["city"]))}],
-        ),
-        tool_name="get_weather",
-    )
+        )
 
-    # Paid tool - just call the bridge with args + context
+    paid_weather_tool = paid_weather(weather_handler)
+
+    # Paid tool - adapt the FastMCP context to the wrapper's (arguments, extra)
     @mcp_server.tool()
     def get_weather(city: str, ctx: Context) -> CallToolResult:
         """Get current weather for a city. Requires payment of $0.001."""
-        return paid_weather_tool({"city": city}, ctx)
+        return call_paid_tool(paid_weather_tool, "get_weather", {"city": city}, ctx)
 
     # Free tool - no wrapper needed
     @mcp_server.tool()
