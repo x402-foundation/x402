@@ -837,15 +837,37 @@ The recovery baseline is:
 
 A server can make claims depend on a proof that each request was computed as agreed. The channel's `receiver` and `receiverAuthorizer` are both a gate contract. The voucher format is unchanged.
 
-1. **Commitment root, signed once per batch.** The client signs, in the gate's EIP-712 domain, `CommitmentRoot(bytes32 channelId,bytes32 verifierId,bytes32 root,uint32 count,uint128 unitPrice,uint128 baseClaimed)`. `root` is a Merkle root over the batch's ordered leaves `Leaf { bytes32 inputCommitment; address payee; }`. Leaf `i` is hashed with its position.
+1. **Commitment root, signed once per batch.** The client signs, in the gate's EIP-712 domain, `CommitmentRoot(bytes32 channelId,bytes32 verifierId,bytes32 root,uint32 count,uint128 unitPrice,uint128 baseClaimed)`. `root` is a Merkle root over the batch's ordered leaves `Leaf { bytes32 inputCommitment; address payee; }`. Leaf `i` is hashed with its position. A leaf's position is the order in which the client made its requests, fixed by the client when it signs the root. A server cannot reorder the leaves: any other order gives a different root.
 2. **Claim.** Anyone calls the gate with the voucher claim, the signed root, one leaf with its position and inclusion path, and a proof for `leaf.inputCommitment`. The gate checks the root signature, the inclusion and the proof, claims exactly one `unitPrice` more on the voucher (never more than `baseClaimed + provenCount * unitPrice`), calls `settle`, and transfers that unit to `leaf.payee`. The claim takes no payout argument: changing the payee changes the leaf, which then fails inclusion.
 3. **The gate must also be the `receiver`.** `claim` accepts the `receiver` as well as the `receiverAuthorizer`, so a different receiver could claim without a proof.
 4. **Exactly one unit per claim.** With a payee per leaf, a claim that moved less or more than one unit would shift value between payees.
-5. **Exits.** The gate implements no ERC-1271, so `claimWithSignature` and `refundWithSignature` are unavailable; the client exits through the timed withdrawal.
+5. **Exits.** Timed withdrawal only; see the open points.
+6. **Signaling.** The 402 carries one optional field, next to `withdrawDelay`:
+
+   ```jsonc
+   "extra": {
+     "receiverAuthorizer": "0xGateAddress",
+     "withdrawDelay": 900,
+     "claimCondition": { "type": "proof", "verifierId": "0x…" },
+     // …
+   }
+   ```
+
+   | Field                  | Type     | Required | Description                                                                                  |
+   | ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------- |
+   | `extra.claimCondition` | `object` | optional | The condition the gate puts on claims: `type` `"proof"` and the `verifierId` signed in each root |
+
+   A client MUST check `extra.claimCondition` before signing a root: that it supports `type`, that it accepts `verifierId`, and that `payTo` equals `extra.receiverAuthorizer`. It signs that `verifierId` into the root. A client that does not support the field signs no root, so the gate claims nothing from its channel.
 
 A prototype gate is tested against `x402BatchSettlement` from this repository (commit `d7d0a435`): [`ProofClaimGate.sol`](https://github.com/achemperety/exactzk-zk-inference-escrow/blob/5890cf62e0f444ab5331a8731f5dcaf50069d13b/test/experimental/batch-gate/ProofClaimGate.sol). Gas per claim (Osaka, test token, accounts cold): 793,491 steady, 841,297 for a channel's first claim, of which about 590,000 is the proof check.
 
-Open points: how positions are ordered; a per-leaf price; how a 402 signals the condition; whether `baseClaimed` should give way to chained roots; several requests per proof.
+Open points:
+
+- **The cost of the gate being the `receiver`.** The gate implements no ERC-1271, so `claimWithSignature` and `refundWithSignature` are unavailable, and the client exits through the timed withdrawal only. Should the gate implement ERC-1271 for cooperative refunds, and whose signature would it accept?
+- A per-leaf price.
+- Whether `extra.claimCondition` should also become an extension.
+- Whether `baseClaimed` should give way to chained roots.
+- Several requests per proof.
 
 ---
 
