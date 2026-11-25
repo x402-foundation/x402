@@ -57,7 +57,6 @@ export interface BatchChannelManagerConfig {
   store: ChannelStore;
   /** How redemption payloads reach the chain. */
   settle: RedemptionSettler;
-  /** Network the channels live on. */
   network: Network;
   /**
    * The facilitator's advertised batch capacity, read at each pass. Absent or
@@ -227,7 +226,7 @@ export class BatchChannelManager {
   /**
    * Claim one batch, or fall back to `seal` for a channel the payer is closing.
    *
-   * @param batch - Channels packed into one claim transaction, all sharing `requirements`
+   * @param batch - Channels packed into one claim transaction
    * @param requirements - Terms the batch's channels were opened against
    * @param result - Accumulates the pass outcome
    * @param result.claimed - Channels whose claim landed
@@ -445,81 +444,78 @@ export class BatchChannelManager {
       channel => channel.status === "open" && channel.settled > channel.payoutWatermark,
     );
     const distributed: string[] = [];
-    const batches = this.groupByTerms(payable).flatMap(group =>
-      chunk(group.channels, this.batchSize("maxSettleChannels")).map(batch => ({
-        batch,
-        requirements: group.requirements,
-      })),
-    );
-    for (const { batch, requirements } of batches) {
-      const response = await this.config.settle(
-        {
-          accepted: requirements,
-          payload: {
-            channels: batch.map(channel => ({
-              channelConfig: channel.channelConfig,
-              channelId: channel.channelId,
-            })),
-            type: "settle",
+    for (const group of this.groupByTerms(payable)) {
+      for (const batch of chunk(group.channels, this.batchSize("maxSettleChannels"))) {
+        const requirements = group.requirements;
+        const response = await this.config.settle(
+          {
+            accepted: requirements,
+            payload: {
+              channels: batch.map(channel => ({
+                channelConfig: channel.channelConfig,
+                channelId: channel.channelId,
+              })),
+              type: "settle",
+            },
+            x402Version: 2,
           },
-          x402Version: 2,
-        },
-        requirements,
-      );
-      if (!response.success) {
-        this.config.onError?.(
-          new Error(
-            `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-          ),
+          requirements,
         );
-        continue;
-      }
-      if (response.network !== this.config.network) {
-        this.config.onError?.(
-          new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
-        );
-        continue;
-      }
-      // `extra.channels[]` is the reference facilitator's addition, not a
-      // spec field; when present it must name exactly this batch. The paid
-      // watermark is always reconciled from the chain below either way.
-      const channels = response.extra?.channels;
-      if (
-        channels !== undefined &&
-        (!Array.isArray(channels) ||
-          channels.length !== batch.length ||
-          new Set(channels).size !== channels.length ||
-          batch.some(channel => !channels.includes(channel.channelId)))
-      ) {
-        this.config.onError?.(
-          new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
-        );
-        continue;
-      }
-      let distributedInBatch = 0;
-      for (const channel of batch) {
-        try {
-          // This response may recover an earlier sweep. A channel ID and a
-          // successful signature do not prove that today's full claim was paid.
-          const paid = await this.readPayoutWatermark(channel.channelId);
-          if (paid === undefined || paid < 0n || paid > channel.deposit)
-            throw new Error("confirmed payout watermark unavailable or invalid");
-          await this.record(channel.channelId, state => ({
-            ...state,
-            onchainSyncedAt: Date.now(),
-            payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
-          }));
-          if (paid >= channel.settled) {
-            distributed.push(channel.channelId);
-            distributedInBatch++;
-          }
-        } catch (error) {
-          // Leave the balance payable for the next pass, including after restart.
-          this.config.onError?.(error);
+        if (!response.success) {
+          this.config.onError?.(
+            new Error(
+              `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+            ),
+          );
+          continue;
         }
-      }
-      if (distributedInBatch > 0) {
-        this.config.onSettle?.({ transaction: response.transaction ?? "" });
+        if (response.network !== this.config.network) {
+          this.config.onError?.(
+            new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
+          );
+          continue;
+        }
+        // `extra.channels[]` is the reference facilitator's addition, not a
+        // spec field; when present it must name exactly this batch. The paid
+        // watermark is always reconciled from the chain below either way.
+        const channels = response.extra?.channels;
+        if (
+          channels !== undefined &&
+          (!Array.isArray(channels) ||
+            channels.length !== batch.length ||
+            new Set(channels).size !== channels.length ||
+            batch.some(channel => !channels.includes(channel.channelId)))
+        ) {
+          this.config.onError?.(
+            new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
+          );
+          continue;
+        }
+        let distributedInBatch = 0;
+        for (const channel of batch) {
+          try {
+            // This response may recover an earlier sweep. A channel ID and a
+            // successful signature do not prove that today's full claim was paid.
+            const paid = await this.readPayoutWatermark(channel.channelId);
+            if (paid === undefined || paid < 0n || paid > channel.deposit)
+              throw new Error("confirmed payout watermark unavailable or invalid");
+            await this.record(channel.channelId, state => ({
+              ...state,
+              onchainSyncedAt: Date.now(),
+              payoutWatermark: state.payoutWatermark > paid ? state.payoutWatermark : paid,
+            }));
+            if (paid >= channel.settled) {
+              distributed.push(channel.channelId);
+              distributedInBatch++;
+            }
+          } catch (error) {
+            // Leave the balance payable for the next pass, including after restart.
+            this.config.onError?.(error);
+          }
+        }
+        if (distributedInBatch > 0) {
+          this.config.onSettle?.({ transaction: response.transaction ?? "" });
+        }
       }
     }
     return distributed;
@@ -586,19 +582,14 @@ export class BatchChannelManager {
   }
 
   /**
-   * Redemption terms for one channel, read from its stored state rather than
-   * from route requirements, so a channel opened under any fee payer is
-   * redeemed against the terms it was opened with. Receiver, mint and withdraw
-   * delay come from `channelConfig`, the fields the facilitator checks, so a
-   * record whose top-level copies drifted cannot pull healthy channels into a
-   * bad batch.
+   * Terms from `channelConfig`, which the facilitator checks.
    *
-   * @param channel - The channel to redeem
-   * @returns Requirements the facilitator re-derives the channel's terms from
+   * @param channel - Channel to redeem
+   * @returns Requirements for that channel
    */
   private termsFor(channel: ChannelState): PaymentRequirements {
     const { channelConfig } = channel;
-    const serverSigned = (channelConfig.voucherSigner ?? "client") === "server";
+    const serverSigned = channelConfig.voucherSigner === "server";
     return {
       scheme: BATCH_SETTLEMENT_SCHEME,
       network: this.config.network,
@@ -619,11 +610,10 @@ export class BatchChannelManager {
   }
 
   /**
-   * Partition channels by the terms they redeem under. The facilitator
-   * rejects a batch whose channels disagree on fee payer, receiver or mint.
+   * Partition channels by redemption terms, in first-seen order.
    *
    * @param channels - Channels to redeem
-   * @returns One group per distinct terms, in first-seen order
+   * @returns One group per distinct terms
    */
   private groupByTerms(
     channels: ChannelState[],
@@ -643,13 +633,10 @@ export class BatchChannelManager {
   }
 
   /**
-   * How many channels one redemption transaction carries: the facilitator's
-   * advertised capacity (four when absent, clamped to the protocol maximum),
-   * narrowed by `maxChannelsPerBatch`. A `claims[]` or `channels[]` longer
-   * than that capacity is not a valid request.
+   * Channels to pack into one redemption transaction.
    *
    * @param field - `maxClaimChannels` for claims, `maxSettleChannels` for distributions
-   * @returns Channels to pack into one redemption transaction
+   * @returns The batch size
    */
   private batchSize(field: "maxClaimChannels" | "maxSettleChannels"): number {
     const advertised = this.config.capacity?.()?.[field];

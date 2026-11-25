@@ -1,5 +1,5 @@
 import { generateKeyPairSigner } from "@solana/kit";
-import type { SettleResponse } from "@x402/core/types";
+import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { describe, expect, it, vi } from "vitest";
 
 import { BatchChannelManager } from "../../src/batch-settlement/server/channelManager";
@@ -58,10 +58,14 @@ type RedemptionPayload = {
 
 /** Records what the worker submitted, answering however the test asks. */
 function recorder(answer: (payload: RedemptionPayload) => SettleResponse = recovered) {
-  const submitted: { type: string; channels: string[] }[] = [];
-  const settle = async (payload: { payload: unknown }): Promise<SettleResponse> => {
-    const raw = payload.payload as RedemptionPayload;
+  const submitted: { type: string; channels: string[]; accepted?: PaymentRequirements }[] = [];
+  const settle = async (
+    request: { payload: unknown; accepted: PaymentRequirements },
+    requirements: PaymentRequirements,
+  ): Promise<SettleResponse> => {
+    const raw = request.payload as RedemptionPayload;
     submitted.push({
+      accepted: requirements,
       channels: (raw.claims ?? [])
         .map(c => c.voucher.channelId)
         .concat((raw.channels ?? []).map(c => c.channelId)),
@@ -377,27 +381,14 @@ describe("batch-settlement redemption worker", () => {
   });
 
   describe("per-channel redemption terms", () => {
-    type Submitted = { type: string; channels: string[]; accepted: PaymentRequirements };
-
-    /** Records each request with the requirements it was authored against. */
-    function termsRecorder() {
-      const submitted: Submitted[] = [];
-      const settle = async (
-        request: { payload: unknown; accepted: PaymentRequirements },
-        requirements: PaymentRequirements,
-      ): Promise<SettleResponse> => {
-        const raw = request.payload as RedemptionPayload;
-        expect(request.accepted).toBe(requirements);
-        submitted.push({
-          accepted: requirements,
-          channels: (raw.claims ?? [])
-            .map(c => c.voucher.channelId)
-            .concat((raw.channels ?? []).map(c => c.channelId)),
-          type: raw.type,
-        });
-        return recovered(raw);
-      };
-      return { settle, submitted };
+    function redeem(store: MemoryChannelStore, settle: ReturnType<typeof recorder>["settle"]) {
+      return new BatchChannelManager({
+        network: SOLANA_DEVNET_CAIP2,
+        readPayoutWatermark: async () => 3_000n,
+        receiverAuthorizer,
+        settle,
+        store,
+      }).redeem();
     }
 
     it("redeems channels opened under different fee payers in one pass, one batch per fee payer", async () => {
@@ -406,22 +397,16 @@ describe("batch-settlement redemption worker", () => {
       await store.put(channel("chan-a"));
       await store.put(channel("chan-b", { feePayer: otherFeePayer }));
       await store.put(channel("chan-c"));
-      const { settle, submitted } = termsRecorder();
+      const { settle, submitted } = recorder();
 
-      const result = await new BatchChannelManager({
-        network: SOLANA_DEVNET_CAIP2,
-        readPayoutWatermark: async () => 3_000n,
-        receiverAuthorizer,
-        settle,
-        store,
-      }).redeem();
+      const result = await redeem(store, settle);
 
       expect(result.claimed.sort()).toEqual(["chan-a", "chan-b", "chan-c"]);
       expect(result.distributed.sort()).toEqual(["chan-a", "chan-b", "chan-c"]);
       const byType = (type: string) =>
         submitted
           .filter(entry => entry.type === type)
-          .map(entry => ({ channels: entry.channels, feePayer: entry.accepted.extra?.feePayer }));
+          .map(entry => ({ channels: entry.channels, feePayer: entry.accepted?.extra?.feePayer }));
       for (const type of ["claim", "settle"]) {
         expect(byType(type)).toEqual([
           { channels: ["chan-a", "chan-c"], feePayer: RECEIVER },
@@ -457,15 +442,9 @@ describe("batch-settlement redemption worker", () => {
         const store = new MemoryChannelStore();
         await store.put(channel("chan-a"));
         await store.put(channel("chan-b", override));
-        const { settle, submitted } = termsRecorder();
+        const { settle, submitted } = recorder();
 
-        await new BatchChannelManager({
-          network: SOLANA_DEVNET_CAIP2,
-          readPayoutWatermark: async () => 3_000n,
-          receiverAuthorizer,
-          settle,
-          store,
-        }).redeem();
+        await redeem(store, settle);
 
         const claims = submitted.filter(entry => entry.type === "claim");
         expect(claims.map(entry => entry.channels)).toEqual([["chan-a"], ["chan-b"]]);
@@ -483,15 +462,9 @@ describe("batch-settlement redemption worker", () => {
           withdrawDelay: 1_800,
         }),
       );
-      const { settle, submitted } = termsRecorder();
+      const { settle, submitted } = recorder();
 
-      await new BatchChannelManager({
-        network: SOLANA_DEVNET_CAIP2,
-        readPayoutWatermark: async () => 3_000n,
-        receiverAuthorizer,
-        settle,
-        store,
-      }).redeem();
+      await redeem(store, settle);
 
       const claims = submitted.filter(entry => entry.type === "claim");
       expect(claims.map(entry => entry.channels)).toEqual([["chan-a", "chan-b"]]);
@@ -505,15 +478,9 @@ describe("batch-settlement redemption worker", () => {
     it("authors requirements from stored channel state", async () => {
       const store = new MemoryChannelStore();
       await store.put(channel("chan-a"));
-      const { settle, submitted } = termsRecorder();
+      const { settle, submitted } = recorder();
 
-      await new BatchChannelManager({
-        network: SOLANA_DEVNET_CAIP2,
-        readPayoutWatermark: async () => 3_000n,
-        receiverAuthorizer,
-        settle,
-        store,
-      }).redeem();
+      await redeem(store, settle);
 
       expect(submitted[0]!.accepted).toEqual({
         amount: "0",
@@ -538,15 +505,9 @@ describe("batch-settlement redemption worker", () => {
           channelConfig: { ...channel("chan-a").channelConfig, voucherSigner: "server" },
         }),
       );
-      const { settle, submitted } = termsRecorder();
+      const { settle, submitted } = recorder();
 
-      await new BatchChannelManager({
-        network: SOLANA_DEVNET_CAIP2,
-        readPayoutWatermark: async () => 3_000n,
-        receiverAuthorizer,
-        settle,
-        store,
-      }).redeem();
+      await redeem(store, settle);
 
       expect(submitted[0]!.accepted.extra).toMatchObject({
         operator: USDC_DEVNET_ADDRESS,
@@ -554,9 +515,9 @@ describe("batch-settlement redemption worker", () => {
       });
     });
 
-    it("sizes batches from the capacity the facilitator advertised to the scheme", async () => {
+    it("uses four channels per batch before the scheme has seen /supported", async () => {
       const scheme = new BatchSvmScheme({ receiverAuthorizer, store: new MemoryChannelStore() });
-      const { settle, submitted } = termsRecorder();
+      const { settle, submitted } = recorder();
       const manager = scheme.createChannelManager({ settle } as never, SOLANA_DEVNET_CAIP2, {
         readPayoutWatermark: async () => 3_000n,
       });
@@ -564,12 +525,14 @@ describe("batch-settlement redemption worker", () => {
         await scheme.getChannelStore().put(channel(`chan-${index}`));
       }
 
-      // Before the scheme sees `/supported`, the default of four applies.
       await manager.redeem();
       expect(
         submitted.filter(entry => entry.type === "claim").map(entry => entry.channels.length),
       ).toEqual([4, 1]);
+    });
 
+    it("uses the capacity the facilitator advertised to the scheme", async () => {
+      const scheme = new BatchSvmScheme({ receiverAuthorizer, store: new MemoryChannelStore() });
       expect(
         scheme.validateFacilitatorSupport(
           SOLANA_DEVNET_CAIP2,
@@ -582,15 +545,14 @@ describe("batch-settlement redemption worker", () => {
           [],
         ),
       ).toBeUndefined();
-      submitted.length = 0;
-      const store = scheme.getChannelStore();
+      const { settle, submitted } = recorder();
+      const manager = scheme.createChannelManager({ settle } as never, SOLANA_DEVNET_CAIP2, {
+        readPayoutWatermark: async () => 3_000n,
+      });
       for (let index = 0; index < 5; index += 1) {
-        await store.update(`chan-${index}`, current => ({
-          ...current!,
-          payoutWatermark: 0n,
-          settled: 0n,
-        }));
+        await scheme.getChannelStore().put(channel(`chan-${index}`));
       }
+
       await manager.redeem();
       const sizes = (type: string) =>
         submitted.filter(entry => entry.type === type).map(entry => entry.channels.length);

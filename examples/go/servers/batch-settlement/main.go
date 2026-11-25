@@ -208,8 +208,6 @@ func main() {
 		svmScheme := batchsvmserver.NewBatchSvmScheme(svmCfg)
 		schemes = append(schemes, nethttpmw.SchemeConfig{Network: svmNetwork, Server: svmScheme})
 
-		// Redeems accumulated vouchers. Terms come from each stored channel and
-		// batch capacity from the facilitator's /supported kind.
 		svmManager = svmScheme.CreateChannelManager(facilitator, svmNetwork, batchsvmserver.BatchChannelManagerConfig{
 			RPCURL: strings.TrimSpace(os.Getenv("SVM_RPC_URL")),
 			OnClaim: func(r batchsvmserver.ClaimResult) {

@@ -565,9 +565,9 @@ describe("batch-settlement SVM onchain", () => {
           expect(settled.success, JSON.stringify(settled)).toBe(true);
           await clientScheme.schemeHooks.onPaymentResponse!({
             paymentPayload: payload,
-            network: SOLANA_DEVNET_CAIP2,
+            requirements: matched,
             settleResponse: settled,
-          } as never);
+          });
           return { matched, payload };
         };
 

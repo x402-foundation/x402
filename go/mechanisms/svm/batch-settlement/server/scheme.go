@@ -51,7 +51,6 @@ type BatchSvmScheme struct {
 	contexts map[string]*RequestContext
 	extras   map[string]map[string]any
 	sequence uint64
-	// capacity is each network's batch capacity from the facilitator's /supported kind.
 	capacity map[x402.Network]RedemptionCapacity
 }
 

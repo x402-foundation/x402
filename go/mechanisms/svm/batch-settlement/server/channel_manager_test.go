@@ -2,8 +2,10 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -295,6 +297,204 @@ func TestBatchSettlementRedemptionWorker(t *testing.T) {
 	})
 }
 
+func TestBatchSettlementRedemptionTermsComeFromChannelState(t *testing.T) {
+	receiverAuthorizer := newTestSigner(t)
+
+	t.Run("redeems channels opened under different fee payers in one pass, one batch per fee payer", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		other := newChannel("chan-b")
+		other.FeePayer = svm.USDCDevnetAddress
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		require.NoError(t, store.Put(other))
+		require.NoError(t, store.Put(newChannel("chan-c")))
+		recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+		for _, payloadType := range []string{batchsettlement.PayloadTypeClaim, batchsettlement.PayloadTypeSettle} {
+			submissions := submissionsOf(recorder.submitted, payloadType)
+			require.Len(t, submissions, 2, payloadType)
+			assert.ElementsMatch(t, []string{"chan-a", "chan-c"}, submissions[0].channels, payloadType)
+			assert.Equal(t, svm.USDCMainnetAddress, submissions[0].requirements.Extra[batchsettlement.ExtraFeePayer])
+			assert.Equal(t, []string{"chan-b"}, submissions[1].channels, payloadType)
+			assert.Equal(t, svm.USDCDevnetAddress, submissions[1].requirements.Extra[batchsettlement.ExtraFeePayer])
+		}
+		for _, id := range []string{"chan-a", "chan-b", "chan-c"} {
+			stored, err := store.Get(id)
+			require.NoError(t, err)
+			assert.Equal(t, uint64(3000), stored.PayoutWatermark, id)
+		}
+	})
+
+	for name, tc := range map[string]struct {
+		mutate   func(*server.ChannelState)
+		expected func(types.PaymentRequirements) bool
+	}{
+		"receiver": {
+			mutate:   func(c *server.ChannelState) { c.ChannelConfig.Receiver = svm.TokenProgramAddress },
+			expected: func(r types.PaymentRequirements) bool { return r.PayTo == svm.TokenProgramAddress },
+		},
+		"mint": {
+			mutate:   func(c *server.ChannelState) { c.ChannelConfig.Token = svm.USDCMainnetAddress },
+			expected: func(r types.PaymentRequirements) bool { return r.Asset == svm.USDCMainnetAddress },
+		},
+		"token program": {
+			mutate: func(c *server.ChannelState) { c.TokenProgram = svm.Token2022ProgramAddress },
+			expected: func(r types.PaymentRequirements) bool {
+				return r.Extra[batchsettlement.ExtraTokenProgram] == svm.Token2022ProgramAddress
+			},
+		},
+		"withdraw delay": {
+			mutate: func(c *server.ChannelState) { c.ChannelConfig.WithdrawDelay = 1800 },
+			expected: func(r types.PaymentRequirements) bool {
+				return r.Extra[batchsettlement.ExtraWithdrawDelay] == 1800
+			},
+		},
+	} {
+		t.Run("never mixes channels with a different "+name+" in one batch", func(t *testing.T) {
+			store := server.NewMemoryChannelStore()
+			other := newChannel("chan-b")
+			tc.mutate(&other)
+			require.NoError(t, store.Put(newChannel("chan-a")))
+			require.NoError(t, store.Put(other))
+			recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+			claims := submissionsOf(recorder.submitted, batchsettlement.PayloadTypeClaim)
+			require.Len(t, claims, 2)
+			assert.Equal(t, []string{"chan-a"}, claims[0].channels)
+			assert.Equal(t, []string{"chan-b"}, claims[1].channels)
+			assert.True(t, tc.expected(claims[1].requirements), "%+v", claims[1].requirements)
+		})
+	}
+
+	t.Run("ignores top-level copies that drifted from the channel config", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		drifted := newChannel("chan-b")
+		drifted.Receiver = svm.TokenProgramAddress
+		drifted.Mint = svm.USDCMainnetAddress
+		drifted.WithdrawDelay = 1800
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		require.NoError(t, store.Put(drifted))
+		recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+		claims := submissionsOf(recorder.submitted, batchsettlement.PayloadTypeClaim)
+		require.Len(t, claims, 1)
+		assert.ElementsMatch(t, []string{"chan-a", "chan-b"}, claims[0].channels)
+		assert.Equal(t, svm.USDCMainnetAddress, claims[0].requirements.PayTo)
+		assert.Equal(t, svm.USDCDevnetAddress, claims[0].requirements.Asset)
+		assert.Equal(t, 900, claims[0].requirements.Extra[batchsettlement.ExtraWithdrawDelay])
+	})
+
+	t.Run("authors requirements from stored channel state", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		require.NoError(t, store.Put(newChannel("chan-a")))
+		recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+		require.NotEmpty(t, recorder.submitted)
+		assert.Equal(t, types.PaymentRequirements{
+			Scheme:            batchsettlement.Scheme,
+			Network:           svm.SolanaDevnetCAIP2,
+			Asset:             svm.USDCDevnetAddress,
+			Amount:            "0",
+			PayTo:             svm.USDCMainnetAddress,
+			MaxTimeoutSeconds: 300,
+			Extra: map[string]interface{}{
+				batchsettlement.ExtraFeePayer:           svm.USDCMainnetAddress,
+				batchsettlement.ExtraTokenProgram:       svm.TokenProgramAddress,
+				batchsettlement.ExtraWithdrawDelay:      900,
+				batchsettlement.ExtraReceiverAuthorizer: svm.TokenProgramAddress,
+			},
+		}, recorder.submitted[0].requirements)
+	})
+
+	t.Run("names the operator for a server-signed channel", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		state := newChannel("chan-a")
+		state.ChannelConfig.VoucherSigner = batchsettlement.VoucherSignerServer
+		require.NoError(t, store.Put(state))
+		recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+		extra := recorder.submitted[0].requirements.Extra
+		assert.Equal(t, svm.USDCDevnetAddress, extra[batchsettlement.ExtraOperator])
+		assert.Equal(t, batchsettlement.VoucherSignerServer, extra[batchsettlement.ExtraVoucherSigner])
+	})
+
+	t.Run("bounds the seal authorization by the redemption timeout", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		closing := newChannel(svm.USDCDevnetAddress)
+		closing.Status = server.ChannelStatusClosing
+		require.NoError(t, store.Put(closing))
+
+		before := time.Now().Unix()
+		recorder := redeemWithTerms(t, store, receiverAuthorizer)
+
+		seals := submissionsOf(recorder.submitted, batchsettlement.PayloadTypeSeal)
+		require.Len(t, seals, 1)
+		var seal batchsettlement.BatchSealPayload
+		for _, payload := range recorder.payloads {
+			typed, ok := payload.(batchsettlement.BatchSealPayload)
+			if ok {
+				seal = typed
+			}
+		}
+		require.NotNil(t, seal.CloseAuthorization)
+		assert.Equal(t, 300, seals[0].requirements.MaxTimeoutSeconds)
+		assert.GreaterOrEqual(t, seal.CloseAuthorization.ValidBefore, before+300)
+		assert.LessOrEqual(t, seal.CloseAuthorization.ValidBefore, time.Now().Unix()+300)
+	})
+}
+
+func TestBatchSettlementChannelManagerUsesFacilitatorCapacity(t *testing.T) {
+	supportedKind := func(extra map[string]any) types.SupportedKind {
+		merged := map[string]any{
+			batchsettlement.ExtraFeePayer:           svm.USDCMainnetAddress,
+			batchsettlement.ExtraReceiverAuthorizer: svm.TokenProgramAddress,
+		}
+		for key, value := range extra {
+			merged[key] = value
+		}
+		return types.SupportedKind{Scheme: batchsettlement.Scheme, Network: svm.SolanaDevnetCAIP2, Extra: merged}
+	}
+	redeemFive := func(t *testing.T, extra map[string]any) *termsFacilitator {
+		t.Helper()
+		scheme := server.NewBatchSvmScheme(&server.Config{Store: server.NewMemoryChannelStore()})
+		for _, id := range []string{"a", "b", "c", "d", "e"} {
+			require.NoError(t, scheme.GetChannelStore().Put(newChannel("chan-"+id)))
+		}
+		if extra != nil {
+			require.NoError(t, scheme.ValidateFacilitatorSupport(svm.SolanaDevnetCAIP2, supportedKind(extra), nil))
+		}
+		facilitator := &termsFacilitator{}
+		manager := scheme.CreateChannelManager(facilitator, svm.SolanaDevnetCAIP2, server.BatchChannelManagerConfig{
+			ReadPayoutWatermark:  func(context.Context, string) (uint64, bool, error) { return 3000, true, nil },
+			ReadSettledWatermark: func(context.Context, string) (uint64, bool, error) { return 3000, true, nil },
+		})
+		_, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		return facilitator
+	}
+
+	t.Run("uses four per batch before the scheme has seen /supported", func(t *testing.T) {
+		facilitator := redeemFive(t, nil)
+		assert.Equal(t, []int{4, 1}, facilitator.claims)
+		assert.Equal(t, []int{4, 1}, facilitator.settles)
+	})
+
+	t.Run("uses the capacity advertised for the network", func(t *testing.T) {
+		facilitator := redeemFive(t, map[string]any{
+			batchsettlement.ExtraMaxClaimChannels:  float64(2),
+			batchsettlement.ExtraMaxSettleChannels: float64(3),
+		})
+		assert.Equal(t, []int{2, 2, 1}, facilitator.claims)
+		assert.Equal(t, []int{3, 2}, facilitator.settles)
+	})
+
+	for _, value := range []any{"18", 0, -3, 2.5, nil} {
+		t.Run("falls back to four for an invalid advertised capacity", func(t *testing.T) {
+			facilitator := redeemFive(t, map[string]any{batchsettlement.ExtraMaxClaimChannels: value})
+			assert.Equal(t, []int{4, 1}, facilitator.claims, "%v", value)
+		})
+	}
+}
+
 func newChannel(id string) server.ChannelState {
 	return server.ChannelState{
 		ChannelConfig: batchsettlement.BatchChannelConfig{
@@ -368,8 +568,9 @@ func recoveredResponse(payload any) *x402.SettleResponse {
 }
 
 type submittedPayload struct {
-	payloadType string
-	channels    []string
+	payloadType  string
+	channels     []string
+	requirements types.PaymentRequirements
 }
 
 type payloadRecorder struct {
@@ -380,9 +581,13 @@ type payloadRecorder struct {
 
 func recordingSettler(answer func(any) *x402.SettleResponse) *payloadRecorder {
 	recorder := &payloadRecorder{}
-	recorder.settle = func(_ context.Context, request server.RedemptionRequest, _ types.PaymentRequirements) (*x402.SettleResponse, error) {
+	recorder.settle = func(_ context.Context, request server.RedemptionRequest, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 		payloadType, channels := redemptionFacts(request.Payload)
-		recorder.submitted = append(recorder.submitted, submittedPayload{payloadType: payloadType, channels: channels})
+		recorder.submitted = append(recorder.submitted, submittedPayload{
+			payloadType:  payloadType,
+			channels:     channels,
+			requirements: requirements,
+		})
 		recorder.payloads = append(recorder.payloads, request.Payload)
 		return answer(request.Payload), nil
 	}
@@ -422,4 +627,56 @@ func sorted(values []string) []string {
 	out := append([]string(nil), values...)
 	sort.Strings(out)
 	return out
+}
+
+func submissionsOf(submitted []submittedPayload, payloadType string) []submittedPayload {
+	var out []submittedPayload
+	for _, submission := range submitted {
+		if submission.payloadType == payloadType {
+			out = append(out, submission)
+		}
+	}
+	return out
+}
+
+func redeemWithTerms(t *testing.T, store server.ChannelStore, authorizer testSigner) *payloadRecorder {
+	t.Helper()
+	recorder := recordingSettler(boundDistribute)
+	options := withPayout(managerOptions(store, authorizer, recorder.settle), 3000)
+	_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+	require.NoError(t, err)
+	return recorder
+}
+
+type termsFacilitator struct {
+	claims  []int
+	settles []int
+}
+
+func (f *termsFacilitator) Verify(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+	return nil, nil
+}
+
+func (f *termsFacilitator) Settle(_ context.Context, payloadBytes, _ []byte) (*x402.SettleResponse, error) {
+	var payment struct {
+		Payload struct {
+			Type     string     `json:"type"`
+			Claims   []struct{} `json:"claims"`
+			Channels []struct{} `json:"channels"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(payloadBytes, &payment); err != nil {
+		return nil, err
+	}
+	switch payment.Payload.Type {
+	case batchsettlement.PayloadTypeClaim:
+		f.claims = append(f.claims, len(payment.Payload.Claims))
+	case batchsettlement.PayloadTypeSettle:
+		f.settles = append(f.settles, len(payment.Payload.Channels))
+	}
+	return okResponse(), nil
+}
+
+func (f *termsFacilitator) GetSupported(context.Context) (x402.SupportedResponse, error) {
+	return x402.SupportedResponse{}, nil
 }

@@ -59,9 +59,8 @@ type WatermarkReader func(ctx context.Context, channelID string) (amount uint64,
 // through ReadSettledWatermark, ReadPayoutWatermark, or RPCURL, never through
 // an implicit public RPC.
 type BatchChannelManagerConfig struct {
-	Store  ChannelStore
-	Settle RedemptionSettler
-	// Network is the CAIP-2 network the channels live on.
+	Store   ChannelStore
+	Settle  RedemptionSettler
 	Network string
 	// Capacity returns the facilitator's advertised batch capacity, read at each
 	// pass. Nil, or zero fields, mean none was advertised.
@@ -238,8 +237,8 @@ type passOutcome struct {
 	sealed  []string
 }
 
-// claimBatch's channels all share requirements. resynced is true once a resync
-// re-claim has run in this chain, so a second mismatch is reported rather than retried.
+// resynced is true once a resync re-claim has run in this chain, so a second
+// mismatch is reported rather than retried.
 func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, result *passOutcome, resynced bool) error {
 	claims := make([]batchsettlement.BatchVoucherClaim, 0, len(batch))
 	for _, channel := range batch {
@@ -456,48 +455,39 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 		}
 	}
 	distributed := []string{}
-	type settleBatch struct {
-		channels     []ChannelState
-		requirements types.PaymentRequirements
-	}
-	var batches []settleBatch
 	for _, group := range m.groupByTerms(payable) {
 		for _, batch := range chunk(group.channels, m.settleBatchSize()) {
-			batches = append(batches, settleBatch{channels: batch, requirements: group.requirements})
-		}
-	}
-	for _, pending := range batches {
-		batch := pending.channels
-		entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
-		for _, channel := range batch {
-			entries = append(entries, batchsettlement.BatchSettleChannel{
-				ChannelID:     channel.ChannelID,
-				ChannelConfig: channel.ChannelConfig,
-			})
-		}
-		response, err := m.submit(ctx, batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: entries}, pending.requirements)
-		if err != nil {
-			return nil, err
-		}
-		if !response.Success {
-			if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response)) > 0 {
+			entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
+			for _, channel := range batch {
+				entries = append(entries, batchsettlement.BatchSettleChannel{
+					ChannelID:     channel.ChannelID,
+					ChannelConfig: channel.ChannelConfig,
+				})
+			}
+			response, err := m.submit(ctx, batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: entries}, group.requirements)
+			if err != nil {
+				return nil, err
+			}
+			if !response.Success {
+				if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response)) > 0 {
+					continue
+				}
+				m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
 				continue
 			}
-			m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
-			continue
-		}
-		if string(response.Network) != m.config.Network {
-			m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
-			continue
-		}
-		if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
-			m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
-			continue
-		}
-		paidOut := m.recordPayouts(ctx, batch, response)
-		distributed = append(distributed, paidOut...)
-		if len(paidOut) > 0 && m.config.OnSettle != nil {
-			m.config.OnSettle(SettleResult{Transaction: response.Transaction})
+			if string(response.Network) != m.config.Network {
+				m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
+				continue
+			}
+			if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
+				m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
+				continue
+			}
+			paidOut := m.recordPayouts(ctx, batch, response)
+			distributed = append(distributed, paidOut...)
+			if len(paidOut) > 0 && m.config.OnSettle != nil {
+				m.config.OnSettle(SettleResult{Transaction: response.Transaction})
+			}
 		}
 	}
 	return distributed, nil
@@ -780,9 +770,6 @@ func (m *BatchChannelManager) batchSize(advertised, ceiling int) int {
 	return size
 }
 
-// advertisedCapacity reads a maxClaimChannels/maxSettleChannels value from a
-// /supported kind. Anything but a positive integer means the facilitator
-// advertised none, reported as 0.
 func advertisedCapacity(value any) int {
 	var n float64
 	switch v := value.(type) {
@@ -809,18 +796,12 @@ func advertisedCapacity(value any) int {
 	return int(n)
 }
 
-// redemptionTerms is the requirements a facilitator re-derives a batch's
-// channel terms from, with the channels that share them.
-type redemptionTerms struct {
+type redemptionGroup struct {
 	requirements types.PaymentRequirements
 	channels     []ChannelState
 }
 
-// termsFor is a channel's redemption requirements, read from its stored state
-// rather than from route requirements, so a channel opened under any fee payer
-// is redeemed against the terms it was opened with. Receiver, mint and withdraw
-// delay come from ChannelConfig, the fields the facilitator checks, so a record
-// whose top-level copies drifted cannot pull healthy channels into a bad batch.
+// Receiver, mint, and withdraw delay come from ChannelConfig. The facilitator checks those fields.
 func (m *BatchChannelManager) termsFor(channel ChannelState) types.PaymentRequirements {
 	extra := map[string]interface{}{
 		batchsettlement.ExtraFeePayer:           channel.FeePayer,
@@ -843,22 +824,18 @@ func (m *BatchChannelManager) termsFor(channel ChannelState) types.PaymentRequir
 	}
 }
 
-// groupByTerms partitions channels by the terms they redeem under, in
-// first-seen order. The facilitator rejects a batch whose channels disagree on
-// fee payer, receiver or mint.
-func (m *BatchChannelManager) groupByTerms(channels []ChannelState) []redemptionTerms {
-	var groups []redemptionTerms
+func (m *BatchChannelManager) groupByTerms(channels []ChannelState) []redemptionGroup {
+	var groups []redemptionGroup
 	index := map[string]int{}
 	for _, channel := range channels {
 		requirements := m.termsFor(channel)
-		// Marshaling string and int fields cannot fail; map keys marshal sorted, so the key is stable.
 		encoded, _ := json.Marshal(requirements)
 		key := string(encoded)
 		position, seen := index[key]
 		if !seen {
 			position = len(groups)
 			index[key] = position
-			groups = append(groups, redemptionTerms{requirements: requirements})
+			groups = append(groups, redemptionGroup{requirements: requirements})
 		}
 		groups[position].channels = append(groups[position].channels, channel)
 	}

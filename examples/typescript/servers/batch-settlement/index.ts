@@ -150,8 +150,6 @@ async function main() {
     });
     resourceServer = resourceServer.register(SVM_NETWORK, batchedSvmScheme);
 
-    // Claims accumulated vouchers and distributes what they settle. Redemption
-    // terms come from each stored channel; batch capacity from the facilitator.
     svmChannelManager = batchedSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
       onClaim: (r: { vouchers: number; transaction: string }) =>
         console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
