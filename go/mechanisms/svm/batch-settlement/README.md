@@ -160,7 +160,7 @@ facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, scheme)
 cleanup := scheme.CreateRentCleanupManager(svm.SolanaDevnetCAIP2)
 ```
 
-The signer must implement `svm.FacilitatorConfirmedTransactionReader`: sweeps, seals and cooperative refunds report the payout read from the confirmed transaction, and without it they answer `settlement_pending`. `svm.ConfirmedTransactionEvidence` builds it from an `rpc.Client`.
+The signer must implement `svm.FacilitatorConfirmedTransactionReader`, which payout attribution reads; `NewBatchSvmScheme` panics without it. `svm.ConfirmedTransactionEvidence` builds it from an `rpc.Client`.
 
 `ChannelStorage` defaults to an in-memory store. The same channel row holds the lifecycle index, the receiver-authorizer binding, and the delegated caller identity. Opens, top-ups, claims, and distributions record that row before broadcast and do not send if the write fails. A failed open reverts a row that call created; activity writes are kept. `ReceiverBindingHistoryReader` is an optional fallback for a row with no binding, used only when set here. A binding read from history is written back when the row is absent. `DelegatedReceiverAuth` requires `ResolveCallerIdentity`; that identity is stored on the channel row.
 
