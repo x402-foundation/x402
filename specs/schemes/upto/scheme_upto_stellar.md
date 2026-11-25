@@ -48,6 +48,8 @@ The `upto` scheme is mediated by a stateless **Kernel** contract. The Kernel is 
 
 A redeploy to a new contract id is a breaking change: Clients pin these addresses and refuse any other, so a new Kernel requires a new SDK release.
 
+**Kernel source and deployments.** The Kernel contract source is public in [`upto-settlement-kernel`](https://github.com/57blocks/agentsmith-contracts/tree/main/upto-settlement-kernel) (Soroban/Rust, with `src/test.rs`). Each pinned address is a reproducible build recorded in [`deployments/`](https://github.com/57blocks/agentsmith-contracts/tree/main/deployments): the `stellar:testnet` Kernel `CBB7WCIQ…` is WASM hash `ba832b45c0ac604f3aabca40203099556235da24c45e76fdb3bb56dc239de916` built from source commit `dccd19cd…`. Integrity SHOULD be established by rebuilding from that commit and matching the pinned WASM hash, plus an on-chain `stellar contract fetch <id> | sha256sum` check.
+
 ### Kernel ABI
 
 The Kernel exposes a single method:
@@ -249,7 +251,16 @@ In the sponsored flow (`areFeesSponsored: true`), the Facilitator fully controls
 
 Facilitator implementations expose a `maxResourceFeeStroops` configuration as a circuit breaker. If the simulation-derived resource fee — at `/verify` or during the settle-time re-simulation — exceeds this ceiling, the Facilitator MUST reject with `invalid_upto_stellar_payload_fee_exceeds_maximum`.
 
-Operators SHOULD size the ceiling for the payers and tokens they serve, not for the common case: a plain SEP-41/SAC transfer from a G-account settles well under 100,000 stroops, but a first payment through a contract token, or a contract-account (C-account) payer whose `__check_auth` runs spending-limit or payee-restriction policies, can declare a resource fee an order of magnitude higher. A ceiling tuned only to G-account SAC transfers will reject smart-account payers.
+The ceiling is checked at **both** `/verify` (the recording-mode simulation at `max_amount`) and the settle-time re-simulation, and these two differ sharply. Recording-mode simulation is conservative — it derives the full authorization footprint — so its fee runs well above the enforcing settle-time fee for the same payment. Measured on testnet (2026-11-25) for a G-account XLM Stellar Asset Contract transfer:
+
+| Stage | Simulation mode | Resource fee |
+| ----- | --------------- | ------------ |
+| `/verify` (`settle(terms, max_amount)`) | recording | **272,635 stroops** |
+| Settlement (`settle(terms, actual_amount)`) | enforcing | **25,225 stroops** (inclusion fee 100, no fee bump) |
+
+The ceiling MUST therefore accommodate the higher `/verify` figure, not the settle-time one: a ceiling tuned to the ~25k settle fee would reject every payment at `/verify`. This is why `exact`'s 50,000-stroop default is far too low for `upto` — the `/verify` simulation alone exceeds it.
+
+Operators SHOULD size the ceiling for the payers and tokens they serve, not for the common case. A G-account SAC transfer sits around the ~272,635-stroop `/verify` figure above; a first payment through a contract token, or a contract-account (C-account) payer whose `__check_auth` runs spending-limit or payee-restriction policies, can declare a resource fee an order of magnitude higher (not measured here — no contract-token or C-account fixture on hand). A ceiling tuned only to G-account SAC transfers will reject smart-account payers.
 
 ## Settlement Logic
 
@@ -365,6 +376,19 @@ so a caller can distinguish "top up and retry" from a malformed payment. Token-s
 (trustline not authorized, recipient/payer trustline missing, nonce already used, account missing or
 archived) SHOULD likewise be surfaced as distinct reasons where the simulation identifies them.
 
+### Kernel contract errors
+
+The Kernel's `validate_settlement` rejects with `error 1..6`. At `/verify` the Facilitator simulates `settle(terms, max_amount)`, so each of these is caught earlier by the terms and ledger-window checks and surfaced as the specific reason below, rather than reaching the catch-all `..._simulation_failed`. What actually reaches a failed simulation is the token-layer `approve`/`transfer_from` (balance or trustline), decoded per the note above.
+
+| Kernel error | # | On-chain condition | Caught at `/verify` by | Surfaced reason |
+| ------------ | - | ------------------ | ---------------------- | --------------- |
+| `InvalidMaximum` | 1 | `max_amount <= 0` | terms check (`max_amount == accepted.amount`, a positive i128) | `invalid_upto_stellar_payload_terms` |
+| `InvalidActualAmount` | 2 | `actual_amount <= 0` | — (settlement only; `/verify` simulates at `max_amount`) | n/a at `/verify` |
+| `ExceedsMaximum` | 3 | `actual_amount > max_amount` | amount check (`requirements.amount <= max_amount`) | `invalid_upto_stellar_payload_amount` |
+| `Expired` | 4 | `ledger > deadline_ledger` | ledger-window check | `invalid_upto_stellar_payload_expired` |
+| `NotYetValid` | 5 | `ledger < valid_after_ledger` | ledger-window check | `invalid_upto_stellar_payload_expiration` |
+| `InvalidValidityWindow` | 6 | `valid_after_ledger > deadline_ledger` | ledger-window check | `invalid_upto_stellar_payload_expiration` |
+
 ### Settlement
 
 | Error reason | Meaning | Kind |
@@ -383,6 +407,19 @@ double-pay. The rest are **terminal**. A Facilitator MUST NOT surface an interna
 5xx once a transaction has been broadcast: it maps such a case to `settlement_pending` with the hash
 (see [Phase 3](#phase-3-settlementresponse)).
 
+### Mapping to x402 standard codes
+
+Some reasons above are the generic x402 [§9](../../x402-specification-v2.md#9-error-handling) codes verbatim — the Facilitator returns them as-is and a Client MAY handle them with standard logic. The `invalid_upto_stellar_payload_*` and `settle_upto_*` reasons are **local-only** extensions with no standard-code equivalent; a Client matches them as scheme-specific.
+
+| Reason | x402 §9 standard code |
+| ------ | --------------------- |
+| `insufficient_funds` | `insufficient_funds` |
+| `settlement_pending` | `settlement_pending` |
+| `unsupported_scheme` | `unsupported_scheme` |
+| `invalid_x402_version` | `invalid_x402_version` |
+| `unexpected_verify_error` / `unexpected_settle_error` | same |
+| `invalid_upto_stellar_payload_*`, `settle_upto_*` | local-only (no standard code) |
+
 ## Security Considerations
 
 1. **Trustless Kernel as the sole trust anchor.** The Kernel cannot redirect funds or exceed the signed terms, and this is its central security property. Pinning it per network makes it the sole on-chain trust anchor for every `upto` Buyer, so its integrity rests on the reproducible-build attestation and independent review described for [The Settlement Kernel](#the-settlement-kernel), not on trusting any Facilitator; a vulnerability in the pinned contract affects every Buyer that signed for it.
@@ -391,6 +428,9 @@ double-pay. The rest are **terminal**. A Facilitator MUST NOT surface an interna
 4. **Single-use.** The Buyer authorization entry's nonce is consumed on inclusion, preventing replay.
 5. **Time bounds.** `valid_after_ledger`/`deadline_ledger` and the entry expiration bound the authorization's lifetime; the Kernel enforces them **on-chain** against the live ledger sequence (`NotYetValid` / `Expired`), and the Facilitator also checks them at `/verify`.
 6. **Zero settlement.** A `0` settlement consumes the authorization without an on-chain transaction, avoiding fees and ledger bloat for unused authorizations.
+7. **Clawback and trustline revocation (token-level liveness).** For a controlled SEP-41 asset, the issuer can clawback the Buyer's balance or deauthorize its trustline in the window between the Buyer's signed `approve` and on-chain settlement. The Kernel's `transfer_from` then fails and `settle` reverts with **no funds moved** — a correct outcome, not a Kernel weakness, since the trust anchor never lets value leave outside the signed terms. The Facilitator's `/verify` simulation catches the condition at check time and SHOULD surface the specific token error rather than the catch-all (see [Error Codes](#verification)); Clients transacting in clawback-enabled or authorization-required assets SHOULD account for this liveness risk, as a settlement that simulated cleanly can still fail if the issuer acts first.
+8. **Facilitator authority rotation and key compromise.** The Facilitator's authorization key (`terms.facilitator`) co-signs every `settle`. A compromised key still **cannot exceed `max_amount`, change `pay_to`/`asset`, or redirect funds** — the Buyer's signed `terms` are fixed and enforced on-chain — but within those bounds it can trigger settlement of any amount up to `max_amount` to the signed `pay_to` before `deadline_ledger`. Rotation means advertising a **new** Facilitator authorization address: Buyers sign fresh `terms` against it, while authorizations bound to the old key lapse with their `deadline_ledger` and single-use nonce. There is no shared, long-lived settlement secret whose compromise is silent or unbounded.
+9. **Facilitator safety set.** `terms.payer` MUST NOT be the Facilitator's authorization address or any Facilitator-controlled account — the source-pool signers and the fee-bump signer ([Rule 3](#3--facilitator-safety)). Without this, a Facilitator could be steered into assembling a self-paying settlement that drains an authorization against its own accounts. The Facilitator rejects any such payment with `invalid_upto_stellar_payload_unsafe_source`, matching the payer against its safety set before assembling the settlement.
 
 ## Appendix
 
