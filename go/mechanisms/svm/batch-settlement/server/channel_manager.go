@@ -469,7 +469,7 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 				return nil, err
 			}
 			if !response.Success {
-				if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response)) > 0 {
+				if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, m.adoptChannelStates(response, batch))) > 0 {
 					continue
 				}
 				m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
@@ -483,7 +483,11 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 				m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
 				continue
 			}
-			paidOut := m.recordPayouts(ctx, batch, response)
+			states := m.adoptChannelStates(response, batch)
+			if states == nil && !m.hasPayoutReader() {
+				m.report(errors.New("distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"))
+			}
+			paidOut := m.recordPayouts(ctx, batch, states)
 			distributed = append(distributed, paidOut...)
 			if len(paidOut) > 0 && m.config.OnSettle != nil {
 				m.config.OnSettle(SettleResult{Transaction: response.Transaction})
@@ -497,8 +501,7 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 // channels paid up to their settled value. A confirmed distribute may answer for
 // an earlier sweep that a later claim has passed, so it never stands in for the
 // payout watermark: a channel without one stays payable for the next pass.
-func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, response *x402.SettleResponse) []string {
-	states := m.adoptChannelStates(response, batch)
+func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, states map[string]observedChannel) []string {
 	var covered []string
 	for _, channel := range batch {
 		observed, ok := m.observePayout(ctx, channel, states)
@@ -523,7 +526,6 @@ func (m *BatchChannelManager) observePayout(ctx context.Context, channel Channel
 		return state, true
 	}
 	if !m.hasPayoutReader() {
-		m.report(errors.New("distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"))
 		return observedChannel{}, false
 	}
 	paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)

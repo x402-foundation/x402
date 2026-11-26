@@ -500,7 +500,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             requirements.network,
             BatchError.CUMULATIVE_AMOUNT_MISMATCH,
             "claim already applied onchain",
-            prepared.map((item, index) => redemptionSnapshot(item.channelId, channels[index]!)),
+            completeStates(prepared, channels, redemptionSnapshot),
           );
         }
         if (this.settlementCache.isDuplicate(claimKey)) {
@@ -654,7 +654,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         requirements.network,
         BatchError.CUMULATIVE_AMOUNT_MISMATCH,
         "nothing to distribute onchain",
-        prepared.map((item, index) => redemptionSnapshot(item.channelId, channels[index]!)),
+        completeStates(prepared, channels, redemptionSnapshot),
       );
     }
     // Different sweeps can share a recent blockhash. Give each new signed

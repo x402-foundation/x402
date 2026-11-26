@@ -898,10 +898,22 @@ describe("batch-settlement redemption resync from the facilitator", () => {
     await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "" }).redeem();
     expect(createRpcClient).not.toHaveBeenCalled();
     expect(errors).toEqual([
-      PAYOUT_UNKNOWN,
       `batch-settlement distribute failed: ${BatchError.CUMULATIVE_AMOUNT_MISMATCH}`,
     ]);
     expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
+  });
+
+  it("reports an unconfirmed payout once for a multi-channel batch", async () => {
+    const store = new MemoryChannelStore();
+    await store.put(channel("chan-a", settledOnly));
+    await store.put(channel("chan-b", settledOnly));
+    const errors: string[] = [];
+    const { settle } = recorder(() => ({ ...ok(), extra: { channels: ["chan-a", "chan-b"] } }));
+    const result = await manager(store, settle, errors, {
+      readPayoutWatermark: undefined,
+    }).redeem();
+    expect(errors).toEqual([PAYOUT_UNKNOWN]);
+    expect(result.distributed).toEqual([]);
   });
 
   it.each<[string, SettleResponse]>([

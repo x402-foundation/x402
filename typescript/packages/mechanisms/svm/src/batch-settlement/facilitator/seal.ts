@@ -54,6 +54,7 @@ import {
 } from "./recovery";
 import {
   CHANNEL_BUSY,
+  completeStates,
   redemptionSnapshot,
   refundResponse,
   resyncFailure,
@@ -358,7 +359,7 @@ export async function settleSeal(
       network,
       BatchError.CLOSE_STATE,
       `${intent} applies only to a ${channelStatusName(requiredStatus)} channel; observed status ${channelStatusName(channel.status)}`,
-      [redemptionSnapshot(channelId, channel)],
+      completeStates([{ channelId }], [channel], redemptionSnapshot),
       payer,
     );
   }
@@ -375,7 +376,7 @@ export async function settleSeal(
       network,
       BatchError.CLOSE_STATE,
       `voucher ${cumulative} is below settled ${settled}`,
-      [redemptionSnapshot(channelId, channel)],
+      completeStates([{ channelId }], [channel], redemptionSnapshot),
       payer,
     );
   }

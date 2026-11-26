@@ -22,7 +22,7 @@ import {
   ChannelBroadcastConfirmationError,
   SettlementConfirmationTimeoutError,
 } from "../../payment-channels/facilitator";
-import { ChannelStatus, channelStatusName } from "../../payment-channels/onchain";
+import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
@@ -140,19 +140,14 @@ export function verifiedChannelExtra(
  *
  * @param channelId - Channel PDA
  * @param channel - Decoded channel account
- * @returns The channel's confirmed onchain state
- * @throws When the channel's status is not one this scheme reports
+ * @returns The channel's confirmed onchain state, or undefined for a status byte this scheme does not report
  */
 export function redemptionSnapshot(
   channelId: string,
   channel: Channel,
-): BatchRedemptionChannelState {
+): BatchRedemptionChannelState | undefined {
   const status = redemptionStatusOf(channel.status);
-  if (status === undefined) {
-    throw new Error(
-      `channel ${channelId} has unrecognized status ${channelStatusName(channel.status)}`,
-    );
-  }
+  if (status === undefined) return undefined;
   return {
     ...snapshotChannel(channelId, channel),
     payoutWatermark: channel.settlement.payoutWatermark.toString(),
@@ -168,13 +163,14 @@ export function redemptionSnapshot(
  *
  * @param channelId - Channel PDA
  * @param channel - Decoded channel account read before the distribute
- * @returns The channel's state after the distribute
+ * @returns The channel's state after the distribute, or undefined for an unreported status byte
  */
 export function distributedSnapshot(
   channelId: string,
   channel: Channel,
-): BatchRedemptionChannelState {
+): BatchRedemptionChannelState | undefined {
   const state = redemptionSnapshot(channelId, channel);
+  if (!state) return undefined;
   return {
     ...state,
     payoutWatermark: state.totalClaimed,
@@ -183,31 +179,35 @@ export function distributedSnapshot(
 }
 
 /**
- * Snapshot a batch's channels, or none unless every one was read: the server
- * adopts only a complete batch.
+ * Snapshot a batch's channels, or none unless every one was read and has a
+ * reportable status: the server adopts only a complete batch.
  *
  * @param batch - The batch's channels
  * @param channels - The decoded channels in the same order, `undefined` where absent
  * @param snapshot - Projects a channel onto its reported state
- * @returns The states, or undefined when a channel was not read
+ * @returns The states, or undefined when a channel was not read or has no reportable state
  */
 export function completeStates(
   batch: readonly { channelId: string }[],
   channels: readonly (Channel | undefined)[] | undefined,
-  snapshot: (channelId: string, channel: Channel) => BatchRedemptionChannelState,
+  snapshot: (channelId: string, channel: Channel) => BatchRedemptionChannelState | undefined,
 ): BatchRedemptionChannelState[] | undefined {
   if (!channels || channels.includes(undefined)) return undefined;
-  return batch.map((item, index) => snapshot(item.channelId, channels[index]!));
+  const states = batch.map((item, index) => snapshot(item.channelId, channels[index]!));
+  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
+    ? states
+    : undefined;
 }
 
 /**
  * Reject a redemption whose effect is already onchain, carrying the channels'
- * state so the server adopts it instead of resubmitting.
+ * state so the server adopts it instead of resubmitting. Without a complete
+ * state it is a plain failure.
  *
  * @param network - CAIP-2 network of the request
  * @param reason - Machine-readable reason
  * @param message - Human-readable detail
- * @param states - The channels' confirmed onchain state
+ * @param states - The channels' confirmed onchain state, when every channel has one
  * @param payer - Channel payer when recoverable
  * @returns The settle response
  */
@@ -215,10 +215,11 @@ export function resyncFailure(
   network: Network,
   reason: string,
   message: string,
-  states: readonly BatchRedemptionChannelState[],
+  states: readonly BatchRedemptionChannelState[] | undefined,
   payer = "",
 ): SettleResponse {
-  return { ...settleFailure(network, reason, payer, message), extra: { channelStates: states } };
+  const failure = settleFailure(network, reason, payer, message);
+  return states ? { ...failure, extra: { channelStates: states } } : failure;
 }
 
 /**

@@ -526,6 +526,20 @@ describe("batch-settlement outcome recovery", () => {
     expect(unread).toMatchObject({ amount: "1000", success: true, transaction: TX });
     expect(unread.extra).toEqual({ channels: [channelId] });
     expect(await store.get(key)).toBeUndefined();
+
+    // An unrecognized status byte omits the field the same way.
+    await store.set(key, TX);
+    await store.delete(`batch:transaction:${NETWORK}:${TX}:result`);
+    api.readChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 1_000n, settled: 3_000n },
+        status: 99 as ChannelStatus,
+      }),
+    );
+    const unknown = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(unknown).toMatchObject({ amount: "1000", success: true, transaction: TX });
+    expect(unknown.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
   });
 
   it("waits for transaction metadata instead of estimating payout from a stale snapshot", async () => {

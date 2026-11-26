@@ -608,7 +608,15 @@ export class BatchChannelManager {
           );
           continue;
         }
-        const paidOut = await this.recordPayouts(batch, this.adoptChannelStates(response, batch));
+        const states = this.adoptChannelStates(response, batch);
+        if (!states && !this.hasPayoutReader()) {
+          this.config.onError?.(
+            new Error(
+              "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set",
+            ),
+          );
+        }
+        const paidOut = await this.recordPayouts(batch, states);
         distributed.push(...paidOut);
         if (paidOut.length > 0) {
           this.config.onSettle?.({ transaction: response.transaction ?? "" });
@@ -684,14 +692,7 @@ export class BatchChannelManager {
   ): Promise<Partial<ObservedChannel> | undefined> {
     const adopted = states?.get(channel.channelId);
     if (adopted) return adopted;
-    if (!this.hasPayoutReader()) {
-      this.config.onError?.(
-        new Error(
-          "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set",
-        ),
-      );
-      return undefined;
-    }
+    if (!this.hasPayoutReader()) return undefined;
     try {
       const paid = await this.readPayoutWatermark(channel.channelId);
       if (paid === undefined || paid < 0n || paid > channel.deposit) {

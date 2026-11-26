@@ -14,6 +14,7 @@ import { BatchError } from "../../src/batch-settlement/errors";
 import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { MAX_CHANNELS_PER_SETTLE_TX } from "../../src/batch-settlement/facilitator/constants";
 import {
+  completeStates,
   distributedSnapshot,
   redemptionSnapshot,
 } from "../../src/batch-settlement/facilitator/responses";
@@ -2050,10 +2051,17 @@ describe("batch facilitator lifecycle", () => {
     expect(closing).toMatchObject({ status: "closing", withdrawRequestedAt: 7 });
   });
 
-  it("refuses to report a channel with an unrecognized status", () => {
-    expect(() => redemptionSnapshot("a", channel({ status: 99 as ChannelStatus }))).toThrow(
-      "channel a has unrecognized status Unknown(99)",
-    );
+  it("reports no channel states when a status byte is unrecognized", () => {
+    const unknown = channel({ status: 99 as ChannelStatus });
+    expect(redemptionSnapshot("a", unknown)).toBeUndefined();
+    expect(distributedSnapshot("a", unknown)).toBeUndefined();
+    expect(
+      completeStates(
+        [{ channelId: "a" }, { channelId: "b" }],
+        [channel(), unknown],
+        redemptionSnapshot,
+      ),
+    ).toBeUndefined();
   });
 
   it("rejects empty and oversized redemption batches", async () => {
