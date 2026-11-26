@@ -1590,6 +1590,31 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(mockedMulticall).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the last Deposited.newBalance when several events share the channel and amount", async () => {
+    const { channelId, dp } = buildEip3009Deposit();
+    const signer = buildSigner({
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: "10000", amount: "10000" }),
+        buildDepositedLog({ channelId, newBalance: "99999", amount: "1" }),
+        buildDepositedLog({ channelId, newBalance: "25000", amount: "10000" }),
+      ]),
+    });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [500n, 200n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [100n, 1234n] },
+      { status: "success", result: 3n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements({ amount: "100" }));
+
+    expect(result.success).toBe(true);
+    expect(result.extra).toMatchObject({
+      channelState: { balance: "25000" },
+    });
+  });
+
   it.each([
     ["empty logs", () => [] as Log[]],
     [
@@ -2573,6 +2598,54 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
 
       expect(result.success).toBe(false);
       expect(result.errorReason).toBe(Errors.ErrAuthorizerAddressMismatch);
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
+
+    it("does not sign a delegated refund that would transfer zero tokens", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSigner();
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 10000n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        delegatedRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrRefundNoBalance);
+      expect(signTypedData).not.toHaveBeenCalled();
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
+
+    it("does not sign a delegated refund when the pre-read fails", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSigner();
+      mockedMulticall.mockRejectedValue(new Error("rpc down"));
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        delegatedRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrRpcReadFailed);
+      expect(signTypedData).not.toHaveBeenCalled();
       expect(signer.writeContract).not.toHaveBeenCalled();
     });
   });

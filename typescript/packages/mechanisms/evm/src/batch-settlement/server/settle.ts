@@ -31,31 +31,17 @@ function maxTotalClaimed(stored: string, settled: string | undefined): string {
 }
 
 /**
- * Keeps the larger `refundNonce`. A settle response can carry the verify-time nonce.
+ * Keeps the larger of the stored and settled counter.
  *
- * @param stored - `refundNonce` already on the channel record.
- * @param settled - `refundNonce` from the settle response, if present and canonical.
- * @returns The larger nonce.
- */
-function maxRefundNonce(stored: number, settled: string | undefined): number {
-  if (settled === undefined) return stored;
-  const parsed = Number(settled);
-  if (!Number.isSafeInteger(parsed) || parsed <= stored) return stored;
-  return parsed;
-}
-
-/**
- * Keeps the later `withdrawRequestedAt`. `deposit` does not clear a pending withdrawal.
+ * `deposit` does not clear a pending withdrawal, and a settle response can carry the
+ * verify-time nonce. Callers pass counters `parseRefundSettlementSnapshot` already checked.
  *
- * @param stored - `withdrawRequestedAt` already on the channel record.
- * @param settled - `withdrawRequestedAt` from the settle response, if present and canonical.
- * @returns The later timestamp.
+ * @param stored - Counter already on the channel record.
+ * @param settled - Counter from the settle response, if present.
+ * @returns The larger counter.
  */
-function laterWithdrawRequestedAt(stored: number, settled: string | undefined): number {
-  if (settled === undefined) return stored;
-  const parsed = Number(settled);
-  if (!Number.isSafeInteger(parsed) || parsed <= stored) return stored;
-  return parsed;
+function maxSafeCount(stored: number, settled: number | undefined): number {
+  return settled !== undefined && settled > stored ? settled : stored;
 }
 
 /**
@@ -401,12 +387,10 @@ export async function handleAfterSettle(
           balance: snapshot.balance ?? existing.balance,
           totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
           withdrawRequestedAt: snapshot.withdrawRequestedAt ?? existing.withdrawRequestedAt,
-          refundNonce: maxRefundNonce(
-            existing.refundNonce,
-            snapshot.refundNonce === undefined ? undefined : String(snapshot.refundNonce),
-          ),
+          refundNonce: maxSafeCount(existing.refundNonce, snapshot.refundNonce),
           network: requirements.network || existing.network,
-          onchainSyncedAt: now,
+          // Omitted balance is still the pre-refund figure, so the next voucher must re-read.
+          onchainSyncedAt: snapshot.balance === undefined ? 0 : now,
           lastRequestTimestamp: now,
         };
       });
@@ -471,10 +455,8 @@ export async function handleAfterSettle(
         const chargedActual = (
           BigInt(existing.chargedCumulativeAmount) + BigInt(requirements.amount)
         ).toString();
-        const withdrawRequestedAt =
-          snapshot?.withdrawRequestedAt === undefined
-            ? undefined
-            : String(snapshot.withdrawRequestedAt);
+        const reportedCounters =
+          snapshot?.totalClaimed !== undefined && snapshot?.withdrawRequestedAt !== undefined;
         return {
           channelId,
           channelConfig: config,
@@ -484,15 +466,13 @@ export async function handleAfterSettle(
           signature: raw.voucher.signature,
           balance: snapshot?.balance ?? existing.balance,
           totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot?.totalClaimed),
-          withdrawRequestedAt: laterWithdrawRequestedAt(
+          withdrawRequestedAt: maxSafeCount(
             existing.withdrawRequestedAt,
-            withdrawRequestedAt,
+            snapshot?.withdrawRequestedAt,
           ),
-          refundNonce: maxRefundNonce(
-            existing.refundNonce,
-            snapshot?.refundNonce === undefined ? undefined : String(snapshot.refundNonce),
-          ),
-          onchainSyncedAt: now,
+          refundNonce: maxSafeCount(existing.refundNonce, snapshot?.refundNonce),
+          // An omitted counter was not refreshed by this deposit.
+          onchainSyncedAt: reportedCounters ? now : existing.onchainSyncedAt,
           lastRequestTimestamp: now,
         };
       });

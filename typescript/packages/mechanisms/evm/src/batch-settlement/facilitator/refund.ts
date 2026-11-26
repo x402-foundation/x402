@@ -181,13 +181,6 @@ export async function executeRefundWithSignature(
       if (configErr) {
         return { success: false, errorReason: configErr, transaction: "", network };
       }
-      refundSig = await signRefund(
-        authorizerSigner,
-        channelId,
-        payload.amount,
-        payload.refundNonce,
-        network,
-      );
     }
 
     let preState: OnchainChannelState;
@@ -215,6 +208,24 @@ export async function executeRefundWithSignature(
         transaction: "",
         network,
       };
+    }
+
+    if (!refundSig) {
+      if (authorizerSigner === undefined) {
+        return {
+          success: false,
+          errorReason: Errors.ErrRefundAuthorizerSignature,
+          transaction: "",
+          network,
+        };
+      }
+      refundSig = await signRefund(
+        authorizerSigner,
+        channelId,
+        payload.amount,
+        payload.refundNonce,
+        network,
+      );
     }
 
     const refundCalldata = encodeFunctionData({

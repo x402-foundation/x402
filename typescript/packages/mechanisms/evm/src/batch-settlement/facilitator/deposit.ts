@@ -679,9 +679,10 @@ function depositedBalanceFromReceipt(
   if (receipt.logs === undefined) {
     return receiptLogsUnavailableResponse(tx, network, payer);
   }
-  const balance = findChannelEvents(receipt.logs, "Deposited", channelId).find(
+  const deposited = findChannelEvents(receipt.logs, "Deposited", channelId).filter(
     event => event.args.amount === amount,
-  )?.args.newBalance;
+  );
+  const balance = deposited[deposited.length - 1]?.args.newBalance;
   if (balance === undefined) {
     return {
       success: false,
