@@ -421,8 +421,9 @@ func (m *BatchChannelManager) seal(ctx context.Context, channel ChannelState) (b
 }
 
 // resyncSeal reports whether the channel is already paid out, which needs no
-// further seal. A sealed-only channel is recorded as sealed, which a distribute
-// still sweeps. A resynced seal is not a new one, so OnSeal is not called.
+// further seal. A sealed channel is recorded but not sent for `settle`, because
+// the facilitator's sealed `distribute` finalizes it. A resynced seal is not a
+// new one, so OnSeal is not called.
 func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelState, response *x402.SettleResponse) (bool, error) {
 	observed, ok := m.adoptChannelStates(response, []ChannelState{channel})[channel.ChannelID]
 	if !ok && m.config.RPCURL != "" {
@@ -450,7 +451,7 @@ func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelSta
 func (m *BatchChannelManager) distribute(ctx context.Context, channels []ChannelState) ([]string, error) {
 	var payable []ChannelState
 	for _, channel := range channels {
-		if (channel.Status == ChannelStatusOpen || channel.Status == ChannelStatusSealed) && channel.Settled > channel.PayoutWatermark {
+		if channel.Status == ChannelStatusOpen && channel.Settled > channel.PayoutWatermark {
 			payable = append(payable, channel)
 		}
 	}

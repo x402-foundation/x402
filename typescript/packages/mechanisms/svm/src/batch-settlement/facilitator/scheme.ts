@@ -56,7 +56,6 @@ import {
   ReceiverAuthorizerConflictError,
   reportStorageError,
   writeThenBroadcast,
-  type OpenBroadcastDisposition,
   type PaymentChannelRecord,
   type PaymentChannelStorage,
 } from "../../payment-channels/storage";
@@ -79,12 +78,15 @@ import {
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
+  completeStates,
   depositResponse,
   distributionStates,
   envelopeFailure,
+  openDisposition,
   parseOptionalSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
+  redemptionSnapshot,
   refundResponse,
   settleFailure,
   settlementPending,
@@ -640,7 +642,13 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       );
     }
     if (instructions.length === 0) {
-      if (previous) return JSON.parse(previous) as SettleResponse;
+      if (previous) {
+        const response = JSON.parse(previous) as SettleResponse;
+        const channelStates = completeStates(prepared, channels, redemptionSnapshot);
+        return channelStates
+          ? { ...response, extra: { ...response.extra, channelStates } }
+          : response;
+      }
       // State alone cannot identify a previous payment or its amount.
       return appliedFailure(requirements, "nothing to distribute onchain", prepared, channels);
     }
@@ -1980,21 +1988,4 @@ function activityRecord(fields: {
     receiverAuthorizer: fields.receiverAuthorizer ?? "",
     tokenProgram: fields.tokenProgram,
   };
-}
-
-/**
- * Whether an open broadcast failed definitively: the send was rejected, the
- * transaction landed with an error, or its blockhash expired unlanded.
- * Pending and a failed attempt to persist a pending signature are kept.
- *
- * @param result - Durable broadcast result
- * @returns `revert` only for a definitive open failure
- */
-function openDisposition(
-  result: { signature: string; channel: unknown } | SettleResponse,
-): OpenBroadcastDisposition {
-  if ("channel" in result) return "keep";
-  if (result.success !== false || result.errorReason !== "transaction_failed") return "keep";
-  if (result.errorMessage?.includes("failed to persist")) return "keep";
-  return "revert";
 }

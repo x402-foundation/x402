@@ -513,8 +513,9 @@ export class BatchChannelManager {
    * Resync from a seal the facilitator rejected because the channel is no longer
    * `Closing`. The snapshot is `extra.channelStates`, or a read through the
    * configured `rpcUrl` when that snapshot is missing or unusable. A sealed
-   * channel is recorded as sealed, so a distribute still sweeps its unpaid
-   * `settled`. A resynced seal is not a new one, so it does not reach `onSeal`.
+   * channel is recorded but not sent for `settle`, because the facilitator's
+   * sealed `distribute` finalizes it. A resynced seal is not a new one, so it
+   * does not reach `onSeal`.
    *
    * @param channel - The channel whose seal was rejected
    * @param response - The rejection, possibly carrying `extra.channelStates`
@@ -549,9 +550,7 @@ export class BatchChannelManager {
    */
   private async distribute(channels: ChannelState[]): Promise<string[]> {
     const payable = channels.filter(
-      channel =>
-        (channel.status === "open" || channel.status === "sealed") &&
-        channel.settled > channel.payoutWatermark,
+      channel => channel.status === "open" && channel.settled > channel.payoutWatermark,
     );
     const distributed: string[] = [];
     for (const group of this.groupByTerms(payable)) {

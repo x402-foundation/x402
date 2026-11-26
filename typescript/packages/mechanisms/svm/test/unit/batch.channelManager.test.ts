@@ -993,50 +993,42 @@ describe("batch-settlement redemption resync from the facilitator", () => {
       expect(submitted.map(s => s.type)).toEqual(["seal"]);
     });
 
-    it("records a sealed channel as sealed and distributes its unpaid settled amount", async () => {
+    it("records a sealed channel as sealed without sending settle", async () => {
       const { id, store } = await closing();
+      const before = await store.get(id);
       const errors: string[] = [];
-      const { settle, submitted } = recorder(payload =>
-        payload.type === "settle"
-          ? {
-              ...ok(),
-              extra: {
-                channelStates: [channelStateEntry(id, "distributed", 10_000, 3_000, 3_000)],
-                channels: [id],
-              },
-            }
-          : resyncFailure(
-              BatchError.CLOSE_STATE,
-              channelStateEntry(id, "sealed", 10_000, 3_000, 0),
-            ),
+      const { settle, submitted } = recorder(() =>
+        resyncFailure(BatchError.CLOSE_STATE, channelStateEntry(id, "sealed", 10_000, 3_000, 0)),
       );
       const result = await manager(store, settle, errors).redeem();
       expect(errors).toEqual([`batch-settlement seal failed: ${BatchError.CLOSE_STATE}`]);
-      expect(result.distributed).toEqual([id]);
-      expect(submitted.map(s => s.type)).toEqual(["seal", "settle"]);
+      expect(result.distributed).toEqual([]);
+      expect(submitted.map(s => s.type)).toEqual(["seal"]);
       expect(await store.get(id)).toMatchObject({
-        payoutWatermark: 3_000n,
+        payoutWatermark: before?.payoutWatermark,
         settled: 3_000n,
-        status: "distributed",
+        status: "sealed",
       });
     });
 
-    it("keeps a sealed channel sealed and payable until a distribute lands", async () => {
+    it("keeps a sealed channel sealed", async () => {
       const { id, store } = await closing();
-      const { settle } = recorder(payload =>
-        payload.type === "settle"
-          ? { errorReason: "settlement_pending", network: SOLANA_DEVNET_CAIP2, success: false }
-          : resyncFailure(
-              BatchError.CLOSE_STATE,
-              channelStateEntry(id, "sealed", 10_000, 3_000, 1_000),
-            ),
+      const { settle, submitted } = recorder(() =>
+        resyncFailure(
+          BatchError.CLOSE_STATE,
+          channelStateEntry(id, "sealed", 10_000, 3_000, 1_000),
+        ),
       );
-      await manager(store, settle, []).redeem();
+      const redeemer = manager(store, settle, []);
+      await redeemer.redeem();
       expect(await store.get(id)).toMatchObject({
         payoutWatermark: 1_000n,
         settled: 3_000n,
         status: "sealed",
       });
+      expect(submitted.map(entry => entry.type)).toEqual(["seal"]);
+      await redeemer.redeem();
+      expect(submitted.map(entry => entry.type)).toEqual(["seal"]);
     });
 
     it("resyncs a seal from the configured rpc when the facilitator sends no state", async () => {

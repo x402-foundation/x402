@@ -1899,9 +1899,9 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   because the channel is no longer `Closing`, or because the voucher is below
   `settled`, SHOULD carry `extra.channelStates[]` with the channel. The server
   SHOULD record a `distributed` channel as paid out, and a `sealed` one by its
-  `settled` value and `sealed` status (so a later `distribute` still pays its
-  unpaid `settled - payoutWatermark`), instead of sealing again; none of these is
-  a new seal.
+  `settled` value and `sealed` status (the server does not `settle` a `sealed`
+  channel, and its final `distribute` is the facilitator's (section 6.2)),
+  instead of sealing again; none of these is a new seal.
 - **Reclaim.** A channel can transition from `Distributed` to deallocated only
   once. Concurrent reclaim attempts require no additional replay mitigation;
   later attempts observe an absent account or invalid status.

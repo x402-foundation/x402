@@ -24,6 +24,7 @@ import {
 } from "../../payment-channels/facilitator";
 import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
+import type { OpenBroadcastDisposition } from "../../payment-channels/storage";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
 import {
@@ -549,4 +550,21 @@ export function classifyError(error: unknown): string {
 export function parseOptionalSlot(value: unknown): bigint | undefined {
   if (value === undefined || value === null) return undefined;
   return parseU64(value as string | number | bigint, "extra.recentSlot");
+}
+
+/**
+ * Whether an open broadcast failed definitively: the send was rejected, the
+ * transaction landed with an error, or its blockhash expired unlanded.
+ * Pending and a failed attempt to persist a pending signature are kept.
+ *
+ * @param result - Durable broadcast result
+ * @returns `revert` only for a definitive open failure
+ */
+export function openDisposition(
+  result: { signature: string; channel: unknown } | SettleResponse,
+): OpenBroadcastDisposition {
+  if ("channel" in result) return "keep";
+  if (result.success !== false || result.errorReason !== "transaction_failed") return "keep";
+  if (result.errorMessage?.includes("failed to persist")) return "keep";
+  return "revert";
 }

@@ -418,53 +418,53 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		assert.Equal(t, []string{batchsettlement.PayloadTypeSeal}, payloadTypes(recorder.submitted), "the paid-out channel is not sealed again")
 	})
 
-	t.Run("records a sealed channel as sealed and distributes its unpaid settled amount", func(t *testing.T) {
+	t.Run("records a sealed channel as sealed without sending settle", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()
 		id := newTestSigner(t).Address().String()
 		closing := newChannel(id)
 		closing.Status = server.ChannelStatusClosing
 		require.NoError(t, store.Put(closing))
-		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
-			payloadType, channels := redemptionFacts(payload)
-			if payloadType == batchsettlement.PayloadTypeSettle {
-				response := withChannelStates(okResponse(), channelStateEntry(id, batchsettlement.ChannelStatusDistributed, 10000, 3000, 3000))
-				response.Extra["channels"] = channels
-				return response
-			}
+		recorder := recordingSettler(func(any) *x402.SettleResponse {
 			return resyncFailure(batchsettlement.ErrCloseState, channelStateEntry(id, batchsettlement.ChannelStatusSealed, 10000, 3000, 0))
 		})
 		options := managerOptions(store, receiverAuthorizer, recorder.settle)
 		errors := errorCollector(&options)
-		manager := server.NewBatchChannelManager(options)
-		result, err := manager.Redeem(context.Background())
+		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"batch-settlement seal failed: " + batchsettlement.ErrCloseState}, *errors)
-		assert.Equal(t, []string{id}, result.Distributed, "a sealed channel is swept in the same pass")
-		assert.Equal(t, []string{batchsettlement.PayloadTypeSeal, batchsettlement.PayloadTypeSettle}, payloadTypes(recorder.submitted))
+		assert.Empty(t, result.Distributed)
+		assert.Equal(t, []string{batchsettlement.PayloadTypeSeal}, payloadTypes(recorder.submitted))
 		stored, err := store.Get(id)
 		require.NoError(t, err)
-		assert.Equal(t, server.ChannelStatusDistributed, stored.Status)
+		assert.Equal(t, server.ChannelStatusSealed, stored.Status)
 		assert.Equal(t, uint64(3000), stored.Settled)
-		assert.Equal(t, uint64(3000), stored.PayoutWatermark)
+		assert.Equal(t, closing.PayoutWatermark, stored.PayoutWatermark)
 	})
 
-	t.Run("keeps a sealed channel sealed and payable until a distribute lands", func(t *testing.T) {
+	t.Run("keeps a sealed channel sealed", func(t *testing.T) {
 		store := server.NewMemoryChannelStore()
 		id := newTestSigner(t).Address().String()
 		closing := newChannel(id)
 		closing.Status = server.ChannelStatusClosing
 		require.NoError(t, store.Put(closing))
-		options := managerOptions(store, receiverAuthorizer, func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
-			return resyncFailure(batchsettlement.ErrCloseState, channelStateEntry(id, batchsettlement.ChannelStatusSealed, 10000, 3000, 1000)), nil
+		recorder := recordingSettler(func(any) *x402.SettleResponse {
+			return resyncFailure(batchsettlement.ErrCloseState, channelStateEntry(id, batchsettlement.ChannelStatusSealed, 10000, 3000, 1000))
 		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
 		errorCollector(&options)
-		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		manager := server.NewBatchChannelManager(options)
+		_, err := manager.Redeem(context.Background())
 		require.NoError(t, err)
 		stored, err := store.Get(id)
 		require.NoError(t, err)
 		assert.Equal(t, server.ChannelStatusSealed, stored.Status)
 		assert.Equal(t, uint64(3000), stored.Settled)
 		assert.Equal(t, uint64(1000), stored.PayoutWatermark)
+		assert.Equal(t, []string{batchsettlement.PayloadTypeSeal}, payloadTypes(recorder.submitted))
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{batchsettlement.PayloadTypeSeal}, payloadTypes(recorder.submitted))
 	})
 
 	t.Run("reports a seal rejection for a channel that is still closing without recording it", func(t *testing.T) {

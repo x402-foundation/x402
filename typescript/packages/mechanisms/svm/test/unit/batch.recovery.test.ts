@@ -466,9 +466,22 @@ describe("batch-settlement outcome recovery", () => {
       .fn()
       .mockResolvedValue(channel({ settlement: { payoutWatermark: 1700n, settled: 1700n } }));
     restartedApi.submitRedemption = vi.fn();
-    expect(await restarted.settleDistributions(payment(payload), payload, requirements())).toEqual(
-      response,
-    );
+    expect(await restarted.settleDistributions(payment(payload), payload, requirements())).toEqual({
+      ...response,
+      extra: {
+        channels: [channelId],
+        channelStates: [
+          {
+            balance: "10000",
+            channelId,
+            payoutWatermark: "1700",
+            status: "open",
+            totalClaimed: "1700",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+    });
     expect(restartedApi.submitRedemption).not.toHaveBeenCalled();
 
     // The identical request can legitimately pay a later claim. No permanent
@@ -526,6 +539,33 @@ describe("batch-settlement outcome recovery", () => {
     expect(unread).toMatchObject({ amount: "1000", success: true, transaction: TX });
     expect(unread.extra).toEqual({ channels: [channelId] });
     expect(await store.get(key)).toBeUndefined();
+
+    // The stored result has no channel states. A caught-up read replays that
+    // result with the states just read, and does not broadcast again.
+    api.readChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 3_000n, settled: 3_000n } }));
+    api.submitRedemption = vi.fn();
+    const refreshed = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(refreshed.transaction).toBe(unread.transaction);
+    expect(refreshed.amount).toBe(unread.amount);
+    expect(refreshed.extra?.channelStates).toEqual([
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "3000",
+        status: "open",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+    expect(facilitatorSigner.sendTransaction).not.toHaveBeenCalled();
+
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    expect(await scheme.settleDistributions(payment(payload), payload, requirements())).toEqual(
+      unread,
+    );
 
     // An unrecognized status byte omits the field the same way.
     await store.set(key, TX);
