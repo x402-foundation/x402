@@ -6,7 +6,15 @@ import {
 } from "@solana/kit";
 import type { PendingSettlementStore } from "@x402/core/facilitator";
 
-import type { FacilitatorSvmSigner } from "../../signer";
+import { address } from "@solana/kit";
+import { findAssociatedTokenPda } from "@solana-program/token-2022";
+
+import { parseU64 } from "../../payment-channels/open";
+import type {
+  FacilitatorConfirmedTransaction,
+  FacilitatorSvmSigner,
+  FacilitatorTokenBalance,
+} from "../../signer";
 
 /** Batch recovery records must outlive an unresolved transaction. */
 export interface BatchPendingSettlementStore extends PendingSettlementStore {
@@ -92,15 +100,19 @@ export async function reserveBroadcast(
 }
 
 /**
- * Thrown when a confirmed sweep cannot be attributed from balance evidence
- * because the merchant recipient is also the refund or treasury beneficiary
- * of a closed channel. The transaction landed; only its accounting is
- * unresolved, so it is reported with its own reason rather than left pending.
+ * Thrown when a confirmed sweep, seal or cooperative refund cannot be
+ * attributed from balance evidence because the merchant recipient is also the
+ * refund or treasury beneficiary of a closed channel, or, with a cause, because
+ * the visible transaction does not carry the balances the payout is read from.
+ * The transaction landed; only its accounting is unresolved, so it is reported
+ * with its own reason rather than left pending.
  */
 export class PayoutAttributionAmbiguousError extends Error {
-  constructor() {
+  constructor(cause?: unknown) {
     super(
-      "closed-channel payout shares its recipient with refund or treasury; transfer attribution is ambiguous",
+      cause === undefined
+        ? "closed-channel payout shares its recipient with refund or treasury; transfer attribution is ambiguous"
+        : `confirmed payout cannot be attributed: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
     this.name = "PayoutAttributionAmbiguousError";
   }
@@ -156,4 +168,54 @@ export async function discardWire(
   } catch {
     /* keep recorded outcome */
   }
+}
+
+/** A confirmed transaction whose pre and post token balances are visible. */
+export type ConfirmedEvidence = FacilitatorConfirmedTransaction & {
+  meta: {
+    preTokenBalances: readonly FacilitatorTokenBalance[];
+    postTokenBalances: readonly FacilitatorTokenBalance[];
+  };
+};
+
+export function hasTokenBalances(
+  evidence: FacilitatorConfirmedTransaction | null | undefined,
+): evidence is ConfirmedEvidence {
+  return Boolean(evidence?.meta?.preTokenBalances && evidence.meta.postTokenBalances);
+}
+
+/**
+ * The increase of an owner's token balance of one mint across a confirmed transaction.
+ *
+ * @param evidence - Confirmed transaction with its token balances
+ * @param owner - Owner of the token account
+ * @param mint - Token mint
+ * @param tokenProgram - Token program that owns the mint
+ * @returns The balance increase
+ */
+export async function ownerBalanceChange(
+  evidence: ConfirmedEvidence,
+  owner: string,
+  mint: string,
+  tokenProgram: string,
+): Promise<bigint> {
+  const [account] = await findAssociatedTokenPda({
+    mint: address(mint),
+    owner: address(owner),
+    tokenProgram: address(tokenProgram),
+  });
+  const index = evidence.transaction.message.accountKeys
+    .map(item => (typeof item === "string" ? item : item.pubkey))
+    .indexOf(account);
+  if (index < 0) throw new Error("token account is absent from the transaction");
+  const balanceAt = (balances: readonly FacilitatorTokenBalance[]): bigint => {
+    const entry = balances.find(item => item.accountIndex === index);
+    if (!entry) return 0n;
+    if (entry.mint !== mint || entry.owner !== owner) throw new Error("token balance mismatch");
+    return parseU64(entry.uiTokenAmount.amount, "token balance");
+  };
+  const change =
+    balanceAt(evidence.meta.postTokenBalances) - balanceAt(evidence.meta.preTokenBalances);
+  if (change < 0n) throw new Error("negative balance change");
+  return change;
 }
