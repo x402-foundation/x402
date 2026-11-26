@@ -1743,17 +1743,25 @@ func TestDeriveRefundState(t *testing.T) {
 		wantBalance             int64
 		wantTotalClaimed        int64
 		wantWithdrawRequestedAt int
+		omitBalance             bool
 	}{
-		{"partial refund", pre(1000, 200, 0, 0), 300, nil, 700, 200, 0},
-		{"refund covering the pending withdrawal clears it", pre(1000, 0, 500, 77), 500, nil, 500, 0, 0},
-		{"refund below the pending withdrawal keeps it", pre(1000, 0, 500, 77), 499, nil, 501, 0, 77},
-		{"bundled claim sets totalClaimed", pre(1000, 200, 0, 0), 400, big.NewInt(600), 600, 600, 0},
-		{"refund above the pre-read balance clamps to zero", pre(100, 0, 0, 0), 150, nil, 0, 0, 0},
+		{"partial refund", pre(1000, 200, 0, 0), 300, nil, 700, 200, 0, false},
+		{"refund covering the pending withdrawal clears it", pre(1000, 0, 500, 77), 500, nil, 500, 0, 0, false},
+		{"refund below the pending withdrawal keeps it", pre(1000, 0, 500, 77), 499, nil, 501, 0, 77, false},
+		{"bundled claim sets totalClaimed", pre(1000, 200, 0, 0), 400, big.NewInt(600), 600, 600, 0, false},
+		{"refund above the pre-read balance omits the balance", pre(100, 0, 0, 0), 150, nil, 0, 0, 0, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := deriveRefundState(tc.preState, big.NewInt(tc.refunded), tc.claimedTotal, big.NewInt(4))
-			if got.Balance.Int64() != tc.wantBalance || got.TotalClaimed.Int64() != tc.wantTotalClaimed ||
+			if tc.omitBalance {
+				if got.Balance != nil {
+					t.Fatalf("balance = %v, want omitted", got.Balance)
+				}
+			} else if got.Balance == nil || got.Balance.Int64() != tc.wantBalance {
+				t.Fatalf("balance = %v, want %d", got.Balance, tc.wantBalance)
+			}
+			if got.TotalClaimed.Int64() != tc.wantTotalClaimed ||
 				got.WithdrawRequestedAt != tc.wantWithdrawRequestedAt || got.RefundNonce.Int64() != 5 {
 				t.Fatalf("got %+v", got)
 			}
@@ -1785,6 +1793,60 @@ func TestFinishRefundAfterReceipt_UsesTheChannelsLastClaimed(t *testing.T) {
 	}
 	cs := resp.Extra["channelState"].(map[string]interface{})
 	if cs["balance"] != "400" || cs["totalClaimed"] != "400" || cs["refundNonce"] != "1" {
+		t.Fatalf("channelState = %+v", cs)
+	}
+}
+
+func TestFinishRefundAfterReceipt_UsesDepositedBalance(t *testing.T) {
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preState := &onchainChannelState{
+		ChannelState:   batchsettlement.ChannelState{Balance: big.NewInt(100), TotalClaimed: big.NewInt(0), RefundNonce: big.NewInt(0)},
+		withdrawAmount: big.NewInt(0),
+	}
+	receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: []*goethtypes.Log{
+		depositedReceiptLog(t, channelId, big.NewInt(400), big.NewInt(500)),
+		refundedReceiptLog(t, channelId, big.NewInt(150)),
+	}}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{ChannelConfig: cfg}
+
+	resp := finishRefundAfterReceipt(payload, channelId, preState, big.NewInt(0), "0xtx", testNetwork, receipt)
+	if !resp.Success || resp.Amount != "150" {
+		t.Fatalf("got %+v", resp)
+	}
+	cs := resp.Extra["channelState"].(map[string]interface{})
+	if cs["balance"] != "350" {
+		t.Fatalf("channelState = %+v", cs)
+	}
+}
+
+func TestFinishRefundAfterReceipt_StalePreReadOmitsBalance(t *testing.T) {
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preState := &onchainChannelState{
+		ChannelState:   batchsettlement.ChannelState{Balance: big.NewInt(100), TotalClaimed: big.NewInt(40), RefundNonce: big.NewInt(2)},
+		withdrawAmount: big.NewInt(0),
+	}
+	receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: []*goethtypes.Log{
+		refundedReceiptLog(t, channelId, big.NewInt(150)),
+	}}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{ChannelConfig: cfg}
+
+	resp := finishRefundAfterReceipt(payload, channelId, preState, big.NewInt(2), "0xtx", testNetwork, receipt)
+	if !resp.Success || resp.Amount != "150" {
+		t.Fatalf("got %+v", resp)
+	}
+	cs := resp.Extra["channelState"].(map[string]interface{})
+	if _, ok := cs["balance"]; ok {
+		t.Fatalf("balance = %v, want omitted", cs["balance"])
+	}
+	if cs["totalClaimed"] != "40" || cs["refundNonce"] != "3" {
 		t.Fatalf("channelState = %+v", cs)
 	}
 }

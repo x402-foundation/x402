@@ -1173,10 +1173,14 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			if existing == nil {
 				return current
 			}
-			postBalance := bigOrZero(snapshot.Balance)
-			curCharged := bigOrZero(existing.ChargedCumulativeAmount)
-			if postBalance.Cmp(curCharged) <= 0 {
-				return nil
+			// An omitted balance is not an empty channel. Refunded has no post-balance,
+			// and a stale pre-read must not delete escrow a deposit already funded.
+			if snapshot.Balance != "" {
+				postBalance := bigOrZero(snapshot.Balance)
+				curCharged := bigOrZero(existing.ChargedCumulativeAmount)
+				if postBalance.Cmp(curCharged) <= 0 {
+					return nil
+				}
 			}
 			next := *existing
 			stampNetwork(&next, ctx.Requirements.GetNetwork())

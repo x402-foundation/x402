@@ -749,6 +749,14 @@ func reconcilePendingDeposit(ctx context.Context, sc depositSettleContext) (*x40
 		state.Balance = balance
 		extra = BuildSettleExtra(sc.channelId, state)
 		syncedAt = readAt
+	} else {
+		// The receipt already carried Deposited.newBalance. Fields deposit() leaves unchanged stay omitted.
+		extra = map[string]interface{}{
+			"channelState": map[string]interface{}{
+				"channelId": sc.channelId,
+				"balance":   balance.String(),
+			},
+		}
 	}
 
 	return &x402.SettleResponse{

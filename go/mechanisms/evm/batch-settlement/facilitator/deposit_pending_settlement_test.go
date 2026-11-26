@@ -135,13 +135,14 @@ func TestSettleDeposit_PendingSettlementStore_CacheHitReconcilesWithoutRebroadca
 
 func TestSettleDeposit_ReconcileChannelState(t *testing.T) {
 	cases := []struct {
-		name        string
-		readFails   bool
-		logs        func(*batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log
-		wantReason  string
-		wantExtra   bool
-		wantSynced  bool
-		wantBalance string
+		name         string
+		readFails    bool
+		logs         func(*batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log
+		wantReason   string
+		wantExtra    bool
+		wantSynced   bool
+		wantBalance  string
+		eventBalance bool
 	}{
 		{
 			name: "Deposited balance with the read's other fields",
@@ -151,11 +152,12 @@ func TestSettleDeposit_ReconcileChannelState(t *testing.T) {
 			wantExtra: true, wantSynced: true, wantBalance: "140",
 		},
 		{
-			name:      "failed read omits the channel state",
+			name:      "failed read still returns the event balance",
 			readFails: true,
 			logs: func(p *batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log {
 				return []*goethtypes.Log{depositedReceiptLog(t, p.Voucher.ChannelId, big.NewInt(100), big.NewInt(140))}
 			},
+			wantExtra: true, wantBalance: "140", eventBalance: true,
 		},
 		{
 			name:       "no Deposited event",
@@ -212,7 +214,28 @@ func TestSettleDeposit_ReconcileChannelState(t *testing.T) {
 			if ok != tc.wantExtra {
 				t.Fatalf("extra = %+v, want channelState=%v", resp.Extra, tc.wantExtra)
 			}
-			if tc.wantExtra && (cs["balance"] != tc.wantBalance || cs["totalClaimed"] != "25" || cs["refundNonce"] != "3") {
+			if !tc.wantExtra {
+				return
+			}
+			if cs["balance"] != tc.wantBalance {
+				t.Fatalf("channelState = %+v", cs)
+			}
+			if tc.eventBalance {
+				if _, ok := cs["totalClaimed"]; ok {
+					t.Fatalf("totalClaimed = %v, want omitted", cs["totalClaimed"])
+				}
+				if _, ok := cs["refundNonce"]; ok {
+					t.Fatalf("refundNonce = %v, want omitted", cs["refundNonce"])
+				}
+				if _, ok := cs["withdrawRequestedAt"]; ok {
+					t.Fatalf("withdrawRequestedAt = %v, want omitted", cs["withdrawRequestedAt"])
+				}
+				if _, hit, getErr := store.Get(context.Background(), sig); getErr != nil || hit {
+					t.Fatalf("pending hit=%v err=%v, confirmed settle must not stay pending", hit, getErr)
+				}
+				return
+			}
+			if cs["totalClaimed"] != "25" || cs["refundNonce"] != "3" {
 				t.Fatalf("channelState = %+v", cs)
 			}
 		})

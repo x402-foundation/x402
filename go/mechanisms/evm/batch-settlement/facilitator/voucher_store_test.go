@@ -1986,8 +1986,8 @@ func TestSettleManagedDeposit_ReconcileStampsOnlyAfterItsRead(t *testing.T) {
 	}{
 		{name: "read stamps an existing row", seedRow: true, wantStamped: true, wantBalance: "1500"},
 		{name: "read stamps a new row", wantStamped: true, wantBalance: "1500"},
-		{name: "failed read keeps the existing stamp", seedRow: true, readFails: true, wantBalance: "500"},
-		{name: "failed read leaves a new row unstamped", readFails: true, wantBalance: "0"},
+		{name: "failed read keeps the existing stamp", seedRow: true, readFails: true, wantBalance: "1500"},
+		{name: "failed read leaves a new row unstamped", readFails: true, wantBalance: "1500"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1997,7 +1997,8 @@ func TestSettleManagedDeposit_ReconcileStampsOnlyAfterItsRead(t *testing.T) {
 			channelId := mustChannelId(t, cfg)
 			if tc.seedRow {
 				seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
-					ChargedCumulativeAmount: "0", Balance: "500", OnchainSyncedAt: 12_345,
+					ChargedCumulativeAmount: "0", Balance: "500", TotalClaimed: "25",
+					WithdrawRequestedAt: 77, RefundNonce: 3, OnchainSyncedAt: 12_345,
 				}))
 			}
 			payload := signedManagedDeposit(t, cfg, channelId)
@@ -2029,6 +2030,9 @@ func TestSettleManagedDeposit_ReconcileStampsOnlyAfterItsRead(t *testing.T) {
 			}
 			if !tc.wantStamped && tc.seedRow && got.OnchainSyncedAt != 12_345 {
 				t.Fatalf("OnchainSyncedAt = %d, want the stored 12345", got.OnchainSyncedAt)
+			}
+			if tc.readFails && tc.seedRow && (got.TotalClaimed != "25" || got.WithdrawRequestedAt != 77 || got.RefundNonce != 3) {
+				t.Fatalf("stored %+v, want the event balance without zeroing unread fields", got)
 			}
 		})
 	}

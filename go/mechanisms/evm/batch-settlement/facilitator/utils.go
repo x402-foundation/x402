@@ -104,6 +104,55 @@ func refundedLogs(receipt *evm.TransactionReceipt, channelId string) []refundedL
 	return out
 }
 
+// eventRefundBalance is the post-refund balance when this receipt deposited into the channel.
+// Deposited.newBalance is absolute; a Refunded after that deposit is subtracted once.
+func eventRefundBalance(receipt *evm.TransactionReceipt, channelId string) (*big.Int, bool) {
+	if receipt == nil {
+		return nil, false
+	}
+	contract := common.HexToAddress(batchsettlement.BatchSettlementAddress)
+	want := common.HexToHash(channelId)
+	var balance *big.Int
+	depositAt := -1
+	for i, log := range receipt.Logs {
+		if log == nil || log.Address != contract || len(log.Topics) < 2 || log.Topics[0] != depositedEvent.ID || log.Topics[1] != want {
+			continue
+		}
+		values, err := depositedEvent.Inputs.NonIndexed().Unpack(log.Data)
+		if err != nil || len(values) < 2 {
+			continue
+		}
+		next, _ := values[1].(*big.Int)
+		if next == nil {
+			continue
+		}
+		balance = new(big.Int).Set(next)
+		depositAt = i
+	}
+	if depositAt < 0 {
+		return nil, false
+	}
+	for _, log := range receipt.Logs[depositAt+1:] {
+		if log == nil || log.Address != contract || len(log.Topics) < 2 || log.Topics[0] != refundedEvent.ID || log.Topics[1] != want {
+			continue
+		}
+		values, err := refundedEvent.Inputs.NonIndexed().Unpack(log.Data)
+		if err != nil || len(values) < 1 {
+			continue
+		}
+		amount, _ := values[0].(*big.Int)
+		if amount == nil || amount.Sign() <= 0 {
+			continue
+		}
+		balance = new(big.Int).Sub(balance, amount)
+		if balance.Sign() < 0 {
+			return nil, false
+		}
+		return balance, true
+	}
+	return balance, true
+}
+
 // An RPC always returns the logs field (possibly empty), so a nil Logs means the signer dropped it.
 const receiptLogsUnavailableMessage = "signer returned a receipt without logs; batch settlement requires WaitForTransactionReceipt to return receipt logs"
 
@@ -428,13 +477,16 @@ func VerifyBatchedVoucherTypedData(
 // settlement-response enrichment; the additive enrichment policy rejects
 // duplicates emitted by the facilitator.
 func channelStateFields(channelId string, state *batchsettlement.ChannelState) map[string]interface{} {
-	return map[string]interface{}{
+	fields := map[string]interface{}{
 		"channelId":           channelId,
-		"balance":             state.Balance.String(),
 		"totalClaimed":        state.TotalClaimed.String(),
 		"withdrawRequestedAt": state.WithdrawRequestedAt,
 		"refundNonce":         state.RefundNonce.String(),
 	}
+	if state.Balance != nil {
+		fields["balance"] = state.Balance.String()
+	}
+	return fields
 }
 
 // BuildVerifyExtra creates the Extensions map for VERIFY responses:

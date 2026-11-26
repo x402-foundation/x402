@@ -405,6 +405,9 @@ func finishRefundAfterReceipt(
 		claimedTotal = logs[len(logs)-1].newTotalClaimed
 	}
 	state := deriveRefundState(preState, refunded, claimedTotal, consumedNonce)
+	if bal, ok := eventRefundBalance(receipt, channelId); ok {
+		state.Balance = bal
+	}
 	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
@@ -447,18 +450,23 @@ func refundedAmount(
 // deriveRefundState derives the post-refund channel state from the receipt events and the
 // pre-transaction state, following the contract's _executeRefund.
 //
-// Refunded carries no post-refund balance, so balance assumes no other balance change landed
-// between the pre-read and inclusion. Likewise withdrawRequestedAt misses a withdrawal initiated
-// in that window, and without a bundled claim totalClaimed is a lower bound.
+// Refunded carries no post-refund balance. A same-receipt Deposited.newBalance replaces the
+// result via eventRefundBalance. Otherwise balance is the pre-read minus the refund, and a
+// negative result is omitted: clamping it to 0 deletes a channel a deposit already funded.
+// withdrawRequestedAt misses a withdrawal initiated in that window, and without a bundled
+// claim totalClaimed is a lower bound.
 func deriveRefundState(
 	preState *onchainChannelState,
 	refunded *big.Int,
 	claimedTotal *big.Int,
 	consumedNonce *big.Int,
 ) *batchsettlement.ChannelState {
-	balance := new(big.Int).Sub(preState.Balance, refunded)
-	if balance.Sign() < 0 {
-		balance = big.NewInt(0)
+	var balance *big.Int
+	if preState.Balance != nil && refunded != nil {
+		balance = new(big.Int).Sub(preState.Balance, refunded)
+		if balance.Sign() < 0 {
+			balance = nil
+		}
 	}
 	totalClaimed := preState.TotalClaimed
 	if claimedTotal != nil {
