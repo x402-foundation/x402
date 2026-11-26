@@ -162,7 +162,20 @@ export async function executeRefundWithSignature(
       );
     }
 
-    const preState = await readChannelState(signer, channelId);
+    let preState: OnchainChannelState;
+    try {
+      preState = await readChannelState(signer, channelId);
+    } catch (e) {
+      return {
+        success: false,
+        errorReason: Errors.ErrRpcReadFailed,
+        errorMessage: truncateErrorMessage(
+          `failed to read channel state: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+        transaction: "",
+        network,
+      };
+    }
     const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
     const refundableAmount = getRefundableAmount(payload, preState, channelId, network);
 

@@ -2739,7 +2739,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.errorReason).toBe(Errors.ErrRefundTransactionFailed);
+      expect(result.errorReason).toBe(Errors.ErrRpcReadFailed);
       expect(result.transaction).toBe("");
       expect(signer.writeContract).not.toHaveBeenCalled();
     });
