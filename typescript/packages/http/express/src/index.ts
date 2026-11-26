@@ -282,6 +282,8 @@ export function paymentMiddlewareFromHTTPServer(
         res.writeHead = function (...args: Parameters<typeof originalWriteHead>) {
           if (!settled) {
             bufferedCalls.push(["writeHead", args]);
+            // writeHead() sets the status; mirror it so the >= 400 check sees it.
+            res.statusCode = args[0];
             return res;
           }
           return originalWriteHead(...args);

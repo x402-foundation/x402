@@ -698,6 +698,34 @@ describe("paymentMiddleware", () => {
     expect(originalEnd).toHaveBeenCalled();
   });
 
+  it("does not settle when the handler sets an error status only through writeHead", async () => {
+    setupMockHttpServer({
+      type: "payment-verified",
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+    });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = createMockRequest();
+    const res = createMockResponse();
+    const originalWriteHead = res.writeHead as ReturnType<typeof vi.fn>;
+    const next = vi.fn(() => {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end('{"error":"upstream"}');
+    });
+
+    await middleware(req, res, next);
+
+    expect(mockProcessSettlement).not.toHaveBeenCalled();
+    expect(originalWriteHead).toHaveBeenCalledWith(500, { "Content-Type": "application/json" });
+  });
+
   it("strips settlement override header from client response", async () => {
     setupMockHttpServer(
       {
