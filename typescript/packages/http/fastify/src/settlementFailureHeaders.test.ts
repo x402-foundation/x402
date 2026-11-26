@@ -59,13 +59,18 @@ async function createHttpServer(
  * Listens with a pre-handler CORS header and a paid route that sets response headers.
  *
  * @param httpServer - Server installed as the payment middleware
+ * @param prepare - Optional setup that runs before the payment middleware
  * @returns Base URL of the running app
  */
-async function listen(httpServer: x402HTTPResourceServer): Promise<string> {
+async function listen(
+  httpServer: x402HTTPResourceServer,
+  prepare?: (instance: FastifyInstance) => void,
+): Promise<string> {
   app = Fastify();
   app.addHook("onRequest", async (_request, reply) => {
     reply.header("Access-Control-Allow-Origin", "https://app.example");
   });
+  prepare?.(app);
   paymentMiddlewareFromHTTPServer(app, httpServer, undefined, undefined, false);
   app.get("/paid", (_request, reply) => {
     reply.header("Set-Cookie", "session=paid-access");
@@ -152,6 +157,30 @@ describe("fastify end-to-end: settlement failure after the handler ran", () => {
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Content-Disposition")).toBeNull();
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://app.example");
+  });
+
+  it("keeps earlier cookies and drops the handler cookie when settlement fails", async () => {
+    const response = await payAndFetch(
+      await listen(
+        await createHttpServer(async () => ({
+          success: false,
+          errorReason: "insufficient_funds",
+          transaction: "",
+          network: TEST_NETWORK,
+        })),
+        instance => {
+          instance.addHook("onRequest", async (_request, reply) => {
+            reply.header("Set-Cookie", "csrf=token");
+            reply.header("Set-Cookie", "sid=abc");
+          });
+        },
+      ),
+    );
+
+    expect(response.status).toBe(402);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toEqual(expect.arrayContaining(["csrf=token", "sid=abc"]));
+    expect(cookies.some(cookie => cookie.startsWith("session="))).toBe(false);
   });
 
   it("drops headers set by the handler when settlement throws", async () => {

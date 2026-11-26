@@ -406,6 +406,12 @@ export function paymentMiddlewareFromHTTPServer(
       }
 
       case "payment-verified": {
+        const preHandlerHeaders = { ...reply.getHeaders() };
+        for (const [name, value] of Object.entries(preHandlerHeaders)) {
+          if (Array.isArray(value)) {
+            preHandlerHeaders[name] = value.slice();
+          }
+        }
         request.x402Context = {
           cancellationDispatcher: result.cancellationDispatcher,
           beforeHandlerSettlement: result.beforeHandlerSettlement,
@@ -413,7 +419,7 @@ export function paymentMiddlewareFromHTTPServer(
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
           requestContext: context,
-          preHandlerHeaders: { ...reply.getHeaders() },
+          preHandlerHeaders,
         };
         request.x402RawGuard = guardReplyRaw(reply);
         return;
