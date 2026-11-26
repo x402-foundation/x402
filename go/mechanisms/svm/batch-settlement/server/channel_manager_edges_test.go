@@ -22,7 +22,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 	t.Run("refuses a store that cannot enumerate its channels", func(t *testing.T) {
 		manager := server.NewBatchChannelManager(server.BatchChannelManagerConfig{
 			ReceiverAuthorizer: receiverAuthorizer,
-			Requirements:       managerRequirements(),
+			Network:            svm.SolanaDevnetCAIP2,
 			Settle: func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
 				return okResponse(), nil
 			},
@@ -58,7 +58,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 		result, err := server.NewBatchChannelManager(server.BatchChannelManagerConfig{
 			OnError:            func(err error) { errors = append(errors, err.Error()) },
 			ReceiverAuthorizer: receiverAuthorizer,
-			Requirements:       managerRequirements(),
+			Network:            svm.SolanaDevnetCAIP2,
 			Settle: func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
 				return &x402.SettleResponse{Network: svm.SolanaDevnetCAIP2, Success: false}, nil
 			},
@@ -167,7 +167,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 		assert.Equal(t, []int{4, 1}, lengths)
 	})
 
-	batchLengths := func(t *testing.T, channels int, extra map[string]any, configured int) (claims, settles []int) {
+	batchLengths := func(t *testing.T, channels int, capacity server.RedemptionCapacity, configured int) (claims, settles []int) {
 		t.Helper()
 		store := server.NewMemoryChannelStore()
 		for i := 0; i < channels; i++ {
@@ -176,14 +176,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 		recorder := recordingSettler(boundDistribute)
 		options := withPayout(managerOptions(store, receiverAuthorizer, recorder.settle), 3000)
 		options.MaxChannelsPerBatch = configured
-		merged := map[string]any{}
-		for key, value := range options.Requirements.Extra {
-			merged[key] = value
-		}
-		for key, value := range extra {
-			merged[key] = value
-		}
-		options.Requirements.Extra = merged
+		options.Capacity = func() server.RedemptionCapacity { return capacity }
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
 		for _, payload := range recorder.payloads {
@@ -198,34 +191,29 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 	}
 
 	t.Run("batches claims and settles up to the facilitator's advertised capacity", func(t *testing.T) {
-		// JSON-decoded /supported numbers arrive as float64.
-		claims, settles := batchLengths(t, 20, map[string]any{
-			batchsettlement.ExtraMaxClaimChannels:  float64(batchsettlement.V1MaxClaimChannels),
-			batchsettlement.ExtraMaxSettleChannels: float64(batchsettlement.V1MaxSettleChannels),
+		claims, settles := batchLengths(t, 20, server.RedemptionCapacity{
+			MaxClaimChannels:  batchsettlement.V1MaxClaimChannels,
+			MaxSettleChannels: batchsettlement.V1MaxSettleChannels,
 		}, 0)
 		assert.Equal(t, []int{18, 2}, claims)
 		assert.Equal(t, []int{13, 7}, settles)
 	})
 
 	t.Run("a misadvertised capacity is clamped to the protocol maximum", func(t *testing.T) {
-		claims, settles := batchLengths(t, 30, map[string]any{
-			batchsettlement.ExtraMaxClaimChannels:  float64(50),
-			batchsettlement.ExtraMaxSettleChannels: float64(50),
-		}, 0)
+		claims, settles := batchLengths(t, 30, server.RedemptionCapacity{MaxClaimChannels: 50, MaxSettleChannels: 50}, 0)
 		assert.Equal(t, []int{18, 12}, claims)
 		assert.Equal(t, []int{13, 13, 4}, settles)
 	})
 
 	t.Run("a configured batch size lowers the advertised capacity", func(t *testing.T) {
-		claims, _ := batchLengths(t, 10, map[string]any{batchsettlement.ExtraMaxClaimChannels: 18}, 8)
+		claims, _ := batchLengths(t, 10, server.RedemptionCapacity{MaxClaimChannels: 18}, 8)
 		assert.Equal(t, []int{8, 2}, claims)
 	})
 
-	t.Run("an invalid advertised capacity falls back to four", func(t *testing.T) {
-		for _, value := range []any{"18", 0, -3, 2.5, nil} {
-			claims, _ := batchLengths(t, 5, map[string]any{batchsettlement.ExtraMaxClaimChannels: value}, 0)
-			assert.Equal(t, []int{4, 1}, claims, "%v", value)
-		}
+	t.Run("an unadvertised capacity falls back to four", func(t *testing.T) {
+		claims, settles := batchLengths(t, 5, server.RedemptionCapacity{}, 0)
+		assert.Equal(t, []int{4, 1}, claims)
+		assert.Equal(t, []int{4, 1}, settles)
 	})
 
 	t.Run("seals a closing channel with its latest voucher when a claim reports channel_closing", func(t *testing.T) {
@@ -299,7 +287,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 		manager := server.NewBatchChannelManager(withPayout(server.BatchChannelManagerConfig{
 			OnError:            func(err error) { errors = append(errors, err.Error()) },
 			ReceiverAuthorizer: receiverAuthorizer,
-			Requirements:       managerRequirements(),
+			Network:            svm.SolanaDevnetCAIP2,
 			Settle: func(_ context.Context, request server.RedemptionRequest, _ types.PaymentRequirements) (*x402.SettleResponse, error) {
 				payloadType, _ := redemptionFacts(request.Payload)
 				seen = append(seen, payloadType)
@@ -344,7 +332,7 @@ func TestBatchSettlementRedemptionWorkerEdgeCases(t *testing.T) {
 				return 0, true, nil
 			},
 			ReceiverAuthorizer: receiverAuthorizer,
-			Requirements:       managerRequirements(),
+			Network:            svm.SolanaDevnetCAIP2,
 			Settle: func(_ context.Context, request server.RedemptionRequest, _ types.PaymentRequirements) (*x402.SettleResponse, error) {
 				payloadType, _ := redemptionFacts(request.Payload)
 				seen = append(seen, payloadType)

@@ -12,7 +12,6 @@ import {
   getTransactionDecoder,
   type KeyPairSigner,
 } from "@solana/kit";
-import type { PaymentRequirements } from "@x402/core/types";
 import { describe, expect, it, vi } from "vitest";
 
 import { BatchError } from "../../src/batch-settlement/errors";
@@ -325,15 +324,8 @@ describe("server batch size", () => {
     const manager = new BatchChannelManager({
       maxChannelsPerBatch,
       receiverAuthorizer: await generateKeyPairSigner(),
-      requirements: {
-        amount: "1000",
-        asset: USDC_DEVNET_ADDRESS,
-        extra,
-        maxTimeoutSeconds: 300,
-        network: SOLANA_DEVNET_CAIP2,
-        payTo: USDC_DEVNET_ADDRESS,
-        scheme: "batch-settlement",
-      } as PaymentRequirements,
+      capacity: () => extra,
+      network: SOLANA_DEVNET_CAIP2,
       settle: vi.fn(),
       store: new MemoryChannelStore(),
     });

@@ -389,7 +389,7 @@ describe("batch-settlement SVM onchain", () => {
         onError: error => errors.push(error),
         receiverAuthorizer,
         rpcUrl: RPC_URL,
-        requirements: accepts()[0]!,
+        network: SOLANA_DEVNET_CAIP2,
         settle: (payload, requirements) => facilitator.settle(payload as never, requirements),
         store: lifecycleStore,
       });
@@ -567,7 +567,7 @@ describe("batch-settlement SVM onchain", () => {
             paymentPayload: payload,
             requirements: matched,
             settleResponse: settled,
-          } as never);
+          });
           return { matched, payload };
         };
 
@@ -632,7 +632,7 @@ describe("batch-settlement SVM onchain", () => {
         const before = await usdcBalance(receiver.address);
         const manager = new BatchChannelManager({
           receiverAuthorizer,
-          requirements: matched,
+          network: SOLANA_DEVNET_CAIP2,
           rpcUrl: RPC_URL,
           settle: (payload, requirements) => facilitator.settle(payload as never, requirements),
           store,

@@ -51,6 +51,7 @@ type BatchSvmScheme struct {
 	contexts map[string]*RequestContext
 	extras   map[string]map[string]any
 	sequence uint64
+	capacity map[x402.Network]RedemptionCapacity
 }
 
 // NewBatchSvmScheme creates a server scheme. A nil config uses in-memory stores.
@@ -73,6 +74,7 @@ func NewBatchSvmScheme(config *Config) *BatchSvmScheme {
 		operations: operations,
 		contexts:   map[string]*RequestContext{},
 		extras:     map[string]map[string]any{},
+		capacity:   map[x402.Network]RedemptionCapacity{},
 	}
 }
 
@@ -175,6 +177,12 @@ func (s *BatchSvmScheme) ValidateFacilitatorSupport(
 			network,
 		)
 	}
+	s.mu.Lock()
+	s.capacity[network] = RedemptionCapacity{
+		MaxClaimChannels:  advertisedCapacity(supportedKind.Extra[batchsettlement.ExtraMaxClaimChannels]),
+		MaxSettleChannels: advertisedCapacity(supportedKind.Extra[batchsettlement.ExtraMaxSettleChannels]),
+	}
+	s.mu.Unlock()
 	if s.config.ReceiverAuthorizer != nil {
 		return nil
 	}
@@ -327,18 +335,21 @@ func (s *BatchSvmScheme) ResolveMinDepositHint(requirements types.PaymentRequire
 }
 
 // CreateChannelManager builds the redemption worker over this scheme's channel store.
+// Redemption terms come from each stored channel, and batch capacity from the
+// facilitator's /supported kind recorded by ValidateFacilitatorSupport (four
+// channels per batch before then).
 func (s *BatchSvmScheme) CreateChannelManager(
 	facilitator x402.FacilitatorClient,
-	requirements types.PaymentRequirements,
+	network x402.Network,
 	options BatchChannelManagerConfig,
-) (*BatchChannelManager, error) {
-	if _, ok := requirements.Extra[batchsettlement.ExtraFeePayer].(string); !ok {
-		return nil, errors.New(
-			"createChannelManager requires requirements.extra.feePayer; pass the requirements returned by enhancePaymentRequirements for the facilitator's /supported kind",
-		)
-	}
+) *BatchChannelManager {
 	options.Store = s.store
-	options.Requirements = requirements
+	options.Network = string(network)
+	options.Capacity = func() RedemptionCapacity {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.capacity[network]
+	}
 	if s.config.ReceiverAuthorizer != nil {
 		options.ReceiverAuthorizer = s.config.ReceiverAuthorizer
 	}
@@ -361,7 +372,7 @@ func (s *BatchSvmScheme) CreateChannelManager(
 		}
 		return facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 	}
-	return NewBatchChannelManager(options), nil
+	return NewBatchChannelManager(options)
 }
 
 // BeforeVerifyHook reserves channel capacity and validates payloads before facilitator verify.

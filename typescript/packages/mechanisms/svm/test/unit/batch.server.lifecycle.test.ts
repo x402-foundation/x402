@@ -991,7 +991,7 @@ describe("batch server lifecycle boundaries", () => {
           return { network: SOLANA_DEVNET_CAIP2, success: true, transaction: "seal-signature" };
         },
       },
-      requirements(),
+      SOLANA_DEVNET_CAIP2,
       {
         readPayoutWatermark: async () => 1_000n,
       },

@@ -135,14 +135,14 @@ Settlement overrides use the same amount formats as upto: raw atomic units (`"50
 Vouchers are worthless until claimed onchain. Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
 
 ```go
-manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+manager := scheme.CreateChannelManager(facilitatorClient, svmNetwork, batchserver.BatchChannelManagerConfig{
     RPCURL: os.Getenv("SVM_RPC_URL"),
 })
 ```
 
 The manager takes channel state from the facilitator's responses (`extra.channelStates`) or infers it from what it submitted, so a confirmed claim or seal whose response was lost resyncs instead of being resubmitted. A distribute's payout watermark is never inferred: without `extra.channelStates` or a reader, the channel stays payable and the next distribute resyncs it. It reads the chain only through `RPCURL`, `ReadSettledWatermark` or `ReadPayoutWatermark`; with none set it never falls back to a public RPC endpoint.
 
-`requirements` must include `extra.feePayer` from the facilitator's supported kind. Claim promptly: if the facilitator or payer forces a close before the latest voucher is claimed, unclaimed value returns to the payer.
+The manager redeems each stored channel against the terms it was opened with (fee payer, receiver, mint, token program, withdraw delay), so channels opened under different facilitator fee payers redeem in one pass, in separate batches. Batch capacity comes from the facilitator's supported kind, recorded by `ValidateFacilitatorSupport`. Claim promptly: if the facilitator or payer forces a close before the latest voucher is claimed, unclaimed value returns to the payer.
 
 ## Facilitator Usage
 

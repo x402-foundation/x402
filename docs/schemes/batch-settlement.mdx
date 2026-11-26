@@ -824,7 +824,7 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
-    const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
+    const manager = batchSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
       rpcUrl: process.env.SVM_RPC_URL,
       onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
       onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
@@ -836,13 +836,14 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
   </Tab>
   <Tab title="Go">
     ```go
-    manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+    manager := scheme.CreateChannelManager(facilitatorClient, svmNetwork, batchserver.BatchChannelManagerConfig{
         RPCURL: os.Getenv("SVM_RPC_URL"),
     })
-    // requirements must include extra.feePayer from the facilitator's supported kind
     ```
   </Tab>
 </Tabs>
+
+The worker redeems each stored channel against the terms it was opened with, so no route requirements are needed. Batch capacity comes from the facilitator's `/supported` kind.
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
 

@@ -1,10 +1,11 @@
 import { generateKeyPairSigner } from "@solana/kit";
-import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
+import type { SettleResponse } from "@x402/core/types";
 import { describe, expect, it } from "vitest";
 
 import { verifyCloseAuthorization } from "../../src/batch-settlement/closeAuthorization";
 import { BatchError } from "../../src/batch-settlement/errors";
 import { BatchChannelManager } from "../../src/batch-settlement/server/channelManager";
+import { REDEMPTION_TIMEOUT_SECONDS } from "../../src/batch-settlement/server/constants";
 import { MemoryChannelStore } from "../../src/batch-settlement/server/storage";
 import type { ChannelState, ChannelStore } from "../../src/batch-settlement/server/types";
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
@@ -12,18 +13,6 @@ import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAsse
 
 const RECEIVER = USDC_MAINNET_ADDRESS;
 const receiverAuthorizer = await generateKeyPairSigner();
-function requirements(): PaymentRequirements {
-  return {
-    amount: "1000",
-    asset: USDC_DEVNET_ADDRESS,
-    extra: { feePayer: RECEIVER, tokenProgram: TOKEN_PROGRAM_ADDRESS, withdrawDelay: 900 },
-    maxTimeoutSeconds: 300,
-    network: SOLANA_DEVNET_CAIP2,
-    payTo: RECEIVER,
-    scheme: "batch-settlement",
-  };
-}
-
 function channel(id: string, overrides: Partial<ChannelState> = {}): ChannelState {
   return {
     channelConfig: {
@@ -31,6 +20,7 @@ function channel(id: string, overrides: Partial<ChannelState> = {}): ChannelStat
       payer: USDC_DEVNET_ADDRESS,
       payerAuthorizer: USDC_DEVNET_ADDRESS,
       receiver: RECEIVER,
+      receiverAuthorizer: receiverAuthorizer.address,
       salt: "0",
       token: USDC_DEVNET_ADDRESS,
       withdrawDelay: 900,
@@ -102,7 +92,7 @@ describe("batch-settlement redemption worker edge cases", () => {
     };
     const manager = new BatchChannelManager({
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: ok,
       store,
     });
@@ -116,7 +106,7 @@ describe("batch-settlement redemption worker edge cases", () => {
     await new BatchChannelManager({
       readPayoutWatermark: async () => 3_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle,
       store,
     }).redeem();
@@ -135,7 +125,7 @@ describe("batch-settlement redemption worker edge cases", () => {
     const result = await new BatchChannelManager({
       onError: error => errors.push((error as Error).message),
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle,
       store,
     }).redeem();
@@ -166,7 +156,7 @@ describe("batch-settlement redemption worker edge cases", () => {
         onError: error => errors.push((error as Error).message),
         readPayoutWatermark: async () => 3_000n,
         receiverAuthorizer,
-        requirements: requirements(),
+        network: SOLANA_DEVNET_CAIP2,
         settle: async () => answer,
         store,
       }).redeem();
@@ -188,7 +178,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       readPayoutWatermark: async () => 3_000n,
       readSettledWatermark: async () => 3_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: async () => ok(),
       store,
     }).redeem();
@@ -208,7 +198,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       readPayoutWatermark: async () => 0n,
       readSettledWatermark: async () => 2_999n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: async () => ok(),
       store,
     }).redeem();
@@ -225,7 +215,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       maxChannelsPerBatch: 8,
       readPayoutWatermark: async () => 3_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle,
       store,
     }).redeem();
@@ -261,7 +251,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       readPayoutWatermark: async () => 3_000n,
       readSettledWatermark: async () => 3_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle,
       store,
     }).redeem();
@@ -298,7 +288,7 @@ describe("batch-settlement redemption worker edge cases", () => {
           voucherExpiresAt: 0n,
         },
         receiverAuthorizer.address,
-        300,
+        REDEMPTION_TIMEOUT_SECONDS,
       ),
     ).resolves.toBe(true);
     expect(await store.get(CLOSING_ID)).toMatchObject({
@@ -324,7 +314,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       onError: error => errors.push((error as Error).message),
       readPayoutWatermark: async () => 3_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: async (request: { payload: unknown }) => {
         const type = (request.payload as Payload).type;
         seen.push(type);
@@ -358,7 +348,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       onError: error => errors.push((error as Error).message),
       readPayoutWatermark: async () => 0n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: async (request: { payload: unknown }) => {
         seen.push((request.payload as Payload).type);
         return ok();
@@ -390,7 +380,7 @@ describe("batch-settlement redemption worker edge cases", () => {
     const result = await new BatchChannelManager({
       readPayoutWatermark: async () => 2_000n,
       receiverAuthorizer,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle,
       store,
     }).redeem();
@@ -416,7 +406,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       new BatchChannelManager({
         readPayoutWatermark: async () => 0n,
         receiverAuthorizer,
-        requirements: requirements(),
+        network: SOLANA_DEVNET_CAIP2,
         settle,
         store,
       }).redeem(),
@@ -431,7 +421,7 @@ describe("batch-settlement redemption worker edge cases", () => {
     const result = await new BatchChannelManager({
       readPayoutWatermark: async () => 3_000n,
       readSettledWatermark: async () => 3_000n,
-      requirements: requirements(),
+      network: SOLANA_DEVNET_CAIP2,
       settle: async request => {
         seen.push(request.payload as Record<string, unknown>);
         return ok();
