@@ -64,6 +64,31 @@ export function assertPaymentChannelFacilitatorSigner(
 }
 
 /**
+ * {@link PaymentChannelFacilitatorSigner} plus the confirmed-transaction read
+ * every batch payout is attributed from. `upto` never reads it.
+ */
+export type BatchFacilitatorSigner = PaymentChannelFacilitatorSigner & {
+  getConfirmedTransaction: NonNullable<FacilitatorSvmSigner["getConfirmedTransaction"]>;
+};
+
+/**
+ * Assert a facilitator signer exposes every cap batch settlement needs.
+ *
+ * @param signer - Facilitator signer to validate
+ * @param label - Component name for error messages
+ * @throws Error when a required capability is missing
+ */
+export function assertBatchFacilitatorSigner(
+  signer: FacilitatorSvmSigner,
+  label: string,
+): asserts signer is BatchFacilitatorSigner {
+  assertPaymentChannelFacilitatorSigner(signer, label);
+  if (typeof signer.getConfirmedTransaction !== "function") {
+    throw new Error(`${label} requires getConfirmedTransaction on the signer.`);
+  }
+}
+
+/**
  * Kit-compatible RPC adapter so generated account fetch helpers read through
  * the facilitator signer.
  *

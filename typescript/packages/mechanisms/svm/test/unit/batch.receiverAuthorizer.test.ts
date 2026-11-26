@@ -128,6 +128,7 @@ function signer() {
         owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
       }),
     ),
+    getConfirmedTransaction: vi.fn(),
     getAddresses: vi.fn(() => [feePayer.address]),
     getLatestBlockhash: vi.fn(),
     getSigner: vi.fn(() => feePayer),

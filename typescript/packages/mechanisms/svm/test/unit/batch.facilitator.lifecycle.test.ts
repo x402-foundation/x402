@@ -231,6 +231,7 @@ describe("batch facilitator lifecycle", () => {
           {
             getAccountInfo: vi.fn(),
             getAddresses: () => [],
+            getConfirmedTransaction: vi.fn(),
             getLatestBlockhash: vi.fn(),
             getSigner: vi.fn(),
             getSlot: vi.fn(),
@@ -291,6 +292,15 @@ describe("batch facilitator lifecycle", () => {
           channelStorage: new InMemoryPaymentChannelStorage(),
         }),
     ).toThrow("requires getAccountInfo");
+  });
+
+  it("requires confirmed transaction reads for payout attribution", () => {
+    expect(
+      () =>
+        new BatchSvmScheme(signer({ getConfirmedTransaction: undefined }) as never, {
+          channelStorage: new InMemoryPaymentChannelStorage(),
+        }),
+    ).toThrow("BatchSvmScheme requires getConfirmedTransaction on the signer.");
   });
 
   it("rejects a deposit during verify when its settlement path is unavailable", async () => {

@@ -574,6 +574,7 @@ describe("batch facilitator open-slot window and accepted versions", () => {
           account === MINT ? { owner: TOKEN_PROGRAM_ADDRESS } : atas(account),
         ),
       getAddresses: vi.fn(() => [feePayer.address]),
+      getConfirmedTransaction: vi.fn(),
       getLatestBlockhash: vi.fn(),
       getSigner: vi.fn(() => feePayer),
       getSlot: vi.fn().mockResolvedValue(slot),

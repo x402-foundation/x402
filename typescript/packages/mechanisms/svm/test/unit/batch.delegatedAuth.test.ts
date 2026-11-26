@@ -67,6 +67,7 @@ function signer() {
         owners: () => [payer.address, RECEIVER, getPaymentChannelsTreasuryOwner(NETWORK)],
       }),
     ),
+    getConfirmedTransaction: vi.fn(),
     getAddresses: () => [feePayer.address],
     getLatestBlockhash: vi.fn(),
     getSigner: () => feePayer,
@@ -365,7 +366,11 @@ function stubClose(scheme: BatchSvmScheme, channelId: string, live: Channel): vo
     signature: SIGNATURE,
   });
   const original = api.sealDependencies.bind(scheme);
-  api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
+  api.sealDependencies = () => ({
+    ...original(),
+    attributeClose: async () => ({ paidToReceiver: 0n, refundedToPayer: 0n }),
+    nowSeconds: () => NOW,
+  });
 }
 
 async function signedVoucher(channelId: string, cumulative: bigint) {
