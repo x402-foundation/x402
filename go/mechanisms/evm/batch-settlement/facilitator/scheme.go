@@ -78,6 +78,10 @@ func NewBatchSettlementEvmScheme(signer evm.FacilitatorEvmSigner, authorizerSign
 // NewBatchSettlementEvmSchemeWithConfig creates a batch settlement facilitator scheme with
 // optional configuration (e.g. the ERC-6492 factory allowlist for counterfactual deposits).
 // A nil config behaves identically to NewBatchSettlementEvmScheme.
+//
+// WaitForTransactionReceipt on signer (and on config.AuthorizerSubmitter) must return the
+// receipt's Logs: deposit and refund settle responses derive channelState from the Deposited,
+// Claimed and Refunded events, and a receipt with nil Logs fails with ErrReceiptLogsUnavailable.
 func NewBatchSettlementEvmSchemeWithConfig(
 	signer evm.FacilitatorEvmSigner,
 	authorizerSigner batchsettlement.AuthorizerSigner,

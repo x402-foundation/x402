@@ -30,6 +30,7 @@ const (
 	receiptConfirmed
 	receiptReverted
 	receiptWithoutRefunded
+	receiptWithoutLogs
 )
 
 // refundChain is a channel holding 10000 at refund nonce 0. Each refund broadcast lands
@@ -103,6 +104,8 @@ func newRefundChain(t *testing.T, receipts ...receiptOutcome) *refundChain {
 			case receiptReverted:
 				return &evm.TransactionReceipt{Status: evm.TxStatusFailed, TxHash: txHash}, nil
 			case receiptWithoutRefunded:
+				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash, Logs: []*goethtypes.Log{}}, nil
+			case receiptWithoutLogs:
 				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
 			}
 			t.Fatalf("unknown receipt outcome %d", outcome)
@@ -293,23 +296,6 @@ func TestRefundPendingSettlement_ConcurrentRetryWaitsOnSameTx(t *testing.T) {
 	}
 }
 
-func TestRefundPendingSettlement_RetryWaitsOutLaggingChannelRead(t *testing.T) {
-	for _, mode := range refundSubmitModes {
-		t.Run(string(mode), func(t *testing.T) {
-			chain := newRefundChain(t, receiptTimeout, receiptConfirmed)
-			scheme := refundPendingScheme(t, mode, chain, newRecordingPendingStore())
-			payload := refundPendingPayload(t, "1000", "0")
-
-			resp, err := settleRefund(scheme, payload)
-			requireRefundPending(t, resp, err)
-
-			chain.staleReads = 1
-			resp, err = settleRefund(scheme, payload)
-			requireRefundReconciled(t, resp, err, "1000", "9000")
-		})
-	}
-}
-
 func TestRefundPendingSettlement_RetryWithUnobservedRefundStaysPending(t *testing.T) {
 	for _, mode := range refundSubmitModes {
 		t.Run(string(mode), func(t *testing.T) {
@@ -321,7 +307,7 @@ func TestRefundPendingSettlement_RetryWithUnobservedRefundStaysPending(t *testin
 			resp, err := settleRefund(scheme, payload)
 			requireRefundPending(t, resp, err)
 
-			chain.staleReads = 1 << 20
+			chain.staleReads = 1
 			resp, err = settleRefund(scheme, payload)
 			requireRefundPending(t, resp, err)
 			if _, ok := recordedRefundTx(t, store); !ok {
@@ -394,27 +380,37 @@ func TestRefundPendingSettlement_RetryRevertedIsTerminal(t *testing.T) {
 }
 
 func TestRefundPendingSettlement_RetryWithoutRefundedEventFailsClosed(t *testing.T) {
+	outcomes := []struct {
+		name    string
+		receipt receiptOutcome
+		reason  string
+	}{
+		{"no Refunded event", receiptWithoutRefunded, ErrRefundedEventMismatch},
+		{"no logs", receiptWithoutLogs, ErrReceiptLogsUnavailable},
+	}
 	for _, mode := range refundSubmitModes {
-		t.Run(string(mode), func(t *testing.T) {
-			chain := newRefundChain(t, receiptTimeout, receiptWithoutRefunded)
-			store := newRecordingPendingStore()
-			scheme := refundPendingScheme(t, mode, chain, store)
-			payload := refundPendingPayload(t, "1000", "0")
+		for _, tc := range outcomes {
+			t.Run(string(mode)+"/"+tc.name, func(t *testing.T) {
+				chain := newRefundChain(t, receiptTimeout, tc.receipt)
+				store := newRecordingPendingStore()
+				scheme := refundPendingScheme(t, mode, chain, store)
+				payload := refundPendingPayload(t, "1000", "0")
 
-			resp, err := settleRefund(scheme, payload)
-			requireRefundPending(t, resp, err)
+				resp, err := settleRefund(scheme, payload)
+				requireRefundPending(t, resp, err)
 
-			resp, err = settleRefund(scheme, payload)
-			if err != nil {
-				t.Fatalf("retry: %v", err)
-			}
-			if resp.Success || resp.ErrorReason != ErrRefundedEventMismatch || resp.Transaction != refundPendingTxHash {
-				t.Fatalf("retry resp = %+v, want %s for %q", resp, ErrRefundedEventMismatch, refundPendingTxHash)
-			}
-			if _, ok := recordedRefundTx(t, store); ok {
-				t.Fatal("confirmed receipt must clear the pending entry")
-			}
-		})
+				resp, err = settleRefund(scheme, payload)
+				if err != nil {
+					t.Fatalf("retry: %v", err)
+				}
+				if resp.Success || resp.ErrorReason != tc.reason || resp.Transaction != refundPendingTxHash {
+					t.Fatalf("retry resp = %+v, want %s for %q", resp, tc.reason, refundPendingTxHash)
+				}
+				if _, ok := recordedRefundTx(t, store); ok {
+					t.Fatal("confirmed receipt must clear the pending entry")
+				}
+			})
+		}
 	}
 }
 

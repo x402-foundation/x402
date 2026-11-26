@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
+
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
@@ -504,24 +506,25 @@ func managedDepositSigner(t *testing.T) *fakeFacilitatorSigner {
 	return depositSignerWithBalances(t, 0, 1000)
 }
 
-// depositSignerWithBalances reads prior until the deposit write, then each post-write
-// read takes the next balance from postWrite and repeats the last.
-func depositSignerWithBalances(t *testing.T, prior int64, postWrite ...int64) *fakeFacilitatorSigner {
+// depositSignerWithBalances serves prior to every channel read, and the deposit receipt carries
+// the Deposited event for the written channel and amount with newBalance.
+func depositSignerWithBalances(t *testing.T, prior, newBalance int64) *fakeFacilitatorSigner {
 	t.Helper()
-	var writeSeen bool
-	postReads := 0
+	var logs []*goethtypes.Log
 	return &fakeFacilitatorSigner{
 		addresses: []string{managedFacilitator},
 		chainId:   big.NewInt(84532),
-		writeContract: func(functionName string, _ ...interface{}) (string, error) {
+		writeContract: func(functionName string, args ...interface{}) (string, error) {
 			if functionName != "deposit" {
 				return "", errors.New("unexpected write " + functionName)
 			}
-			writeSeen = true
+			cfg := args[0].(ContractChannelConfigTuple)
+			amount := args[1].(*big.Int)
+			logs = []*goethtypes.Log{depositedReceiptLog(t, channelIDFromContractConfig(t, cfg), amount, big.NewInt(newBalance))}
 			return successTxHash, nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash, Logs: logs}, nil
 		},
 		getBalance: func(string, string) (*big.Int, error) {
 			return big.NewInt(10000), nil
@@ -533,12 +536,7 @@ func depositSignerWithBalances(t *testing.T, prior int64, postWrite ...int64) *f
 			if functionName != evm.FunctionTryAggregate {
 				return nil, errors.New("unexpected rpc")
 			}
-			if !writeSeen {
-				return multicallChannelStateResult(t, big.NewInt(prior), big.NewInt(0), 0, big.NewInt(0)), nil
-			}
-			balance := postWrite[min(postReads, len(postWrite)-1)]
-			postReads++
-			return multicallChannelStateResult(t, big.NewInt(balance), big.NewInt(0), 0, big.NewInt(0)), nil
+			return multicallChannelStateResult(t, big.NewInt(prior), big.NewInt(0), 0, big.NewInt(0)), nil
 		},
 	}
 }
@@ -1879,15 +1877,15 @@ func TestSettleManaged_UnheldAcquireErrorFailsBeforeVerify(t *testing.T) {
 	}
 }
 
-func TestSettleManagedDeposit_ConfirmedReadStampsItsSample(t *testing.T) {
+func TestSettleManagedDeposit_DepositedEventStampsSyncedAt(t *testing.T) {
 	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
 	auth := managedAuthorizer()
 	cfg := managedConfig(auth.addr, "06")
 	channelId := mustChannelId(t, cfg)
 	seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
-		ChargedCumulativeAmount: "0", Balance: "0", OnchainSyncedAt: 1,
+		ChargedCumulativeAmount: "0", Balance: "500", OnchainSyncedAt: 1,
 	}))
-	deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 0, 0, 1000))
+	deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 500, 1500))
 
 	before := time.Now().UnixMilli()
 	resp, err := SettleManaged(context.Background(), deps, signedManagedDeposit(t, cfg, channelId), managedRequirements(auth.addr), nil, nil)
@@ -1896,7 +1894,7 @@ func TestSettleManagedDeposit_ConfirmedReadStampsItsSample(t *testing.T) {
 		t.Fatalf("got %+v %v", resp, err)
 	}
 	got, _ := store.Get(context.Background(), channelId)
-	if got.OnchainSyncedAt < before || got.OnchainSyncedAt > after || got.Balance != "1000" || got.ChargedCumulativeAmount != "1000" {
+	if got.OnchainSyncedAt < before || got.OnchainSyncedAt > after || got.Balance != "1500" || got.ChargedCumulativeAmount != "1000" {
 		t.Fatalf("stored %+v", got)
 	}
 }
@@ -1969,34 +1967,18 @@ func TestSettleManagedDeposit_ActualAboveAcceptedDoesNotBroadcast(t *testing.T) 
 	}
 }
 
-func TestSettleManagedDeposit_OptimisticKeepsStoredStamp(t *testing.T) {
-	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
-	auth := managedAuthorizer()
-	cfg := managedConfig(auth.addr, "06")
-	channelId := mustChannelId(t, cfg)
-	seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
-		ChargedCumulativeAmount: "0", Balance: "500", OnchainSyncedAt: 12_345,
-	}))
-	deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 500, 500))
-
-	resp, err := SettleManaged(context.Background(), deps, signedManagedDeposit(t, cfg, channelId), managedRequirements(auth.addr), nil, nil)
-	if err != nil || !resp.Success {
-		t.Fatalf("got %+v %v", resp, err)
-	}
-	got, _ := store.Get(context.Background(), channelId)
-	if got.OnchainSyncedAt != 12_345 || got.Balance != "1500" {
-		t.Fatalf("stored %+v", got)
-	}
-}
-
-func TestSettleManagedDeposit_ReconcileKeepsStoredStamp(t *testing.T) {
+func TestSettleManagedDeposit_ReconcileStampsOnlyAfterItsRead(t *testing.T) {
 	cases := []struct {
-		name         string
-		seedRow      bool
-		wantSyncedAt int64
+		name        string
+		seedRow     bool
+		readFails   bool
+		wantStamped bool
+		wantBalance string
 	}{
-		{name: "existing row keeps its stamp", seedRow: true, wantSyncedAt: 12_345},
-		{name: "new row has no stamp", seedRow: false, wantSyncedAt: 0},
+		{name: "read stamps an existing row", seedRow: true, wantStamped: true, wantBalance: "1500"},
+		{name: "read stamps a new row", wantStamped: true, wantBalance: "1500"},
+		{name: "failed read keeps the existing stamp", seedRow: true, readFails: true, wantBalance: "500"},
+		{name: "failed read leaves a new row unstamped", readFails: true, wantBalance: "0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2009,23 +1991,35 @@ func TestSettleManagedDeposit_ReconcileKeepsStoredStamp(t *testing.T) {
 					ChargedCumulativeAmount: "0", Balance: "500", OnchainSyncedAt: 12_345,
 				}))
 			}
-			deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 1500, 1500))
 			payload := signedManagedDeposit(t, cfg, channelId)
 			dp, err := batchsettlement.DepositPayloadFromMap(payload.Payload)
 			if err != nil {
 				t.Fatal(err)
 			}
+			signer := depositSignerWithBalances(t, 1500, 1500)
+			signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+				return depositedReceipt(t, txHash, dp, 1500), nil
+			}
+			if tc.readFails {
+				signer.readContract = func(string, ...interface{}) (interface{}, error) { return nil, errors.New("rpc down") }
+			}
+			deps := managedDeps(t, store, store, auth, signer)
 			if err := deps.PendingStore.Set(context.Background(), depositSettlementCacheKey(dp, batchsettlement.AssetTransferMethodEip3009), successTxHash); err != nil {
 				t.Fatal(err)
 			}
 
+			before := time.Now().UnixMilli()
 			resp, err := SettleManaged(context.Background(), deps, payload, managedRequirements(auth.addr), nil, nil)
 			if err != nil || !resp.Success {
 				t.Fatalf("got %+v %v", resp, err)
 			}
 			got, _ := store.Get(context.Background(), channelId)
-			if got.OnchainSyncedAt != tc.wantSyncedAt || got.Balance != "1500" {
-				t.Fatalf("stored %+v", got)
+			stamped := got.OnchainSyncedAt >= before
+			if stamped != tc.wantStamped || got.Balance != tc.wantBalance {
+				t.Fatalf("stored %+v, want stamped=%v balance=%s", got, tc.wantStamped, tc.wantBalance)
+			}
+			if !tc.wantStamped && tc.seedRow && got.OnchainSyncedAt != 12_345 {
+				t.Fatalf("OnchainSyncedAt = %d, want the stored 12345", got.OnchainSyncedAt)
 			}
 		})
 	}
@@ -2503,6 +2497,56 @@ func TestSettleManaged_RefundWithLiveWorkerMarkerSendsRefundOnly(t *testing.T) {
 	}
 	if got := h.row(); got.PendingClaim != nil || got.ChargeCount != 2 {
 		t.Fatalf("after worker finish: %+v", got)
+	}
+}
+
+// TestSettleManaged_RefundStoresDerivedStateFromOneRead pins that a managed refund reads the
+// channel once, caps and derives from that read, and writes the derived state with an
+// OnchainSyncedAt stamp no later than the read.
+func TestSettleManaged_RefundStoresDerivedStateFromOneRead(t *testing.T) {
+	cases := []struct {
+		name             string
+		marker           *PendingClaim
+		wantWrites       []string
+		wantTotalClaimed string
+	}{
+		{"refund alone", workerMarker(), []string{"refundWithSignature"}, "1000"},
+		{"bundled claim", nil, []string{"multicall"}, "5000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := unclaimedFields()
+			fields.OnchainSyncedAt = 1
+			h := newHotRefund(t, fields, tc.marker, nil)
+			reads := 0
+			read := h.signer.readContract
+			h.signer.readContract = func(functionName string, args ...interface{}) (interface{}, error) {
+				if functionName == evm.FunctionTryAggregate {
+					reads++
+				}
+				return read(functionName, args...)
+			}
+
+			before := time.Now().UnixMilli()
+			resp, err := h.settle("5000")
+			readEnd := time.Now().UnixMilli()
+			if err != nil || resp == nil || !resp.Success {
+				t.Fatalf("refund %+v %v", resp, err)
+			}
+			if reads != 1 {
+				t.Fatalf("channel reads = %d, want 1", reads)
+			}
+			if !reflect.DeepEqual(h.signer.writeFns, tc.wantWrites) {
+				t.Fatalf("writes = %v, want %v", h.signer.writeFns, tc.wantWrites)
+			}
+			got := h.row()
+			if got.Balance != "5000" || got.TotalClaimed != tc.wantTotalClaimed || got.RefundNonce != 1 || got.WithdrawRequestedAt != 0 {
+				t.Fatalf("stored %+v", got)
+			}
+			if got.OnchainSyncedAt < before || got.OnchainSyncedAt > readEnd {
+				t.Fatalf("OnchainSyncedAt = %d, want within [%d, %d]", got.OnchainSyncedAt, before, readEnd)
+			}
+		})
 	}
 }
 

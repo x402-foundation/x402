@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
+
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
@@ -28,14 +30,9 @@ func pendingDepositPayload(t *testing.T) (string, *batchsettlement.BatchSettleme
 	return payload.Deposit.Authorization.Erc3009Authorization.Signature, payload, reqs
 }
 
-// depositConfirmedChannelStateReader reports an empty channel pre-broadcast and
-// a balance reflecting the deposit amount once broadcast (tracked via
-// writeSeen), so finishDepositSettle's post-receipt poll (see deposit.go)
-// observes the expected balance on its first read instead of spinning until
-// channelStatePollDeadline. Reconciliation (reconcilePendingDeposit) has no
-// pre-broadcast snapshot of its own and exits its poll on the first
-// successful read regardless of balance, so this also satisfies that path.
-func depositConfirmedChannelStateReader(t *testing.T, writeSeen *bool) func(functionName string, _ ...interface{}) (interface{}, error) {
+// depositChannelStateReader reports an empty channel to every channel-state read and accepts the
+// deposit simulation.
+func depositChannelStateReader(t *testing.T) func(functionName string, _ ...interface{}) (interface{}, error) {
 	return func(functionName string, _ ...interface{}) (interface{}, error) {
 		if functionName == "deposit" {
 			return nil, nil
@@ -43,27 +40,21 @@ func depositConfirmedChannelStateReader(t *testing.T, writeSeen *bool) func(func
 		if functionName != evm.FunctionTryAggregate {
 			return nil, errors.New("unexpected rpc")
 		}
-		balance := big.NewInt(0)
-		if writeSeen == nil || *writeSeen {
-			balance = big.NewInt(100)
-		}
-		return multicallChannelStateResult(t, balance, big.NewInt(0), 0, big.NewInt(0)), nil
+		return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
 	}
 }
 
 func TestSettleDeposit_PendingSettlementStore_CacheMissSuccessLeavesNoEntry(t *testing.T) {
 	sig, payload, reqs := pendingDepositPayload(t)
 	store := x402.NewInMemoryPendingSettlementStore()
-	writeSeen := false
 	signer := &fakeFacilitatorSigner{
 		addresses:    []string{"0xfacilitator"},
-		readContract: depositConfirmedChannelStateReader(t, &writeSeen),
+		readContract: depositChannelStateReader(t),
 		writeContract: func(string, ...interface{}) (string, error) {
-			writeSeen = true
 			return "0x" + strings.Repeat("ab", 32), nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return depositedReceipt(t, txHash, payload, 100), nil
 		},
 	}
 	signer.getBalance = func(string, string) (*big.Int, error) { return big.NewInt(1000), nil }
@@ -87,7 +78,7 @@ func TestSettleDeposit_PendingSettlementStore_CacheMissReceiptFailurePopulatesSt
 	wantTxHash := "0x" + strings.Repeat("ab", 32)
 	signer := &fakeFacilitatorSigner{
 		addresses:     []string{"0xfacilitator"},
-		readContract:  depositConfirmedChannelStateReader(t, nil),
+		readContract:  depositChannelStateReader(t),
 		writeContract: func(string, ...interface{}) (string, error) { return wantTxHash, nil },
 		waitForReceipt: func(string) (*evm.TransactionReceipt, error) {
 			return nil, errors.New("rpc: timeout waiting for receipt")
@@ -122,9 +113,9 @@ func TestSettleDeposit_PendingSettlementStore_CacheHitReconcilesWithoutRebroadca
 	}
 	signer := &fakeFacilitatorSigner{
 		addresses:    []string{"0xfacilitator"},
-		readContract: depositConfirmedChannelStateReader(t, nil),
+		readContract: depositChannelStateReader(t),
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return depositedReceipt(t, txHash, payload, 100), nil
 		},
 	}
 
@@ -144,6 +135,92 @@ func TestSettleDeposit_PendingSettlementStore_CacheHitReconcilesWithoutRebroadca
 	}
 }
 
+func TestSettleDeposit_ReconcileChannelState(t *testing.T) {
+	cases := []struct {
+		name        string
+		readFails   bool
+		logs        func(*batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log
+		wantReason  string
+		wantExtra   bool
+		wantSynced  bool
+		wantBalance string
+	}{
+		{
+			name: "Deposited balance with the read's other fields",
+			logs: func(p *batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log {
+				return []*goethtypes.Log{depositedReceiptLog(t, p.Voucher.ChannelId, big.NewInt(100), big.NewInt(140))}
+			},
+			wantExtra: true, wantSynced: true, wantBalance: "140",
+		},
+		{
+			name:      "failed read omits the channel state",
+			readFails: true,
+			logs: func(p *batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log {
+				return []*goethtypes.Log{depositedReceiptLog(t, p.Voucher.ChannelId, big.NewInt(100), big.NewInt(140))}
+			},
+		},
+		{
+			name:       "no Deposited event",
+			logs:       func(*batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log { return []*goethtypes.Log{} },
+			wantReason: ErrDepositTransactionFailed,
+		},
+		{
+			name:       "no logs",
+			logs:       func(*batchsettlement.BatchSettlementDepositPayload) []*goethtypes.Log { return nil },
+			wantReason: ErrReceiptLogsUnavailable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sig, payload, reqs := pendingDepositPayload(t)
+			store := x402.NewInMemoryPendingSettlementStore()
+			priorTxHash := "0x" + strings.Repeat("ab", 32)
+			if err := store.Set(context.Background(), sig, priorTxHash); err != nil {
+				t.Fatalf("store.Set: %v", err)
+			}
+			reads := 0
+			signer := &fakeFacilitatorSigner{
+				addresses: []string{"0xfacilitator"},
+				readContract: func(string, ...interface{}) (interface{}, error) {
+					reads++
+					if tc.readFails {
+						return nil, errors.New("rpc down")
+					}
+					return multicallChannelStateResult(t, big.NewInt(40), big.NewInt(25), 0, big.NewInt(3)), nil
+				},
+				waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
+					return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash, Logs: tc.logs(payload)}, nil
+				},
+			}
+
+			resp, syncedAt, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, store, nil)
+			if tc.wantReason != "" {
+				requireSettleErrorReason(t, err, tc.wantReason)
+				if reads != 0 {
+					t.Fatalf("reads = %d, want none without a Deposited event", reads)
+				}
+				return
+			}
+			if err != nil || !resp.Success || resp.Transaction != priorTxHash {
+				t.Fatalf("resp=%+v err=%v", resp, err)
+			}
+			if reads != 1 {
+				t.Fatalf("reads = %d, want 1", reads)
+			}
+			if (syncedAt != 0) != tc.wantSynced {
+				t.Fatalf("syncedAt = %d, want stamped=%v", syncedAt, tc.wantSynced)
+			}
+			cs, ok := resp.Extra["channelState"].(map[string]interface{})
+			if ok != tc.wantExtra {
+				t.Fatalf("extra = %+v, want channelState=%v", resp.Extra, tc.wantExtra)
+			}
+			if tc.wantExtra && (cs["balance"] != tc.wantBalance || cs["totalClaimed"] != "25" || cs["refundNonce"] != "3") {
+				t.Fatalf("channelState = %+v", cs)
+			}
+		})
+	}
+}
+
 func TestSettleDeposit_PendingSettlementStore_CacheHitStillPendingReturnsAgainWithoutRebroadcast(t *testing.T) {
 	sig, payload, reqs := pendingDepositPayload(t)
 	store := x402.NewInMemoryPendingSettlementStore()
@@ -153,7 +230,7 @@ func TestSettleDeposit_PendingSettlementStore_CacheHitStillPendingReturnsAgainWi
 	}
 	signer := &fakeFacilitatorSigner{
 		addresses:      []string{"0xfacilitator"},
-		readContract:   depositConfirmedChannelStateReader(t, nil),
+		readContract:   depositChannelStateReader(t),
 		waitForReceipt: func(string) (*evm.TransactionReceipt, error) { return nil, errors.New("rpc: still pending") },
 	}
 
@@ -177,16 +254,14 @@ func TestSettleDeposit_PendingSettlementStore_CacheHitStillPendingReturnsAgainWi
 
 func TestSettleDeposit_PendingSettlementStore_NilStoreDisablesFastPath(t *testing.T) {
 	_, payload, reqs := pendingDepositPayload(t)
-	writeSeen := false
 	signer := &fakeFacilitatorSigner{
 		addresses:    []string{"0xfacilitator"},
-		readContract: depositConfirmedChannelStateReader(t, &writeSeen),
+		readContract: depositChannelStateReader(t),
 		writeContract: func(string, ...interface{}) (string, error) {
-			writeSeen = true
 			return "0x" + strings.Repeat("ab", 32), nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return depositedReceipt(t, txHash, payload, 100), nil
 		},
 	}
 	signer.getBalance = func(string, string) (*big.Int, error) { return big.NewInt(1000), nil }
@@ -253,7 +328,7 @@ func delegatedDepositSigner(t *testing.T, write func(string, ...interface{}) (st
 		getBalance: func(string, string) (*big.Int, error) {
 			return big.NewInt(1000), nil
 		},
-		readContract:   depositConfirmedChannelStateReader(t, nil),
+		readContract:   depositChannelStateReader(t),
 		writeContract:  write,
 		waitForReceipt: wait,
 	}
@@ -478,7 +553,7 @@ func TestSettleDeposit_ReconcileConfirmedKeepsBindingAndClearsPendingEntry(t *te
 			if waits == 1 {
 				return nil, errors.New("rpc: timeout")
 			}
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: hash}, nil
+			return depositedReceipt(t, hash, payload, 100), nil
 		},
 	)
 	_, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, pending, delegatedBinding(auth))
@@ -501,16 +576,14 @@ func TestSettleDeposit_SuccessKeepsBinding(t *testing.T) {
 	_, payload, reqs := pendingDepositPayload(t)
 	auth := newSpyDelegatedAuth()
 	pending := &recordingPendingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore()}
-	writeSeen := false
 	signer := &fakeFacilitatorSigner{
 		addresses:    []string{"0xfacilitator"},
-		readContract: depositConfirmedChannelStateReader(t, &writeSeen),
+		readContract: depositChannelStateReader(t),
 		writeContract: func(string, ...interface{}) (string, error) {
-			writeSeen = true
 			return "0x" + strings.Repeat("ab", 32), nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return depositedReceipt(t, txHash, payload, 100), nil
 		},
 	}
 	signer.getBalance = func(string, string) (*big.Int, error) { return big.NewInt(1000), nil }

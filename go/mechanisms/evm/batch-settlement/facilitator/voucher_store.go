@@ -377,7 +377,7 @@ func settleManagedVoucher(
 			return failSettle(requirements, configErr), nil
 		}
 		var err error
-		mirror, err = heldVoucherMirror(ctx, deps, raw, requirements)
+		mirror, err = heldVoucherMirror(ctx, deps, raw, requirements, signedCap)
 		if resp, settleErr := failSettleFromErr(requirements, err); settleErr != nil || resp != nil {
 			return resp, settleErr
 		}
@@ -586,6 +586,10 @@ func settleManagedRefund(
 
 	var begun []attestedClaim
 	var claimToFinish *attestedClaim
+	var preState *onchainChannelState
+	// syncedAt precedes the read the response channelState comes from, so the stamp never claims
+	// more freshness than that read has.
+	syncedAt := time.Now().UnixMilli()
 	if pending {
 		// Reconcile the earlier attempt's claim marker only when it recorded this tx.
 		if item, ok := pendingClaimForTx(channelId, stored.PendingClaim, pendingTx); ok {
@@ -594,12 +598,13 @@ func settleManagedRefund(
 		enriched.Amount = amount
 	} else {
 		// A pending refund may have landed, so a fresh cap only applies before broadcast.
-		onchain, readErr := ReadChannelState(ctx, deps.Signer, channelId)
-		if readErr != nil || onchain == nil {
+		var readErr error
+		preState, readErr = readOnchainChannelState(ctx, deps.Signer, channelId)
+		if readErr != nil {
 			return failSettle(requirements, ErrRpcReadFailed), nil
 		}
 		var capErr string
-		if amount, capErr = capRefundAmount(amount, onchain.Balance, stored.ChargedCumulativeAmount); capErr != "" {
+		if amount, capErr = capRefundAmount(amount, preState.Balance, stored.ChargedCumulativeAmount); capErr != "" {
 			return failSettle(requirements, capErr), nil
 		}
 		claims := rebuildClaims(stored)
@@ -644,6 +649,7 @@ func settleManagedRefund(
 		Payload:    &enriched,
 		DataSuffix: dataSuffix,
 		OnClaimed:  func(ids map[string]struct{}) { claimed = ids },
+		preState:   preState,
 	}
 	var settled *x402.SettleResponse
 	if pending {
@@ -719,6 +725,7 @@ func settleManagedRefund(
 				next.WithdrawRequestedAt = v
 			}
 			next.RefundNonce = refundNonceFromExtra(current.RefundNonce, extraState)
+			next.OnchainSyncedAt = syncedAt
 		} else {
 			next.RefundNonce = current.RefundNonce + 1
 		}
@@ -1009,13 +1016,15 @@ func (m voucherMirror) snapshot(current *FacilitatorChannel) *FacilitatorChannel
 	return m.channel
 }
 
-// heldVoucherMirror reads chain state unless the stored row is fresh.
-// A failed read leaves an existing row's escrow and fails a missing row.
+// heldVoucherMirror reads chain state unless the stored row is fresh. A read below signedCap
+// (the voucher's maxClaimableAmount) is re-read, so a lagging node does not overwrite a fresher
+// stored balance. A failed read leaves an existing row's escrow and fails a missing row.
 func heldVoucherMirror(
 	ctx context.Context,
 	deps VoucherStoreDeps,
 	raw *batchsettlement.BatchSettlementVoucherPayload,
 	requirements types.PaymentRequirements,
+	signedCap *big.Int,
 ) (voucherMirror, error) {
 	channelId := raw.Voucher.ChannelId
 	stored, getErr := deps.Storage.Get(ctx, channelId)
@@ -1031,7 +1040,7 @@ func heldVoucherMirror(
 		return voucherMirror{}, nil
 	}
 	readAt := time.Now().UnixMilli()
-	state, err := ReadChannelState(ctx, deps.Signer, channelId)
+	state, err := readChannelStateCovering(ctx, deps.Signer, channelId, signedCap)
 	if err != nil {
 		if stored != nil {
 			return voucherMirror{}, nil

@@ -1,6 +1,7 @@
 package facilitator
 
 import (
+	"context"
 	"errors"
 	"math/big"
 	"strings"
@@ -324,5 +325,80 @@ func TestErc3009AuthorizationTimeInvalidReason_FutureValidAfter(t *testing.T) {
 	r := Erc3009AuthorizationTimeInvalidReason(big.NewInt(now+3600), big.NewInt(now+7200))
 	if r != ErrValidAfterInFuture {
 		t.Fatalf("expected future, got %q", r)
+	}
+}
+
+// balanceReader serves balances in order to channel-state reads, repeating the last.
+func balanceReader(t *testing.T, balances ...int64) (*fakeFacilitatorSigner, *int) {
+	t.Helper()
+	reads := 0
+	return &fakeFacilitatorSigner{
+		readContract: func(string, ...interface{}) (interface{}, error) {
+			balance := balances[min(reads, len(balances)-1)]
+			reads++
+			return multicallChannelStateResult(t, big.NewInt(balance), big.NewInt(0), 0, big.NewInt(0)), nil
+		},
+	}, &reads
+}
+
+func withoutRereadDelays(t *testing.T) {
+	t.Helper()
+	saved := channelStateRereadDelays
+	channelStateRereadDelays = []time.Duration{0, 0, 0}
+	t.Cleanup(func() { channelStateRereadDelays = saved })
+}
+
+func TestReadChannelStateCovering(t *testing.T) {
+	withoutRereadDelays(t)
+	cases := []struct {
+		name        string
+		minBalance  int64
+		balances    []int64
+		wantReads   int
+		wantBalance int64
+	}{
+		{"covered on the first read", 100, []int64{100}, 1, 100},
+		{"stale then fresh", 100, []int64{0, 50, 100}, 3, 100},
+		{"short after every retry", 100, []int64{50}, 4, 50},
+		{"zero floor still needs a funded channel", 0, []int64{0, 1}, 2, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer, reads := balanceReader(t, tc.balances...)
+			state, err := readChannelStateCovering(context.Background(), signer, "0x"+strings.Repeat("11", 32), big.NewInt(tc.minBalance))
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if *reads != tc.wantReads || state.Balance.Int64() != tc.wantBalance {
+				t.Fatalf("reads=%d balance=%s, want %d reads and balance %d", *reads, state.Balance, tc.wantReads, tc.wantBalance)
+			}
+		})
+	}
+}
+
+func TestReadChannelStateCovering_ReadErrorStopsRereads(t *testing.T) {
+	withoutRereadDelays(t)
+	reads := 0
+	signer := &fakeFacilitatorSigner{readContract: func(string, ...interface{}) (interface{}, error) {
+		reads++
+		return nil, errors.New("rpc down")
+	}}
+	if _, err := readChannelStateCovering(context.Background(), signer, "0x"+strings.Repeat("11", 32), big.NewInt(1)); err == nil {
+		t.Fatal("want the read error")
+	}
+	if reads != 1 {
+		t.Fatalf("reads = %d, want 1", reads)
+	}
+}
+
+func TestReadChannelStateCovering_CancelledContextStopsRereads(t *testing.T) {
+	signer, reads := balanceReader(t, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := readChannelStateCovering(ctx, signer, "0x"+strings.Repeat("11", 32), big.NewInt(1)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if *reads != 1 {
+		t.Fatalf("reads = %d, want 1", *reads)
 	}
 }
