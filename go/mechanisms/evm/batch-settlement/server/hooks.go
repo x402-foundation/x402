@@ -1115,8 +1115,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			if cs != nil {
 				applySettleChannelState(&next, cs, false)
 			}
-			// totalClaimed and withdrawRequestedAt come from the pre-deposit read. An omitted
-			// field is not a fresh snapshot, so the next voucher re-reads the chain.
 			next.OnchainSyncedAt = 0
 			if cs != nil && cs.claimedSet && cs.withdrawSet {
 				next.OnchainSyncedAt = now
@@ -1194,8 +1192,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			// A refund applies a present withdrawRequestedAt, including 0. Deposit only raises it.
 			applySettleChannelState(&next, snapshot, true)
-			// An omitted balance leaves the pre-refund balance. Drop the sync stamp so the
-			// next voucher re-reads instead of trusting that balance for the cache TTL.
 			next.OnchainSyncedAt = 0
 			if snapshot.balanceSet {
 				next.OnchainSyncedAt = now

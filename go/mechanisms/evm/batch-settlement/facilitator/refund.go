@@ -96,8 +96,6 @@ func executeRefundWithSignature(
 			fmt.Sprintf("invalid nonce: %s", payload.RefundNonce))
 	}
 
-	// A provided signature is checked before any read. An unsigned refund is signed only after
-	// the channel read shows there is something to refund.
 	var refundSig []byte
 	if payload.RefundAuthorizerSignature != "" {
 		var err error

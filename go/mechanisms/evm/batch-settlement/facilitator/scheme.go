@@ -27,7 +27,7 @@ type BatchSettlementEvmSchemeConfig struct {
 	// Every field on VoucherStoreConfig is read only when this is set.
 	VoucherStore *VoucherStoreConfig
 	// ResolveCallerIdentity resolves a stable caller identity for a delegated settle.
-	// When set, /supported advertises extra.delegatedRefund: true. Self-managed: an unsigned
+	// With an authorizer signer, /supported advertises extra.delegatedRefund: true. Self-managed: an unsigned
 	// cooperative refund is accepted only from the caller that created the channel.
 	// Facilitator-managed: also authorizes refunds on channels whose 402 omits
 	// extra.refundAuthorizer.
@@ -190,8 +190,7 @@ func (f *BatchSettlementEvmScheme) GetExtra(_ x402.Network) map[string]interface
 	}
 	extra := map[string]interface{}{
 		"receiverAuthorizer": f.authorizerSigner.Address(),
-		// A self-managed server that delegates receiverAuthorizer fails initialize() on an explicit false.
-		"delegatedRefund": f.resolveCallerIdentity != nil,
+		"delegatedRefund":    f.resolveCallerIdentity != nil,
 	}
 	if f.voucherStore != nil {
 		extra["withdrawDelay"] = f.voucherStore.withdrawDelay
