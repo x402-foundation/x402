@@ -34,6 +34,10 @@ import {
 import { requireTokenProgramHint } from "../../payment-channels/requirements";
 import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
 import { SettlementCache } from "../../settlement-cache";
+import {
+  assertBatchFacilitatorSigner,
+  type BatchFacilitatorSigner,
+} from "../../payment-channels/signer";
 import type {
   FacilitatorAccountInfo,
   FacilitatorConfirmedTransaction,
@@ -61,14 +65,12 @@ import { BatchSvmRentCleanupManager } from "./rentCleanupManager";
 import {
   InMemoryBatchPendingSettlementStore,
   PayoutAttributionAmbiguousError,
-  assertBatchFacilitatorSigner,
   broadcastExpiredWithoutLanding,
   discardWire,
   distributionsForStore,
   hasTokenBalances,
   ownerBalanceChange,
   reserveBroadcast,
-  type BatchFacilitatorSigner,
   type BatchPendingSettlementStore,
   type ConfirmedEvidence,
 } from "./recovery";

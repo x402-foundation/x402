@@ -10,40 +10,8 @@ import type { PendingSettlementStore } from "@x402/core/facilitator";
 import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
 import { parseU64 } from "../../payment-channels/open";
-import {
-  assertPaymentChannelFacilitatorSigner,
-  type PaymentChannelFacilitatorSigner,
-} from "../../payment-channels/signer";
-import type {
-  FacilitatorConfirmedTransaction,
-  FacilitatorSvmSigner,
-  FacilitatorTokenBalance,
-} from "../../signer";
-
-/**
- * {@link PaymentChannelFacilitatorSigner} plus the confirmed-transaction read
- * every batch payout is attributed from. `upto` never reads it.
- */
-export type BatchFacilitatorSigner = PaymentChannelFacilitatorSigner & {
-  getConfirmedTransaction: NonNullable<FacilitatorSvmSigner["getConfirmedTransaction"]>;
-};
-
-/**
- * Assert a facilitator signer exposes every cap batch settlement needs.
- *
- * @param signer - Facilitator signer to validate
- * @param label - Component name for error messages
- * @throws Error when a required capability is missing
- */
-export function assertBatchFacilitatorSigner(
-  signer: FacilitatorSvmSigner,
-  label: string,
-): asserts signer is BatchFacilitatorSigner {
-  assertPaymentChannelFacilitatorSigner(signer, label);
-  if (typeof signer.getConfirmedTransaction !== "function") {
-    throw new Error(`${label} requires getConfirmedTransaction on the signer.`);
-  }
-}
+import type { BatchFacilitatorSigner } from "../../payment-channels/signer";
+import type { FacilitatorConfirmedTransaction, FacilitatorTokenBalance } from "../../signer";
 
 /** Batch recovery records must outlive an unresolved transaction. */
 export interface BatchPendingSettlementStore extends PendingSettlementStore {
