@@ -3623,6 +3623,78 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(channel?.refundNonce).toBe(5);
   });
 
+  it("keeps stored deposit fields when the response omits channelState", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "1000",
+      totalClaimed: "40",
+      withdrawRequestedAt: 77,
+      refundNonce: 5,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {},
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.chargedCumulativeAmount).toBe("1000");
+    expect(channel?.balance).toBe("1000");
+    expect(channel?.totalClaimed).toBe("40");
+    expect(channel?.withdrawRequestedAt).toBe(77);
+    expect(channel?.refundNonce).toBe(5);
+  });
+
+  it("rejects a deposit channelState field that is not a canonical uint", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "1000",
+      totalClaimed: "40",
+      withdrawRequestedAt: 77,
+      refundNonce: 5,
+      lastRequestTimestamp: 0,
+    });
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+        requirements: makeRequirements({ amount: "1000" }),
+        result: {
+          success: true,
+          transaction: "0xtx",
+          network: NETWORK,
+          payer: PAYER,
+          extra: { channelState: { channelId, balance: "01", totalClaimed: "40" } },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrRefundPayload);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.chargedCumulativeAmount).toBe("0");
+    expect(channel?.balance).toBe("1000");
+    expect(channel?.refundNonce).toBe(5);
+  });
+
   it("clears withdrawRequestedAt when a refund snapshot reports 0", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
@@ -3787,6 +3859,77 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(channel?.totalClaimed).toBe("40");
     expect(channel?.withdrawRequestedAt).toBe(77);
     expect(channel?.refundNonce).toBe(5);
+  });
+
+  it("keeps the stored channel when a refund response omits channelState", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "1000",
+      totalClaimed: "40",
+      withdrawRequestedAt: 77,
+      refundNonce: 4,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildRefundPayload(channelId, "0", config, "150"),
+      requirements: makeRequirements({ amount: "0" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {},
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.balance).toBe("1000");
+    expect(channel?.totalClaimed).toBe("40");
+    expect(channel?.withdrawRequestedAt).toBe(77);
+    expect(channel?.refundNonce).toBe(4);
+    expect(channel?.lastRequestTimestamp).toBe(0);
+  });
+
+  it("rejects a refund channelState field that is not a canonical uint", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "1000",
+      totalClaimed: "40",
+      withdrawRequestedAt: 77,
+      refundNonce: 4,
+      lastRequestTimestamp: 0,
+    });
+
+    await expect(
+      server.schemeHooks.onAfterSettle!({
+        paymentPayload: buildRefundPayload(channelId, "0", config, "150"),
+        requirements: makeRequirements({ amount: "0" }),
+        result: {
+          success: true,
+          transaction: "0xtx",
+          network: NETWORK,
+          payer: PAYER,
+          extra: { channelState: { channelId, balance: "01" } },
+        } as SettleResponse,
+      } as never),
+    ).rejects.toThrow(Errors.ErrRefundPayload);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.balance).toBe("1000");
+    expect(channel?.refundNonce).toBe(4);
   });
 
   it.each([

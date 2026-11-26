@@ -24,6 +24,7 @@ export const ErrInvalidReceiveAuthorizationSignature =
 export const ErrErc3009AuthorizationRequired =
   "invalid_batch_settlement_evm_erc3009_authorization_required";
 export const ErrRefundTransactionFailed = "invalid_batch_settlement_evm_refund_transaction_failed";
+export const ErrTransactionReverted = "invalid_batch_settlement_evm_transaction_reverted";
 export const ErrInvalidPayloadType = "invalid_batch_settlement_evm_payload_type";
 export const ErrInvalidVoucherPayload = "invalid_batch_settlement_evm_voucher_payload";
 export const ErrInvalidDepositPayload = "invalid_batch_settlement_evm_deposit_payload";

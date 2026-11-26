@@ -556,7 +556,13 @@ describe("server extra parsers", () => {
       withdrawRequestedAt: undefined,
       refundNonce: undefined,
     });
-    expect(() => parseRefundSettlementSnapshot({})).toThrow(ErrRefundPayload);
+    expect(parseRefundSettlementSnapshot({})).toBeUndefined();
+    expect(parseRefundSettlementSnapshot(undefined)).toBeUndefined();
+    expect(() => parseRefundSettlementSnapshot({ channelState: "nope" })).toThrow(ErrRefundPayload);
+    expect(() => parseRefundSettlementSnapshot({ channelState: null })).toThrow(ErrRefundPayload);
+    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "01" } })).toThrow(
+      ErrRefundPayload,
+    );
     expect(() =>
       parseRefundSettlementSnapshot({
         channelState: {

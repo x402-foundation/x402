@@ -86,89 +86,63 @@ export type RefundSettlementSnapshot = {
 };
 
 /**
- * Parses the facilitator's post-refund channel snapshot.
+ * Parses a settle `channelState` object.
+ *
+ * An omitted object returns `undefined` so the caller keeps the stored channel. A present field
+ * that is not a canonical non-negative integer throws `ErrRefundPayload`.
  *
  * @param extra - Settlement response extra fields.
- * @returns Validated refund settlement snapshot.
+ * @returns Validated snapshot, or `undefined` when `channelState` is omitted.
  */
 export function parseRefundSettlementSnapshot(
   extra: Record<string, unknown> | undefined,
-): RefundSettlementSnapshot {
+): RefundSettlementSnapshot | undefined {
+  if (extra?.channelState === undefined) {
+    return undefined;
+  }
   const channelState = readChannelStateExtra(extra);
-  if (channelState === undefined) {
+  if (channelState === undefined || Array.isArray(extra.channelState)) {
     throw new Error(ErrRefundPayload);
   }
   return {
-    balance: optionalUintString(channelState, "balance"),
-    totalClaimed: optionalUintString(channelState, "totalClaimed"),
-    withdrawRequestedAt: optionalUintNumber(channelState, "withdrawRequestedAt"),
-    refundNonce: optionalUintNumber(channelState, "refundNonce"),
+    balance: requireCanonicalUint(channelState, "balance"),
+    totalClaimed: requireCanonicalUint(channelState, "totalClaimed"),
+    withdrawRequestedAt: requireCanonicalCount(channelState, "withdrawRequestedAt"),
+    refundNonce: requireCanonicalCount(channelState, "refundNonce"),
   };
 }
 
 /**
- * Reads a uint string when the field is present.
+ * Reads a canonical uint string when the field is present.
  *
- * @param extra - Settlement response extra fields from the facilitator.
- * @param key - Field name: `balance` or `totalClaimed`.
- * @returns The decimal string, or `undefined` when the field is absent.
+ * @param extra - Channel snapshot fields from the settle response.
+ * @param key - Field to read.
+ * @returns Decimal string, or `undefined` when the field is absent.
  */
-function optionalUintString(
+function requireCanonicalUint(
   extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
-  key: "balance" | "totalClaimed",
+  key: keyof BatchSettlementChannelStateExtra,
 ): string | undefined {
   if (extra[key] === undefined) return undefined;
-  return parseUintStringExtra(extra, key);
+  const parsed = readExtraUintString(extra, key);
+  if (parsed === undefined) throw new Error(ErrRefundPayload);
+  return parsed;
 }
 
 /**
- * Reads a uint when the field is present.
+ * Reads a canonical uint as a safe integer when the field is present.
  *
- * @param extra - Settlement response extra fields from the facilitator.
+ * @param extra - Channel snapshot fields from the settle response.
  * @param key - Field name: `withdrawRequestedAt` or `refundNonce`.
- * @returns The parsed integer, or `undefined` when the field is absent.
+ * @returns The integer, or `undefined` when the field is absent.
  */
-function optionalUintNumber(
+function requireCanonicalCount(
   extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
   key: "withdrawRequestedAt" | "refundNonce",
 ): number | undefined {
-  if (extra[key] === undefined) return undefined;
-  return parseUintNumberExtra(extra, key);
-}
-
-/**
- * Parses a non-negative integer as a decimal string from refund snapshot `extra`.
- *
- * @param extra - Settlement response extra fields from the facilitator.
- * @param key - Field name: `balance` or `totalClaimed`.
- * @returns Decimal string representation of the uint (digits only).
- */
-function parseUintStringExtra(
-  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
-  key: "balance" | "totalClaimed",
-): string {
-  const value = extra?.[key];
-  if (typeof value === "string" && /^\d+$/.test(value)) return value;
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return String(value);
-  throw new Error(ErrRefundPayload);
-}
-
-/**
- * Parses a non-negative integer from refund snapshot `extra`.
- *
- * @param extra - Settlement response extra fields from the facilitator.
- * @param key - Field name: `withdrawRequestedAt` or `refundNonce`.
- * @returns Parsed non-negative integer.
- */
-function parseUintNumberExtra(
-  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
-  key: "withdrawRequestedAt" | "refundNonce",
-): number {
-  const value = extra?.[key];
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    const parsed = parseInt(value, 10);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  throw new Error(ErrRefundPayload);
+  const parsed = requireCanonicalUint(extra, key);
+  if (parsed === undefined) return undefined;
+  const value = Number(parsed);
+  if (!Number.isSafeInteger(value) || String(value) !== parsed) throw new Error(ErrRefundPayload);
+  return value;
 }

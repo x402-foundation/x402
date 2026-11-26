@@ -313,6 +313,7 @@ export async function executeRefundWithSignature(
 
     return await waitAndReturnSettleResponse(signer, tx, network, payload.channelConfig.payer, {
       failedStatusReason: Errors.ErrRefundTransactionFailed,
+      revertedReason: Errors.ErrTransactionReverted,
       onSuccess: async receipt => {
         if (receipt.logs === undefined) {
           return receiptLogsUnavailableResponse(tx, network, payload.channelConfig.payer);

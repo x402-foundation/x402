@@ -1627,6 +1627,25 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(mockedMulticall).toHaveBeenCalledTimes(1);
   });
 
+  it("returns ErrTransactionReverted when the deposit receipt reverts", async () => {
+    const { dp } = buildEip3009Deposit();
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "reverted" }),
+    });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrTransactionReverted);
+  });
+
   it("fails with ErrReceiptLogsUnavailable when the signer drops the deposit receipt logs", async () => {
     const { dp } = buildEip3009Deposit();
     const signer = buildSigner({ waitForTransactionReceipt: successReceipt(undefined) });
@@ -2174,6 +2193,30 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     );
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrClaimTransactionFailed);
+  });
+
+  it("returns ErrTransactionReverted when the claim receipt reverts", async () => {
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "reverted" }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+    const cp: BatchSettlementClaimPayload = {
+      type: "claim",
+      claims: [
+        {
+          voucher: { channel: config, maxClaimableAmount: "1000" },
+          signature: "0xcafe",
+          totalClaimed: "1000",
+        },
+      ],
+    };
+    const result = await scheme.settle(
+      envelopeSettle(cp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrTransactionReverted);
   });
 
   it("returns AuthorizerAddressMismatch when claim authorizer doesn't match config", async () => {
@@ -2850,7 +2893,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.errorMessage).toBe("replacement underpriced");
   });
 
-  it("returns ErrSettleTransactionFailed when settle receipt is not success", async () => {
+  it("returns ErrTransactionReverted when the settle receipt reverts", async () => {
     const signer = buildSigner({
       waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "reverted" }),
     });
@@ -2865,7 +2908,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       makeRequirements(),
     );
     expect(result.success).toBe(false);
-    expect(result.errorReason).toBe(Errors.ErrSettleTransactionFailed);
+    expect(result.errorReason).toBe(Errors.ErrTransactionReverted);
   });
 });
 
@@ -3047,6 +3090,36 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrRefundTransactionFailed);
     expect(result.errorMessage).toContain("nonce too low");
+  });
+
+  it("returns ErrTransactionReverted when the refund receipt reverts", async () => {
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "reverted" }),
+    });
+    mockedMulticall.mockResolvedValue([
+      { status: "success", result: [10000n, 0n] },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const rp: BatchSettlementEnrichedRefundPayload = {
+      type: "refund",
+      channelConfig: config,
+      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+      amount: "0",
+      refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+      claims: [],
+    };
+
+    const result = await scheme.settle(
+      envelopeSettle(rp as unknown as Record<string, unknown>),
+      makeRequirements(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrTransactionReverted);
   });
 
   it("broadcasts but fails closed when a zero refund emits no Refunded event", async () => {

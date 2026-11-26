@@ -426,6 +426,7 @@ async function reconcilePendingDeposit(
   return withPendingSettlementStore(store, cacheKey, () =>
     waitAndReturnSettleResponse(receiptSigner, cachedTx, requirements.network, payer, {
       failedStatusReason: Errors.ErrDepositTransactionFailed,
+      revertedReason: Errors.ErrTransactionReverted,
       onSuccess: async receipt => {
         const deposited = depositedBalanceFromReceipt(
           receipt,
@@ -614,6 +615,7 @@ export async function settleDeposit(
     return await withPendingSettlementStore(store, cacheKey, () =>
       waitAndReturnSettleResponse(receiptSigner, tx, requirements.network, payer, {
         failedStatusReason: Errors.ErrDepositTransactionFailed,
+        revertedReason: Errors.ErrTransactionReverted,
         onSuccess: async receipt => {
           const deposited = depositedBalanceFromReceipt(
             receipt,

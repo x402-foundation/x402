@@ -625,7 +625,7 @@ A facilitator must enforce:
 12. **Managed watermark** (`extra.voucherManager === "facilitator"`): `maxClaimableAmount` must equal `chargedCumulativeAmount + paymentRequirements.amount`. For refund payloads, `maxClaimableAmount` must equal `chargedCumulativeAmount`. On mismatch, return `invalid_batch_settlement_evm_cumulative_amount_mismatch` with `extra.channelState` and `extra.voucherState`.
 13. **Refund authorizer bind** (facilitator-managed mode): whenever `extra.refundAuthorizer` is present, the address unpacked from `channelConfig.salt` must equal it. Managed `/verify` (including deposit) MUST reject a 402 that omits `extra.refundAuthorizer` when the facilitator does not honor caller-identity refunds (`delegatedRefund` is not `true`), because neither consent path would be available.
 
-The facilitator must return the channel snapshot (`balance`, `totalClaimed`, `withdrawRequestedAt`, `refundNonce`) in every `/verify` response `extra` field. A successful `/settle` response carries the same snapshot under `extra.channelState`. Two success paths omit fields: a deposit reconcile whose follow-up channel read fails omits `totalClaimed`, `withdrawRequestedAt`, and `refundNonce` (it still includes `channelId` and `balance` from `Deposited.newBalance`), and a refund whose balance would be negative omits `balance`. A server keeps its stored value for an omitted field. In facilitator-managed mode those objects MUST also include `chargedCumulativeAmount`. If `withdrawRequestedAt` is non-zero, outstanding vouchers should be claimed promptly before the withdraw delay elapses.
+The facilitator must return the channel snapshot (`balance`, `totalClaimed`, `withdrawRequestedAt`, `refundNonce`) in every `/verify` response `extra` field. A successful `/settle` response carries the same snapshot under `extra.channelState`. Two success paths omit fields: a deposit reconcile whose follow-up channel read fails omits `totalClaimed`, `withdrawRequestedAt`, and `refundNonce` (it still includes `channelId` and `balance` from `Deposited.newBalance`), and a refund whose balance would be negative omits `balance`. A server keeps its stored value for an omitted field, including when the `channelState` object itself is absent. A present field that is not a canonical non-negative integer (`"0"` or a digit string with no leading zeros, or a non-negative safe integer) is `invalid_batch_settlement_evm_refund_payload`. In facilitator-managed mode those objects MUST also include `chargedCumulativeAmount`. If `withdrawRequestedAt` is non-zero, outstanding vouchers should be claimed promptly before the withdraw delay elapses.
 
 ---
 
@@ -763,14 +763,14 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_charge_exceeds_signed_cumulative`          | Committing the charge would exceed the voucher's signed `maxClaimableAmount` |
 | `invalid_batch_settlement_evm_claim_payload`                             | Claim payload is malformed                                                   |
 | `invalid_batch_settlement_evm_claim_simulation_failed`                   | Claim simulation failed                                                      |
-| `invalid_batch_settlement_evm_claim_transaction_failed`                  | Onchain claim transaction failed                                             |
+| `invalid_batch_settlement_evm_claim_transaction_failed`                  | Claim broadcast failed. A reverted receipt uses `transaction_reverted`       |
 | `invalid_batch_settlement_evm_cumulative_amount_mismatch`               | Corrective 402: client's cumulative voucher ceiling does not match the server's tracked `chargedCumulativeAmount` |
 | `invalid_batch_settlement_evm_cumulative_below_claimed`                  | Voucher `maxClaimableAmount` violates monotonicity vs onchain `totalClaimed` (voucher and deposit verify: must be at least `totalClaimed + requirements.amount` and strictly greater than `totalClaimed`; refund: must not be strictly below `totalClaimed`) |
 | `invalid_batch_settlement_evm_cumulative_exceeds_balance`                | Voucher `maxClaimableAmount` exceeds effective onchain balance               |
 | `invalid_batch_settlement_evm_deposit_below_min_deposit`                 | Server rejected a deposit below its local `extra.minDeposit` policy          |
 | `invalid_batch_settlement_evm_deposit_payload`                           | Deposit payload is malformed                                                 |
 | `invalid_batch_settlement_evm_deposit_simulation_failed`                 | Deposit simulation failed                                                    |
-| `invalid_batch_settlement_evm_deposit_transaction_failed`                | Onchain deposit transaction failed                                           |
+| `invalid_batch_settlement_evm_deposit_transaction_failed`                | Deposit broadcast failed, or the receipt has no matching `Deposited` event. A reverted receipt uses `transaction_reverted` |
 | `invalid_batch_settlement_evm_eip2612_amount_mismatch`                   | EIP-2612 permit amount does not match the requested authorization          |
 | `invalid_batch_settlement_evm_eip2612_asset_mismatch`                    | EIP-2612 permit asset does not match the payment asset                       |
 | `invalid_batch_settlement_evm_eip2612_deadline_expired`                  | EIP-2612 permit deadline has expired                                         |
@@ -807,17 +807,17 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_refund_authorizer_mismatch`                | Address unpacked from `channelConfig.salt` does not match `extra.refundAuthorizer` |
 | `invalid_batch_settlement_evm_refund_authorizer_signature`               | `refundAuthorizerSignature` is missing or does not recover to `extra.refundAuthorizer` |
 | `invalid_batch_settlement_evm_refund_no_balance`                         | Cooperative refund requested but no refundable balance remains |
-| `invalid_batch_settlement_evm_refund_payload`                            | Refund payload is malformed                                                  |
+| `invalid_batch_settlement_evm_refund_payload`                            | Refund payload is malformed, or a present settle `channelState` uint is not canonical |
 | `invalid_batch_settlement_evm_refund_simulation_failed`                  | Refund simulation failed                                                     |
-| `invalid_batch_settlement_evm_refund_transaction_failed`                 | Onchain refund transaction failed                                            |
+| `invalid_batch_settlement_evm_refund_transaction_failed`                 | Refund broadcast failed. A reverted receipt uses `transaction_reverted`      |
 | `invalid_batch_settlement_evm_rpc_read_failed`                           | Facilitator failed to read required onchain data                             |
 | `invalid_batch_settlement_evm_scheme`                                    | `scheme` is not `batch-settlement`                                           |
 | `invalid_batch_settlement_evm_settle_payload`                            | Settle payload is malformed                                                  |
 | `invalid_batch_settlement_evm_nothing_to_settle`                         | Receiver/token pair has no claimed-but-unsettled funds |
 | `invalid_batch_settlement_evm_settle_simulation_failed`                  | Settle simulation failed                                                     |
-| `invalid_batch_settlement_evm_settle_transaction_failed`                 | Onchain settle transaction failed                                            |
+| `invalid_batch_settlement_evm_settle_transaction_failed`                 | Settle broadcast failed. A reverted receipt uses `transaction_reverted`      |
 | `invalid_batch_settlement_evm_token_mismatch`                            | Channel token does not match the payment requirements asset                  |
-| `invalid_batch_settlement_evm_transaction_reverted`                      | Submitted transaction reverted                                               |
+| `invalid_batch_settlement_evm_transaction_reverted`                      | Submitted deposit, refund, claim, or settle transaction reverted             |
 | `invalid_batch_settlement_evm_unexpected_cancel`                         | Client supplied server-authored `cancel`                                     |
 | `invalid_batch_settlement_evm_unexpected_pending_id`                     | Client supplied server-authored `pendingId`                                  |
 | `invalid_batch_settlement_evm_unknown_settle_action`                     | Settle payload requested an unknown action                                   |

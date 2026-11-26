@@ -15,12 +15,7 @@ import type { AuthorizerSigner } from "../types";
 import type { BatchSettlementEvmScheme } from "./scheme";
 import type { Channel } from "./storage";
 import { rethrowLockImplementationError } from "./storage";
-import {
-  parseRefundSettlementSnapshot,
-  readChannelStateExtra,
-  readExtraString,
-  readExtraUintString,
-} from "./utils";
+import { parseRefundSettlementSnapshot } from "./utils";
 
 type AdmissionHold = "self" | "other" | "none";
 
@@ -380,13 +375,16 @@ export async function handleAfterSettle(
     const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
     const now = Date.now();
 
-    const snapshot = parseRefundSettlementSnapshot(result.extra);
     const recovered = scheme.readRequestContext(paymentPayload)?.channelSnapshot;
     const hold = await inspectAdmission(scheme, channelId, pendingId);
     if (hold === "other") {
       throw new Error(Errors.ErrChannelBusy);
     }
     try {
+      const snapshot = parseRefundSettlementSnapshot(result.extra);
+      if (!snapshot) {
+        return;
+      }
       const updateResult = await storage.updateChannel(channelId, current => {
         const existing = current ?? (hold === "self" ? recovered : undefined);
         if (!existing) {
@@ -440,7 +438,6 @@ export async function handleAfterSettle(
     const channelId = raw.voucher.channelId;
     const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
     const ex = result.extra ?? {};
-    const channelState = readChannelStateExtra(ex);
     const config = raw.channelConfig;
     const signedMaxClaimable = raw.voucher.maxClaimableAmount;
     const now = Date.now();
@@ -464,6 +461,7 @@ export async function handleAfterSettle(
     let abortReason: string | undefined;
     let abortMessage: string | undefined;
     try {
+      const snapshot = parseRefundSettlementSnapshot(ex);
       const updateResult = await storage.updateChannel(channelId, current => {
         const existing = current ?? (hold === "self" ? recovered : undefined);
         if (!existing) {
@@ -473,6 +471,10 @@ export async function handleAfterSettle(
         const chargedActual = (
           BigInt(existing.chargedCumulativeAmount) + BigInt(requirements.amount)
         ).toString();
+        const withdrawRequestedAt =
+          snapshot?.withdrawRequestedAt === undefined
+            ? undefined
+            : String(snapshot.withdrawRequestedAt);
         return {
           channelId,
           channelConfig: config,
@@ -480,18 +482,15 @@ export async function handleAfterSettle(
           chargedCumulativeAmount: chargedActual,
           signedMaxClaimable,
           signature: raw.voucher.signature,
-          balance: readExtraString(channelState, "balance", existing.balance),
-          totalClaimed: maxTotalClaimed(
-            existing.totalClaimed,
-            readExtraUintString(channelState, "totalClaimed"),
-          ),
+          balance: snapshot?.balance ?? existing.balance,
+          totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot?.totalClaimed),
           withdrawRequestedAt: laterWithdrawRequestedAt(
             existing.withdrawRequestedAt,
-            readExtraUintString(channelState, "withdrawRequestedAt"),
+            withdrawRequestedAt,
           ),
           refundNonce: maxRefundNonce(
             existing.refundNonce,
-            readExtraUintString(channelState, "refundNonce"),
+            snapshot?.refundNonce === undefined ? undefined : String(snapshot.refundNonce),
           ),
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
@@ -516,8 +515,12 @@ export async function handleAfterSettle(
         }
       }
     } catch (err) {
-      abortReason = Errors.ErrVoucherStoreUnavailable;
-      abortMessage = err instanceof Error ? err.message : String(err);
+      if (err instanceof Error && err.message === Errors.ErrRefundPayload) {
+        abortReason = Errors.ErrRefundPayload;
+      } else {
+        abortReason = Errors.ErrVoucherStoreUnavailable;
+        abortMessage = err instanceof Error ? err.message : String(err);
+      }
     } finally {
       if (hold === "self") {
         try {
