@@ -781,10 +781,14 @@ func confirmedDepositBalance(ctx context.Context, sc depositSettleContext) (*big
 		return nil, x402.NewSettleError(ErrReceiptLogsUnavailable, sc.config.Payer, sc.network, sc.txHash,
 			receiptLogsUnavailableMessage)
 	}
+	var balance *big.Int
 	for _, log := range depositedLogs(receipt, sc.channelId) {
 		if log.amount != nil && log.newBalance != nil && log.amount.Cmp(sc.amount) == 0 {
-			return log.newBalance, nil
+			balance = log.newBalance
 		}
+	}
+	if balance != nil {
+		return balance, nil
 	}
 	return nil, x402.NewSettleError(ErrDepositTransactionFailed, sc.config.Payer, sc.network, sc.txHash,
 		"receipt has no Deposited event for the channel and deposit amount")

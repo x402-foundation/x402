@@ -1115,7 +1115,12 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			if cs != nil {
 				applySettleChannelState(&next, cs, false)
 			}
-			next.OnchainSyncedAt = now
+			// totalClaimed and withdrawRequestedAt come from the pre-deposit read. An omitted
+			// field is not a fresh snapshot, so the next voucher re-reads the chain.
+			next.OnchainSyncedAt = 0
+			if cs != nil && cs.claimedSet && cs.withdrawSet {
+				next.OnchainSyncedAt = now
+			}
 			next.LastRequestTimestamp = now
 			return &next
 		})
@@ -1189,7 +1194,12 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			// A refund applies a present withdrawRequestedAt, including 0. Deposit only raises it.
 			applySettleChannelState(&next, snapshot, true)
-			next.OnchainSyncedAt = now
+			// An omitted balance leaves the pre-refund balance. Drop the sync stamp so the
+			// next voucher re-reads instead of trusting that balance for the cache TTL.
+			next.OnchainSyncedAt = 0
+			if snapshot.balanceSet {
+				next.OnchainSyncedAt = now
+			}
 			next.LastRequestTimestamp = now
 			return &next
 		})
@@ -1354,25 +1364,6 @@ func applySettleChannelState(next *ChannelSession, cs *settleChannelNumbers, app
 	}
 	if cs.nonceSet && cs.refundNonce.Cmp(big.NewInt(int64(next.RefundNonce))) > 0 {
 		next.RefundNonce = int(cs.refundNonce.Int64())
-	}
-}
-
-func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettlementChannelStateExtra) {
-	if cs.Balance != "" {
-		next.Balance = cs.Balance
-	}
-	// A response can carry an earlier read, so these fields only move forward.
-	if cs.TotalClaimed != "" && bigOrZero(cs.TotalClaimed).Cmp(bigOrZero(next.TotalClaimed)) > 0 {
-		next.TotalClaimed = cs.TotalClaimed
-	}
-	if cs.WithdrawRequestedAt > next.WithdrawRequestedAt {
-		next.WithdrawRequestedAt = cs.WithdrawRequestedAt
-	}
-	if cs.RefundNonce != "" {
-		reported := bigOrZero(cs.RefundNonce)
-		if reported.Cmp(big.NewInt(int64(next.RefundNonce))) > 0 {
-			next.RefundNonce = int(reported.Int64())
-		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -2073,20 +2074,22 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 }
 
-func TestApplyChannelStateExtra_StaleDepositKeepsRefundNonce(t *testing.T) {
+func TestApplySettleChannelState_StaleDepositKeepsRefundNonce(t *testing.T) {
 	next := ChannelSession{Balance: "1000", RefundNonce: 1}
-	applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{
-		Balance: "4000", RefundNonce: "4",
-	})
-	applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{
-		Balance: "5000", RefundNonce: "2",
-	})
+	applySettleChannelState(&next, &settleChannelNumbers{
+		balance: big.NewInt(4000), balanceSet: true,
+		refundNonce: big.NewInt(4), nonceSet: true,
+	}, false)
+	applySettleChannelState(&next, &settleChannelNumbers{
+		balance: big.NewInt(5000), balanceSet: true,
+		refundNonce: big.NewInt(2), nonceSet: true,
+	}, false)
 	if next.RefundNonce != 4 || next.Balance != "5000" {
 		t.Fatalf("session = %+v, want refundNonce 4 and balance 5000", next)
 	}
 }
 
-func TestApplyChannelStateExtra_TotalClaimedOnlyMovesForward(t *testing.T) {
+func TestApplySettleChannelState_TotalClaimedOnlyMovesForward(t *testing.T) {
 	cases := []struct {
 		name     string
 		stored   string
@@ -2101,9 +2104,137 @@ func TestApplyChannelStateExtra_TotalClaimedOnlyMovesForward(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			next := ChannelSession{TotalClaimed: tc.stored, Balance: "1000"}
-			applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{Balance: "900", TotalClaimed: tc.reported})
+			cs := &settleChannelNumbers{balance: big.NewInt(900), balanceSet: true}
+			if tc.reported != "" {
+				reported, ok := new(big.Int).SetString(tc.reported, 10)
+				if !ok {
+					t.Fatalf("reported %q", tc.reported)
+				}
+				cs.totalClaimed = reported
+				cs.claimedSet = true
+			}
+			applySettleChannelState(&next, cs, false)
 			if next.TotalClaimed != tc.want || next.Balance != "900" {
 				t.Fatalf("session = %+v, want totalClaimed %s and balance 900", next, tc.want)
+			}
+		})
+	}
+}
+
+func TestAfterSettleHook_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.RefundNonce = 1
+	sess.OnchainSyncedAt = time.Now().UnixMilli()
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-refund")
+	rp := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "1",
+		"claims":      []interface{}{},
+	}
+	stub := &stubPayload{data: rp}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-refund",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"totalClaimed": "100",
+					"refundNonce":  "2",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.Balance != "1000" || got.RefundNonce != 2 || got.OnchainSyncedAt != 0 {
+		t.Fatalf("session = %+v, want balance 1000, refundNonce 2, onchainSyncedAt 0", got)
+	}
+}
+
+func TestAfterSettleHook_DepositOmittedFieldsClearOnchainSyncedAt(t *testing.T) {
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	cases := []struct {
+		name         string
+		state        map[string]interface{}
+		wantSynced   bool
+		wantBalance  string
+		wantClaimed  string
+		wantWithdraw int
+	}{
+		{
+			name: "omitted totalClaimed",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "withdrawRequestedAt": 80, "refundNonce": "1",
+			},
+			wantBalance: "10000", wantClaimed: "100", wantWithdraw: 80,
+		},
+		{
+			name: "omitted withdrawRequestedAt",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "totalClaimed": "200", "refundNonce": "1",
+			},
+			wantBalance: "10000", wantClaimed: "200", wantWithdraw: 77,
+		},
+		{
+			name: "totalClaimed and withdrawRequestedAt present",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "totalClaimed": "200", "withdrawRequestedAt": 80, "refundNonce": "1",
+			},
+			wantSynced: true, wantBalance: "10000", wantClaimed: "200", wantWithdraw: 80,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			sess := sampleSession(id, "0")
+			sess.Balance = "900"
+			sess.TotalClaimed = "100"
+			sess.WithdrawRequestedAt = 77
+			sess.OnchainSyncedAt = 50
+			seedSession(t, s, id, sess)
+			before := time.Now().UnixMilli()
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{
+					Payload:      &stubPayload{data: depositPayloadFor(id, "100", "0xsig")},
+					Requirements: batchedReqs(),
+				},
+				Result: &x402.SettleResponse{Success: true, Extra: map[string]interface{}{"channelState": tc.state}},
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != tc.wantBalance || got.TotalClaimed != tc.wantClaimed || got.WithdrawRequestedAt != tc.wantWithdraw {
+				t.Fatalf("session = %+v", got)
+			}
+			if tc.wantSynced {
+				if got.OnchainSyncedAt < before {
+					t.Fatalf("onchainSyncedAt = %d, want a fresh stamp", got.OnchainSyncedAt)
+				}
+				return
+			}
+			if got.OnchainSyncedAt != 0 {
+				t.Fatalf("onchainSyncedAt = %d, want 0", got.OnchainSyncedAt)
 			}
 		})
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -27,12 +26,8 @@ type BatchSettlementEvmSchemeConfig struct {
 	// VoucherStore enables facilitator-managed custody. Nil keeps self-managed mode.
 	// Every field on VoucherStoreConfig is read only when this is set.
 	VoucherStore *VoucherStoreConfig
-	// DelegatedRefund opts in to signing an unsigned self-managed refund with AuthorizerSigner.
-	// /supported then advertises extra.delegatedRefund: true. The scheme does not authenticate
-	// the caller; the host must. Requires AuthorizerSigner.
-	DelegatedRefund bool
 	// ResolveCallerIdentity resolves a stable caller identity for a delegated settle.
-	// When set, /supported also advertises extra.delegatedRefund: true. Self-managed: an unsigned
+	// When set, /supported advertises extra.delegatedRefund: true. Self-managed: an unsigned
 	// cooperative refund is accepted only from the caller that created the channel.
 	// Facilitator-managed: also authorizes refunds on channels whose 402 omits
 	// extra.refundAuthorizer.
@@ -67,7 +62,6 @@ type BatchSettlementEvmScheme struct {
 	voucherStore          *voucherStoreRuntime
 	resolveCallerIdentity ResolveCallerIdentity
 	delegatedAuthStore    storage.DelegatedAuthStore
-	delegatedRefund       bool
 	onStorageError        func(err error, network, channelId string)
 	logger                *slog.Logger
 }
@@ -114,13 +108,9 @@ func NewBatchSettlementEvmSchemeWithConfig(
 		if config.PendingSettlementStore != nil {
 			s.pendingStore = config.PendingSettlementStore
 		}
-		if config.DelegatedRefund && authorizerSigner == nil {
-			return nil, fmt.Errorf("delegatedRefund requires authorizerSigner")
-		}
 		if config.ResolveCallerIdentity != nil && config.DelegatedAuthStore == nil {
 			return nil, fmt.Errorf("resolveCallerIdentity requires delegatedAuthStore")
 		}
-		s.delegatedRefund = config.DelegatedRefund
 		s.resolveCallerIdentity = config.ResolveCallerIdentity
 		s.delegatedAuthStore = config.DelegatedAuthStore
 		s.logger = config.Logger
@@ -200,9 +190,8 @@ func (f *BatchSettlementEvmScheme) GetExtra(_ x402.Network) map[string]interface
 	}
 	extra := map[string]interface{}{
 		"receiverAuthorizer": f.authorizerSigner.Address(),
-		// false unless the host opted in or caller identity is configured. A self-managed
-		// server that delegates receiverAuthorizer fails initialize() on an explicit false.
-		"delegatedRefund": f.delegatedRefund || f.resolveCallerIdentity != nil,
+		// A self-managed server that delegates receiverAuthorizer fails initialize() on an explicit false.
+		"delegatedRefund": f.resolveCallerIdentity != nil,
 	}
 	if f.voucherStore != nil {
 		extra["withdrawDelay"] = f.voucherStore.withdrawDelay
@@ -513,30 +502,12 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 	if raw.RefundAuthorizerSignature != "" {
 		return ""
 	}
-	if f.delegatedRefund {
-		return f.delegatedRefundConsent(raw, requirements)
-	}
 	if f.resolveCallerIdentity == nil {
 		return ErrRefundAuthorizerSignature
 	}
 	deps := RefundConsentDeps{ResolveCallerIdentity: f.resolveCallerIdentity, DelegatedAuthStore: f.delegatedAuthStore}
 	if identErr := checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx); identErr != "" {
 		return identErr
-	}
-	return channelConfigReason(raw, requirements)
-}
-
-// delegatedRefundConsent allows an unsigned refund to be signed by authorizerSigner.
-// The signer must be the channel's receiverAuthorizer, and the channel config must match requirements.
-func (f *BatchSettlementEvmScheme) delegatedRefundConsent(
-	raw *batchsettlement.BatchSettlementEnrichedRefundPayload,
-	requirements types.PaymentRequirements,
-) string {
-	if f.authorizerSigner == nil {
-		return ErrAuthorizerNotConfigured
-	}
-	if !strings.EqualFold(raw.ChannelConfig.ReceiverAuthorizer, f.authorizerSigner.Address()) {
-		return ErrAuthorizerAddressMismatch
 	}
 	return channelConfigReason(raw, requirements)
 }

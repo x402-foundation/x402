@@ -96,7 +96,8 @@ func executeRefundWithSignature(
 			fmt.Sprintf("invalid nonce: %s", payload.RefundNonce))
 	}
 
-	// Resolve refund authorizer signature — auto-sign if absent
+	// A provided signature is checked before any read. An unsigned refund is signed only after
+	// the channel read shows there is something to refund.
 	var refundSig []byte
 	if payload.RefundAuthorizerSignature != "" {
 		var err error
@@ -110,21 +111,10 @@ func executeRefundWithSignature(
 			return nil, x402.NewSettleError(ErrAuthorizerNotConfigured, "", network, "",
 				"no refund authorizer signature in payload and no authorizer signer configured")
 		}
-		// Verify authorizer address matches config's receiverAuthorizer
 		if !strings.EqualFold(payload.ChannelConfig.ReceiverAuthorizer, authorizerSigner.Address()) {
 			return nil, x402.NewSettleError(ErrAuthorizerAddressMismatch, "", network, "",
 				fmt.Sprintf("config receiverAuthorizer %s does not match authorizerSigner %s",
 					payload.ChannelConfig.ReceiverAuthorizer, authorizerSigner.Address()))
-		}
-		channelId, err := batchsettlement.ComputeChannelId(payload.ChannelConfig, string(network))
-		if err != nil {
-			return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", network, "",
-				fmt.Sprintf("failed to compute channel id: %s", err))
-		}
-		refundSig, err = authorizerSigner.SignRefund(ctx, channelId, payload.Amount, payload.RefundNonce, string(network))
-		if err != nil {
-			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
-				fmt.Sprintf("failed to sign refund: %s", err))
 		}
 	}
 
@@ -152,6 +142,13 @@ func executeRefundWithSignature(
 			Transaction:  "",
 			Network:      network,
 		}, nil
+	}
+	if payload.RefundAuthorizerSignature == "" {
+		refundSig, err = authorizerSigner.SignRefund(ctx, channelId, payload.Amount, payload.RefundNonce, string(network))
+		if err != nil {
+			return nil, x402.NewSettleError(ErrRefundTransactionFailed, "", network, "",
+				fmt.Sprintf("failed to sign refund: %s", err))
+		}
 	}
 
 	// Handle claims + refund atomically if claims are present

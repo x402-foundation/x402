@@ -263,36 +263,38 @@ func TestRefund_PreReadFailureRejectsBeforeBroadcast(t *testing.T) {
 		Amount:        "100",
 		RefundNonce:   "0",
 	}
-	cases := []struct {
-		name   string
-		refund func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error)
-	}{
-		{"refundWithSignature", func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error) {
-			return ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
-		}},
-		{"refund", func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error) {
-			return ExecuteRefund(context.Background(), signer, payload, testNetwork, nil)
-		}},
+	signerFor := func() *fakeFacilitatorSigner {
+		return &fakeFacilitatorSigner{
+			addresses: []string{"0xfacilitator"},
+			readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+				if functionName == evm.FunctionTryAggregate {
+					return nil, errors.New("rpc down")
+				}
+				return nil, nil
+			},
+			writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("ab", 32), nil },
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			signer := &fakeFacilitatorSigner{
-				addresses: []string{"0xfacilitator"},
-				readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
-					if functionName == evm.FunctionTryAggregate {
-						return nil, errors.New("rpc down")
-					}
-					return nil, nil
-				},
-				writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("ab", 32), nil },
-			}
-			_, err := tc.refund(signer)
-			requireSettleErrorReason(t, err, ErrRpcReadFailed)
-			if signer.writeCalls != 0 {
-				t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
-			}
-		})
-	}
+	t.Run("refundWithSignature", func(t *testing.T) {
+		signer := signerFor()
+		auth := &countingAuthorizer{fakeAuthorizerSigner: fakeAuthorizerSigner{addr: "0xauthorizer"}}
+		_, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), auth, nil)
+		requireSettleErrorReason(t, err, ErrRpcReadFailed)
+		if signer.writeCalls != 0 {
+			t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
+		}
+		if auth.refunds != 0 {
+			t.Fatalf("refund signatures = %d, want 0", auth.refunds)
+		}
+	})
+	t.Run("refund", func(t *testing.T) {
+		signer := signerFor()
+		_, err := ExecuteRefund(context.Background(), signer, payload, testNetwork, nil)
+		requireSettleErrorReason(t, err, ErrRpcReadFailed)
+		if signer.writeCalls != 0 {
+			t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
+		}
+	})
 }
 
 func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
@@ -314,7 +316,8 @@ func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
 		RefundNonce:   "0",
 	}
 
-	resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
+	auth := &countingAuthorizer{fakeAuthorizerSigner: fakeAuthorizerSigner{addr: "0xauthorizer"}}
+	resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), auth, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -323,6 +326,9 @@ func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
 	}
 	if signer.writeCalls != 0 {
 		t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
+	}
+	if auth.refunds != 0 {
+		t.Fatalf("refund signatures = %d, want 0", auth.refunds)
 	}
 }
 
@@ -809,6 +815,54 @@ func TestSettleDeposit_ChannelStateFromDepositedEvent(t *testing.T) {
 	}
 	if syncedAt == 0 {
 		t.Fatal("syncedAt = 0, want the time the event-derived state was built")
+	}
+}
+
+func TestSettleDeposit_UsesLastMatchingDepositedEvent(t *testing.T) {
+	payload, reqs := signedErc3009Deposit(t, testNetwork, "100", "150")
+	amount, ok := new(big.Int).SetString(payload.Deposit.Amount, 10)
+	if !ok {
+		t.Fatalf("deposit amount %q", payload.Deposit.Amount)
+	}
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		getBalance: func(string, string) (*big.Int, error) {
+			return big.NewInt(1000), nil
+		},
+		writeContract: func(string, ...interface{}) (string, error) {
+			return "0x" + strings.Repeat("ab", 32), nil
+		},
+		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{
+				Status: evm.TxStatusSuccess,
+				TxHash: txHash,
+				Logs: []*goethtypes.Log{
+					depositedReceiptLog(t, payload.Voucher.ChannelId, amount, big.NewInt(100)),
+					depositedReceiptLog(t, payload.Voucher.ChannelId, amount, big.NewInt(250)),
+				},
+			}, nil
+		},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "deposit" {
+				return nil, nil
+			}
+			if functionName != evm.FunctionTryAggregate {
+				return nil, errors.New("unexpected rpc")
+			}
+			return multicallChannelStateResult(t, big.NewInt(50), big.NewInt(30), 0, big.NewInt(2)), nil
+		},
+	}
+
+	resp, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("SettleDeposit: %v", err)
+	}
+	cs, ok := resp.Extra["channelState"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing channelState in extra: %+v", resp.Extra)
+	}
+	if cs["balance"] != "250" {
+		t.Fatalf("balance = %v, want 250 from the last matching Deposited event", cs["balance"])
 	}
 }
 
