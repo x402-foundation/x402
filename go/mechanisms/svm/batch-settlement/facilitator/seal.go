@@ -49,7 +49,9 @@ type PreparedRefund struct {
 
 // SealDependencies are the scheme internals the seal path borrows.
 type SealDependencies struct {
-	PendingStore             x402.PendingSettlementStore
+	PendingStore x402.PendingSettlementStore
+	// PayoutStore holds payout records; required with OnDistributionConfirmed set.
+	PayoutStore              x402.PendingSettlementStore
 	ResolveTerms             func(context.Context, batchsettlement.BatchChannelConfig, types.PaymentRequirements, VoucherModeBinding) (BatchTerms, error)
 	ReadBinding              func(context.Context, string, string) (ChannelBinding, error)
 	IsDelegatedAuthorizer    func(string) bool
@@ -143,14 +145,14 @@ func settleSeal(
 	}
 	key := fmt.Sprintf("batch:%s:%s:%s:%d", intent, network, channelID, cumulative)
 	if deps.OnDistributionConfirmed != nil {
-		if previous, ok, err := deps.PendingStore.Get(ctx, resultKey(key)); err != nil {
+		if previous, ok, err := deps.PayoutStore.Get(ctx, resultKey(key)); err != nil {
 			return nil, err
 		} else if ok {
 			var stored x402.SettleResponse
 			if err := json.Unmarshal([]byte(previous), &stored); err != nil {
 				return nil, err
 			}
-			return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
+			return completeSealDistribution(ctx, deps.PayoutStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
 		}
 	}
 	required := generated.ChannelStatus_Closing
@@ -383,7 +385,7 @@ func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromP
 	}
 	if deps.OnDistributionConfirmed != nil {
 		// The payout record outlives the pending one, so only the hook is left to run.
-		if err := storePayoutResult(ctx, deps.PendingStore, r.key, sealed); err != nil {
+		if err := storePayoutResult(ctx, deps.PayoutStore, r.key, sealed); err != nil {
 			return unfinished(err)
 		}
 		if pending := forgetPending(); pending != nil {
@@ -392,7 +394,7 @@ func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromP
 		if err := visible(); err != nil {
 			return SettlementPending(network, payer, signature, err.Error())
 		}
-		return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, r.key, sealed, r.requirements, r.intent)
+		return completeSealDistribution(ctx, deps.PayoutStore, deps.OnDistributionConfirmed, r.key, sealed, r.requirements, r.intent)
 	}
 	if err := visible(); err != nil {
 		return unfinished(err)

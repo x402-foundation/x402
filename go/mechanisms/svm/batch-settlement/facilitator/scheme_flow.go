@@ -802,7 +802,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	feePayer := prepared[0].FeePayer
 	var previous *x402.SettleResponse
 	if f.config.OnDistributionConfirmed != nil {
-		raw, ok, err := f.pendingStore.Get(ctx, resultKey(key))
+		raw, ok, err := f.payoutStore.Get(ctx, resultKey(key))
 		if err != nil {
 			return nil, err
 		}
@@ -964,7 +964,7 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 			response.Extra[batchsettlement.ExtraChannelStates] = states
 		}
 		if f.config.OnDistributionConfirmed != nil {
-			if err := storePayoutResult(ctx, f.pendingStore, key, response); err != nil {
+			if err := storePayoutResult(ctx, f.payoutStore, key, response); err != nil {
 				return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
 			}
 			if pending := f.completePayout(ctx, key, response, requirements); pending != nil {
@@ -981,7 +981,7 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 func (f *BatchSvmScheme) completePayout(ctx context.Context, key string, response *x402.SettleResponse, requirements types.PaymentRequirements) *x402.SettleResponse {
 	err := f.config.OnDistributionConfirmed(ctx, response, requirements)
 	if err == nil {
-		err = f.pendingStore.Delete(ctx, resultKey(key))
+		err = f.payoutStore.Delete(ctx, resultKey(key))
 	}
 	if err != nil {
 		return SettlementPending(response.Network, response.Payer, response.Transaction, err.Error())
