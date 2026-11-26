@@ -679,6 +679,82 @@ func TestScheme_DirectModeRelaysPresignedClaim(t *testing.T) {
 	}
 }
 
+type countingAuthorizer struct {
+	fakeAuthorizerSigner
+	refunds int
+}
+
+func (a *countingAuthorizer) SignRefund(ctx context.Context, channelId, amount, nonce, network string) ([]byte, error) {
+	a.refunds++
+	return a.fakeAuthorizerSigner.SignRefund(ctx, channelId, amount, nonce, network)
+}
+
+func TestScheme_DelegatedRefundSignsUnsignedRefund(t *testing.T) {
+	auth := &countingAuthorizer{fakeAuthorizerSigner: fakeAuthorizerSigner{addr: managedAuthorizer().Address()}}
+	cfg := managedConfig(auth.Address(), "00")
+	channelId := mustChannelId(t, cfg)
+	signer := &fakeFacilitatorSigner{
+		addresses:    []string{"0xfacilitator"},
+		readContract: func(string, ...interface{}) (interface{}, error) { return nil, errors.New("rpc down") },
+	}
+	scheme, err := NewBatchSettlementEvmSchemeWithConfig(signer, auth, &BatchSettlementEvmSchemeConfig{DelegatedRefund: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extra := scheme.GetExtra(x402.Network(managedNetwork)); extra["delegatedRefund"] != true || extra["receiverAuthorizer"] != auth.Address() {
+		t.Fatalf("extra = %+v", extra)
+	}
+	payload := managedEnvelope((&batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Voucher:       voucherFields(channelId, "0", dummySig),
+		Amount:        "1000",
+		RefundNonce:   "0",
+	}).ToMap())
+	reqs := types.PaymentRequirements{
+		Scheme:  batchsettlement.SchemeBatched,
+		Network: managedNetwork,
+		Amount:  "1000",
+		Asset:   managedToken,
+		PayTo:   managedReceiver,
+		Extra:   map[string]interface{}{"receiverAuthorizer": auth.Address(), "withdrawDelay": 900},
+	}
+
+	_, err = scheme.Settle(context.Background(), payload, reqs, nil)
+	var se *x402.SettleError
+	if !errors.As(err, &se) || se.ErrorReason != ErrRpcReadFailed || auth.refunds != 1 {
+		t.Fatalf("err=%v refunds=%d", err, auth.refunds)
+	}
+
+	mismatch := cfg
+	mismatch.ReceiverAuthorizer = "0x1111111111111111111111111111111111111111"
+	mismatchPayload := managedEnvelope((&batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: mismatch,
+		Voucher:       voucherFields(mustChannelId(t, mismatch), "0", dummySig),
+		Amount:        "1000",
+		RefundNonce:   "0",
+	}).ToMap())
+	resp, err := scheme.Settle(context.Background(), mismatchPayload, reqs, nil)
+	if err != nil || resp.Success || resp.ErrorReason != ErrAuthorizerAddressMismatch || auth.refunds != 1 {
+		t.Fatalf("mismatch resp=%+v err=%v refunds=%d", resp, err, auth.refunds)
+	}
+
+	wrongPayee := reqs
+	wrongPayee.PayTo = managedPayer
+	resp, err = scheme.Settle(context.Background(), payload, wrongPayee, nil)
+	if err != nil || resp.Success || resp.ErrorReason != ErrReceiverMismatch || auth.refunds != 1 {
+		t.Fatalf("payTo resp=%+v err=%v refunds=%d", resp, err, auth.refunds)
+	}
+}
+
+func TestScheme_DelegatedRefundRequiresAuthorizerSigner(t *testing.T) {
+	_, err := NewBatchSettlementEvmSchemeWithConfig(&fakeFacilitatorSigner{addresses: []string{"0xfacilitator"}}, nil, &BatchSettlementEvmSchemeConfig{DelegatedRefund: true})
+	if err == nil || !strings.Contains(err.Error(), "delegatedRefund requires authorizerSigner") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestScheme_GetExtraDelegatedRefundTracksCallerIdentity(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -1789,6 +1789,100 @@ func TestAfterSettleHook_DepositEventBalanceKeepsStoredFields(t *testing.T) {
 	}
 }
 
+func TestAfterSettleHook_RefundClearsWithdrawRequestedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-refund")
+	stub := &stubPayload{data: map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "4",
+		"claims":      []interface{}{},
+	}}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-refund",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":           id,
+					"balance":             "900",
+					"totalClaimed":        "100",
+					"withdrawRequestedAt": 0,
+					"refundNonce":         "5",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.WithdrawRequestedAt != 0 || got.Balance != "900" || got.RefundNonce != 5 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestAfterSettleHook_DepositKeepsWithdrawRequestedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-deposit")
+	stub := &stubPayload{data: depositPayloadFor(id, "100", "0xsig")}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-deposit",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":           id,
+					"balance":             "2500",
+					"withdrawRequestedAt": 0,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.WithdrawRequestedAt != 77 || got.Balance != "2500" || got.RefundNonce != 4 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
 func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")

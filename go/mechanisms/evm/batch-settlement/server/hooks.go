@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1152,6 +1153,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		if snapshot == nil {
 			return nil
 		}
+		withdrawAt, withdrawSet := presentWithdrawRequestedAt(ctx.Result.Extra)
 		now := time.Now().UnixMilli()
 		hold, holdErr := inspectAdmission(ctx.Ctx, s, normalizedId, pendingId)
 		if holdErr != nil {
@@ -1185,6 +1187,10 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			next := *existing
 			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			applyChannelStateExtra(&next, snapshot)
+			// A refund that covers the pending withdrawal reports 0. Deposit stays only-raise.
+			if withdrawSet {
+				next.WithdrawRequestedAt = withdrawAt
+			}
 			next.OnchainSyncedAt = now
 			next.LastRequestTimestamp = now
 			return &next
@@ -1242,6 +1248,43 @@ func handleEnrichSettlementResponse(s *BatchSettlementEvmScheme, ctx x402.Settle
 		out["chargedAmount"] = ctx.Requirements.GetAmount()
 	}
 	return out, nil
+}
+
+// presentWithdrawRequestedAt reports a non-negative withdrawRequestedAt when the settle extra includes the key.
+func presentWithdrawRequestedAt(extra map[string]interface{}) (int, bool) {
+	if extra == nil {
+		return 0, false
+	}
+	raw, ok := extra["channelState"].(map[string]interface{})
+	if !ok || raw == nil {
+		return 0, false
+	}
+	switch v := raw["withdrawRequestedAt"].(type) {
+	case int:
+		return nonNegativeWithdrawAt(v)
+	case int64:
+		return nonNegativeWithdrawAt(int(v))
+	case float64:
+		if v != float64(int(v)) {
+			return 0, false
+		}
+		return nonNegativeWithdrawAt(int(v))
+	case string:
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, false
+		}
+		return nonNegativeWithdrawAt(n)
+	default:
+		return 0, false
+	}
+}
+
+func nonNegativeWithdrawAt(n int) (int, bool) {
+	if n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettlementChannelStateExtra) {
