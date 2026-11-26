@@ -15,6 +15,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+const payoutUnknown = "distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"
+
 func channelStateEntry(id, status string, deposit, settled, payout uint64) map[string]any {
 	return map[string]any{
 		"channelId":           id,
@@ -72,12 +74,34 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
 		assert.Equal(t, server.RedemptionResult{Claimed: []string{"chan-a"}, Distributed: []string{}, Sealed: []string{}}, result)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3000), stored.Settled)
 		assert.Zero(t, stored.PayoutWatermark, "the payout stays payable until the facilitator or a reader reports it")
+	})
+
+	t.Run("reports a successful distribute with unusable channel states and no reader", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		state := newChannel("chan-a")
+		state.Settled = 3000
+		state.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(state))
+		var settles []server.SettleResult
+		options := managerOptions(store, receiverAuthorizer, func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
+			return withChannelStates(okResponse(), channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 3000)), nil
+		})
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
+		assert.Empty(t, result.Distributed)
+		assert.Empty(t, settles)
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Zero(t, stored.PayoutWatermark)
 	})
 
 	t.Run("keeps an unpaid balance payable when a recovered distribute answers without channel states", func(t *testing.T) {
@@ -161,7 +185,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown, payoutUnknown}, *errors)
 		assert.Equal(t, [][]string{{"chan-a", "chan-b"}, {"chan-b"}}, claimsOf(recorder))
 		assert.Equal(t, []string{"chan-b"}, result.Claimed, "a resynced channel is not a new claim")
 		assert.Equal(t, []server.ClaimResult{{Transaction: "sig", Vouchers: 1}}, claims)
@@ -241,7 +265,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, [][]string{{"chan-a", "chan-b"}, {"chan-b"}}, claimsOf(recorder))
-		assert.Len(t, *errors, 1)
+		assert.Equal(t, []string{"batch-settlement claim failed: " + batchsettlement.ErrCumulativeAmountMismatch, payoutUnknown}, *errors)
 	})
 
 	t.Run("ignores channel states that do not name exactly the submitted batch or carry impossible values", func(t *testing.T) {
@@ -317,7 +341,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3000), stored.Settled)
@@ -358,7 +382,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, []string{"batch-settlement distribute failed: " + batchsettlement.ErrCumulativeAmountMismatch}, *errors)
+		assert.Equal(t, []string{payoutUnknown, "batch-settlement distribute failed: " + batchsettlement.ErrCumulativeAmountMismatch}, *errors)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), stored.PayoutWatermark)

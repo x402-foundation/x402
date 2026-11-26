@@ -9,7 +9,7 @@
 
 import { address, type MessagePartialSigner } from "@solana/kit";
 import { getChannelDecoder } from "../../payment-channels/generated/accounts/channel";
-import { ChannelStatus, PAYMENT_CHANNELS_PROGRAM_ID } from "../../payment-channels/onchain";
+import { PAYMENT_CHANNELS_PROGRAM_ID } from "../../payment-channels/onchain";
 import { createRpcClient } from "../../utils";
 import type { Network, PaymentRequirements, SettleResponse } from "@x402/core/types";
 
@@ -19,6 +19,7 @@ import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "../facilitator/co
 import {
   BATCH_SETTLEMENT_SCHEME,
   isBatchRedemptionChannelState,
+  redemptionStatusOf,
   type BatchRedemptionStatus,
   type BatchSealPayload,
 } from "../types";
@@ -524,7 +525,7 @@ export class BatchChannelManager {
     if (!observed && this.configuredRpcUrl() !== undefined) {
       try {
         const read = await this.readSettlement(channel.channelId);
-        const status = read ? redemptionStatus(read.status) : undefined;
+        const status = read ? redemptionStatusOf(read.status) : undefined;
         if (read && status) {
           observed = { payout: read.payoutWatermark, settled: read.settled, status };
         }
@@ -683,7 +684,14 @@ export class BatchChannelManager {
   ): Promise<Partial<ObservedChannel> | undefined> {
     const adopted = states?.get(channel.channelId);
     if (adopted) return adopted;
-    if (!this.hasPayoutReader()) return undefined;
+    if (!this.hasPayoutReader()) {
+      this.config.onError?.(
+        new Error(
+          "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set",
+        ),
+      );
+      return undefined;
+    }
     try {
       const paid = await this.readPayoutWatermark(channel.channelId);
       if (paid === undefined || paid < 0n || paid > channel.deposit) {
@@ -953,27 +961,6 @@ function chunk<T>(items: T[], size: number): T[][] {
  */
 function larger(a: bigint, b: bigint): bigint {
   return a > b ? a : b;
-}
-
-/**
- * The redemption status name of an onchain channel status.
- *
- * @param status - Decoded channel status byte
- * @returns The `extra.channelStates` status, or undefined for one this scheme does not know
- */
-function redemptionStatus(status: number): BatchRedemptionStatus | undefined {
-  switch (status) {
-    case ChannelStatus.Open:
-      return "open";
-    case ChannelStatus.Sealed:
-      return "sealed";
-    case ChannelStatus.Closing:
-      return "closing";
-    case ChannelStatus.Distributed:
-      return "distributed";
-    default:
-      return undefined;
-  }
 }
 
 /**

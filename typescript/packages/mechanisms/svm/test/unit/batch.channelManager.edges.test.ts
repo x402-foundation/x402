@@ -12,6 +12,8 @@ import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants"
 import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 
 const RECEIVER = USDC_MAINNET_ADDRESS;
+const PAYOUT_UNKNOWN =
+  "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set";
 const receiverAuthorizer = await generateKeyPairSigner();
 function channel(id: string, overrides: Partial<ChannelState> = {}): ChannelState {
   return {
@@ -448,7 +450,7 @@ describe("batch-settlement redemption worker edge cases", () => {
         settle: async () => ok(),
         store,
       }).redeem();
-      expect(errors).toEqual([]);
+      expect(errors).toEqual([PAYOUT_UNKNOWN]);
       expect(result).toEqual({ claimed: [id], distributed: [], sealed: [] });
       expect(await store.get(id)).toMatchObject({ payoutWatermark: 0n, settled: 3_000n });
     });
@@ -503,7 +505,7 @@ describe("batch-settlement redemption worker edge cases", () => {
       expect((await store.get("chan-a"))?.payoutWatermark).toBe(1_000n);
       await manager.redeem();
     });
-    expect(errors).toEqual([]);
+    expect(errors).toEqual([PAYOUT_UNKNOWN, PAYOUT_UNKNOWN]);
     expect(seen).toEqual(["settle", "settle"]);
     expect(urls).toEqual([]);
   });
@@ -540,7 +542,7 @@ describe("batch-settlement redemption worker edge cases", () => {
         settle: async () => ok(),
         store,
       }).redeem();
-      expect(errors).toEqual([]);
+      expect(errors).toEqual([PAYOUT_UNKNOWN]);
       expect(result).toEqual({ claimed: ["chan-a"], distributed: [], sealed: [] });
       expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
     });

@@ -1,6 +1,7 @@
 /* eslint-disable jsdoc/require-jsdoc */
 /** Wire types for the SVM `batch-settlement` scheme. */
 
+import { channelStatusName } from "../payment-channels/onchain";
 import { BATCH_SETTLEMENT_SCHEME } from "./constants";
 import { BatchError } from "./errors";
 import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "./facilitator/constants";
@@ -457,6 +458,17 @@ export function isBatchChannelState(value: unknown): value is BatchChannelState 
 }
 
 const REDEMPTION_STATUSES: readonly unknown[] = ["open", "closing", "sealed", "distributed"];
+
+/**
+ * The redemption status of an onchain channel status byte.
+ *
+ * @param status - Channel status byte
+ * @returns The `extra.channelStates` status, or undefined for an unknown byte
+ */
+export function redemptionStatusOf(status: number): BatchRedemptionStatus | undefined {
+  const name = channelStatusName(status).toLowerCase();
+  return REDEMPTION_STATUSES.find((known): known is BatchRedemptionStatus => known === name);
+}
 
 export function isBatchRedemptionChannelState(
   value: unknown,

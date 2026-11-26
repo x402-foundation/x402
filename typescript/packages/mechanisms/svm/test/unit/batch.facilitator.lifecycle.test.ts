@@ -2050,6 +2050,12 @@ describe("batch facilitator lifecycle", () => {
     expect(closing).toMatchObject({ status: "closing", withdrawRequestedAt: 7 });
   });
 
+  it("refuses to report a channel with an unrecognized status", () => {
+    expect(() => redemptionSnapshot("a", channel({ status: 99 as ChannelStatus }))).toThrow(
+      "channel a has unrecognized status Unknown(99)",
+    );
+  });
+
   it("rejects empty and oversized redemption batches", async () => {
     const scheme = new BatchSvmScheme(signer() as never, {
       channelStorage: new InMemoryPaymentChannelStorage(),

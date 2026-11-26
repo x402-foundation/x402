@@ -22,14 +22,14 @@ import {
   ChannelBroadcastConfirmationError,
   SettlementConfirmationTimeoutError,
 } from "../../payment-channels/facilitator";
-import { ChannelStatus } from "../../payment-channels/onchain";
+import { ChannelStatus, channelStatusName } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
-import type {
-  BatchChannelState,
-  BatchRedemptionChannelState,
-  BatchRedemptionStatus,
+import {
+  redemptionStatusOf,
+  type BatchChannelState,
+  type BatchRedemptionChannelState,
 } from "../types";
 
 /** Reason reported when a channel is already mid-operation. */
@@ -135,28 +135,28 @@ export function verifiedChannelExtra(
   return flat;
 }
 
-const REDEMPTION_STATUS: Record<ChannelStatus, BatchRedemptionStatus> = {
-  [ChannelStatus.Open]: "open",
-  [ChannelStatus.Closing]: "closing",
-  [ChannelStatus.Sealed]: "sealed",
-  [ChannelStatus.Distributed]: "distributed",
-};
-
 /**
  * Project a decoded channel account onto a `extra.channelStates[]` entry.
  *
  * @param channelId - Channel PDA
  * @param channel - Decoded channel account
  * @returns The channel's confirmed onchain state
+ * @throws When the channel's status is not one this scheme reports
  */
 export function redemptionSnapshot(
   channelId: string,
   channel: Channel,
 ): BatchRedemptionChannelState {
+  const status = redemptionStatusOf(channel.status);
+  if (status === undefined) {
+    throw new Error(
+      `channel ${channelId} has unrecognized status ${channelStatusName(channel.status)}`,
+    );
+  }
   return {
     ...snapshotChannel(channelId, channel),
     payoutWatermark: channel.settlement.payoutWatermark.toString(),
-    status: REDEMPTION_STATUS[channel.status as ChannelStatus],
+    status,
   };
 }
 

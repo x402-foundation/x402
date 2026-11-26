@@ -522,19 +522,20 @@ func (m *BatchChannelManager) observePayout(ctx context.Context, channel Channel
 	if state, ok := states[channel.ChannelID]; ok {
 		return state, true
 	}
-	if m.hasPayoutReader() {
-		paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
-		if err != nil {
-			m.report(err)
-			return observedChannel{}, false
-		}
-		if !ok || paid > channel.Deposit {
-			m.report(errors.New("confirmed payout watermark unavailable or invalid"))
-			return observedChannel{}, false
-		}
-		return observedChannel{payout: paid}, true
+	if !m.hasPayoutReader() {
+		m.report(errors.New("distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"))
+		return observedChannel{}, false
 	}
-	return observedChannel{}, false
+	paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
+	if err != nil {
+		m.report(err)
+		return observedChannel{}, false
+	}
+	if !ok || paid > channel.Deposit {
+		m.report(errors.New("confirmed payout watermark unavailable or invalid"))
+		return observedChannel{}, false
+	}
+	return observedChannel{payout: paid}, true
 }
 
 // observeSettled is a channel's confirmed settled watermark from the

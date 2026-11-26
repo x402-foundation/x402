@@ -32,6 +32,16 @@ import { encodeVoucherMessageBytes } from "./voucher";
 export { RECLAIM_DISCRIMINATOR, ChannelStatus };
 
 /**
+ * The name of an onchain channel status.
+ *
+ * @param status - Channel status byte
+ * @returns `Open`, `Sealed`, `Closing`, `Distributed`, or `Unknown(n)`
+ */
+export function channelStatusName(status: number): string {
+  return ChannelStatus[status] ?? `Unknown(${status})`;
+}
+
+/**
  * Concrete instruction shape returned by every builder here: program address,
  * a concrete account list, and a `Uint8Array` data buffer. Avoids the
  * `data?: Uint8Array | undefined` widening of the base `Instruction` interface.

@@ -24,6 +24,8 @@ vi.mock("../../src/utils", async importOriginal => {
 });
 
 const RECEIVER = USDC_MAINNET_ADDRESS;
+const PAYOUT_UNKNOWN =
+  "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set";
 const receiverAuthorizer = await generateKeyPairSigner();
 function channel(id: string, overrides: Partial<ChannelState> = {}): ChannelState {
   return {
@@ -856,7 +858,7 @@ describe("batch-settlement redemption resync from the facilitator", () => {
         },
       }).redeem();
       expect(reads).toBe(1);
-      expect(errors).toEqual([]);
+      expect(errors).toEqual([PAYOUT_UNKNOWN]);
       expect((await store.get("chan-a"))?.settled).toBe(3_000n);
     }
   });
@@ -896,10 +898,36 @@ describe("batch-settlement redemption resync from the facilitator", () => {
     await manager(store, settle, errors, { readPayoutWatermark: undefined, rpcUrl: "" }).redeem();
     expect(createRpcClient).not.toHaveBeenCalled();
     expect(errors).toEqual([
+      PAYOUT_UNKNOWN,
       `batch-settlement distribute failed: ${BatchError.CUMULATIVE_AMOUNT_MISMATCH}`,
     ]);
     expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
   });
+
+  it.each<[string, SettleResponse]>([
+    ["no channelStates", ok()],
+    [
+      "unusable channelStates",
+      withChannelStates(ok(), channelStateEntry("chan-z", "open", 10_000, 3_000, 3_000)),
+    ],
+  ])(
+    "reports a successful distribute with %s and no reader, and leaves the channel payable",
+    async (_name, response) => {
+      const store = new MemoryChannelStore();
+      await store.put(channel("chan-a", settledOnly));
+      const errors: string[] = [];
+      const onSettle = vi.fn();
+      const { settle } = recorder(() => response);
+      const result = await manager(store, settle, errors, {
+        onSettle,
+        readPayoutWatermark: undefined,
+      }).redeem();
+      expect(errors).toEqual([PAYOUT_UNKNOWN]);
+      expect(result.distributed).toEqual([]);
+      expect(onSettle).not.toHaveBeenCalled();
+      expect((await store.get("chan-a"))?.payoutWatermark).toBe(0n);
+    },
+  );
 
   it("dials a whitespace rpcUrl as given when a distribute has no state", async () => {
     const store = new MemoryChannelStore();

@@ -26,6 +26,7 @@ import type { Channel } from "../../payment-channels/generated/accounts/channel"
 import {
   buildSettleAndSealInstructions,
   ChannelStatus,
+  channelStatusName,
   type ServerInstruction,
 } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
@@ -720,25 +721,4 @@ async function authenticateServer(
   throw new Error(
     `${BatchError.CLOSE_AUTHORIZATION}: signature does not bind this close or is outside its validity window`,
   );
-}
-
-/**
- * The name Go prints for a channel status byte.
- *
- * @param status - Onchain channel status
- * @returns `Open`, `Sealed`, `Closing`, `Distributed`, or `Unknown(n)`
- */
-function channelStatusName(status: number): string {
-  switch (status) {
-    case ChannelStatus.Open:
-      return "Open";
-    case ChannelStatus.Sealed:
-      return "Sealed";
-    case ChannelStatus.Closing:
-      return "Closing";
-    case ChannelStatus.Distributed:
-      return "Distributed";
-    default:
-      return `Unknown(${status})`;
-  }
 }
