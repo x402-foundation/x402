@@ -290,13 +290,13 @@ For static USD caps and asset allowlists, use [`spendControls`](/getting-started
 
     client := x402.Newx402Client()
 
-    client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationResult, error) {
+    client.OnBeforePaymentCreation(func(ctx x402.PaymentCreationContext) (*x402.BeforePaymentCreationHookResult, error) {
         maxAmount := big.NewInt(10_000_000) // 10 USDC
         requestedAmount := new(big.Int)
         requestedAmount.SetString(ctx.Requirements.Amount, 10)
 
         if requestedAmount.Cmp(maxAmount) > 0 {
-            return &x402.BeforePaymentCreationResult{
+            return &x402.BeforePaymentCreationHookResult{
                 Abort:  true,
                 Reason: "Payment exceeds spending limit",
             }, nil

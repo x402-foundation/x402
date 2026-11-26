@@ -1,0 +1,10 @@
+[profile.default]
+src = "src"
+out = "out"
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+# Reproducible artifacts: the committed bytecode does not depend on the source path or a metadata hash.
+cbor_metadata = false
+bytecode_hash = "none"

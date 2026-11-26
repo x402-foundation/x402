@@ -2,10 +2,23 @@
 export const BATCH_SETTLEMENT_SCHEME = "batch-settlement";
 
 /**
- * `PaymentRequirements.extra` keys a server regenerates for every
- * `PaymentRequired`, so they are not part of requirements matching.
+ * `PaymentRequirements.extra` keys left out of requirements matching: the
+ * server matching a payment to its accepts, and the facilitator checking
+ * `paymentPayload.accepted` against the forwarded requirements.
+ *
+ * `recentBlockhash`, `lastValidBlockHeight` and `recentSlot` are regenerated
+ * for every `PaymentRequired`. `maxClaimChannels` and `maxSettleChannels` are
+ * the facilitator's redemption capacity, copied from its `/supported` kind:
+ * they size the server's own claim and settle batches, nothing the payer signs
+ * reads them, and the facilitator enforces its own capacity, not theirs.
  */
-export const DYNAMIC_EXTRA_FIELDS: readonly string[] = ["recentBlockhash", "recentSlot"];
+export const DYNAMIC_EXTRA_FIELDS: readonly string[] = [
+  "recentBlockhash",
+  "lastValidBlockHeight",
+  "recentSlot",
+  "maxClaimChannels",
+  "maxSettleChannels",
+];
 
 /** Shortest grace period a channel may advertise, in seconds (15 minutes). */
 export const MIN_WITHDRAW_DELAY = 900;

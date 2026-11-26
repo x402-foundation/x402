@@ -140,6 +140,8 @@ manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, bat
 })
 ```
 
+The manager takes channel state from the facilitator's responses (`extra.channelStates`) or infers it from what it submitted, so a confirmed claim or seal whose response was lost resyncs instead of being resubmitted. A distribute's payout watermark is never inferred: without `extra.channelStates` or a reader, the channel stays payable and the next distribute resyncs it. It reads the chain only through `RPCURL`, `ReadSettledWatermark` or `ReadPayoutWatermark`; with none set it never falls back to a public RPC endpoint.
+
 `requirements` must include `extra.feePayer` from the facilitator's supported kind. Claim promptly: if the facilitator or payer forces a close before the latest voucher is claimed, unclaimed value returns to the payer.
 
 ## Facilitator Usage
@@ -157,6 +159,8 @@ facilitator.Register([]x402.Network{svm.SolanaDevnetCAIP2}, scheme)
 
 cleanup := scheme.CreateRentCleanupManager(svm.SolanaDevnetCAIP2)
 ```
+
+The signer must implement `svm.FacilitatorConfirmedTransactionReader`, which payout attribution reads; `NewBatchSvmScheme` panics without it. `svm.ConfirmedTransactionEvidence` builds it from an `rpc.Client`.
 
 `ChannelStorage` defaults to an in-memory store. The same channel row holds the lifecycle index, the receiver-authorizer binding, and the delegated caller identity. Opens, top-ups, claims, and distributions record that row before broadcast and do not send if the write fails. A failed open reverts a row that call created; activity writes are kept. `ReceiverBindingHistoryReader` is an optional fallback for a row with no binding, used only when set here. A binding read from history is written back when the row is absent. `DelegatedReceiverAuth` requires `ResolveCallerIdentity`; that identity is stored on the channel row.
 

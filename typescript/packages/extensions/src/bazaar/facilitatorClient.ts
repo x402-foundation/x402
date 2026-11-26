@@ -2,7 +2,7 @@
  * Client extensions for querying Bazaar discovery resources
  */
 
-import { HTTPFacilitatorClient, readLimitedText } from "@x402/core/http";
+import { FacilitatorTimeoutError, HTTPFacilitatorClient, readLimitedText } from "@x402/core/http";
 import type { PaymentRequirements } from "@x402/core/types";
 import { WithExtensions } from "../types";
 
@@ -11,6 +11,42 @@ import { WithExtensions } from "../types";
  * JSON schemas, so they need more room than control-plane JSON.
  */
 const MAX_DISCOVERY_RESPONSE_BYTES = 4 << 20;
+
+/**
+ * GETs a discovery endpoint under the facilitator client's `timeoutMs`.
+ *
+ * @param client - Facilitator client supplying the timeout
+ * @param operation - Operation name used in error messages
+ * @param endpoint - Full discovery URL
+ * @param headers - Request headers
+ * @returns The parsed JSON response body
+ * @throws FacilitatorTimeoutError when the deadline elapses before completion
+ */
+async function getDiscovery<T>(
+  client: HTTPFacilitatorClient,
+  operation: string,
+  endpoint: string,
+  headers: Record<string, string>,
+): Promise<T> {
+  const signal = AbortSignal.timeout(client.timeoutMs);
+  try {
+    const response = await fetch(endpoint, { method: "GET", headers, signal });
+
+    if (!response.ok) {
+      const errorText = await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
+        () => response.statusText,
+      );
+      throw new Error(`Facilitator ${operation} failed (${response.status}): ${errorText}`);
+    }
+
+    return JSON.parse(await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES)) as T;
+  } catch (error) {
+    if (signal.aborted) {
+      throw new FacilitatorTimeoutError(operation, client.timeoutMs);
+    }
+    throw error;
+  }
+}
 
 /**
  * Parameters for listing discovery resources.
@@ -260,23 +296,12 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
         const queryString = queryParams.toString();
         const endpoint = `${client.url}/discovery/resources${queryString ? `?${queryString}` : ""}`;
 
-        const response = await fetch(endpoint, {
-          method: "GET",
+        return getDiscovery<DiscoveryResourcesResponse>(
+          client,
+          "listDiscoveryResources",
+          endpoint,
           headers,
-        });
-
-        if (!response.ok) {
-          const errorText = await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
-            () => response.statusText,
-          );
-          throw new Error(
-            `Facilitator listDiscoveryResources failed (${response.status}): ${errorText}`,
-          );
-        }
-
-        return JSON.parse(
-          await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES),
-        ) as DiscoveryResourcesResponse;
+        );
       },
 
       async search(
@@ -315,23 +340,12 @@ export function withBazaar<T extends HTTPFacilitatorClient>(
 
         const endpoint = `${client.url}/discovery/search?${queryParams.toString()}`;
 
-        const response = await fetch(endpoint, {
-          method: "GET",
+        return getDiscovery<SearchDiscoveryResourcesResponse>(
+          client,
+          "searchDiscoveryResources",
+          endpoint,
           headers,
-        });
-
-        if (!response.ok) {
-          const errorText = await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES).catch(
-            () => response.statusText,
-          );
-          throw new Error(
-            `Facilitator searchDiscoveryResources failed (${response.status}): ${errorText}`,
-          );
-        }
-
-        return JSON.parse(
-          await readLimitedText(response, MAX_DISCOVERY_RESPONSE_BYTES),
-        ) as SearchDiscoveryResourcesResponse;
+        );
       },
     },
   } as WithExtensions<T, BazaarClientExtension>["extensions"];

@@ -207,6 +207,10 @@ func (s *scriptedSigner) GetSlot(context.Context, string, rpc.CommitmentType) (u
 	return 200, nil
 }
 
+func (s *scriptedSigner) GetConfirmedTransaction(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+	return nil, nil
+}
+
 // healthyTokenAccount returns a funded, initialized token account for account
 // when it is the associated token account of one of owners for mint (under
 // SPL Token or Token-2022), owned by program; otherwise nil.

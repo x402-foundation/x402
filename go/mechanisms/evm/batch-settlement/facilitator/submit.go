@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	batchsettlement "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
 )
@@ -38,11 +39,14 @@ func firstOnClaimed(callbacks []OnClaimedRows) OnClaimedRows {
 }
 
 // SubmitContext is the signers and mode used by claim and refund dispatchers.
+// PendingStore, when set, lets a refund retry reconcile a transaction that a
+// prior settlement_pending attempt broadcast.
 type SubmitContext struct {
 	SubmitMode          SubmitMode
 	Signer              evm.FacilitatorEvmSigner
 	AuthorizerSigner    batchsettlement.AuthorizerSigner
 	AuthorizerSubmitter evm.FacilitatorEvmSigner
+	PendingStore        x402.PendingSettlementStore
 }
 
 // AssertDirectAuthorizerSubmitter validates a dedicated authorizer submitter

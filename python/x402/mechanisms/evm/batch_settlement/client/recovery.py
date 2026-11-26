@@ -20,6 +20,7 @@ from ..utils import (
     coerce_bytes32,
     compute_channel_id,
     get_batch_settlement_eip712_domain,
+    is_contract_recoverable_signature,
 )
 from .channel import (
     BatchSettlementClientDeps,
@@ -111,6 +112,8 @@ def recover_from_signature(
         message_data=message,
     )
     sig_bytes = bytes.fromhex(sig.removeprefix("0x"))
+    if not is_contract_recoverable_signature(sig_bytes):
+        return False
     recovered = Account.recover_message(signable, signature=sig_bytes)
 
     if deps.payer_authorizer is not None:

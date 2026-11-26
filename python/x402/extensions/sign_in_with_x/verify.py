@@ -45,8 +45,6 @@ async def _verify_evm_payload(payload: SIWxPayload, options: SIWxVerifyOptions) 
     except ValueError as error:
         return _verify_failure("invalid_siwx_chain_id", str(error))
 
-    # Use the EIP-55 form the message carries for the message, the verifier and
-    # the payer, so the result does not depend on the casing the client sent.
     address = canonical_evm_address(payload.address)
     message = format_siwe_message(payload, address)
     try:

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -187,6 +186,9 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			s := newScriptedSigner(t, 1)
 			s.keys = nil
 			NewBatchSvmScheme(ctx, s, nil)
+		})
+		require.PanicsWithValue(t, "BatchSvmScheme requires GetConfirmedTransaction on the signer", func() {
+			NewBatchSvmScheme(ctx, withoutConfirmedReads{newScriptedSigner(t, 1)}, nil)
 		})
 	})
 
@@ -658,15 +660,68 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		}
 		stale := payment(batchsettlement.BatchVoucherPayload{
 			Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
-		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1")))
-		fresh := requirements(withExtra(batchsettlement.ExtraRecentSlot, "2"), withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"))
+		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1"), withExtra(batchsettlement.ExtraLastValidBlockHeight, "1")))
+		fresh := requirements(
+			withExtra(batchsettlement.ExtraRecentSlot, "2"),
+			withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"),
+			withExtra(batchsettlement.ExtraLastValidBlockHeight, "2"),
+		)
 		result, err = scheme.Verify(ctx, stale, fresh, nil)
 		require.NoError(t, err)
 		require.True(t, result.IsValid, result.InvalidReason)
+		// Neither is the facilitator's redemption capacity, which each server
+		// process copies from /supported at its own time.
+		larger := requirements(withExtra(batchsettlement.ExtraMaxClaimChannels, 18), withExtra(batchsettlement.ExtraMaxSettleChannels, 13))
+		for _, held := range []types.PaymentRequirements{
+			requirements(),
+			requirements(withExtra(batchsettlement.ExtraMaxClaimChannels, 4), withExtra(batchsettlement.ExtraMaxSettleChannels, 4)),
+		} {
+			voucherPayload := batchsettlement.BatchVoucherPayload{
+				Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
+			}
+			result, err = scheme.Verify(ctx, payment(voucherPayload, held), larger, nil)
+			require.NoError(t, err)
+			require.True(t, result.IsValid, result.InvalidReason)
+			result, err = scheme.Verify(ctx, payment(voucherPayload, larger), held, nil)
+			require.NoError(t, err)
+			require.True(t, result.IsValid, result.InvalidReason)
+		}
 		require.Empty(t, EnvelopeFailure(
 			requirements(func(r *types.PaymentRequirements) { r.Extra = nil }),
 			requirements(func(r *types.PaymentRequirements) { r.Extra = map[string]any{} }),
 		))
+	})
+
+	t.Run("settle rejects a scheme or network that differs from the requirements before any work", func(t *testing.T) {
+		scheme := newScheme(t, newSigner(t), nil)
+		req := requirements()
+		voucher := batchsettlement.BatchVoucher{ChannelID: channelID, ExpiresAt: 0, MaxClaimableAmount: "1", Signature: "x"}
+		claim := batchsettlement.BatchClaimPayload{Type: batchsettlement.PayloadTypeClaim, Claims: []batchsettlement.BatchVoucherClaim{{
+			ChannelConfig: channelConfig, ChannelID: channelID, Voucher: voucher,
+		}}}
+		matching := payment(claim, req)
+
+		for name, tamper := range map[string]func(*types.PaymentPayload){
+			"network": func(p *types.PaymentPayload) { p.Accepted.Network = "solana:other" },
+			"scheme":  func(p *types.PaymentPayload) { p.Accepted.Scheme = "exact" },
+		} {
+			t.Run(name, func(t *testing.T) {
+				tampered := matching
+				tamper(&tampered)
+
+				result, err := scheme.Settle(ctx, tampered, req, nil)
+
+				require.NoError(t, err)
+				require.False(t, result.Success)
+				wantReason := InvalidPaymentRequirements
+				if name == "scheme" {
+					wantReason = "unsupported_scheme"
+				}
+				require.Equal(t, wantReason, result.ErrorReason)
+				require.Empty(t, result.Transaction)
+				require.Equal(t, x402.Network(tampered.Accepted.Network), result.Network)
+			})
+		}
 	})
 
 	t.Run("maps setup-transaction failures to their spec codes", func(t *testing.T) {
@@ -684,15 +739,27 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		garbage.Deposit.Transaction = "AAAA"
 		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(garbage))
 
-		// An open transaction submitted against an existing channel is not a top_up.
-		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			return channel(func(c *generated.Channel) {
-				c.AuthorizedSigner = payer.Address()
-				c.OpenSlot = 123
-				c.Salt = mustParseU64(t, actualDeposit.ChannelConfig.Salt)
-			}), nil
+		// An open against an existing channel is a retry only with a pending signature,
+		// exactly the channel's deposit and nothing settled; otherwise it is judged as a top_up.
+		existing := func(overrides ...func(*generated.Channel)) {
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return channel(append([]func(*generated.Channel){func(c *generated.Channel) {
+					c.AuthorizedSigner = payer.Address()
+					c.OpenSlot = 123
+					c.Salt = mustParseU64(t, actualDeposit.ChannelConfig.Salt)
+				}}, overrides...)...), nil
+			}
 		}
+		existing(func(c *generated.Channel) { c.Deposit = 20_000 })
 		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(actualDeposit))
+		existing(func(c *generated.Channel) { c.Settlement.Settled = 1_000 })
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, verifyDeposit(actualDeposit))
+		existing()
+		require.Equal(t, batchsettlement.ErrSetupTransaction, verifyDeposit(actualDeposit))
+		require.NoError(t, scheme.pendingStore.Set(ctx, depositKey(network, actualChannelID), fixedSigStr))
+		replayed, err := scheme.Verify(ctx, payment(actualDeposit, req), req, nil)
+		require.NoError(t, err)
+		require.True(t, replayed.IsValid, replayed.InvalidReason)
 
 		for _, tc := range []struct {
 			err    error
@@ -839,10 +906,12 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			return ValidatedDeposit{}, errors.New("plain validation failure")
 		}
 		result, err = scheme.Verify(ctx, payment(deposit, req), req, nil)
-		require.NoError(t, err)
-		require.False(t, result.IsValid)
-		require.Equal(t, "transaction_failed", result.InvalidReason)
-		require.Equal(t, "plain validation failure", result.InvalidMessage)
+		require.Nil(t, result)
+		require.EqualError(t, err, "plain validation failure")
+		require.Equal(t, UnexpectedSettleError, ClassifyError(err))
+		require.Equal(t, UnexpectedSettleError, ClassifyError(errors.New("http 429 too many requests")))
+		require.Equal(t, UnexpectedSettleError, ClassifyError(errors.New("http 503 service unavailable")))
+		require.Equal(t, "transaction_failed", ClassifyError(&svm.TransactionOnchainFailureError{Message: "reverted"}))
 
 		result, err = scheme.Verify(ctx, types.PaymentPayload{
 			X402Version: 2, Accepted: req, Payload: map[string]any{"nope": true},
@@ -1319,6 +1388,10 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			return channel(), nil
 		}
+		scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
+			return durableResult{OK: true, Signature: fixedSigStr}, nil
+		}
+		require.NoError(t, scheme.pendingStore.Set(ctx, depositKey(req.Network, channelID), fixedSigStr))
 		depositResult, err := scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
 			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
 			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
@@ -1333,11 +1406,20 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.False(t, voucherResult.Success)
 		require.Equal(t, batchsettlement.ErrPayloadType, voucherResult.ErrorReason)
 
-		// Error conversion through deposit settle path (voucher settle is terminal PAYLOAD_TYPE in Go).
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{}, errors.New("rpc down")
 		}
 		failed, err := scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
+			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
+			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
+		}, req), req, nil)
+		require.Nil(t, failed)
+		require.EqualError(t, err, "rpc down")
+
+		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
+			return ValidatedDeposit{}, &svm.TransactionOnchainFailureError{Message: "tx failed onchain"}
+		}
+		failed, err = scheme.Settle(ctx, payment(batchsettlement.BatchDepositPayload{
 			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
 			Deposit: batchsettlement.BatchDeposit{Amount: "1", Transaction: "x"}, Voucher: &voucherStub,
 		}, req), req, nil)
@@ -1406,16 +1488,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 
 	t.Run("settles top-ups, idempotent opens, vouchers, and refunds", func(t *testing.T) {
 		facilitatorSigner := newSigner(t)
-		var simulated []string
-		facilitatorSigner.simulateFn = func(_ context.Context, tx *solana.Transaction, _ string) error {
-			wire, err := svm.EncodeTransaction(tx)
-			if err == nil {
-				simulated = append(simulated, wire)
-			} else {
-				simulated = append(simulated, "setup")
-			}
-			return nil
-		}
 		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
 		scheme := newScheme(t, facilitatorSigner, &Config{ChannelStorage: storage})
 		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
@@ -1464,7 +1536,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.True(t, topUp.Success)
 		require.Equal(t, "1000", topUp.Amount)
 		require.Equal(t, fixedSigStr, topUp.Transaction)
-		require.NotEmpty(t, simulated)
 
 		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
 			return ValidatedDeposit{
@@ -1476,10 +1547,22 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			}, nil
 		}
 		scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return channel(), nil }
-		idempotent, err := scheme.settleDeposit(ctx, deposit, req, nil)
+		scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
+			return durableResult{OK: true, Signature: fixedSigStr}, nil
+		}
+		openKey := depositKey(network, channelID)
+		_, err = scheme.settleDeposit(ctx, deposit, req, nil)
+		require.ErrorContains(t, err, ChannelBusy, "an open replay without a pending signature is a duplicate")
+		require.NoError(t, scheme.pendingStore.Set(ctx, openKey, fixedSigStr))
+		replayed, err := scheme.settleDeposit(ctx, deposit, req, nil)
 		require.NoError(t, err)
-		require.True(t, idempotent.Success)
-		require.Equal(t, "", idempotent.Transaction)
+		require.True(t, replayed.Success)
+		require.Equal(t, fixedSigStr, replayed.Transaction)
+		_, stillPending, err := scheme.pendingStore.Get(ctx, openKey)
+		require.NoError(t, err)
+		require.False(t, stillPending)
+		_, err = scheme.settleDeposit(ctx, deposit, req, nil)
+		require.ErrorContains(t, err, ChannelBusy, "the pending signature answers one retry")
 
 		voucherSettle, err := scheme.Settle(ctx, payment(batchsettlement.BatchVoucherPayload{
 			Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
@@ -1511,12 +1594,8 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			return deps
 		}
 		closing, err := scheme.settleRefund(ctx, refund, req, nil)
-		require.NoError(t, err)
-		require.True(t, closing.Success)
-		require.Equal(t, "", closing.Transaction)
-		state, ok := closing.Extra["channelState"].(batchsettlement.BatchChannelState)
-		require.True(t, ok)
-		require.Equal(t, int64(20), state.WithdrawRequestedAt)
+		require.ErrorContains(t, err, batchsettlement.ErrReceiverBindingUnavailable, "an unauthenticated refund does not learn that the channel is closing")
+		require.Nil(t, closing)
 
 		require.NoError(t, storage.Delete(ctx, network, channelID))
 		blockhash := solana.MustHashFromBase58(svm.USDCMainnetAddress)
@@ -1579,37 +1658,10 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.ErrorContains(t, err, batchsettlement.ErrReceiverBindingUnavailable)
 	})
 
-	t.Run("serializes opens by channel and releases the lock before broadcast failures", func(t *testing.T) {
-		facilitatorSigner := newSigner(t)
-		scheme := newScheme(t, facilitatorSigner, nil)
+	t.Run("holds no reservation after a top-up fails before broadcast", func(t *testing.T) {
 		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
 		require.NoError(t, err)
-		deposit := batchsettlement.ParsedBatchPayload{
-			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
-			Deposit: &batchsettlement.BatchDeposit{Amount: "1000", Transaction: "open-a"}, Voucher: &voucher,
-		}
-		scheme.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
-			return ValidatedDeposit{
-				ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 1_000, IsTopUp: false,
-				Payload: batchsettlement.BatchDepositPayload{
-					Type: deposit.Type, ChannelConfig: channelConfig, Deposit: *deposit.Deposit, Voucher: &voucher,
-				},
-				Terms: defaultTerms,
-			}, nil
-		}
-		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
-		key := "batch:deposit:" + network + ":" + channelID
-		require.False(t, scheme.settlementCache.IsDuplicate(key)) // seed pending
 		req := requirements()
-		for _, transaction := range []string{"open-a", "open-b"} {
-			payload := deposit
-			payload.Deposit = &batchsettlement.BatchDeposit{Amount: "1000", Transaction: transaction}
-			result, err := scheme.settleDeposit(ctx, payload, req, nil)
-			require.NoError(t, err)
-			require.False(t, result.Success)
-			require.Equal(t, ChannelBusy, result.ErrorReason)
-		}
-
 		simSigner := newSigner(t)
 		simSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
 			return errors.New("bad simulation")
@@ -1646,9 +1698,16 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		simulation.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
 		_, err = simulation.settleDeposit(ctx, topUpPayload, req, nil)
 		require.ErrorContains(t, err, batchsettlement.ErrSettlementSimulation)
-		topKey := "batch:topup:" + network + ":" + openWire
-		_, held := simulation.settlementCache.Entries()[topKey]
-		require.False(t, held)
+		_, openHash, err := decodeWithMessageHash(openWire)
+		require.NoError(t, err)
+		topKey := "batch:topup:" + network + ":" + openHash
+		requireNotReserved := func(scheme *BatchSvmScheme) {
+			t.Helper()
+			holder, reserved, err := scheme.duplicateStore.Reserve(ctx, topKey, "probe", ReservationTTL)
+			require.NoError(t, err)
+			require.True(t, reserved, "held by %q", holder)
+		}
+		requireNotReserved(simulation)
 
 		classifiedSigner := newSigner(t)
 		classifiedSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
@@ -1667,8 +1726,76 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		indexing.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
 		_, err = indexing.settleDeposit(ctx, topUpPayload, req, nil)
 		require.ErrorContains(t, err, "storage unavailable")
-		_, held = indexing.settlementCache.Entries()[topKey]
-		require.False(t, held)
+		requireNotReserved(indexing)
+	})
+
+	t.Run("reconciles a pending top-up before simulating it", func(t *testing.T) {
+		voucher, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 1_000, 0)
+		require.NoError(t, err)
+		req := requirements()
+		tx, err := solana.NewTransaction(
+			[]solana.Instruction{solana.NewInstruction(solana.MustPublicKeyFromBase58(svm.MemoProgramAddress), nil, []byte("top-up"))},
+			solana.MustHashFromBase58("11111111111111111111111111111111"),
+			solana.TransactionPayer(feePayerKey.PublicKey()),
+		)
+		require.NoError(t, err)
+		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(feePayerKey.PublicKey()) {
+				return &feePayerKey
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		topUpWire, err := svm.EncodeTransaction(tx)
+		require.NoError(t, err)
+		_, hash, err := decodeWithMessageHash(topUpWire)
+		require.NoError(t, err)
+		topUpPayload := batchsettlement.ParsedBatchPayload{
+			Type: batchsettlement.PayloadTypeDeposit, ChannelConfig: channelConfig,
+			Deposit: &batchsettlement.BatchDeposit{Amount: "1000", Transaction: topUpWire}, Voucher: &voucher,
+		}
+		scheme := func(signer *lifecycleSigner) *BatchSvmScheme {
+			s := newScheme(t, signer, nil)
+			s.hooks.validateDeposit = func(context.Context, batchsettlement.ParsedBatchPayload, types.PaymentRequirements, ProofAmountBound) (ValidatedDeposit, error) {
+				return ValidatedDeposit{
+					ChannelID: channelID, Deposit: 1_000, ExpectedDeposit: 11_000, IsTopUp: true,
+					Payload: batchsettlement.BatchDepositPayload{
+						Type: topUpPayload.Type, ChannelConfig: channelConfig, Deposit: *topUpPayload.Deposit, Voucher: &voucher,
+					},
+					Terms: defaultTerms,
+				}, nil
+			}
+			s.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+			s.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				return channel(func(c *generated.Channel) { c.Deposit = 11_000 }), nil
+			}
+			return s
+		}
+		topKey := topUpKey(network, hash)
+
+		pendingSigner := newSigner(t)
+		pendingSigner.simulateFn = func(context.Context, *solana.Transaction, string) error {
+			return errors.New("AlreadyProcessed")
+		}
+		pending := scheme(pendingSigner)
+		require.NoError(t, pending.pendingStore.Set(ctx, topKey, fixedSigStr))
+		response, err := pending.settleDeposit(ctx, topUpPayload, req, nil)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, fixedSigStr, response.Transaction)
+		require.Zero(t, pendingSigner.simulateN, "a recorded top-up is not simulated again")
+		require.Empty(t, pendingSigner.sentTransactions())
+		_, kept, err := pending.pendingStore.Get(ctx, topKey)
+		require.NoError(t, err)
+		require.False(t, kept, "the record is cleared once the top-up is confirmed")
+
+		freshSigner := newSigner(t)
+		fresh := scheme(freshSigner)
+		response, err = fresh.settleDeposit(ctx, topUpPayload, req, nil)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, 1, freshSigner.simulateN, "a top-up with no record is simulated once before it is sent")
+		require.Len(t, freshSigner.sentTransactions(), 1)
 	})
 
 	t.Run("prepares and confirms a voucher claim batch", func(t *testing.T) {
@@ -1753,16 +1880,26 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		_, err = settle(mismatch, claim())
 		require.ErrorContains(t, err, batchsettlement.ErrChannelIDMismatch)
 
-		for _, value := range []uint64{0, 10_001} {
-			bounds := configured(t)
-			v, err := batchclient.SignBatchVoucher(ctx, payer, channelID, value, 0)
-			require.NoError(t, err)
-			_, err = settle(bounds, claim(func(voucher *batchsettlement.BatchVoucher) {
-				voucher.MaxClaimableAmount = fmt.Sprintf("%d", value)
-				voucher.Signature = v.Signature
-			}))
-			require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
-		}
+		exceeding := configured(t)
+		overDeposit, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 10_001, 0)
+		require.NoError(t, err)
+		_, err = settle(exceeding, claim(func(voucher *batchsettlement.BatchVoucher) {
+			voucher.MaxClaimableAmount = "10001"
+			voucher.Signature = overDeposit.Signature
+		}))
+		require.ErrorContains(t, err, batchsettlement.ErrCumulativeAmountMismatch)
+
+		applied := configured(t)
+		zero, err := batchclient.SignBatchVoucher(ctx, payer, channelID, 0, 0)
+		require.NoError(t, err)
+		result, err := settle(applied, claim(func(voucher *batchsettlement.BatchVoucher) {
+			voucher.MaxClaimableAmount = "0"
+			voucher.Signature = zero.Signature
+		}))
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		require.Equal(t, batchsettlement.ErrCumulativeAmountMismatch, result.ErrorReason)
+		require.Contains(t, result.Extra, batchsettlement.ExtraChannelStates)
 		signature := configured(t)
 		_, err = settle(signature, claim(func(v *batchsettlement.BatchVoucher) { v.MaxClaimableAmount = "1001" }))
 		require.ErrorContains(t, err, batchsettlement.ErrVoucherSignature)
@@ -1771,7 +1908,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		rejected.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
 			return durableResult{Response: &x402.SettleResponse{ErrorReason: string(x402.ErrSettlementPending), Success: false}}, nil
 		}
-		result, err := settle(rejected, claim())
+		result, err = settle(rejected, claim())
 		require.NoError(t, err)
 		require.False(t, result.Success)
 		require.Equal(t, string(x402.ErrSettlementPending), result.ErrorReason)
@@ -1970,10 +2107,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, fixedSigStr, first.Signature)
 
 		pendingStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 		}
@@ -1992,7 +2126,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.NotEmpty(t, calls)
 		require.NotNil(t, calls[0].opts)
 		require.True(t, calls[0].opts.SearchTransactionHistory)
-		require.Zero(t, pendingStore.deletes)
+		require.Equal(t, 1, pendingStore.deletes, "the pending record is cleared once the reconcile finds the transaction landed")
 	})
 
 	t.Run("distinguishes pre-broadcast, pending, and onchain-terminal failures", func(t *testing.T) {
@@ -2010,11 +2144,19 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.Equal(t, string(x402.ErrSettlementPending), pending.Response.ErrorReason)
 		require.Equal(t, fixedSigStr, pending.Response.Transaction)
 
+		onchain := &paymentchannels.ChannelBroadcastConfirmationError{Signature: fixedSigStr, Err: &svm.TransactionOnchainFailureError{Message: "reverted"}}
+		_, found := PendingSignatureOf(onchain)
+		require.False(t, found, "a transaction that failed onchain has no outcome left to wait for")
+		_, err = scheme.broadcastDurably(ctx, "onchain", network, payer.Address().String(), func(func(string, string) error) (string, error) {
+			return "", onchain
+		})
+		require.Equal(t, "transaction_failed", ClassifyError(err))
+		_, recorded, getErr := scheme.pendingStore.Get(ctx, "onchain")
+		require.NoError(t, getErr)
+		require.False(t, recorded, "no pending record is kept for a broadcast that failed onchain")
+
 		terminalStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 		}
@@ -2039,10 +2181,7 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		require.NotZero(t, terminalStore.deletes)
 
 		retryStore := &scriptedPendingStore{
-			get: func(_ context.Context, key string) (string, bool, error) {
-				if strings.HasSuffix(key, CompletedBroadcastSuffix) {
-					return "", false, nil
-				}
+			get: func(context.Context, string) (string, bool, error) {
 				return fixedSigStr, true, nil
 			},
 			deleteErr: errors.New("delete failed"),
@@ -2175,6 +2314,11 @@ func (s *lifecycleSigner) SimulateTransaction(ctx context.Context, tx *solana.Tr
 		return s.simulateFn(ctx, tx, network)
 	}
 	return s.scriptedSigner.SimulateTransaction(ctx, tx, network, opts)
+}
+
+// withoutConfirmedReads hides every method of its signer beyond the payment-channel set.
+type withoutConfirmedReads struct {
+	paymentchannels.PaymentChannelFacilitatorSigner
 }
 
 type addressesOnlySigner struct {

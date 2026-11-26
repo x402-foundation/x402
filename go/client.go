@@ -268,11 +268,7 @@ func (c *x402Client) HandlePaymentResponse(
 	prCtx PaymentResponseContext,
 ) (PaymentResponseResult, error) {
 	c.mu.RLock()
-	schemes := findSchemesByNetwork(c.schemes, Network(prCtx.Requirements.Network))
-	var schemeImpl SchemeNetworkClient
-	if schemes != nil {
-		schemeImpl = schemes[prCtx.Requirements.Scheme]
-	}
+	schemeImpl := findByNetworkAndScheme(c.schemes, prCtx.Requirements.Scheme, Network(prCtx.Requirements.Network))
 	userHooks := append([]OnPaymentResponseHook(nil), c.onPaymentResponseHooks...)
 	c.mu.RUnlock()
 
@@ -306,12 +302,8 @@ func (c *x402Client) SelectPaymentRequirementsV1(requirements []types.PaymentReq
 	// Filter to supported (use wildcard matching helper)
 	var supported []types.PaymentRequirementsV1
 	for _, req := range requirements {
-		network := Network(req.Network)
-		schemes := findSchemesByNetwork(c.schemesV1, network)
-		if schemes != nil {
-			if _, ok := schemes[req.Scheme]; ok {
-				supported = append(supported, req)
-			}
+		if findByNetworkAndScheme(c.schemesV1, req.Scheme, Network(req.Network)) != nil {
+			supported = append(supported, req)
 		}
 	}
 
@@ -363,12 +355,8 @@ func (c *x402Client) SelectPaymentRequirements(requirements []types.PaymentRequi
 	// Step 1: Filter to supported (use wildcard matching helper)
 	var supported []types.PaymentRequirements
 	for _, req := range requirements {
-		network := Network(req.Network)
-		schemes := findSchemesByNetwork(c.schemes, network)
-		if schemes != nil {
-			if _, ok := schemes[req.Scheme]; ok {
-				supported = append(supported, req)
-			}
+		if findByNetworkAndScheme(c.schemes, req.Scheme, Network(req.Network)) != nil {
+			supported = append(supported, req)
 		}
 	}
 
@@ -694,16 +682,7 @@ func (c *x402Client) CreatePaymentPayloadV1(
 	scheme := requirements.Scheme
 	network := Network(requirements.Network)
 
-	// Use wildcard matching helper
-	schemes := findSchemesByNetwork(c.schemesV1, network)
-	if schemes == nil {
-		return types.PaymentPayloadV1{}, &PaymentError{
-			Code:    ErrCodeUnsupportedScheme,
-			Message: fmt.Sprintf("no client registered for network %s", network),
-		}
-	}
-
-	client := schemes[scheme]
+	client := findByNetworkAndScheme(c.schemesV1, scheme, network)
 	if client == nil {
 		return types.PaymentPayloadV1{}, &PaymentError{
 			Code:    ErrCodeUnsupportedScheme,
@@ -771,16 +750,7 @@ func (c *x402Client) CreatePaymentPayload(
 	scheme := requirements.Scheme
 	network := Network(requirements.Network)
 
-	// Use wildcard matching helper
-	schemes := findSchemesByNetwork(c.schemes, network)
-	if schemes == nil {
-		return types.PaymentPayload{}, &PaymentError{
-			Code:    ErrCodeUnsupportedScheme,
-			Message: fmt.Sprintf("no client registered for network %s", network),
-		}
-	}
-
-	client := schemes[scheme]
+	client := findByNetworkAndScheme(c.schemes, scheme, network)
 	if client == nil {
 		return types.PaymentPayload{}, &PaymentError{
 			Code:    ErrCodeUnsupportedScheme,

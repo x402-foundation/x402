@@ -73,13 +73,8 @@ func createSIWEMessage(payload Payload) (*siwe.Message, error) {
 		options["resources"] = payload.Resources
 	}
 
-	// Normalize the account address to its EIP-55 checksummed form so that the
-	// rendered message is byte-identical across SIWX implementations. EIP-4361
-	// requires the address line to carry the EIP-55 checksum, and the TypeScript
-	// library (@signinwithethereum/siwe) always checksums it. Rebuilding from a
-	// non-checksummed payload address without this step yields a different
-	// message, a different EIP-191 hash, and rejects an otherwise valid
-	// signature produced by a client using a different implementation.
+	// siwe.NewMessage prints a lowercase or uppercase address unchanged. HexToAddress
+	// maps a non-address to the zero address, so only real hex is checksummed.
 	address := payload.Address
 	if common.IsHexAddress(address) {
 		address = common.HexToAddress(address).Hex()

@@ -1,5 +1,15 @@
 # @x402/hono Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- Updated dependencies [bf3908f](https://github.com/x402-foundation/x402/commit/bf3908f)
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/extensions@2.32.0
+  - @x402/core@2.32.0
+  - @x402/paywall@2.32.0
+
 ## 2.31.0
 
 ### Minor Changes

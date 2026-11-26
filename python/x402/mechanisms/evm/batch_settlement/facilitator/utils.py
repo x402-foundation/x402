@@ -37,7 +37,12 @@ from ..errors import (
     ERR_WITHDRAW_DELAY_OUT_OF_RANGE,
 )
 from ..types import ChannelConfig, ChannelState
-from ..utils import coerce_bytes32, compute_channel_id, get_batch_settlement_eip712_domain
+from ..utils import (
+    coerce_bytes32,
+    compute_channel_id,
+    get_batch_settlement_eip712_domain,
+    is_contract_recoverable_signature,
+)
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
@@ -109,10 +114,15 @@ def verify_batch_settlement_voucher_typed_data(
         "maxClaimableAmount": int(max_claimable_amount),
     }
 
-    sig_bytes = _signature_to_bytes(signature)
+    try:
+        sig_bytes = _signature_to_bytes(signature)
+    except ValueError:
+        return False
     is_zero = int(payer_authorizer, 16) == 0
 
     if not is_zero:
+        if not is_contract_recoverable_signature(sig_bytes):
+            return False
         try:
             signable = encode_typed_data(
                 domain_data=domain,
@@ -134,6 +144,7 @@ def verify_batch_settlement_voucher_typed_data(
             primary_type="Voucher",
             message=message,
             signature=sig_bytes,
+            eoa_signature_check=is_contract_recoverable_signature,
         )
     except Exception:
         return False

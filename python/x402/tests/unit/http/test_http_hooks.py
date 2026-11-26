@@ -496,3 +496,52 @@ class TestGateHookThrowHttpOutcomes:
         assert "storage path" not in (decoded.error_reason or "")
         assert "storage path" not in (decoded.error_message or "")
         assert client.settle_calls == []
+
+
+class TestPermit2AllowanceRequired:
+    @pytest.mark.asyncio
+    async def test_returns_412_precondition_failed(self, protected_routes):
+        class AllowanceRequiredFacilitator(MockFacilitatorClient):
+            async def verify(self, payload, requirements) -> VerifyResponse:
+                self.verify_calls.append((payload, requirements))
+                return VerifyResponse(
+                    is_valid=False,
+                    invalid_reason="permit2_allowance_required",
+                    payer="0xpayer",
+                )
+
+        class ExactScheme:
+            scheme = "exact"
+            default_asset_transfer_method = "default"
+            payment_flows = {
+                "default": {"supported": ("authorization",), "default": "authorization"},
+            }
+
+        client = AllowanceRequiredFacilitator()
+        server = x402ResourceServer(client)
+        server.register("eip155:8453", ExactScheme())
+        server.initialize()
+        http_server = x402HTTPResourceServer(server, protected_routes)
+
+        requirements = make_requirements()
+        payload = PaymentPayload(payload={}, accepted=requirements)
+        context = HTTPRequestContext(
+            adapter=PaymentHeaderAdapter(encode_payment_signature_header(payload)),
+            path="/api/protected",
+            method="GET",
+        )
+
+        with patch.object(
+            x402HTTPResourceServer,
+            "_build_payment_requirements_from_options",
+            new=AsyncMock(return_value=[requirements]),
+        ):
+            result = await http_server.process_http_request(context)
+
+        assert len(client.verify_calls) == 1
+        assert result.type == "payment-error"
+        assert result.response is not None
+        assert result.response.status == 412
+        assert result.response.body == {"error": "permit2_allowance_required"}
+        assert "PAYMENT-REQUIRED" in result.response.headers
+        assert result.response.headers["Cache-Control"] == "no-store"

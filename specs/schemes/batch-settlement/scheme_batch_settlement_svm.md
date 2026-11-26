@@ -196,7 +196,8 @@ onchain `payee` signature or the close voucher the server supplies at settle
 (client-signed in client mode, operator-signed after server enrichment in
 server mode). The server MUST
 reject an open whose binding Memo is not its own key before forwarding the
-deposit. A refund for a channel that is already `Closing` reports that close.
+deposit. A refund for a channel that is already `Closing` MUST fail with
+`invalid_batch_settlement_svm_close_state`.
 
 A refund is a cooperative close by default: the facilitator applies the
 server's accepted voucher with `settle_and_seal` and a sealed `distribute` on
@@ -248,19 +249,22 @@ and `SettlementResponse` types are defined in
 | `tokenProgram` | string | yes | SPL Token (`Tokenkeg...`) or Token-2022 (`TokenzQ...`) program that owns `asset`. The client and facilitator MUST verify it against the onchain mint owner. |
 | `memo` | string | no | Seller-defined UTF-8 payment reference for the setup transaction's Memo instruction. Maximum 256 bytes. |
 | `recentBlockhash` | string | no | Pre-fetched blockhash the client MAY use to build an `open` or `top_up` transaction without an RPC round trip. The client MUST refresh it if it is no longer valid. |
+| `lastValidBlockHeight` | string | no | Last block height at which `recentBlockhash` is valid, as a decimal string. Informational; MAY be ignored by the client. Ignored when `recentBlockhash` is absent. |
 | `recentSlot` | number | no | Recent slot the client MAY use as `channelConfig.openSlot` when it does not fetch its own slot. The program still enforces the open-slot window. |
 | `minDeposit` | string | no | Atomic deposit target. When present, MUST be a positive integer greater than or equal to `amount`. |
 | `maxIdleSecs` | number | no | Facilitator idle window in seconds, copied from the facilitator's `/supported` `extra`. After this long with no facilitator-visible lifecycle activity on an `Open` channel, the facilitator MAY abandon-close it at the onchain `settled` watermark (see Phase 4). Absent means the facilitator does not idle-close. |
 | `transactionVersions` | array | no | Transaction message versions the facilitator accepts, as an array of `0` and/or `1`, copied from the facilitator's `/supported` `extra`. Absent means `[0]`. See [Transaction versions](#transaction-versions). |
-| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
-| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. |
+| `maxClaimChannels` | number | no | Most `claims[]` entries the facilitator redeems in one `claim` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. Not part of requirements matching (section 4.5). See [Facilitator-built transactions](#facilitator-built-transactions-and-batching-capacity). |
+| `maxSettleChannels` | number | no | Most `channels[]` entries the facilitator distributes in one `settle` transaction, copied from the facilitator's `/supported` `extra`. Absent means `4`. Not part of requirements matching (section 4.5). |
 | `channelState` | object | no | Corrective-only server channel snapshot for cumulative amount resynchronization. |
 | `voucherState` | object | no | Corrective-only signed voucher proof for cumulative amount resynchronization. |
 
-`recentBlockhash` and `recentSlot` are
+`recentBlockhash`, `lastValidBlockHeight` and `recentSlot` are
 transaction-construction hints only. They are not persistent channel
 configuration and are not included in the voucher message. A client MAY ignore
-the hints and obtain fresher values from an RPC.
+the hints and obtain fresher values from an RPC. A server MAY regenerate them
+for every `PaymentRequired`, so they are not part of requirements matching
+(section 4.5).
 
 Clients SHOULD use a conforming `extra.minDeposit` as the deposit target and
 SHOULD enforce a local maximum deposit so a 402 cannot lock unbounded escrow.
@@ -728,7 +732,11 @@ A successful voucher-only response is:
 
 The standard x402 `POST /verify` and `POST /settle` request envelope contains
 `x402Version`, `paymentPayload`, and `paymentRequirements`. For every request,
-`paymentPayload.accepted` MUST equal `paymentRequirements`.
+`paymentPayload.accepted` MUST equal `paymentRequirements`, ignoring the
+transaction-construction hints `extra.recentBlockhash`,
+`extra.lastValidBlockHeight` and `extra.recentSlot` (section 4.1) and the
+redemption capacity `extra.maxClaimChannels` and `extra.maxSettleChannels`. The
+server leaves the same fields out when it matches a payment to its accepts.
 
 | Request field | Type | Required | Notes |
 |---|---|---|---|
@@ -1085,10 +1093,44 @@ A facilitator MAY add per-channel confirmation under `extra`: for a claim,
 `extra.accepts[]` entries of `{ "channelId", "totalClaimed" }` giving the
 confirmed onchain `settled` value the claim advanced each channel to; for a
 settle, `extra.channels[]` listing the channel PDAs the transaction paid. A
-server MUST NOT require either field. When they are absent, it reconciles the
-`settled` and `payout_watermark` values by reading the channel account after
-the transaction confirms; when they are present, it MAY use them only if they
-name exactly the channels it submitted.
+settle response MAY also carry `extra.channelStates[]`, and a facilitator
+SHOULD attach it to the redemption rejections listed under Phase 5. Each entry
+is the channel's confirmed onchain state:
+
+```json
+{
+  "channelId": "<channel-pda>",
+  "status": "open",
+  "balance": "100000",
+  "totalClaimed": "5000",
+  "payoutWatermark": "5000",
+  "withdrawRequestedAt": 0
+}
+```
+
+`status` is one of `open`, `closing`, `sealed`, or `distributed`. `balance` is
+the deposit, `totalClaimed` is `settled`, and `payoutWatermark` is
+`payout_watermark`. On a successful settle the entries describe the channels
+after the transaction: `payoutWatermark` equals `totalClaimed`, and a sealed
+channel is reported as `distributed`. A settle answered from a remembered
+broadcast (section 6) reports the channels as read after its recovery instead:
+a claim that landed since may have advanced `totalClaimed` past
+`payoutWatermark`, and the unpaid difference stays payable.
+
+A server MUST NOT require any of these fields. It adopts `extra.accepts[]` or
+`extra.channelStates[]` only if the response is bound to the requested network,
+the entries name exactly the channels it submitted with no duplicates, and
+every entry satisfies `payoutWatermark <= totalClaimed <= balance`; otherwise it
+ignores the field. When the fields are absent or ignored, the server MAY infer
+the confirmed state from the values it submitted: a confirmed claim advanced
+`settled` to each voucher's `maxClaimableAmount`. It MUST NOT infer that a
+confirmed settle advanced `payout_watermark` to `settled`, since the settle may
+be answered from a remembered broadcast that a later claim has passed; it leaves
+the channel payable for its next settle instead. It MAY instead read the channel
+account, but only through a reader it was explicitly configured with. A server
+MUST NOT fall back to an implicit public RPC endpoint. When a rejection carries
+no usable state and no reader is configured, the server reports the failure and
+leaves its state unchanged.
 
 Seal (`amount` is the delta paid to the receiver; `extra.channelState`
 carries the final watermark, and `balance - totalClaimed` went back to the
@@ -1554,8 +1596,8 @@ reject a failed simulation, sign and broadcast it, and confirm that the channel
 entered `Closing` before returning success. An expired blockhash or
 out-of-window `openSlot` MUST be rejected; the client must rebuild and re-sign
 with fresh values. If the channel is already `Closing`, the facilitator MUST
-NOT rebroadcast; after revalidating the channel bindings, it returns the
-observed initiation state as the idempotent result.
+NOT rebroadcast and MUST fail with `invalid_batch_settlement_svm_close_state`;
+only the call that broadcast reports the initiation.
 
 ### Phase 2 - Steady-State Request
 
@@ -1734,6 +1776,10 @@ choice:
   not fit (an unusual channel shape), the facilitator MUST fail it rather than
   truncate it.
 
+`maxClaimChannels` and `maxSettleChannels` are not part of requirements
+matching (section 4.5): no message the payer signs includes them, and a server
+whose processes copy `/supported` at different times may hold different values.
+
 The table is informative. Per-channel costs are the bytes a further channel
 adds to the message once the shared accounts (fee payer, programs, sysvars,
 mint, payee and treasury token accounts) are already present; the shared
@@ -1815,27 +1861,47 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   the authoritative replay defense. The same authorization MUST NOT execute the
   resource handler more than once.
 - **Client-supplied transactions.** For `deposit` and `refund`, the facilitator
-  SHOULD maintain a short-lived in-flight cache keyed by the exact serialized
-  transaction or its first signature. Concurrent `/settle` calls for the same
-  transaction MUST be coalesced to one broadcast and one result or rejected
-  with `duplicate_settlement`; they MUST NOT produce independent successful
-  settlements. The entry MAY be evicted once the transaction's blockhash is no
-  longer valid. A refund retry after `request_close` confirms MUST return the
-  observed `Closing` state rather than attempt a second transition.
+  SHOULD maintain a short-lived in-flight cache keyed by the transaction's
+  message hash, which is stable across signature variants of the same message.
+  Concurrent `/settle` calls for the same
+  transaction MUST be rejected with `duplicate_settlement`; only the call that
+  broadcast reports the settlement. The entry MAY be evicted once the
+  transaction's blockhash is no longer valid. A refund retry after
+  `request_close` confirms MUST fail with `invalid_batch_settlement_svm_close_state`
+  rather than attempt a second transition.
 - **Claims.** Program `settle` requires a strictly increasing watermark, so the
-  same claim cannot advance accounting twice. A facilitator MAY coalesce
-  in-flight `(channelId, maxClaimableAmount)` claims to avoid a predictable
-  second transaction failure; no durable duplicate cache is required.
+  same claim cannot advance accounting twice. A claim whose `maxClaimableAmount`
+  is at or below the observed `settled` watermark MUST be rejected with
+  `invalid_batch_settlement_svm_cumulative_amount_mismatch`, and a concurrent
+  duplicate in-flight claim MUST be rejected with `duplicate_settlement`; no
+  durable duplicate cache is required. The rejection is how a server learns
+  that a claim whose response was lost already confirmed, so the facilitator
+  SHOULD attach `extra.channelStates[]` for every channel of the batch, and the
+  server SHOULD resync the channels whose `totalClaimed` is at least their
+  voucher and re-claim the rest once, rather than resubmit the whole batch.
 - **Open-channel distributions.** `distribute` advances `payout_watermark` to
-  `settled`; a repeat cannot pay the same delta again. A facilitator MAY
-  coalesce concurrent distributions for the same channel and observed
-  watermark.
-- **Refunds.** The facilitator MUST coalesce retries of the same
-  `request_close` transaction into one broadcast and one initiation result.
-  Once `Closing`, later retries return the observed channel state. A `seal` or
+  `settled`; a repeat cannot pay the same delta again. A concurrent duplicate
+  distribution for the same channel and observed watermark MUST be rejected with
+  `duplicate_settlement`. A distribution that finds nothing left to pay is
+  rejected with `invalid_batch_settlement_svm_cumulative_amount_mismatch`; the
+  facilitator SHOULD attach `extra.channelStates[]` for the channels it read,
+  and the server SHOULD adopt their `payoutWatermark` instead of resubmitting.
+- **Refunds.** The facilitator MUST reject concurrent retries of the same
+  `request_close` transaction with `duplicate_settlement`, so one broadcast
+  produces one initiation result. Once `Closing`, a later retry fails with
+  `invalid_batch_settlement_svm_close_state`. A `seal` or
   server-enriched refund occupies the `("close", channelId, maxClaimableAmount)`
-  namespace; the server and facilitator MUST cache that result through
-  `closeAuthorization.validBefore`.
+  namespace; the server MUST cache that result through
+  `closeAuthorization.validBefore`. The facilitator keeps no close result
+  (section 6.3): it rejects a concurrent duplicate with `duplicate_settlement`
+  and fails a retry after the close confirmed with
+  `invalid_batch_settlement_svm_close_state`. A `seal` rejected with that code
+  because the channel is no longer `Closing`, or because the voucher is below
+  `settled`, SHOULD carry `extra.channelStates[]` with the channel. The server
+  SHOULD record a `distributed` channel as paid out, and a `sealed` one by its
+  `settled` value and `sealed` status (so a later `distribute` still pays its
+  unpaid `settled - payoutWatermark`), instead of sealing again; none of these is
+  a new seal.
 - **Reclaim.** A channel can transition from `Distributed` to deallocated only
   once. Concurrent reclaim attempts require no additional replay mitigation;
   later attempts observe an absent account or invalid status.
@@ -1941,6 +2007,43 @@ provided reservation and completion invariants survive process failure and
 concurrent workers. Retention, sharding, monitoring, and application-result
 storage are implementation concerns.
 
+Facilitator `/settle` needs no durable result store: it rejects concurrent
+duplicates and remembers broadcasts whose confirmation timed out, and the chain
+answers for everything else. A `/settle` call succeeds only when it broadcast
+and confirmed the transaction itself, or when it finished a remembered
+`settlement_pending` record found at its start. A concurrent duplicate for one
+transaction MUST be rejected with `duplicate_settlement`, not coalesced into a
+shared success, and MUST NOT report the other call's signature. A retry is valid
+only for `settlement_pending`: a retry of a completed claim, `seal`, refund, or
+`distribute` MUST fail rather than be answered from channel status. A remembered
+broadcast whose blockhash is no longer valid and that the network has no record
+of MUST be dropped, so a retry broadcasts afresh instead of staying
+`settlement_pending`. A retry of a `seal` or cooperative refund whose broadcast
+timed out and has since landed MUST be answered from its remembered broadcast,
+with the payout and refund read from the confirmed transaction, before the
+channel's status is read: the channel no longer has the status a new close
+needs, but the retry is not a new close. Once a remembered transaction is
+confirmed, a channel read that fails or lags MUST NOT keep the retry
+`settlement_pending`; a recovered `distribute` then omits
+`extra.channelStates[]`. A confirmed transaction whose payout cannot be
+attributed is answered with
+`invalid_batch_settlement_svm_payout_attribution_ambiguous` and its signature,
+and its remembered broadcast is dropped. A retry of a deposit whose `open` timed
+out and has since landed MUST be answered only from its remembered broadcast,
+once, and only for the caller that opened a delegated channel, and fails closed
+when the facilitator holds no row for that channel naming the caller; without a
+remembered broadcast it is judged as a `top_up`. A facilitator that exposes a
+payout hook MUST instead keep the
+confirmed payout record, from the moment it observes the confirmation, until
+the hook has run, and delete it then. A `/settle` retry that finds the record
+finishes the hook, deletes the record, and returns the payout; if the hook or the
+delete fails it returns `settlement_pending` and keeps the record. The hook runs
+at least once for every payout whose confirmation the facilitator observed, or
+that a retry reconciles from a remembered broadcast, and MUST be idempotent per
+transaction. A payout that confirms after the facilitator stopped without
+observing it or remembering its broadcast does not reach the hook; the
+transaction stays onchain for out-of-band reconciliation.
+
 ## 7. Error Codes
 
 Standard x402 codes apply. The facilitator reports verification failures in
@@ -1975,7 +2078,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   full unused escrow.
 - `invalid_batch_settlement_svm_close_state` - the channel cannot be closed, or
   a cooperative voucher does not equal server state or is behind the
-  channel's onchain `settled` value.
+  channel's onchain `settled` value. A `seal` rejection SHOULD carry
+  `extra.channelStates[]` (section 4.4, Phase 5).
 - `invalid_batch_settlement_svm_channel_closing` - the payer has started a
   forced close, so program `settle` is unavailable: a `claim`, `voucher`, or
   `authorization` for the channel is refused and the server retries with a
@@ -1985,7 +2089,9 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - `invalid_batch_settlement_svm_withdraw_delay_out_of_range` - `withdrawDelay`
   is outside `900..=2592000` seconds or is shorter than `maxTimeoutSeconds`.
 - `invalid_batch_settlement_svm_cumulative_amount_mismatch` - corrective 402:
-  client's cumulative voucher does not match server state.
+  client's cumulative voucher does not match server state. For a server-authored
+  `claim` or `settle`, the redemption is already onchain and the rejection
+  SHOULD carry `extra.channelStates[]` (section 4.4, Phase 5).
 - `invalid_batch_settlement_svm_cumulative_exceeds_deposit` - voucher exceeds
   escrowed deposit.
 - `invalid_batch_settlement_svm_voucher_expiry` - voucher `expiresAt` is
@@ -2002,12 +2108,13 @@ Standard x402 codes apply. The facilitator reports verification failures in
 - `invalid_batch_settlement_svm_refund_transaction` - refund transaction is not
   a valid payer-signed `request_close` for the derived channel or contains an
   unauthorized instruction.
-- `invalid_batch_settlement_svm_payout_attribution_ambiguous` - a `settle`
-  transaction confirmed, but the receiver's token-balance delta cannot be
-  attributed to the batch because a sealed payout in the same transaction
-  returned escrow to a payer or treasury that aliases `payTo`. The facilitator
+- `invalid_batch_settlement_svm_payout_attribution_ambiguous` - a `settle`,
+  `seal`, or cooperative refund transaction confirmed, but the receiver's
+  token-balance delta cannot be attributed: a payer or treasury that received
+  escrow in the same transaction aliases `payTo`, or the confirmed transaction
+  does not carry the token balances the payout is read from. The facilitator
   returns the confirmed signature with this reason instead of an `amount`;
-  the server reconciles from onchain state.
+  the server reconciles as in section 4.4.
 - `invalid_batch_settlement_svm_operation_ceiling_changed` - a server-mode
   `requestId` was already reserved or completed with a different ceiling. The
   reuse is a duplicate operation: the handler did not run, and the earlier
@@ -2086,7 +2193,8 @@ Standard x402 codes apply. The facilitator reports verification failures in
   `settled` monotonicity reject old vouchers. Server-mode request identifiers
   are single use; duplicates are rejected rather than replayed. Clients keep
   one request in flight per channel and only advance from their local confirmed
-  watermark. A sponsored `request_close` is idempotent by that transaction.
+  watermark. A sponsored `request_close` is single use by that transaction: a
+  concurrent duplicate is rejected and a retry once `Closing` fails.
   Cooperative closes use a separate operation namespace and a terminal onchain
   transition.
 - **Bounded sponsor exposure.** Client-supplied transactions have a static

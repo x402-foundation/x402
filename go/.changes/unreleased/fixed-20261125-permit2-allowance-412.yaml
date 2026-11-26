@@ -1,0 +1,3 @@
+kind: fixed
+body: The HTTP resource server now answers 412 Precondition Failed when verification fails with permit2_allowance_required, matching the TypeScript and Python servers. It previously returned 402, so clients could not tell that a Permit2 approval is needed before retrying.
+time: 2026-11-25T08:00:00Z

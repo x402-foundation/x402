@@ -508,7 +508,7 @@ In the example the client pays `1050000` base units in total: `50000` to the spl
 | `splits` | array | OPTIONAL | 1–8 entries. Absent or empty ⇒ single-payee `exact`. |
 | `splits[].payTo` | string | REQUIRED | Base58-encoded recipient public key. |
 | `splits[].amount` | string | REQUIRED | Decimal string in base units of `asset`. An **absolute** amount, not a percentage or basis points. MUST be a positive integer no greater than `2^64 − 1` (the SPL Token `u64` range), with no sign, decimal point, exponent, or leading zeros. |
-| `splits[].memo` | string | OPTIONAL | Human-readable label for this leg (e.g. `"platform fee"`, `"referral"`), ≤ 566 bytes. Part of the payment terms: the client MUST show it with the leg's `payTo` address and `amount` when obtaining consent (§5.6), and, because it is unauthenticated server-supplied text, MUST NOT show it in place of the address. It is bound like every other requirements field: the client echoes the requirements it consented to in `PaymentPayload.accepted`, and verification runs against them. It is **not** emitted as an on-chain Memo instruction. Mirrors `splits[].memo` in the MPP Solana charge draft for wire parity. |
+| `splits[].memo` | string | OPTIONAL | Human-readable label for this leg (e.g. `"platform fee"`, `"referral"`), ≤ 566 bytes. Applications displaying the label MUST show it with the leg's `payTo` address and `amount`, never instead of the address (§5.6). It is bound like every other requirements field through `PaymentPayload.accepted`; the label does not establish recipient identity. It is **not** emitted as an on-chain Memo instruction. Mirrors `splits[].memo` in the MPP Solana charge draft for wire parity. |
 | `splits[].ataCreationRequired` | boolean | OPTIONAL | Default `false`. Marks this recipient's ATA as possibly needing creation in the payment transaction, funded by the `feePayer`. MUST only be set when the Sponsor advertises `ataCreationSponsored` (§5.4, §5.5). Meaningful only for SPL / Token-2022 assets. |
 
 The primary `payTo` carries the equivalent top-level flag `extra.ataCreationRequired` (default `false`), governed by the same rules (§5.4). The single on-chain Memo remains governed by `extra.memo` (§3.1); per-split memos never reach the chain.
@@ -550,6 +550,8 @@ This is a deliberate, bounded exception to Fee Payer Isolation (§2.1.1) and Fee
 
 Per transaction, rent exposure is opt-in per Sponsor (advertised), opt-in per recipient (marked), and never charged for an ATA that already exists, since `CreateIdempotent` is then a no-op. It is **not** bounded over time. An owner can close its ATA, reclaiming the rent to an address it chooses, and the next charge funds creation again. A Resource Server that controls its recipients can therefore cycle create and close to extract ≈0.002 SOL per charge, and can rotate `payTo` addresses to the same effect. A Sponsor that advertises `ataCreationSponsored` SHOULD bound this, for example by tracking sponsored creations per owner and mint and refusing or pricing repeats, by rate-limiting sponsored creations per Resource Server (§2.2), or by recovering the cost through a split to itself.
 
+Splits do not automatically reimburse rent. This section defines no sponsorship-fee negotiation or dynamic rent quote; a Sponsor SHOULD apply its own out-of-band controls before advertising sponsored creation.
+
 ### 5.5 Capability Advertisement and Sponsor Acceptance with Splits (MUST)
 
 Split support is not an unadvertised local policy. A Sponsor announces it in the `extra` object of the matching `kinds[]` entry of its `/supported` response, alongside `feePayer`:
@@ -586,13 +588,15 @@ A Sponsor that signs a split transaction as `feePayer` MUST, in addition to the 
 
 Within what it advertises, a Sponsor retains the policy flexibility of §2.3 (for example a lower per-request limit on sponsored ATA creations).
 
-### 5.6 Client-Side Verification (MUST)
+Malformed split schemas or field values without a more specific error code MUST be rejected with `invalid_exact_svm_splits_invalid`. Transfer legs that use different authorities MUST be rejected with `invalid_exact_svm_payload_split_authority_mismatch`. These codes are shared across SDKs; the `split_*` codes above retain their specified names.
 
-Before signing, the client MUST verify that `extra.splits` — when present — contains only the recipients and amounts it expects. A malicious Resource Server could otherwise inject or alter splits to divert a portion of the payment. Specifically, the client MUST:
+### 5.6 Client Validation and Recipient Policy
 
-- Confirm each split's `payTo`, `amount`, and `memo` (when present) against the terms it agreed to. When asking a user for consent, show the `memo` as the label for that leg alongside its `payTo` address and `amount`, never instead of the address.
-- Independently compute the primary remainder (`amount − Σ splits[].amount`) and confirm it is the amount reaching the merchant.
-- Reject requirements whose split recipients or amounts it did not agree to, and reject any `ataCreationRequired: true` it is unwilling to fund.
+Clients MUST validate the split schema and amount semantics (§5.1–§5.2) before signing. Splits are carve-outs from the quoted top-level `amount`, not additional charges (§5.2). The existing primary-leg overpayment tolerance is unchanged (§5.3). The Sponsor funds transaction fees and authorized ATA creation (§5.4).
+
+Clients SHOULD accept valid split requirements without a separate split-specific approval step, as they do for the primary `payTo`. Applications MAY apply recipient, amount, or label policies to any payment, including split payments, through their existing before-payment hooks. Such a policy MUST be able to reject a payment before transaction construction and signing.
+
+When displaying a split's `memo`, applications MUST show it alongside that leg's address and amount, never in place of the address. Labels are unauthenticated server-supplied text and do not establish recipient identity.
 
 ### 5.7 Static Layout with Splits (MUST)
 
@@ -607,7 +611,7 @@ Path 1 (§3.1) generalizes for splits and for ATA creation. With `N` splits and 
 
 A version-1 transaction carries its compute budget in the message header (§1.5), so it omits steps 1 and 2 and MUST contain the protocol instructions in the same relative order from step 3, with assertion guards permitted anywhere. When `K > 0`, the transaction also invokes the Associated Token Account program, whose program data counts against `loadedAccountsDataSizeLimit`, so the client MUST size that limit to include it.
 
-Guard placement and count do not change the payment-leg order: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this protocol layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2; non-recoverable guard or extension policy failures remain non-recoverable. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
+Guard placement and count do not change the payment-leg order: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this protocol layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2; non-recoverable guard or extension policy failures remain non-recoverable. Reference clients cap their estimated compute unit limit at the reference default Sponsor ceiling of 400,000 CU. A charge that cannot execute within that budget needs fewer splits or ATA creations; simulation MUST reject it rather than silently increasing Sponsor exposure. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
 
 The exactly-one-Memo rule for `extra.memo` (§3.1) is unchanged: a single on-chain Memo governs the whole charge, not one per leg. Smart-wallet (Path 2, §3.2) charges verify the same `N + 1`-leg outcome across the CPI trace, and post-settlement verification (§3.4) confirms every leg landed on-chain, not simulation alone.
 
@@ -620,7 +624,7 @@ These extend the invariants of §4 when `extra.splits` is present.
 | I8 | **No fund diversion** | Every `asset` transfer lands on an ATA derived from `payTo` or a declared split `payTo`; unexpected transfers rejected (§5.3, §5.5). |
 | I9 | **Authorized, per-transaction-bounded rent** | Fee payer funds ATA creation only when it advertises `ataCreationSponsored`, only for recipients explicitly marked `ataCreationRequired`, never for an existing ATA, and only in the account positions of §2.1.1; creation for owners outside the declared recipient set forbidden. Repeat creation after an owner closes its ATA is bounded by Sponsor policy (§5.4, §5.5). |
 | I10 | **Exact carve-outs** | Each split leg matches its declared amount exactly; only the primary leg tolerates overpayment (§5.3). |
-| I11 | **Consented distribution** | Client verifies split recipients, amounts, and memos (when present) before signing, showing each memo alongside its address (§5.6). |
+| I11 | **Policy visibility** | All split terms are available to application recipient policies before transaction construction and signing (§5.6). |
 | I12 | **Advertised capability** | Split count and ATA sponsorship are bounded by what the Sponsor advertises in `/supported`; absent advertisement means no support, and requirements exceeding it are rejected (§5.5). |
 
 ---

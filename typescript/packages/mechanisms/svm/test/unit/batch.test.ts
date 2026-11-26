@@ -1,5 +1,6 @@
 import { generateKeyPairSigner, getTransactionDecoder, getBase64Codec } from "@solana/kit";
-import type { PaymentRequirements } from "@x402/core/types";
+import { x402ResourceServer } from "@x402/core/server";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { BatchError } from "../../src/batch-settlement/errors";
@@ -324,6 +325,44 @@ describe("batch-settlement SVM", () => {
           [],
         ),
       ).toThrow(/"client" or "server"/);
+    });
+
+    it("matches a payment whose copied facilitator capacity differs from its own", async () => {
+      // Processes of one server copy `/supported` at their own times, so the
+      // process that receives a payment may hold a different capacity than
+      // the one that issued its 402.
+      const enhance = (extra: Record<string, unknown>) =>
+        new BatchServerScheme({ receiverAuthorizer }).enhancePaymentRequirements(
+          requirements(),
+          {
+            extra: { feePayer: feePayer.address, ...extra },
+            network: SOLANA_DEVNET_CAIP2,
+            scheme: "batch-settlement",
+            x402Version: 2,
+          },
+          [],
+        );
+      const absent = await enhance({});
+      const small = await enhance({ maxClaimChannels: 4, maxSettleChannels: 4 });
+      const larger = await enhance({ maxClaimChannels: 18, maxSettleChannels: 13 });
+      expect(larger.extra).toMatchObject({ maxClaimChannels: 18, maxSettleChannels: 13 });
+      const resourceServer = new x402ResourceServer({} as never);
+      resourceServer.register(SOLANA_DEVNET_CAIP2, new BatchServerScheme({ receiverAuthorizer }));
+      const paying = (accepted: PaymentRequirements) =>
+        ({ accepted, payload: {}, x402Version: 2 }) as PaymentPayload;
+      for (const [issued, held] of [
+        [absent, larger],
+        [larger, absent],
+        [small, larger],
+        [larger, small],
+      ]) {
+        expect(resourceServer.findMatchingRequirements([held], paying(issued))).toBe(held);
+      }
+      // Every other field is still compared.
+      const otherFeePayer = { ...larger, extra: { ...larger.extra, feePayer: payer.address } };
+      expect(
+        resourceServer.findMatchingRequirements([otherFeePayer], paying(small)),
+      ).toBeUndefined();
     });
 
     it("broadcasts the deposit and commits its voucher only in the post-handler settle", async () => {

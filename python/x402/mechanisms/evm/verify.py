@@ -8,6 +8,7 @@ except ImportError as e:
     raise ImportError(
         "EVM mechanism requires ethereum packages. Install with: pip install x402[evm]"
     ) from e
+from collections.abc import Callable
 from typing import Any
 
 from .constants import EIP1271_MAGIC_VALUE, IS_VALID_SIGNATURE_ABI
@@ -251,6 +252,8 @@ def verify_typed_data_strict(
     primary_type: str,
     message: dict[str, Any],
     signature: bytes,
+    *,
+    eoa_signature_check: Callable[[bytes], bool] | None = None,
 ) -> bool:
     """Strict typed-data signature verification that mirrors on-chain SignatureChecker.
 
@@ -268,6 +271,7 @@ def verify_typed_data_strict(
         primary_type: Primary type name.
         message: Message data.
         signature: Signature bytes.
+        eoa_signature_check: Optional signature-form check for the ECDSA branch.
 
     Returns:
         True iff on-chain SignatureChecker would accept the signature.
@@ -279,6 +283,8 @@ def verify_typed_data_strict(
 
     code = signer.get_code(address)
     if not code:
+        if eoa_signature_check is not None and not eoa_signature_check(signature):
+            return False
         # EOA path: pure ecrecover. On-chain ecrecover never reverts — invalid
         # signatures (wrong length, bad encoding) return address(0), so we mirror
         # that by returning False instead of raising.

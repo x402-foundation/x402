@@ -2,7 +2,11 @@ import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { getAddress, recoverTypedDataAddress } from "viem";
 import { BATCH_SETTLEMENT_SCHEME, voucherTypes } from "../constants";
 import type { BatchSettlementClientContext } from "./storage";
-import { computeChannelId, getBatchSettlementEip712Domain } from "../utils";
+import {
+  computeChannelId,
+  getBatchSettlementEip712Domain,
+  isContractRecoverableSignature,
+} from "../utils";
 import { getEvmChainId } from "../../utils";
 import {
   type BatchSettlementClientDeps,
@@ -99,6 +103,9 @@ export async function recoverFromSignature(
   }
 
   const chainId = getEvmChainId(accept.network);
+  if (!isContractRecoverableSignature(sig)) {
+    return false;
+  }
   const recovered = await recoverTypedDataAddress({
     domain: getBatchSettlementEip712Domain(chainId),
     types: voucherTypes,

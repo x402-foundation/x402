@@ -453,8 +453,16 @@ class PaymentMiddleware:
                 body_chunks: list[bytes] = []
 
                 try:
-                    for chunk in self._original_wsgi(environ, response_wrapper):
-                        body_chunks.append(chunk)
+                    app_iter = self._original_wsgi(environ, response_wrapper)
+                    try:
+                        for chunk in app_iter:
+                            body_chunks.append(chunk)
+                    finally:
+                        # The server iterates a new body, never this one, so it never calls close().
+                        # close() runs call_on_close callbacks and closes send_file.
+                        close = getattr(app_iter, "close", None)
+                        if callable(close):
+                            close()
                 except BaseException as error:
                     cancel_settlement = None
                     if dispatcher is not None:

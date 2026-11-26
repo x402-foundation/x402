@@ -573,70 +573,97 @@ func settleManagedRefund(
 		return failSettle(requirements, ErrCumulativeAmountMismatch), nil
 	}
 
-	onchain, readErr := ReadChannelState(ctx, deps.Signer, channelId)
-	if readErr != nil || onchain == nil {
-		return failSettle(requirements, ErrRpcReadFailed), nil
-	}
-
-	claims := rebuildClaims(stored)
-	amount, capErr := capRefundAmount(resolveRefundAmount(raw.Amount, stored), onchain.Balance, stored.ChargedCumulativeAmount)
-	if capErr != "" {
-		return failSettle(requirements, capErr), nil
-	}
 	nonce := fmt.Sprintf("%d", stored.RefundNonce)
+	refundKey := refundSettlementCacheKey(channelId, nonce)
+	pendingTx, pending, err := pendingRefundTx(ctx, deps.PendingStore, refundKey, raw.ChannelConfig.Payer, x402.Network(requirements.Network))
+	if err != nil {
+		return nil, err
+	}
+	amount := resolveRefundAmount(raw.Amount, stored)
 	// Consent has passed; the facilitator signs the onchain Refund/ClaimBatch digests itself.
 	enriched := *StripAuthorizerSignatures(raw)
-	enriched.Amount = amount
 	enriched.RefundNonce = nonce
-	enriched.Claims = claims
 
 	var begun []attestedClaim
-	if len(claims) > 0 {
-		one, result, beginErr := beginAttestedClaim(ctx, deps.Storage, channelId, claims[0], time.Now().UnixMilli())
-		if beginErr != nil {
-			return nil, beginErr
+	var claimToFinish *attestedClaim
+	if pending {
+		// Reconcile the earlier attempt's claim marker only when it recorded this tx.
+		if item, ok := pendingClaimForTx(channelId, stored.PendingClaim, pendingTx); ok {
+			claimToFinish = &item
 		}
-		switch result {
-		case beginStarted:
-			begun = []attestedClaim{one}
-			dataSuffix, err = evm.ResolveDataSuffix(fctx, evm.DataSuffixContext{
-				Payload:      payment,
-				Requirements: requirements,
-				Metadata:     batchsettlement.ChargeCountsMetadata([]uint64{chargeCountUint(one.Count)}),
-			})
-			if err != nil {
-				_ = abortAttestedClaims(ctx, deps.Storage, begun)
-				return failSettle(requirements, ErrRpcReadFailed), nil
+		enriched.Amount = amount
+	} else {
+		// A pending refund may have landed, so a fresh cap only applies before broadcast.
+		onchain, readErr := ReadChannelState(ctx, deps.Signer, channelId)
+		if readErr != nil || onchain == nil {
+			return failSettle(requirements, ErrRpcReadFailed), nil
+		}
+		var capErr string
+		if amount, capErr = capRefundAmount(amount, onchain.Balance, stored.ChargedCumulativeAmount); capErr != "" {
+			return failSettle(requirements, capErr), nil
+		}
+		claims := rebuildClaims(stored)
+		enriched.Amount = amount
+		enriched.Claims = claims
+		if len(claims) > 0 {
+			one, result, beginErr := beginAttestedClaim(ctx, deps.Storage, channelId, claims[0], time.Now().UnixMilli())
+			if beginErr != nil {
+				return nil, beginErr
 			}
-		case beginBusy, beginAlreadyClaimed:
-			// Another claim covers the receiver's share. Send the refund alone for the payer's
-			// unspent part; the worker claims the remainder later and this attests nothing.
-			voucherStoreLogger(deps).Info("batch-settlement: refund sent without bundled claim", "channel_id", channelId)
-			claims = nil
-			enriched.Claims = nil
-		case beginSuperseded, beginMissing:
-			// A voucher was committed after the refund amount was computed. Refunding would give away the new charge.
-			return failSettle(requirements, ErrCumulativeAmountMismatch), nil
-		default:
-			return nil, fmt.Errorf("unexpected begin result %d", result)
+			switch result {
+			case beginStarted:
+				begun = []attestedClaim{one}
+				claimToFinish = &one
+				dataSuffix, err = evm.ResolveDataSuffix(fctx, evm.DataSuffixContext{
+					Payload:      payment,
+					Requirements: requirements,
+					Metadata:     batchsettlement.ChargeCountsMetadata([]uint64{chargeCountUint(one.Count)}),
+				})
+				if err != nil {
+					_ = abortAttestedClaims(ctx, deps.Storage, begun)
+					return failSettle(requirements, ErrRpcReadFailed), nil
+				}
+			case beginBusy, beginAlreadyClaimed:
+				// Another claim covers the receiver's share. Send the refund alone for the payer's
+				// unspent part; the worker claims the remainder later and this attests nothing.
+				voucherStoreLogger(deps).Info("batch-settlement: refund sent without bundled claim", "channel_id", channelId)
+				enriched.Claims = nil
+			case beginSuperseded, beginMissing:
+				// A voucher was committed after the refund amount was computed. Refunding would give away the new charge.
+				return failSettle(requirements, ErrCumulativeAmountMismatch), nil
+			default:
+				return nil, fmt.Errorf("unexpected begin result %d", result)
+			}
 		}
 	}
 	// The claim leg may be a no-op (no Claimed event). Capture which rows actually claimed so
 	// the local charge count is only decremented when an indexer would credit it.
 	claimed := map[string]struct{}{}
-	settled, err := SubmitRefund(ctx, SubmitRefundInput{
+	input := SubmitRefundInput{
 		Network:    requirements.Network,
 		Payload:    &enriched,
 		DataSuffix: dataSuffix,
 		OnClaimed:  func(ids map[string]struct{}) { claimed = ids },
-	}, SubmitContext{
-		SubmitMode:          deps.SubmitMode,
-		Signer:              deps.Signer,
-		AuthorizerSigner:    deps.AuthorizerSigner,
-		AuthorizerSubmitter: deps.AuthorizerSubmitter,
-	})
+	}
+	var settled *x402.SettleResponse
+	if pending {
+		settled, err = reconcilePendingRefund(ctx, deps.Signer, deps.PendingStore, refundKey, input, channelId, pendingTx)
+	} else {
+		settled, err = submitRefund(ctx, input, SubmitContext{
+			SubmitMode:          deps.SubmitMode,
+			Signer:              deps.Signer,
+			AuthorizerSigner:    deps.AuthorizerSigner,
+			AuthorizerSubmitter: deps.AuthorizerSubmitter,
+			PendingStore:        deps.PendingStore,
+		})
+	}
 	landed, releaseErr := releaseAttestedClaims(ctx, deps.Storage, begun, err, settled)
 	if err != nil {
+		if pending && claimToFinish != nil && isTransactionReverted(err) {
+			if abortErr := abortAttestedClaim(ctx, deps.Storage, *claimToFinish); abortErr != nil {
+				voucherStoreLogger(deps).Warn("batch-settlement: reverted refund claim marker was not cleared", "channel_id", channelId, "error", abortErr)
+			}
+		}
 		if releaseErr != nil {
 			return nil, releaseErr
 		}
@@ -650,12 +677,19 @@ func settleManagedRefund(
 	}
 
 	extraState, _ := settled.Extra["channelState"].(map[string]interface{})
-	if len(claims) > 0 {
-		newClaimed := refundClaimedTotal(stored.TotalClaimed, claims, extraState)
+	extraTotalClaimed := ""
+	if extraState != nil {
+		extraTotalClaimed, _ = extraState["totalClaimed"].(string)
+	}
+	if claimToFinish != nil {
+		newClaimed := extraTotalClaimed
+		if newClaimed == "" {
+			newClaimed = storage.MaxUint256String(stored.TotalClaimed, claimToFinish.ClaimedTo)
+		}
 		if deltaErr := applyClaimedSettleDelta(ctx, deps.SettleTargetStorage, requirements.Network, stored.ChannelConfig.Receiver, stored.ChannelConfig.Token, newClaimed, stored.TotalClaimed); deltaErr != nil {
 			return settled, nil
 		}
-		if finishErr := finishAttestedClaim(ctx, deps.Storage, channelId, newClaimed, begun[0], rowEmittedClaimed(claimed, channelId, claims[0].TotalClaimed)); finishErr != nil {
+		if finishErr := finishAttestedClaim(ctx, deps.Storage, channelId, newClaimed, *claimToFinish, rowEmittedClaimed(claimed, channelId, claimToFinish.ClaimedTo)); finishErr != nil {
 			voucherStoreLogger(deps).Warn("batch-settlement: refund landed but attested claim was not applied", "channel_id", channelId, "error", finishErr)
 		}
 	}
@@ -823,7 +857,11 @@ func verifyRefundAuthorizerSignature(signature, refundAuthorizer, channelId, amo
 	if err != nil {
 		return false
 	}
-	ok, err = evm.VerifyEOASignature(hash, common.FromHex(signature), common.HexToAddress(refundAuthorizer))
+	sigBytes := common.FromHex(signature)
+	if !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+		return false
+	}
+	ok, err = evm.VerifyEOASignature(hash, sigBytes, common.HexToAddress(refundAuthorizer))
 	return err == nil && ok
 }
 
@@ -1099,6 +1137,23 @@ func rebuildClaims(stored *FacilitatorChannel) []batchsettlement.BatchSettlement
 	claim.Voucher.Channel = stored.ChannelConfig
 	claim.Voucher.MaxClaimableAmount = stored.SignedMaxClaimable
 	return []batchsettlement.BatchSettlementVoucherClaim{claim}
+}
+
+func pendingClaimForTx(channelID string, marker *PendingClaim, txHash string) (attestedClaim, bool) {
+	if marker == nil || txHash == "" || !strings.EqualFold(marker.TxHash, txHash) {
+		return attestedClaim{}, false
+	}
+	return attestedClaim{
+		ChannelID: channelID,
+		Count:     marker.AttestedCount,
+		ClaimedTo: marker.ClaimedTo,
+		StartedAt: marker.StartedAt,
+	}, true
+}
+
+func isTransactionReverted(err error) bool {
+	var se *x402.SettleError
+	return errors.As(err, &se) && se.ErrorReason == ErrTransactionReverted
 }
 
 func refundAmountError(amount string) string {
