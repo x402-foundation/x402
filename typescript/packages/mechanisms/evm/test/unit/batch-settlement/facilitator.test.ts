@@ -1602,6 +1602,12 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       "a Deposited log for another channel",
       () => [buildDepositedLog({ channelId: `0x${"77".repeat(32)}`, newBalance: "10000" })],
     ],
+    [
+      "a Deposited log for another amount",
+      (channelId: `0x${string}`) => [
+        buildDepositedLog({ channelId, newBalance: "10001", amount: "10001" }),
+      ],
+    ],
   ])("fails terminally when the deposit receipt has %s", async (_, logs) => {
     const { channelId, dp } = buildEip3009Deposit();
     const signer = buildSigner({ waitForTransactionReceipt: successReceipt(logs(channelId)) });

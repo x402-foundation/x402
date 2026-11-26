@@ -68,7 +68,8 @@ function getRefundableAmount(
  * following the contract's `_executeRefund`.
  *
  * `Refunded` carries no post-refund balance, so `balance` assumes no other balance change
- * landed between the pre-read and inclusion.
+ * landed between the pre-read and inclusion. Likewise `withdrawRequestedAt` misses a withdrawal
+ * initiated in that window, and without a bundled claim `totalClaimed` is a lower bound.
  *
  * @param preState - Onchain channel state read before the transaction.
  * @param refunded - Amount of the receipt's `Refunded` event.

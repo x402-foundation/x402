@@ -433,6 +433,7 @@ async function reconcilePendingDeposit(
         const deposited = depositedBalanceFromReceipt(
           receipt,
           voucher.channelId,
+          BigInt(deposit.amount),
           cachedTx,
           requirements.network,
           payer,
@@ -622,6 +623,7 @@ export async function settleDeposit(
           const deposited = depositedBalanceFromReceipt(
             receipt,
             voucher.channelId,
+            BigInt(deposit.amount),
             tx,
             requirements.network,
             payer,
@@ -630,8 +632,9 @@ export async function settleDeposit(
             return deposited;
           }
           // `deposit()` leaves totalClaimed, withdrawRequestedAt and refundNonce untouched, so the
-          // verify snapshot supplies them. A claim landing between verify and inclusion makes
-          // totalClaimed a lower bound.
+          // verify snapshot supplies them as of verify: a claim landing between verify and
+          // inclusion makes totalClaimed a lower bound, and a withdrawal initiated in that window
+          // is missing from withdrawRequestedAt until the next voucher verify.
           return {
             success: true,
             transaction: tx,
@@ -662,11 +665,13 @@ export async function settleDeposit(
 
 /**
  * Reads the post-deposit balance from a successful deposit receipt. A successful `deposit()`
- * always emits `Deposited`, so a receipt without one means the deposit did not run.
+ * always emits `Deposited` for the deposited amount, so a receipt without a matching one means
+ * the deposit did not run.
  *
  * @param receipt - Successful receipt of the deposit (or approve + deposit bundle) transaction.
  * @param receipt.logs - Receipt logs; `undefined` when the signer dropped them.
  * @param channelId - The deposited channel.
+ * @param amount - The deposit amount from the payload.
  * @param tx - The deposit transaction hash.
  * @param network - Network the transaction was broadcast to.
  * @param payer - The payer address.
@@ -675,6 +680,7 @@ export async function settleDeposit(
 function depositedBalanceFromReceipt(
   receipt: { logs?: readonly Log[] },
   channelId: `0x${string}`,
+  amount: bigint,
   tx: `0x${string}`,
   network: Network,
   payer: `0x${string}`,
@@ -682,12 +688,14 @@ function depositedBalanceFromReceipt(
   if (receipt.logs === undefined) {
     return receiptLogsUnavailableResponse(tx, network, payer);
   }
-  const balance = findChannelEvents(receipt.logs, "Deposited", channelId)[0]?.args.newBalance;
+  const balance = findChannelEvents(receipt.logs, "Deposited", channelId).find(
+    event => event.args.amount === amount,
+  )?.args.newBalance;
   if (balance === undefined) {
     return {
       success: false,
       errorReason: Errors.ErrDepositTransactionFailed,
-      errorMessage: "receipt has no Deposited event for the channel",
+      errorMessage: "receipt has no Deposited event for the channel and deposit amount",
       transaction: tx,
       network,
       payer,
