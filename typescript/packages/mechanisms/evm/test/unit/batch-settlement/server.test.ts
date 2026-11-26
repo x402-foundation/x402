@@ -3539,6 +3539,50 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(channel?.balance).toBe("11000");
   });
 
+  it.each([
+    ["keeps a stored totalClaimed above the refund snapshot", "700", "700"],
+    ["advances totalClaimed to a higher refund snapshot", "100", "300"],
+  ])("%s", async (_, storedTotalClaimed, expected) => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: storedTotalClaimed,
+      withdrawRequestedAt: 0,
+      refundNonce: 0,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildRefundPayload(channelId, "0", config, "9000"),
+      requirements: makeRequirements({ amount: "0" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "1000",
+            totalClaimed: "300",
+            withdrawRequestedAt: 0,
+            refundNonce: "1",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.totalClaimed).toBe(expected);
+    expect(channel?.balance).toBe("1000");
+  });
+
   it("aborts MissingChannel when a deposit settle has no row and no verify snapshot", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);

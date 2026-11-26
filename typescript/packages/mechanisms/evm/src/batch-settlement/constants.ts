@@ -15,11 +15,11 @@ export const PERMIT2_DEPOSIT_COLLECTOR_ADDRESS =
   "0x4020425FAf3B746C082C2f942b4E5159887B0005" as const;
 
 /**
- * Bounds for the voucher channel-state re-read (`readChannelStateCovering`), which waits out a
- * lagging RPC node when the balance cannot cover what was already admitted.
+ * Waits between the voucher channel-state re-reads (`readChannelStateCovering`), which wait out
+ * a lagging RPC node when the balance cannot cover the voucher. Each entry adds one read, and
+ * an uncovered voucher pays all of them, so keep the list short.
  */
-export const CHANNEL_STATE_POLL_MS = 2_000;
-export const CHANNEL_STATE_POLL_INTERVAL_MS = 150;
+export const CHANNEL_STATE_REREAD_DELAYS_MS = [150, 400, 1_000] as const;
 
 /** Default server SDK multiplier for `extra.minDeposit` when no floor is configured. */
 export const DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER = 10;

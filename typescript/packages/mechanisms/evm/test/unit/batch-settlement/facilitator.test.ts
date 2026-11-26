@@ -36,6 +36,7 @@ import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/facilita
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import {
   BATCH_SETTLEMENT_ADDRESS,
+  CHANNEL_STATE_REREAD_DELAYS_MS,
   ERC3009_DEPOSIT_COLLECTOR_ADDRESS,
   PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
 } from "../../../src/batch-settlement/constants";
@@ -554,6 +555,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyVoucher", () => {
     const result = await withFakeTimers(() => scheme.verify(payload, makeRequirements()));
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(Errors.ErrChannelNotFound);
+    expect(mockedMulticall).toHaveBeenCalledTimes(CHANNEL_STATE_REREAD_DELAYS_MS.length + 1);
   });
 
   it("returns CumulativeExceedsBalance when maxClaimable stays above balance through the re-read window", async () => {
@@ -565,7 +567,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyVoucher", () => {
     const result = await withFakeTimers(() => scheme.verify(payload, makeRequirements()));
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(Errors.ErrCumulativeExceedsBalance);
-    expect(mockedMulticall.mock.calls.length).toBeGreaterThan(1);
+    expect(mockedMulticall).toHaveBeenCalledTimes(CHANNEL_STATE_REREAD_DELAYS_MS.length + 1);
   });
 
   it("re-reads a stale balance until it covers maxClaimable", async () => {
@@ -2437,6 +2439,11 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       claims: [],
     });
 
+    const delegatedRequirements = (overrides: Partial<PaymentRequirements> = {}) => {
+      const base = makeRequirements(overrides);
+      return { ...base, extra: { ...base.extra, receiverAuthorizer: authorizer.address } };
+    };
+
     it("advertises delegatedRefund: true in getExtra", () => {
       const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer, {
         delegatedRefund: true,
@@ -2470,7 +2477,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
 
       const result = await scheme.settle(
         envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
-        makeRequirements(),
+        delegatedRequirements(),
       );
 
       expect(result.success).toBe(true);
@@ -2478,6 +2485,27 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       expect(signer.writeContract).toHaveBeenCalledWith(
         expect.objectContaining({ functionName: "refundWithSignature" }),
       );
+    });
+
+    it("rejects an unsigned refund whose channel does not match the requirements without signing", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSigner();
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        delegatedRequirements({ payTo: PAYER }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrReceiverMismatch);
+      expect(signTypedData).not.toHaveBeenCalled();
+      expect(signer.writeContract).not.toHaveBeenCalled();
     });
 
     it("rejects an unsigned refund when the channel receiverAuthorizer is not the facilitator", async () => {

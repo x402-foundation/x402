@@ -27,7 +27,8 @@ type AdmissionHold = "self" | "other" | "none";
 
 /**
  * Keeps the larger of the stored and settled `totalClaimed`. Onchain `totalClaimed` only
- * increases, and a deposit response reports the verify-time value, a lower bound.
+ * increases, and deposit and refund responses can report a value read before the transaction,
+ * a lower bound.
  *
  * @param stored - `totalClaimed` already on the channel record.
  * @param settled - `totalClaimed` from the settle response, if present and canonical.
@@ -372,6 +373,7 @@ export async function handleAfterSettle(
         return {
           ...existing,
           ...snapshot,
+          totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
           network: requirements.network || existing.network,
           onchainSyncedAt: now,
           lastRequestTimestamp: now,

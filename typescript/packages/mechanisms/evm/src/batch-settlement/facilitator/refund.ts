@@ -1,5 +1,5 @@
 import { SettleResponse, PaymentRequirements } from "@x402/core/types";
-import { encodeFunctionData, getAddress } from "viem";
+import { encodeFunctionData, getAddress, isAddressEqual } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import type {
   AuthorizerSigner,
@@ -21,6 +21,7 @@ import {
   receiptLogsUnavailableResponse,
   toChannelStateExtra,
   toContractChannelConfig,
+  validateChannelConfig,
 } from "./utils";
 
 /**
@@ -126,17 +127,40 @@ export async function executeRefundWithSignature(
   const network = requirements.network;
 
   try {
-    const canSignRefund = delegatedRefund && authorizerSigner !== undefined;
-    if (!payload.refundAuthorizerSignature && !canSignRefund) {
-      return {
-        success: false,
-        errorReason: Errors.ErrRefundAuthorizerSignature,
-        transaction: "",
+    const channelId = computeChannelId(payload.channelConfig, network);
+
+    let refundSig = payload.refundAuthorizerSignature;
+    if (!refundSig) {
+      const refundSigner = delegatedRefund ? authorizerSigner : undefined;
+      if (!refundSigner) {
+        return {
+          success: false,
+          errorReason: Errors.ErrRefundAuthorizerSignature,
+          transaction: "",
+          network,
+        };
+      }
+      if (!isAddressEqual(payload.channelConfig.receiverAuthorizer, refundSigner.address)) {
+        return {
+          success: false,
+          errorReason: Errors.ErrAuthorizerAddressMismatch,
+          transaction: "",
+          network,
+        };
+      }
+      const configErr = validateChannelConfig(payload.channelConfig, channelId, requirements);
+      if (configErr) {
+        return { success: false, errorReason: configErr, transaction: "", network };
+      }
+      refundSig = await signRefund(
+        refundSigner,
+        channelId,
+        payload.amount,
+        payload.refundNonce,
         network,
-      };
+      );
     }
 
-    const channelId = computeChannelId(payload.channelConfig, network);
     const preState = await readChannelState(signer, channelId);
     const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
     const refundableAmount = getRefundableAmount(payload, preState, channelId, network);
@@ -149,28 +173,6 @@ export async function executeRefundWithSignature(
         transaction: "",
         network,
       };
-    }
-
-    let refundSig = payload.refundAuthorizerSignature;
-    if (!refundSig) {
-      if (
-        getAddress(payload.channelConfig.receiverAuthorizer) !==
-        getAddress(authorizerSigner!.address)
-      ) {
-        return {
-          success: false,
-          errorReason: Errors.ErrAuthorizerAddressMismatch,
-          transaction: "",
-          network,
-        };
-      }
-      refundSig = await signRefund(
-        authorizerSigner!,
-        channelId,
-        payload.amount,
-        payload.refundNonce,
-        network,
-      );
     }
 
     const refundCalldata = encodeFunctionData({
