@@ -173,6 +173,114 @@ class TestX402ClientSyncRegistration:
 
 
 # =============================================================================
+# Wildcard Scheme Lookup Tests
+# =============================================================================
+
+
+class _MarkedSchemeClient(MockSchemeClient):
+    """Mock scheme client whose payload names the instance that created it."""
+
+    def __init__(self, scheme: str, marker: str):
+        super().__init__(scheme)
+        self.marker = marker
+
+    def create_payment_payload(self, requirements, context=None):
+        return {"marker": self.marker}
+
+
+class _RecordingSchemeHooks:
+    """Scheme hook container that counts payment-response calls."""
+
+    def __init__(self):
+        self.payment_response_calls = 0
+
+    def on_payment_response(self, ctx):
+        self.payment_response_calls += 1
+
+
+class TestWildcardSchemeOnNetworkWithOtherRegistration:
+    """A wildcard scheme stays reachable when another scheme has an exact registration."""
+
+    network = "eip155:1"
+    asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+    def _req(self, scheme: str = "upto") -> PaymentRequirements:
+        return PaymentRequirements(
+            scheme=scheme,
+            network=self.network,
+            asset=self.asset,
+            amount="1000",
+            pay_to="0xpay",
+            max_timeout_seconds=60,
+        )
+
+    def test_sync_client_selects_wildcard_scheme(self):
+        client = (
+            x402ClientSync()
+            .register("eip155:*", MockSchemeClient("exact"))
+            .register("eip155:*", MockSchemeClient("upto"))
+            .register("eip155:1", MockSchemeClient("exact"))
+        )
+        req = self._req()
+
+        payload = client.create_payment_payload(PaymentRequired(x402_version=2, accepts=[req]))
+
+        assert payload.accepted.scheme == "upto"
+
+    @pytest.mark.asyncio
+    async def test_async_client_selects_wildcard_scheme(self):
+        client = (
+            x402Client()
+            .register("eip155:*", MockSchemeClient("exact"))
+            .register("eip155:*", MockSchemeClient("upto"))
+            .register("eip155:1", MockSchemeClient("exact"))
+        )
+        req = self._req()
+
+        payload = await client.create_payment_payload(
+            PaymentRequired(x402_version=2, accepts=[req])
+        )
+
+        assert payload.accepted.scheme == "upto"
+
+    def test_exact_registration_still_wins_for_its_scheme(self):
+        client = (
+            x402ClientSync()
+            .register("eip155:*", _MarkedSchemeClient("exact", "wildcard-exact"))
+            .register("eip155:1", _MarkedSchemeClient("exact", "network-exact"))
+        )
+        req = self._req("exact")
+
+        payload = client.create_payment_payload(PaymentRequired(x402_version=2, accepts=[req]))
+
+        assert payload.payload["marker"] == "network-exact"
+
+    @pytest.mark.asyncio
+    async def test_runs_wildcard_scheme_payment_response_hook(self):
+        upto = MockSchemeClient("upto")
+        upto.scheme_hooks = _RecordingSchemeHooks()
+        wildcard_exact = MockSchemeClient("exact")
+        wildcard_exact.scheme_hooks = _RecordingSchemeHooks()
+        network_exact = MockSchemeClient("exact")
+        network_exact.scheme_hooks = _RecordingSchemeHooks()
+        client = (
+            x402Client()
+            .register("eip155:*", wildcard_exact)
+            .register("eip155:*", upto)
+            .register("eip155:1", network_exact)
+        )
+        req = self._req("upto")
+        payload = PaymentPayload(x402_version=2, payload={}, accepted=req)
+
+        await client.handle_payment_response(
+            PaymentResponseContext(payment_payload=payload, requirements=req)
+        )
+
+        assert upto.scheme_hooks.payment_response_calls == 1
+        assert network_exact.scheme_hooks.payment_response_calls == 0
+
+
+# =============================================================================
 # Policy Tests
 # =============================================================================
 
