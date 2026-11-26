@@ -7,11 +7,7 @@ import {
   parseTransferCheckedInstruction as parseTransferCheckedInstructionToken,
   TOKEN_PROGRAM_ADDRESS,
 } from "@solana-program/token";
-import {
-  findAssociatedTokenPda,
-  parseTransferCheckedInstruction as parseTransferCheckedInstruction2022,
-  TOKEN_2022_PROGRAM_ADDRESS,
-} from "@solana-program/token-2022";
+import { parseTransferCheckedInstruction as parseTransferCheckedInstruction2022 } from "@solana-program/token-2022";
 import {
   decompileTransactionMessage,
   getCompiledTransactionMessageDecoder,
@@ -86,7 +82,9 @@ import {
   isAtaProgramInstruction,
   parsePaymentLegs,
   SplitsError,
+  TOKEN_PROGRAMS,
   usesSplitTerms,
+  verifyExpectedMemo,
   type PaymentLeg,
 } from "../splits";
 import * as Errors from "./errors";
@@ -1443,16 +1441,13 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     // Verify destination ATA matches expected ATA for payTo address
     const destATA = parsedTransfer.accounts.destination.address.toString();
     try {
-      const [expectedDestATA] = await findAssociatedTokenPda({
-        mint: requirements.asset as Address,
-        owner: requirements.payTo as Address,
-        tokenProgram:
-          programAddress === TOKEN_PROGRAM_ADDRESS.toString()
-            ? (TOKEN_PROGRAM_ADDRESS as Address)
-            : (TOKEN_2022_PROGRAM_ADDRESS as Address),
-      });
+      const expectedDestATA = await deriveAta(
+        requirements.payTo,
+        requirements.asset,
+        programAddress,
+      );
 
-      if (destATA !== expectedDestATA.toString()) {
+      if (destATA !== expectedDestATA) {
         return {
           isValid: false,
           invalidReason: Errors.ErrRecipientMismatch,
@@ -1537,34 +1532,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       invalidReason: undefined,
       payer,
     };
-  }
-
-  /**
-   * Checks that exactly one Memo instruction carries `extra.memo` when the
-   * requirements set one.
-   *
-   * @param optionalInstructions - The optional trailing instructions
-   * @param requirements - Payment requirements
-   * @returns An error reason, or undefined when the memo is valid
-   */
-  private verifyExpectedMemo(
-    optionalInstructions: ReadonlyArray<{
-      programAddress: { toString(): string };
-      data?: ArrayLike<number>;
-    }>,
-    requirements: PaymentRequirements,
-  ): string | undefined {
-    const expectedMemo = requirements.extra?.memo as string | undefined;
-    if (!expectedMemo) return undefined;
-    const memoInstructions = optionalInstructions.filter(
-      ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
-    );
-    if (memoInstructions.length !== 1) {
-      return Errors.ErrMemoCount;
-    }
-    const memoData = memoInstructions[0].data;
-    const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
-    return actualMemo === expectedMemo ? undefined : Errors.ErrMemoMismatch;
   }
 
   /**
@@ -1697,8 +1664,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       // accounts would let the transfer's authority be something other than
       // the account the payer signed with.
       if (
-        (programAddress !== TOKEN_PROGRAM_ADDRESS.toString() &&
-          programAddress !== TOKEN_2022_PROGRAM_ADDRESS.toString()) ||
+        !TOKEN_PROGRAMS.has(programAddress) ||
         !ixData ||
         ixData.length !== 10 ||
         ixData[0] !== IX_TOKEN_TRANSFER_CHECKED ||
@@ -1745,10 +1711,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     const optionalInstructions = instructions.slice(firstOptional);
     for (const ix of optionalInstructions) {
       const programAddress = ix.programAddress.toString();
-      if (
-        programAddress !== LIGHTHOUSE_PROGRAM_ADDRESS &&
-        programAddress !== MEMO_PROGRAM_ADDRESS
-      ) {
+      if (programAddress !== MEMO_PROGRAM_ADDRESS) {
         return fail(Errors.ErrUnknownOptionalInstruction, payer);
       }
     }
@@ -1772,7 +1735,7 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       return fail(error instanceof Error ? error.message : String(error), payer);
     }
 
-    const memoError = this.verifyExpectedMemo(optionalInstructions, requirements);
+    const memoError = verifyExpectedMemo(optionalInstructions, requirements);
     if (memoError) {
       return fail(memoError, payer);
     }

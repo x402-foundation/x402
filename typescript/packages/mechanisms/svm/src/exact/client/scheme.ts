@@ -1,9 +1,7 @@
-import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
   findAssociatedTokenPda,
   getCreateAssociatedTokenIdempotentInstruction,
   getTransferCheckedInstruction,
-  TOKEN_2022_PROGRAM_ADDRESS,
 } from "@solana-program/token-2022";
 import {
   appendTransactionMessageInstructions,
@@ -37,7 +35,7 @@ import {
 import { createRpcClient, resolveBlockhash, resolveTransactionVersion } from "../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../mint-cache";
 import { findDefaultAsset } from "../../defaultAssets";
-import { parsePaymentLegs } from "../splits";
+import { parsePaymentLegs, TOKEN_PROGRAMS } from "../splits";
 
 /**
  * SVM client implementation for the Exact payment scheme.
@@ -89,10 +87,7 @@ export class ExactSvmScheme implements SchemeNetworkClient {
     );
     const tokenProgramAddress = mintMetadata.programAddress;
 
-    if (
-      tokenProgramAddress.toString() !== TOKEN_PROGRAM_ADDRESS.toString() &&
-      tokenProgramAddress.toString() !== TOKEN_2022_PROGRAM_ADDRESS.toString()
-    ) {
+    if (!TOKEN_PROGRAMS.has(tokenProgramAddress.toString())) {
       throw new Error("Asset was not created by a known token program");
     }
 

@@ -18,7 +18,6 @@ import {
   type Transaction,
 } from "@solana/kit";
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
-import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
 import {
   checkTransactionV1Budget,
@@ -31,7 +30,9 @@ import {
   deriveLegDestinations,
   matchTransfersToLegs,
   SplitsError,
+  TOKEN_PROGRAMS,
   transferPaysLeg,
+  verifyExpectedMemo,
   type LegDestinations,
   type PaymentLeg,
 } from "../splits";
@@ -43,11 +44,6 @@ const DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS = 50_000;
 export const IX_SET_COMPUTE_UNIT_LIMIT = 2;
 export const IX_SET_COMPUTE_UNIT_PRICE = 3;
 export const IX_TOKEN_TRANSFER_CHECKED = 12;
-
-const TOKEN_PROGRAMS = new Set([
-  TOKEN_PROGRAM_ADDRESS.toString(),
-  TOKEN_2022_PROGRAM_ADDRESS.toString(),
-]);
 
 export type SmartWalletLimits = {
   maxComputeUnits?: number;
@@ -681,31 +677,13 @@ export async function verifySmartWalletTransaction(
       getCompiledTransactionMessageDecoder().decode(transaction.messageBytes).staticAccounts ?? []
     ).map(String);
 
-  // 4a. Verify memo content matches extra.memo when present.
-  // Mirrors Path 1's Step 5b enforcement so a seller-required memo cannot be
-  // bypassed by routing through a smart wallet. The memo program is a standalone
-  // top-level instruction in both paths; wallet programs do not wrap it via CPI.
-  const expectedMemo = requirements.extra?.memo as string | undefined;
-  if (expectedMemo) {
-    const memoInstructions = decompiledInstructions.filter(
-      ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
-    );
-    if (memoInstructions.length !== 1) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrMemoCount,
-        payer: "",
-      };
-    }
-    const memoData = memoInstructions[0].data;
-    const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
-    if (actualMemo !== expectedMemo) {
-      return {
-        isValid: false,
-        invalidReason: Errors.ErrMemoMismatch,
-        payer: "",
-      };
-    }
+  const memoError = verifyExpectedMemo(decompiledInstructions, requirements);
+  if (memoError) {
+    return {
+      isValid: false,
+      invalidReason: memoError,
+      payer: "",
+    };
   }
 
   const topLevelTransfers = extractTopLevelTransfers(decompiledInstructions);
