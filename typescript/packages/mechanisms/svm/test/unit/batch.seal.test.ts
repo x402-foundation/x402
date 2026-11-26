@@ -283,6 +283,7 @@ describe("batch-settlement seal", () => {
     expect(key).toBe(`batch:seal:${NETWORK}:${channelId}:3000`);
     expect(record).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledWith(response, requirements());
+    expect(api.readChannel).not.toHaveBeenCalled();
 
     // The same close replays from the recorded result without a second broadcast.
     await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
@@ -534,6 +535,8 @@ describe("batch-settlement seal", () => {
     });
     expect(record).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledWith({ ...above.response, amount: "2500" }, requirements());
+    // Voucher bounds and closing-state reads before the broadcast; none after it.
+    expect(above.api.readChannel).toHaveBeenCalledTimes(2);
     const [, , instructions, key] = above.api.submitRedemption.mock.calls[0]!;
     expect(instructions).toHaveLength(3);
     expect(key).toBe(`batch:refund:${NETWORK}:${channelId}:3000`);

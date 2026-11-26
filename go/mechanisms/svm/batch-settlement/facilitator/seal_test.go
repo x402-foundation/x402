@@ -267,9 +267,15 @@ func TestBatchSettlementSeal(t *testing.T) {
 	t.Run("applies the final voucher with settle_and_seal and a sealed distribute in one transaction", func(t *testing.T) {
 		payouts := &payoutLog{}
 		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
+		reads := 0
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			reads++
+			return live(nil), nil
+		}
 		payload := sealPayload(t, 3_000)
 		response := settle(t, fixture.scheme, payload)
 		assert.True(t, response.Success)
+		assert.Zero(t, reads, "a close reads the confirmed transaction, not the channel")
 		assert.Equal(t, "2500", response.Amount)
 		assert.Equal(t, "2500", response.Extra["paidToReceiver"])
 		assert.Equal(t, payer.PublicKey().String(), response.Payer)
@@ -431,68 +437,6 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.Len(t, payouts.calls(), 2)
 	})
 
-	t.Run("delivers the payout of a close that confirmed before its sealed state was visible", func(t *testing.T) {
-		payouts := &payoutLog{}
-		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
-		sealedChannel := live(func(channel *generated.Channel) {
-			channel.Status = uint8(generated.ChannelStatus_Sealed)
-			channel.Settlement = generated.SettlementWatermarks{Settled: 3_000, PayoutWatermark: 500}
-		})
-		stale := live(nil)
-		var closeLanded bool
-		fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			if closeLanded {
-				return sealedChannel, nil
-			}
-			return stale, nil
-		}
-		reads := 0
-		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			reads++
-			closeLanded = true
-			return stale, nil
-		}
-		payload := sealPayload(t, 3_000)
-
-		pending := settleThrown(t, fixture.scheme, payload)
-		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
-		assert.Equal(t, signature, pending.Transaction)
-		assert.Empty(t, payouts.calls())
-
-		recovered := settle(t, fixture.scheme, payload)
-		assert.True(t, recovered.Success)
-		assert.Equal(t, "2500", recovered.Amount)
-		assert.Equal(t, signature, recovered.Transaction)
-		assert.Len(t, fixture.submits, 1)
-		assert.Equal(t, 1, reads)
-		require.Len(t, payouts.calls(), 1)
-		assert.Equal(t, "2500", payouts.calls()[0].response.Amount)
-	})
-
-	t.Run("answers settlement_pending with the signature when the post-confirmation seal read errors", func(t *testing.T) {
-		payouts := &payoutLog{}
-		fixture := facilitator(t, nil, true, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
-		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			return nil, context.DeadlineExceeded
-		}
-		payload := sealPayload(t, 3_000)
-
-		pending := settleThrown(t, fixture.scheme, payload)
-		assert.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
-		assert.Equal(t, signature, pending.Transaction)
-		assert.Empty(t, payouts.calls())
-
-		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-			return nil, nil
-		}
-		recovered := settle(t, fixture.scheme, payload)
-		assert.True(t, recovered.Success)
-		assert.Equal(t, "2500", recovered.Amount)
-		assert.Equal(t, signature, recovered.Transaction)
-		assert.Len(t, fixture.submits, 1)
-		require.Len(t, payouts.calls(), 1)
-	})
-
 	t.Run("seals at the current watermark without a precompile when the voucher equals settled", func(t *testing.T) {
 		fixture := facilitator(t, nil, true)
 		response := settle(t, fixture.scheme, sealPayload(t, 1_000))
@@ -582,7 +526,14 @@ func TestBatchSettlementSeal(t *testing.T) {
 		refund := func(t *testing.T, cumulative uint64, configure ...func(*Config)) (*sealFixture, *x402.SettleResponse) {
 			t.Helper()
 			fixture := facilitator(t, openLive, true, configure...)
-			return fixture, settle(t, fixture.scheme, refundPayload(t, cumulative))
+			reads := 0
+			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+				reads++
+				return openLive, nil
+			}
+			response := settle(t, fixture.scheme, refundPayload(t, cumulative))
+			assert.Zero(t, reads, "a refund reads the confirmed transaction, not the channel")
+			return fixture, response
 		}
 		payouts := &payoutLog{}
 		above, response := refund(t, 3_000, func(cfg *Config) { cfg.OnDistributionConfirmed = payouts.record })
@@ -790,50 +741,6 @@ func TestBatchSettlementSeal(t *testing.T) {
 			assert.False(t, again.Success)
 			assert.Equal(t, batchsettlement.ErrCloseState, again.ErrorReason)
 			assert.Len(t, payouts.calls(), 1, "the payout is not delivered twice")
-		})
-	}
-
-	for _, intent := range []CloseIntent{CloseIntentSeal, CloseIntentRefund} {
-		t.Run(fmt.Sprintf("keeps a hookless %s pending when its closed state is not visible yet, and answers the retry even when the channel cannot be read", intent), func(t *testing.T) {
-			channel, payload, amount := live(nil), any(sealPayload(t, 3_000)), "2500"
-			if intent == CloseIntentRefund {
-				channel, payload, amount = openLive, refundPayload(t, 3_000), "7000"
-			}
-			fixture := facilitator(t, channel, true)
-			attributing(fixture, CloseAttribution{PaidToReceiver: 2_500, RefundedToPayer: 7_000}, nil)
-			ctx := context.Background()
-			key := fmt.Sprintf("batch:%s:%s:%s:3000", intent, network, channelID)
-			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-				return channel, nil
-			}
-			request := types.PaymentPayload{X402Version: 2, Accepted: requirements, Payload: asMap(t, payload)}
-			first, err := fixture.scheme.Settle(ctx, request, requirements, nil)
-			require.Nil(t, first)
-			var settleErr *x402.SettleError
-			require.ErrorAs(t, err, &settleErr)
-			assert.Equal(t, x402.ErrSettlementPending, settleErr.ErrorReason)
-			recorded, stored, err := fixture.scheme.pendingStore.Get(ctx, key)
-			require.NoError(t, err)
-			require.True(t, stored, "the confirmed close is remembered for the retry")
-			assert.Equal(t, signature, recorded)
-
-			fixture.scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) {
-				return sealedAt3000(), nil
-			}
-			fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
-				return nil, errors.New("rpc unavailable")
-			}
-			fixture.scheme.hooks.reconcileBroadcast = func(context.Context, string, string, string, string) (durableResult, error) {
-				return durableResult{OK: true, Signature: signature}, nil
-			}
-			recovered := settle(t, fixture.scheme, payload)
-			assert.True(t, recovered.Success)
-			assert.Equal(t, amount, recovered.Amount)
-			assert.Equal(t, "2500", recovered.Extra["paidToReceiver"])
-			assert.Len(t, fixture.submits, 1)
-			_, stored, err = fixture.scheme.pendingStore.Get(ctx, key)
-			require.NoError(t, err)
-			assert.False(t, stored)
 		})
 	}
 

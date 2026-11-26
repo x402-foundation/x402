@@ -314,7 +314,6 @@ export async function settleSeal(
     key,
     network,
     payer,
-    requiredStatus,
     requirements,
     terms,
   };
@@ -382,7 +381,6 @@ interface CloseRun {
   key: string;
   network: Network;
   payer: string;
-  requiredStatus: ChannelStatus;
   requirements: PaymentRequirements;
   terms: SealTerms;
 }
@@ -424,17 +422,6 @@ async function finishClose(
     };
   }
 
-  // The sealed distribute may deallocate the PDA outright; a read still in
-  // the pre-close status means the confirmed state is not visible yet.
-  const observed = await deps.readChannel(network, channelId);
-  if (observed && observed.status === run.requiredStatus) {
-    return settlementPending(
-      network,
-      payer,
-      signature,
-      `${intent} confirmed but the sealed state is not visible yet`,
-    );
-  }
   const incomplete = await deps.completeOrPending(key, signature, network, payer);
   if (incomplete) return incomplete;
 

@@ -1061,7 +1061,6 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		},
 		DeriveChannelID:         f.deriveChannelID,
 		FetchChannel:            f.fetchChannel,
-		ReadChannel:             f.readChannel,
 		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,
