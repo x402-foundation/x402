@@ -94,23 +94,6 @@ func findRegisteredNetwork[T any](networkMap map[Network]map[string]T, scheme st
 	return "", false
 }
 
-// findSchemesByNetwork finds all schemes for a given network
-func findSchemesByNetwork[T any](networkMap map[Network]map[string]T, network Network) map[string]T {
-	// Try exact match first
-	if schemeMap, exists := networkMap[network]; exists {
-		return schemeMap
-	}
-
-	// Try pattern matching
-	for registeredNetwork, schemeMap := range networkMap {
-		if network.Match(registeredNetwork) || registeredNetwork.Match(network) {
-			return schemeMap
-		}
-	}
-
-	return nil
-}
-
 // NumberToDecimalString converts a float64 to a plain decimal string without scientific notation.
 func NumberToDecimalString(n float64) string {
 	return strconv.FormatFloat(n, 'f', -1, 64)

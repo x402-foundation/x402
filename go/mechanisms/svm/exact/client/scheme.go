@@ -121,7 +121,7 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	}
 
 	// Find source ATA (client's token account)
-	sourceATA, err := findAssociatedTokenAddress(c.signer.Address(), tokenProgramID, mintPubkey)
+	sourceATA, err := svm.DeriveATA(c.signer.Address(), mintPubkey, tokenProgramID)
 	if err != nil {
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToDeriveSourceATA+": %w", err)
 	}
@@ -253,14 +253,6 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		X402Version: 2,
 		Payload:     svmPayload.ToMap(),
 	}, nil
-}
-
-func findAssociatedTokenAddress(owner, tokenProgram, mint solana.PublicKey) (solana.PublicKey, error) {
-	account, _, err := solana.FindProgramAddress(
-		[][]byte{owner.Bytes(), tokenProgram.Bytes(), mint.Bytes()},
-		solana.SPLAssociatedTokenAccountProgramID,
-	)
-	return account, err
 }
 
 func (c *ExactSvmScheme) resolveRecentBlockhash(

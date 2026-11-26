@@ -174,35 +174,6 @@ func matchTransfersToLegs(transfers []transferCheckedInfo, legs []legDestination
 	return out, nil
 }
 
-// verifyExpectedMemo checks that exactly one Memo instruction carries
-// extra.memo when the requirements set one.
-func verifyExpectedMemo(tx *solana.Transaction, optional []solana.CompiledInstruction, requirements types.PaymentRequirements) string {
-	expectedMemo, ok := requirements.Extra["memo"].(string)
-	if !ok || expectedMemo == "" {
-		return ""
-	}
-	memoPubkey := solana.MustPublicKeyFromBase58(svm.MemoProgramAddress)
-	var memoCount int
-	var actual []byte
-	for _, ix := range optional {
-		programID, err := tx.Message.Program(ix.ProgramIDIndex)
-		if err != nil {
-			continue
-		}
-		if programID.Equals(memoPubkey) {
-			memoCount++
-			actual = ix.Data
-		}
-	}
-	if memoCount != 1 {
-		return ErrMemoCount
-	}
-	if string(actual) != expectedMemo {
-		return ErrMemoMismatch
-	}
-	return ""
-}
-
 // verifyStaticSplitPath is Path 1 for split charges (§5.7): on legacy and
 // version 0 a compute limit + compute price prefix (version 1 carries its
 // budget in the message config instead), K fee-payer-funded CreateIdempotent
@@ -294,7 +265,7 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 		// Exactly 10 data bytes and 4 accounts: trailing multisig signer
 		// accounts would let the transfer's authority be something other than
 		// the account the payer signed with.
-		if progErr != nil || !isTokenProgram(programID) ||
+		if progErr != nil || !svm.IsSplTokenProgram(programID) ||
 			len(ix.Data) != 10 || ix.Data[0] != ixTokenTransferChecked || len(ix.Accounts) != 4 {
 			return "", x402.NewVerifyError(ErrNoTransferInstruction, payer, ErrNoTransferInstruction)
 		}
@@ -345,8 +316,9 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 		return "", splitVerifyError(err, payer)
 	}
 
-	if reason := verifyExpectedMemo(tx, optional, requirements); reason != "" {
-		return "", x402.NewVerifyError(reason, payer, reason)
+	expectedMemo, _ := requirements.Extra["memo"].(string)
+	if err := verifySmartWalletMemo(tx, expectedMemo); err != nil {
+		return "", x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
 	return payer, nil

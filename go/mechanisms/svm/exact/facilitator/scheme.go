@@ -973,7 +973,7 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 			if svm.UsesSplitTerms(requirements) {
 				legs, legsErr := svm.ParsePaymentLegs(requirements)
 				verified = legsErr == nil &&
-					f.postSettlementLegsVerified(ctx, caps, signature, networkStr, requirements, legs, topLevelTransfersOf(tx), nil)
+					f.postSettlementLegsVerified(ctx, caps, signature, networkStr, requirements, legs, extractTopLevelTransfers(tx), nil)
 			} else {
 				verified = verifyPostSettlement(ctx, caps, signature, networkStr, requirements, publicKeysToStrings(f.signer.GetAddresses(ctx, networkStr)), nil, nil)
 			}
@@ -1122,7 +1122,7 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 		return nil, errors.New(ErrMintMismatch)
 	}
 
-	expectedDestATA, err := findATA(payToPubkey, mintPubkey, progID)
+	expectedDestATA, err := svm.DeriveATA(payToPubkey, mintPubkey, progID)
 	if err != nil {
 		return nil, errors.New(ErrRecipientMismatch)
 	}
@@ -1149,15 +1149,4 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 		destination: destATA,
 		authority:   accounts[3].PublicKey,
 	}, nil
-}
-
-// topLevelTransfersOf returns the top-level TransferChecked instructions of
-// a decoded transaction. A transaction using Address Lookup Tables that are
-// not resolved locally yields only the transfers whose accounts resolve, so
-// callers fall back to the confirmed CPI trace for the rest.
-func topLevelTransfersOf(tx *solana.Transaction) []transferCheckedInfo {
-	if tx == nil {
-		return nil
-	}
-	return extractTopLevelTransfers(tx)
 }

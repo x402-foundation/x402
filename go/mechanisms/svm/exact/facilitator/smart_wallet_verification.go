@@ -56,22 +56,10 @@ type transferCheckedInfo struct {
 	authority   solana.PublicKey
 }
 
-func isTokenProgram(programID solana.PublicKey) bool {
-	return programID.Equals(solana.TokenProgramID) || programID.Equals(solana.Token2022ProgramID)
-}
-
-func findATA(owner, mint, tokenProgram solana.PublicKey) (solana.PublicKey, error) {
-	ata, _, err := solana.FindProgramAddress(
-		[][]byte{owner.Bytes(), tokenProgram.Bytes(), mint.Bytes()},
-		solana.SPLAssociatedTokenAccountProgramID,
-	)
-	return ata, err
-}
-
 func expectedDestinationATAs(payTo, mint solana.PublicKey) (map[solana.PublicKey]struct{}, error) {
 	atas := make(map[solana.PublicKey]struct{}, 2)
 	for _, program := range []solana.PublicKey{solana.TokenProgramID, solana.Token2022ProgramID} {
-		ata, err := findATA(payTo, mint, program)
+		ata, err := svm.DeriveATA(payTo, mint, program)
 		if err != nil {
 			continue
 		}
@@ -180,7 +168,7 @@ func extractTransfersFromInnerInstructions(inner []rpc.InnerInstruction, account
 				continue
 			}
 			programID := accountKeys[ix.ProgramIDIndex]
-			if !isTokenProgram(programID) {
+			if !svm.IsSplTokenProgram(programID) {
 				continue
 			}
 			if len(ix.Data) < 9 || ix.Data[0] != ixTokenTransferChecked || len(ix.Accounts) < 4 {
@@ -202,11 +190,13 @@ func extractTransfersFromInnerInstructions(inner []rpc.InnerInstruction, account
 	return transfers
 }
 
+// extractTopLevelTransfers returns TransferChecked instructions whose accounts
+// resolve. Unresolved address-lookup-table accounts are skipped.
 func extractTopLevelTransfers(tx *solana.Transaction) []transferCheckedInfo {
 	var transfers []transferCheckedInfo
 	for _, ix := range tx.Message.Instructions {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
-		if err != nil || !isTokenProgram(programID) {
+		if err != nil || !svm.IsSplTokenProgram(programID) {
 			continue
 		}
 		if len(ix.Data) < 9 || ix.Data[0] != ixTokenTransferChecked || len(ix.Accounts) < 4 {
@@ -470,7 +460,7 @@ func verifyPostSettlement(
 		return false
 	}
 	for _, program := range []solana.PublicKey{solana.TokenProgramID, solana.Token2022ProgramID} {
-		ata, ataErr := findATA(payTo, mint, program)
+		ata, ataErr := svm.DeriveATA(payTo, mint, program)
 		if ataErr != nil {
 			continue
 		}
