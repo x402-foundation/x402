@@ -520,7 +520,10 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 		return ErrRefundAuthorizerSignature
 	}
 	deps := RefundConsentDeps{ResolveCallerIdentity: f.resolveCallerIdentity, DelegatedAuthStore: f.delegatedAuthStore}
-	return checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx)
+	if identErr := checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx); identErr != "" {
+		return identErr
+	}
+	return channelConfigReason(raw, requirements)
 }
 
 // delegatedRefundConsent allows an unsigned refund to be signed by authorizerSigner.
@@ -535,6 +538,13 @@ func (f *BatchSettlementEvmScheme) delegatedRefundConsent(
 	if !strings.EqualFold(raw.ChannelConfig.ReceiverAuthorizer, f.authorizerSigner.Address()) {
 		return ErrAuthorizerAddressMismatch
 	}
+	return channelConfigReason(raw, requirements)
+}
+
+func channelConfigReason(
+	raw *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	requirements types.PaymentRequirements,
+) string {
 	channelId, err := batchsettlement.ComputeChannelId(raw.ChannelConfig, requirements.Network)
 	if err != nil {
 		return ErrInvalidRefundPayload
