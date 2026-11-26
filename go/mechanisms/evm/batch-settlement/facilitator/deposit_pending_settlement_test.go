@@ -572,6 +572,27 @@ func TestSettleDeposit_ReconcileConfirmedKeepsBindingAndClearsPendingEntry(t *te
 	}
 }
 
+func TestSettleDeposit_ReceiptWithoutLogsKeepsBinding(t *testing.T) {
+	_, payload, reqs := pendingDepositPayload(t)
+	auth := newSpyDelegatedAuth()
+	txHash := "0x" + strings.Repeat("ab", 32)
+	signer := delegatedDepositSigner(t,
+		func(string, ...interface{}) (string, error) { return txHash, nil },
+		func(hash string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: hash}, nil
+		},
+	)
+	_, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, delegatedBinding(auth))
+	se := requireSettleErrorReason(t, err, ErrReceiptLogsUnavailable)
+	if se.Transaction != txHash {
+		t.Fatalf("transaction = %q, want %q", se.Transaction, txHash)
+	}
+	requireDelegatedBinding(t, auth, payload.Voucher.ChannelId, "svc")
+	if len(auth.revertedToken) != 0 {
+		t.Fatalf("a deposit that may have landed must not revert, got %v", auth.revertedToken)
+	}
+}
+
 func TestSettleDeposit_SuccessKeepsBinding(t *testing.T) {
 	_, payload, reqs := pendingDepositPayload(t)
 	auth := newSpyDelegatedAuth()

@@ -382,7 +382,7 @@ func refundPreState(
 	}
 	state, err := readOnchainChannelState(ctx, signer, channelId)
 	if err != nil {
-		return nil, x402.NewSettleError(ErrRefundTransactionFailed, payer, network, "",
+		return nil, x402.NewSettleError(ErrChannelStateReadFailed, payer, network, "",
 			fmt.Sprintf("failed to read channel state: %s", err))
 	}
 	return state, nil

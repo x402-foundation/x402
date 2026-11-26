@@ -884,7 +884,8 @@ func incrementChargeCount(channel *FacilitatorChannel, network string) *Facilita
 }
 
 // depositChargeSnapshot always carries the settle extra's escrow.
-// OnchainSyncedAt is syncedAt, so an unconfirmed deposit leaves the stored stamp.
+// OnchainSyncedAt is syncedAt, so a reconcile that could not read the channel leaves the stored
+// stamp.
 func depositChargeSnapshot(
 	raw *batchsettlement.BatchSettlementDepositPayload,
 	requirements types.PaymentRequirements,

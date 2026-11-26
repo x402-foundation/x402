@@ -288,7 +288,7 @@ func TestRefund_PreReadFailureRejectsBeforeBroadcast(t *testing.T) {
 				writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("ab", 32), nil },
 			}
 			_, err := tc.refund(signer)
-			requireSettleErrorReason(t, err, ErrRefundTransactionFailed)
+			requireSettleErrorReason(t, err, ErrChannelStateReadFailed)
 			if signer.writeCalls != 0 {
 				t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
 			}

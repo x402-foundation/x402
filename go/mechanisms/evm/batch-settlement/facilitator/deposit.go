@@ -124,12 +124,14 @@ func revertDelegatedBinding(ctx context.Context, binding *DelegatedDepositBindin
 	}
 }
 
+// settleErrorKeepsDelegatedBinding reports whether err leaves the deposit possibly landed. A
+// confirmed receipt without logs is terminal but says nothing about whether deposit() ran.
 func settleErrorKeepsDelegatedBinding(err error) bool {
 	var se *x402.SettleError
 	if !errors.As(err, &se) {
 		return false
 	}
-	if se.ErrorReason == ErrSettlementPending {
+	if se.ErrorReason == ErrSettlementPending || se.ErrorReason == ErrReceiptLogsUnavailable {
 		return true
 	}
 	return strings.Contains(se.ErrorMessage, "failed to persist for retry")
@@ -177,15 +179,22 @@ func VerifyDeposit(
 	fctx *x402.FacilitatorContext,
 	allowedFactories []string,
 ) (*x402.VerifyResponse, error) {
-	state, invalid, err := verifyDepositState(ctx, signer, payload, requirements, extensions, fctx, allowedFactories)
+	preState, invalid, err := verifyDepositState(ctx, signer, payload, requirements, extensions, fctx, allowedFactories)
 	if err != nil || invalid != nil {
 		return invalid, err
 	}
 	return &x402.VerifyResponse{
 		IsValid: true,
 		Payer:   payload.ChannelConfig.Payer,
-		Extra:   BuildVerifyExtra(payload.Voucher.ChannelId, state),
+		Extra:   BuildVerifyExtra(payload.Voucher.ChannelId, preState.state),
 	}, nil
+}
+
+// depositPreState is the channel state the deposit verify read, and the unix-milli sample taken
+// before that read.
+type depositPreState struct {
+	state  *batchsettlement.ChannelState
+	readAt int64
 }
 
 // verifyDepositState runs the VerifyDeposit checks and returns the pre-deposit channel state on
@@ -198,7 +207,7 @@ func verifyDepositState(
 	extensions map[string]interface{},
 	fctx *x402.FacilitatorContext,
 	allowedFactories []string,
-) (*batchsettlement.ChannelState, *x402.VerifyResponse, error) {
+) (*depositPreState, *x402.VerifyResponse, error) {
 	config := payload.ChannelConfig
 	channelId := payload.Voucher.ChannelId
 
@@ -318,6 +327,7 @@ func verifyDepositState(
 	// ReadChannelState returns those zeros successfully — a nil error with
 	// Balance=0, TotalClaimed=0 etc.  A non-nil error means an actual RPC
 	// failure, which we surface rather than silently masking.
+	readAt := time.Now().UnixMilli()
 	state, err := ReadChannelState(ctx, signer, channelId)
 	if err != nil {
 		return nil, nil, x402.NewVerifyError(ErrChannelStateReadFailed, config.Payer,
@@ -422,7 +432,7 @@ func verifyDepositState(
 		}
 	}
 
-	return state, nil, nil
+	return &depositPreState{state: state, readAt: readAt}, nil, nil
 }
 
 // depositSettlementCacheKey returns the unique-per-payload key used to key the
@@ -465,7 +475,8 @@ func depositSettlementCacheKey(
 // authorization was already consumed onchain. Every other settle re-runs
 // VerifyDeposit before the delegated binding and before broadcast.
 //
-// syncedAt is the unix-milli sample before the read that confirmed the balance, or 0.
+// syncedAt is the unix-milli sample before the channel read the response channelState was built
+// from, or 0 when a reconcile could not read the channel.
 func SettleDeposit(
 	ctx context.Context,
 	signer evm.FacilitatorEvmSigner,
@@ -712,11 +723,12 @@ type depositSettleContext struct {
 // of verify: a claim landing between verify and inclusion makes totalClaimed a lower bound, and
 // a withdrawal initiated in that window is missing from withdrawRequestedAt until the next read.
 //
-// syncedAt is the unix-milli time the response state was built.
+// syncedAt is the verify read's sample, so the stamp never claims more freshness than the fields
+// taken from that read have.
 func finishDepositSettle(
 	ctx context.Context,
 	sc depositSettleContext,
-	preState *batchsettlement.ChannelState,
+	preState *depositPreState,
 ) (*x402.SettleResponse, int64, error) {
 	receipt, err := evm.WaitForSettleReceiptWithPendingStore(ctx, sc.store, sc.cacheKey, sc.receiptWaitSigner, sc.txHash, sc.config.Payer, sc.network,
 		ErrDepositTransactionFailed, ErrTransactionReverted)
@@ -731,7 +743,7 @@ func finishDepositSettle(
 	// The settle response intentionally omits `chargedCumulativeAmount` — that field is
 	// added by the resource server's `enrichSettlementResponse` hook, and emitting it from
 	// the facilitator violates the additive-enrichment policy.
-	state := *preState
+	state := *preState.state
 	state.Balance = balance
 	return &x402.SettleResponse{
 		Success:     true,
@@ -740,7 +752,7 @@ func finishDepositSettle(
 		Payer:       sc.config.Payer,
 		Amount:      sc.amountStr,
 		Extra:       BuildSettleExtra(sc.channelId, &state),
-	}, time.Now().UnixMilli(), nil
+	}, preState.readAt, nil
 }
 
 // reconcilePendingDeposit handles a PendingSettlementStore cache hit for
@@ -752,7 +764,8 @@ func finishDepositSettle(
 //
 // The balance comes from the receipt's Deposited event; with no pre-broadcast snapshot here,
 // one read supplies the fields deposit() does not touch, so a lagging node still returns them
-// correctly. If that read fails, Extra is omitted and syncedAt is 0.
+// correctly. syncedAt is the sample before that read; if the read fails, Extra is omitted and
+// syncedAt is 0.
 func reconcilePendingDeposit(ctx context.Context, sc depositSettleContext) (*x402.SettleResponse, int64, error) {
 	receipt, err := evm.WaitForSettleReceiptWithPendingStore(ctx, sc.store, sc.cacheKey, sc.receiptWaitSigner, sc.txHash, sc.config.Payer, sc.network,
 		ErrDepositTransactionFailed, ErrTransactionReverted)
@@ -766,10 +779,11 @@ func reconcilePendingDeposit(ctx context.Context, sc depositSettleContext) (*x40
 
 	var extra map[string]interface{}
 	var syncedAt int64
+	readAt := time.Now().UnixMilli()
 	if state, readErr := ReadChannelState(ctx, sc.signer, sc.channelId); readErr == nil {
 		state.Balance = balance
 		extra = BuildSettleExtra(sc.channelId, state)
-		syncedAt = time.Now().UnixMilli()
+		syncedAt = readAt
 	}
 
 	return &x402.SettleResponse{

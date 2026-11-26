@@ -1877,7 +1877,9 @@ func TestSettleManaged_UnheldAcquireErrorFailsBeforeVerify(t *testing.T) {
 	}
 }
 
-func TestSettleManagedDeposit_DepositedEventStampsSyncedAt(t *testing.T) {
+// The stored stamp is the verify read's sample, not the receipt time: totalClaimed,
+// withdrawRequestedAt and refundNonce come from that pre-broadcast read.
+func TestSettleManagedDeposit_DepositedEventStampsVerifyRead(t *testing.T) {
 	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
 	auth := managedAuthorizer()
 	cfg := managedConfig(auth.addr, "06")
@@ -1885,17 +1887,28 @@ func TestSettleManagedDeposit_DepositedEventStampsSyncedAt(t *testing.T) {
 	seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
 		ChargedCumulativeAmount: "0", Balance: "500", OnchainSyncedAt: 1,
 	}))
-	deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 500, 1500))
+	signer := depositSignerWithBalances(t, 500, 1500)
+	var broadcastAt int64
+	write := signer.writeContract
+	signer.writeContract = func(functionName string, args ...interface{}) (string, error) {
+		broadcastAt = time.Now().UnixMilli()
+		return write(functionName, args...)
+	}
+	wait := signer.waitForReceipt
+	signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+		time.Sleep(20 * time.Millisecond)
+		return wait(txHash)
+	}
+	deps := managedDeps(t, store, store, auth, signer)
 
 	before := time.Now().UnixMilli()
 	resp, err := SettleManaged(context.Background(), deps, signedManagedDeposit(t, cfg, channelId), managedRequirements(auth.addr), nil, nil)
-	after := time.Now().UnixMilli()
 	if err != nil || !resp.Success {
 		t.Fatalf("got %+v %v", resp, err)
 	}
 	got, _ := store.Get(context.Background(), channelId)
-	if got.OnchainSyncedAt < before || got.OnchainSyncedAt > after || got.Balance != "1500" || got.ChargedCumulativeAmount != "1000" {
-		t.Fatalf("stored %+v", got)
+	if got.OnchainSyncedAt < before || got.OnchainSyncedAt > broadcastAt || got.Balance != "1500" || got.ChargedCumulativeAmount != "1000" {
+		t.Fatalf("stored %+v, want OnchainSyncedAt in [%d, %d]", got, before, broadcastAt)
 	}
 }
 
