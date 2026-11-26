@@ -336,6 +336,14 @@ export async function settleSeal(
   }
 
   const channel = await deps.fetchChannel(network, channelId);
+  // A refund of a channel the payer already started closing is a plain
+  // close_state error. It is not a resync: the channel is still Closing.
+  if (intent === "refund" && channel.status === ChannelStatus.Closing) {
+    deps.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
+      ChannelStatus.Closing,
+    ]);
+    throw new Error(`${BatchError.CLOSE_STATE}: ${channelId} is already closing`);
+  }
   if (channel.status !== requiredStatus) {
     // The channel must be this one before its state is revealed.
     deps.assertClaimChannel(
@@ -348,7 +356,7 @@ export async function settleSeal(
     return resyncFailure(
       network,
       BatchError.CLOSE_STATE,
-      `${intent} applies only to a ${ChannelStatus[requiredStatus]} channel; observed status ${channel.status}`,
+      `${intent} applies only to a ${channelStatusName(requiredStatus)} channel; observed status ${channelStatusName(channel.status)}`,
       [redemptionSnapshot(channelId, channel)],
       payer,
     );
@@ -712,4 +720,25 @@ async function authenticateServer(
   throw new Error(
     `${BatchError.CLOSE_AUTHORIZATION}: signature does not bind this close or is outside its validity window`,
   );
+}
+
+/**
+ * The name Go prints for a channel status byte.
+ *
+ * @param status - Onchain channel status
+ * @returns `Open`, `Sealed`, `Closing`, `Distributed`, or `Unknown(n)`
+ */
+function channelStatusName(status: number): string {
+  switch (status) {
+    case ChannelStatus.Open:
+      return "Open";
+    case ChannelStatus.Sealed:
+      return "Sealed";
+    case ChannelStatus.Closing:
+      return "Closing";
+    case ChannelStatus.Distributed:
+      return "Distributed";
+    default:
+      return `Unknown(${status})`;
+  }
 }
