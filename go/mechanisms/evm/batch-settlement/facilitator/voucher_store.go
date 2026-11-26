@@ -725,7 +725,11 @@ func settleManagedRefund(
 				next.WithdrawRequestedAt = v
 			}
 			next.RefundNonce = refundNonceFromExtra(current.RefundNonce, extraState)
-			next.OnchainSyncedAt = syncedAt
+			// An omitted balance is the stored balance, so this read is not fresh.
+			next.OnchainSyncedAt = 0
+			if _, ok := extraState["balance"].(string); ok {
+				next.OnchainSyncedAt = syncedAt
+			}
 		} else {
 			next.RefundNonce = current.RefundNonce + 1
 		}
