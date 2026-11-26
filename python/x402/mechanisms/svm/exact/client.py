@@ -161,10 +161,8 @@ class ExactSvmScheme:
             )
 
         if split_terms:
-            # One TransferChecked per leg: the primary remainder to payTo, then
-            # each split in extra.splits order (§5.7). A recipient marked
-            # ataCreationRequired gets a fee-payer-funded CreateIdempotent
-            # unless its ATA is confirmed to exist (§5.4).
+            # Primary remainder, then each split. CreateIdempotent only when a
+            # marked recipient's ATA is not confirmed to exist.
             create_ixs: list[Instruction] = []
             transfer_ixs: list[Instruction] = []
             for leg in legs:
@@ -234,11 +232,7 @@ class ExactSvmScheme:
 
     @staticmethod
     def _account_exists(client: SvmRpcClient, address: Pubkey) -> bool:
-        """Whether an account exists.
-
-        An RPC failure counts as "not confirmed", so the caller includes the
-        idempotent creation rather than risk a transfer to a missing ATA.
-        """
+        """Whether an account exists. An RPC failure counts as unconfirmed."""
         try:
             return client.get_account_info(address).value is not None
         except Exception:

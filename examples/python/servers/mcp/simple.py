@@ -56,12 +56,9 @@ def call_paid_tool(
     arguments: dict[str, Any],
     ctx: Context,
 ) -> CallToolResult:
-    """Call a sync payment-wrapped handler from a FastMCP tool.
+    """Call a sync payment wrapper from a FastMCP tool.
 
-    The payment wrapper takes ``(arguments, extra)`` where ``extra["_meta"]`` is
-    the request metadata carrying the client's payment payload. FastMCP hands the
-    tool a ``Context`` instead, so this adapter reads the metadata off it and
-    converts the wrapper's ``MCPToolResult`` back into a ``CallToolResult``.
+    ``extra["_meta"]`` carries the payment payload from the request metadata.
     """
     request_meta = ctx.request_context.meta
     meta = dict(request_meta.model_extra or {}) if request_meta is not None else {}

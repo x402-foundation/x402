@@ -1,9 +1,4 @@
-"""Multi-payee splits for the exact scheme (scheme_exact_svm.md §5).
-
-Shared by the client (transaction construction), the server (requirements
-checks against the facilitator's advertisement) and the facilitator (Path 1
-static verification).
-"""
+"""Multi-payee splits (scheme_exact_svm.md §5), shared by the client, server, and facilitator."""
 
 from __future__ import annotations
 
@@ -63,10 +58,7 @@ class PaymentLeg:
 
 @dataclass(frozen=True)
 class SplitCapabilities:
-    """Split capabilities a facilitator advertises in ``/supported`` ``kinds[].extra``.
-
-    Both fail closed: absent means no support (§5.5).
-    """
+    """Split capabilities from ``/supported``. Absent fields mean no support."""
 
     max_splits: int = 0
     ata_creation_sponsored: bool = False
@@ -83,11 +75,7 @@ def is_valid_split_address(value: object) -> bool:
 
 
 def uses_split_terms(requirements: PaymentRequirements) -> bool:
-    """Whether the requirements use the splits extension.
-
-    True for a non-empty ``extra.splits`` or a primary marked
-    ``extra.ataCreationRequired: true``.
-    """
+    """True when ``extra.splits`` is present and not ``[]``, or ``ataCreationRequired`` is true."""
     extra = requirements.extra or {}
     splits = extra.get("splits")
     if splits is not None and not (isinstance(splits, list) and len(splits) == 0):
@@ -106,12 +94,10 @@ def _parse_amount(value: object, field_name: str) -> int:
 
 
 def parse_payment_legs(requirements: PaymentRequirements) -> list[PaymentLeg]:
-    """Validate ``extra.splits`` / ``extra.ataCreationRequired`` and return the legs.
-
-    The primary remainder comes first, then one leg per split in order.
+    """Validate ``extra.splits`` and return the primary remainder, then each split in order.
 
     Raises:
-        SplitsError: When the requirements violate §5.1 or §5.2.
+        SplitsError: When the requirements violate the split rules.
     """
     if not is_valid_split_address(requirements.pay_to):
         raise SplitsError(ERR_SPLITS_INVALID, "payTo is not a valid address")
@@ -177,11 +163,7 @@ def parse_payment_legs(requirements: PaymentRequirements) -> list[PaymentLeg]:
 
 
 def get_split_capabilities(extra: Mapping[str, Any] | None) -> SplitCapabilities:
-    """Read the split capabilities from a ``/supported`` kind's ``extra``.
-
-    Non-int (bools are not ints here) or absent ``maxSplits`` reads as 0, and
-    anything but ``ataCreationSponsored: true`` reads as False.
-    """
+    """Read split capabilities from a ``/supported`` kind. Invalid values mean no support."""
     extra = extra or {}
     max_splits = extra.get("maxSplits")
     if not isinstance(max_splits, int) or isinstance(max_splits, bool) or max_splits < 0:
@@ -235,17 +217,13 @@ def validate_ata_creation(
     created_owners: set[str],
     token_program: str | None = None,
 ) -> str:
-    """Validate an ATA-program instruction against §5.4 and §2.1.1.
-
-    It must be a ``CreateIdempotent`` funded by the fee payer that creates the
-    ATA, for the asset, of a recipient marked ``ataCreationRequired``, at most
-    once per owner. ``created_owners`` is updated.
+    """Require a fee-payer ``CreateIdempotent`` for one marked recipient. Updates ``created_owners``.
 
     Returns:
         The owner of the created ATA.
 
     Raises:
-        SplitsError: When the instruction is not an authorized creation.
+        SplitsError: When the creation is not authorized.
     """
 
     def reject(detail: str) -> SplitsError:
@@ -282,12 +260,7 @@ def assert_fee_payer_isolated_with_ata_creation(
     marked_owners: set[str] | frozenset[str],
     token_program: str | None = None,
 ) -> set[str]:
-    """Fee payer isolation with the bounded §2.1.1 ``CreateIdempotent`` exception.
-
-    Inside a validated ``CreateIdempotent`` the fee payer may be the funding
-    payer (account 0) and, when it is itself a recipient, the wallet owner
-    (account 2). It must not appear anywhere else or be invoked as a program.
-    Every ATA-program instruction is validated by :func:`validate_ata_creation`.
+    """The fee payer may fund a ``CreateIdempotent`` and may be that ATA's owner. Nowhere else.
 
     Returns:
         The owners whose ATAs the transaction creates.
@@ -310,9 +283,7 @@ def assert_fee_payer_isolated_with_ata_creation(
                 created_owners=created_owners,
                 token_program=token_program,
             )
-            # Account 0 is the fee payer by construction; account 2 may be the
-            # fee payer only as a marked recipient's owner. Accounts 1, 3, 4, 5
-            # are the ATA, mint and programs, none of which can be the fee payer.
+            # validate_ata_creation already bounds the fee payer to the payer and the owner.
             continue
         if fee_payer in ix.accounts:
             raise SplitsError(

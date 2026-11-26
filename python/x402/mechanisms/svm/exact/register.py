@@ -138,11 +138,10 @@ def register_exact_svm_facilitator(
         networks: Network(s) to register.
         max_compute_units: Compute-unit ceiling for V2 verification, default 400,000.
         max_splits: Maximum ``extra.splits`` entries the V2 scheme accepts (0-8).
-        ata_creation_sponsored: Whether the V2 scheme's fee payer funds ATA
-            creation for recipients marked ``ataCreationRequired``. Owners can
-            close their ATA, reclaim the rent, and repeat on every charge.
-            Requires out-of-band limits per owner/mint or Resource Server;
-            splits do not automatically reimburse sponsored rent.
+        ata_creation_sponsored: Whether the V2 fee payer funds ATA creation for
+            recipients marked ``ataCreationRequired``. An owner can close the ATA,
+            reclaim the rent, and repeat. Sponsored rent is not reimbursed, so
+            this needs an out-of-band limit.
         transaction_versions: Transaction message versions to accept and
             advertise, applied to both the V2 and V1 schemes. Defaults to
             ``[0, 1]``.
