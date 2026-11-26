@@ -2652,7 +2652,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       });
     });
 
-    it("does not report balance 0 when the pre-read is below Refunded.amount", async () => {
+    it("omits balance when the pre-read is below Refunded.amount", async () => {
       const signer = buildSigner({
         waitForTransactionReceipt: successReceipt([
           buildRefundedLog({ channelId, amount: "2000" }),
@@ -2666,8 +2666,13 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.extra).toMatchObject({
-        channelState: { balance: "500" },
+      expect(result.extra).toEqual({
+        channelState: {
+          channelId,
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "8",
+        },
       });
     });
 

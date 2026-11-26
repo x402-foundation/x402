@@ -79,7 +79,7 @@ export function readExtraUintString(
 }
 
 export type RefundSettlementSnapshot = {
-  balance: string;
+  balance?: string;
   totalClaimed: string;
   withdrawRequestedAt: number;
   refundNonce: number;
@@ -96,7 +96,10 @@ export function parseRefundSettlementSnapshot(
 ): RefundSettlementSnapshot {
   const channelState = readChannelStateExtra(extra);
   return {
-    balance: parseUintStringExtra(channelState, "balance"),
+    balance:
+      channelState?.balance === undefined
+        ? undefined
+        : parseUintStringExtra(channelState, "balance"),
     totalClaimed: parseUintStringExtra(channelState, "totalClaimed"),
     withdrawRequestedAt: parseUintNumberExtra(channelState, "withdrawRequestedAt"),
     refundNonce: parseUintNumberExtra(channelState, "refundNonce"),

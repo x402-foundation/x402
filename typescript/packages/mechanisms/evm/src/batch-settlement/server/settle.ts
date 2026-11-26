@@ -379,12 +379,16 @@ export async function handleAfterSettle(
         if (!existing) {
           return current;
         }
-        if (BigInt(snapshot.balance) <= BigInt(existing.chargedCumulativeAmount)) {
+        if (
+          snapshot.balance !== undefined &&
+          BigInt(snapshot.balance) <= BigInt(existing.chargedCumulativeAmount)
+        ) {
           return undefined;
         }
         return {
           ...existing,
           ...snapshot,
+          balance: snapshot.balance ?? existing.balance,
           totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
           refundNonce: maxRefundNonce(existing.refundNonce, String(snapshot.refundNonce)),
           network: requirements.network || existing.network,
