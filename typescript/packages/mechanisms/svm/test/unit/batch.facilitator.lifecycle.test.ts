@@ -13,6 +13,10 @@ import {
 import { BatchError } from "../../src/batch-settlement/errors";
 import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { MAX_CHANNELS_PER_SETTLE_TX } from "../../src/batch-settlement/facilitator/constants";
+import {
+  distributedSnapshot,
+  redemptionSnapshot,
+} from "../../src/batch-settlement/facilitator/responses";
 import { assertRefundable } from "../../src/batch-settlement/facilitator/seal";
 import { assertDepositProof } from "../../src/batch-settlement/facilitator/voucherMode";
 import {
@@ -1745,8 +1749,7 @@ describe("batch facilitator lifecycle", () => {
     mismatch.api.deriveChannelId = vi.fn().mockResolvedValue(payer.address);
     await expect(settle(mismatch.scheme, claim())).rejects.toThrow(BatchError.CHANNEL_ID_MISMATCH);
 
-    for (const value of [0n, 10_001n]) {
-      const bounds = configured();
+    const signedClaim = async (value: bigint) => {
       const boundedClaim = claim({ maxClaimableAmount: value.toString() });
       boundedClaim.claims[0]!.voucher.signature = (
         await signBatchVoucher(payer, {
@@ -1755,10 +1758,18 @@ describe("batch facilitator lifecycle", () => {
           maxClaimableAmount: value,
         })
       ).signature;
-      await expect(settle(bounds.scheme, boundedClaim)).rejects.toThrow(
-        BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-      );
-    }
+      return boundedClaim;
+    };
+    await expect(settle(configured().scheme, await signedClaim(10_001n))).rejects.toThrow(
+      BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+    );
+    const applied = configured();
+    await expect(settle(applied.scheme, await signedClaim(0n))).resolves.toMatchObject({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      extra: { channelStates: [expect.objectContaining({ channelId })] },
+      success: false,
+    });
+    expect(applied.api.submitRedemption).not.toHaveBeenCalled();
     const signature = configured();
     await expect(settle(signature.scheme, claim({ maxClaimableAmount: "1001" }))).rejects.toThrow(
       BatchError.VOUCHER_SIGNATURE,
@@ -1838,7 +1849,23 @@ describe("batch facilitator lifecycle", () => {
         payload,
         requirements(),
       ),
-    ).resolves.toMatchObject({ amount: "800", success: true, transaction: SIGNATURE });
+    ).resolves.toMatchObject({
+      amount: "800",
+      extra: {
+        channelStates: [
+          {
+            balance: "10000",
+            channelId,
+            payoutWatermark: "1000",
+            status: "open",
+            totalClaimed: "1000",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+      success: true,
+      transaction: SIGNATURE,
+    });
     // Activity is recorded before the sweep is submitted.
     expect(recordActivity).toHaveBeenCalledOnce();
     expect(recordActivity).toHaveBeenCalledWith(
@@ -1941,6 +1968,86 @@ describe("batch facilitator lifecycle", () => {
     await expect(
       settle(split.scheme, { ...payload, channels: [...payload.channels, ...payload.channels] }),
     ).rejects.toThrow(BatchError.PAYLOAD_TYPE);
+  });
+
+  it("rejects a distribution with nothing left to sweep and reports the channel state", async () => {
+    const scheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+    });
+    const api = internals(scheme);
+    api.resolveTerms = vi.fn().mockResolvedValue({
+      feePayer: feePayer.address,
+      feePayerSigner: feePayer,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      withdrawDelay: 900,
+    });
+    api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
+    api.fetchChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 1_000n, settled: 1_000n } }));
+    api.submitRedemption = vi.fn();
+    const payload: BatchSettlePayload = {
+      type: "settle",
+      channels: [{ channelConfig, channelId }],
+    };
+    const response = await scheme.settleDistributions(
+      { accepted: requirements(), payload, x402Version: 2 } as never,
+      payload,
+      requirements(),
+    );
+    expect(response).toMatchObject({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      success: false,
+      transaction: "",
+    });
+    expect(response.extra).toEqual({
+      channelStates: [
+        {
+          balance: "10000",
+          channelId,
+          payoutWatermark: "1000",
+          status: "open",
+          totalClaimed: "1000",
+          withdrawRequestedAt: 0,
+        },
+      ],
+    });
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+  });
+
+  it("reports redemption channel states from the decoded channel", () => {
+    const sealed = channel({
+      settlement: { payoutWatermark: 0n, settled: 2_000n },
+      status: ChannelStatus.Sealed,
+    });
+    const open = channel({ settlement: { payoutWatermark: 1_000n, settled: 3_000n } });
+    expect([distributedSnapshot("a", open), distributedSnapshot("b", sealed)]).toEqual([
+      {
+        balance: "10000",
+        channelId: "a",
+        payoutWatermark: "3000",
+        status: "open",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+      {
+        balance: "10000",
+        channelId: "b",
+        payoutWatermark: "2000",
+        status: "distributed",
+        totalClaimed: "2000",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+    expect(redemptionSnapshot("b", sealed)).toMatchObject({
+      payoutWatermark: "0",
+      status: "sealed",
+    });
+    const closing = redemptionSnapshot(
+      "c",
+      channel({ closureStartedAt: 7n, status: ChannelStatus.Closing }),
+    );
+    expect(closing).toMatchObject({ status: "closing", withdrawRequestedAt: 7 });
   });
 
   it("rejects empty and oversized redemption batches", async () => {

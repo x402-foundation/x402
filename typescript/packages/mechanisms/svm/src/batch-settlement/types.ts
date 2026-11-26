@@ -215,6 +215,23 @@ export type BatchChannelState = {
   chargedCumulativeAmount?: string | undefined;
 };
 
+/** Onchain channel status a redemption snapshot reports. */
+export type BatchRedemptionStatus = "open" | "closing" | "sealed" | "distributed";
+
+/**
+ * The onchain channel snapshot a facilitator attaches to a settle success or to
+ * a redemption rejected as already applied, as `extra.channelStates[]`, so the
+ * server resyncs without reading the chain.
+ */
+export type BatchRedemptionChannelState = {
+  channelId: string;
+  status: BatchRedemptionStatus;
+  balance: string;
+  totalClaimed: string;
+  payoutWatermark: string;
+  withdrawRequestedAt: number;
+};
+
 export function isBatchVoucher(value: unknown): value is BatchVoucher {
   if (!isRecord(value)) return false;
   return (
@@ -436,6 +453,22 @@ export function isBatchChannelState(value: unknown): value is BatchChannelState 
     isDecimal(value.totalClaimed) &&
     isSafeUint(value.withdrawRequestedAt) &&
     isOptional(value.chargedCumulativeAmount, isDecimal)
+  );
+}
+
+const REDEMPTION_STATUSES: readonly unknown[] = ["open", "closing", "sealed", "distributed"];
+
+export function isBatchRedemptionChannelState(
+  value: unknown,
+): value is BatchRedemptionChannelState {
+  return (
+    isRecord(value) &&
+    isString(value.channelId) &&
+    REDEMPTION_STATUSES.includes(value.status) &&
+    isDecimal(value.balance) &&
+    isDecimal(value.totalClaimed) &&
+    isDecimal(value.payoutWatermark) &&
+    isSafeUint(value.withdrawRequestedAt)
   );
 }
 

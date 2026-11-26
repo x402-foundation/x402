@@ -368,9 +368,24 @@ describe("batch-settlement outcome recovery", () => {
       .fn()
       .mockResolvedValue(channel({ settlement: { payoutWatermark: 0n, settled: 2_000n } }));
     unrelatedApi.submitRedemption = vi.fn();
-    await expect(unrelated.settleClaims(payment(payload), payload, requirements())).rejects.toThrow(
-      BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-    );
+    const rejected = await unrelated.settleClaims(payment(payload), payload, requirements());
+    expect(rejected).toMatchObject({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      success: false,
+      transaction: "",
+    });
+    expect(rejected.extra).toEqual({
+      channelStates: [
+        {
+          balance: "10000",
+          channelId,
+          payoutWatermark: "0",
+          status: "open",
+          totalClaimed: "2000",
+          withdrawRequestedAt: 0,
+        },
+      ],
+    });
     expect(unrelatedApi.submitRedemption).not.toHaveBeenCalled();
   });
 
@@ -465,6 +480,52 @@ describe("batch-settlement outcome recovery", () => {
     const next = await restarted.settleDistributions(payment(payload), payload, requirements());
     expect(next.transaction).toBe("second-transaction");
     expect(restartedApi.submitRedemption).toHaveBeenCalledOnce();
+  });
+
+  it("reports the onchain payout watermark of a recovered sweep that a later claim has passed", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const store = new InMemoryPendingSettlementStore();
+    await store.set(key, TX);
+    const facilitatorSigner = signer();
+    facilitatorSigner.getConfirmedTransaction.mockResolvedValue(
+      await payoutEvidence("200", "1200"),
+    );
+    const scheme = new BatchSvmScheme(facilitatorSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.submitRedemption = vi.fn();
+    // The timed-out sweep paid up to 1000; a claim then settled up to 3000.
+    api.readChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 1_000n, settled: 3_000n } }));
+    const response = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(response).toMatchObject({ amount: "1000", success: true });
+    expect(response.extra?.channelStates).toEqual([
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "1000",
+        status: "open",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    // The confirmed sweep does not wait on the optional field.
+    await store.set(key, TX);
+    await store.delete(`batch:transaction:${NETWORK}:${TX}:result`);
+    api.readChannel = vi.fn().mockRejectedValue(new Error("rpc unavailable"));
+    const unread = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(unread).toMatchObject({ amount: "1000", success: true, transaction: TX });
+    expect(unread.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
   });
 
   it("waits for transaction metadata instead of estimating payout from a stale snapshot", async () => {
