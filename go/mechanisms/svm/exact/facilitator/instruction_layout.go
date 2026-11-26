@@ -211,7 +211,8 @@ func (f *ExactSvmScheme) resolveProtocolLayout(tx *solana.Transaction, feePayer 
 	return partitionProtocolInstructions(tx, instructions)
 }
 
-// stripAssertionGuards enforces the shared assertion-only, fee-payer-isolated guard policy.
+// stripAssertionGuards enforces the shared assertion-only guard policy: only
+// Lighthouse assertion discriminators, never invoked as the fee payer program.
 func stripAssertionGuards(tx *solana.Transaction, instructions []solana.CompiledInstruction, feePayer solana.PublicKey) ([]solana.CompiledInstruction, error) {
 	// Validate every Lighthouse instruction before tuple matching so an allowlist
 	// or recoverable layout error cannot bypass assertion-only guard policy.
@@ -223,7 +224,10 @@ func stripAssertionGuards(tx *solana.Transaction, instructions []solana.Compiled
 		if classifyProtocolInstruction(tx, inst) != kindGuard {
 			return nil, errors.New(ErrInvalidLighthouseInstruction)
 		}
-		if err := assertFeePayerIsolatedFromInstructions(tx, []solana.CompiledInstruction{inst}, feePayer); err != nil {
+		// A guard may list the fee payer as an account: account privileges are
+		// message-level (the fee payer is always a writable signer) and assertions
+		// only read. It must never be the invoked program.
+		if progID.Equals(feePayer) {
 			return nil, errors.New(ErrFeePayerTransferringFunds)
 		}
 	}

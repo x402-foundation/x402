@@ -23,6 +23,16 @@ func blockInstruction(program solana.PublicKey, discriminator []byte, feePayer .
 	return solana.NewInstruction(program, metas, discriminator)
 }
 
+// guardNaming is a Lighthouse assertion listing account as a signer and writable
+// (message-level privileges make that the fee payer's role in any real transaction).
+func guardNaming(account solana.PublicKey, discriminator byte) solana.Instruction {
+	return solana.NewInstruction(
+		lighthouseProgramID,
+		solana.AccountMetaSlice{solana.NewAccountMeta(account, true, true)},
+		[]byte{discriminator},
+	)
+}
+
 func verifyReason(t *testing.T, scheme *ExactSvmScheme, f exactFixture) string {
 	t.Helper()
 	_, err := scheme.Verify(context.Background(), f.payload, f.requirements, nil)
@@ -64,6 +74,24 @@ func TestExactSvmScheme_Path1InstructionLayout(t *testing.T) {
 	}{
 		{name: "guards before transfer (Phantom)", before: fixed(guards(1)...)},
 		{name: "guards before and after", before: fixed(guards(2)...), after: fixed(guards(1)...)},
+		{
+			name: "Phantom guards, one naming the fee payer",
+			before: func(fp solana.PublicKey) []solana.Instruction {
+				return []solana.Instruction{lighthouseInstruction(), guardNaming(fp, 5)}
+			},
+			after: func(fp solana.PublicKey) []solana.Instruction { return []solana.Instruction{guardNaming(fp, 2)} },
+		},
+		{
+			name: "non-assertion Lighthouse discriminator naming the fee payer", wantReason: ErrInvalidLighthouseInstruction,
+			before: func(fp solana.PublicKey) []solana.Instruction { return []solana.Instruction{guardNaming(fp, 18)} },
+		},
+		{
+			name: "non-guard instruction naming the fee payer beside a fee payer guard", config: allowlists,
+			wantReason: ErrPreflightPostflightFeePayerNotIsolated,
+			before: func(fp solana.PublicKey) []solana.Instruction {
+				return []solana.Instruction{guardNaming(fp, 2), blockInstruction(setup, []byte{0xaa}, fp)}
+			},
+		},
 		{name: "many guards, no cap", before: fixed(guards(3)...), after: fixed(guards(5)...)},
 		{name: "several memos without extra.memo", after: fixed(memoInstruction("one"), memoInstruction("two"))},
 		{
@@ -134,6 +162,20 @@ func TestExactSvmScheme_Path1InstructionLayout(t *testing.T) {
 			assert.Equal(t, tt.wantReason, verifyReason(t, scheme, f))
 		})
 	}
+}
+
+func TestStripAssertionGuardsRejectsFeePayerAsInvokedProgram(t *testing.T) {
+	none := func(solana.PublicKey) []solana.Instruction { return nil }
+	f := buildExactFixtureWithInstructionsFn(t, func(solana.PublicKey) []solana.Instruction {
+		return []solana.Instruction{lighthouseInstruction()}
+	}, none)
+
+	_, err := stripAssertionGuards(f.tx, f.tx.Message.Instructions, lighthouseProgramID)
+	require.Error(t, err)
+	assert.Equal(t, ErrFeePayerTransferringFunds, err.Error())
+
+	_, err = stripAssertionGuards(f.tx, f.tx.Message.Instructions, f.facilitatorAddr)
+	assert.NoError(t, err)
 }
 
 func TestExactSvmScheme_HasStaticTransferLayoutHonorsAllowlists(t *testing.T) {

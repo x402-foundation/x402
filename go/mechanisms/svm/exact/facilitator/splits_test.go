@@ -402,23 +402,42 @@ func TestSplits_Path1RejectsMixedAuthorities(t *testing.T) {
 	assert.Equal(t, ErrSplitAuthorityMismatch, splitVerifyReason(t, resp, err))
 }
 
-func TestSplits_Path1RejectsFeePayerOutsideCreateIdempotent(t *testing.T) {
-	p := newSplitParties(t)
-	req := p.requirements(nil)
-	lighthouse := solana.NewInstruction(
-		solana.MustPublicKeyFromBase58(svm.LighthouseProgramAddress),
-		solana.AccountMetaSlice{solana.NewAccountMeta(p.feePayer, false, false)},
-		[]byte{2},
-	)
-	encoded, _ := p.buildTx(t, []solana.Instruction{
-		p.transfer(t, p.merchant, 1_000_000),
-		p.transfer(t, p.platform, 40_000),
-		p.transfer(t, p.referrer, 10_000),
-		lighthouse,
-	})
-	resp, err := NewExactSvmScheme(p.signer(), &Config{MaxSplits: 8}).
-		Verify(context.Background(), splitPayment(req, encoded), req, nil)
-	assert.Contains(t, splitVerifyReason(t, resp, err), ErrFeePayerTransferringFunds)
+func TestSplits_Path1FeePayerOutsideCreateIdempotent(t *testing.T) {
+	cases := []struct {
+		name     string
+		program  string
+		data     []byte
+		wantFail bool
+	}{
+		{name: "assertion guard naming the fee payer", program: svm.LighthouseProgramAddress, data: []byte{2}},
+		{name: "memo naming the fee payer", program: svm.MemoProgramAddress, data: []byte("m"), wantFail: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			p := newSplitParties(t)
+			req := p.requirements(nil)
+			optional := solana.NewInstruction(
+				solana.MustPublicKeyFromBase58(tt.program),
+				solana.AccountMetaSlice{solana.NewAccountMeta(p.feePayer, false, false)},
+				tt.data,
+			)
+			encoded, _ := p.buildTx(t, []solana.Instruction{
+				p.transfer(t, p.merchant, 1_000_000),
+				p.transfer(t, p.platform, 40_000),
+				p.transfer(t, p.referrer, 10_000),
+				optional,
+			})
+			resp, err := NewExactSvmScheme(p.signer(), &Config{MaxSplits: 8}).
+				Verify(context.Background(), splitPayment(req, encoded), req, nil)
+			if tt.wantFail {
+				assert.Contains(t, splitVerifyReason(t, resp, err), ErrSmartWalletFeePayerNotIsolated)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.True(t, resp.IsValid)
+		})
+	}
 }
 
 func TestSplits_Path1EnforcesSellerMemo(t *testing.T) {

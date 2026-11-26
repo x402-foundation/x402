@@ -63,8 +63,6 @@ func TestLighthouseSecurity(t *testing.T) {
 							want := ""
 							if len(data) == 0 || data[0] < 2 || data[0] > 17 {
 								want = ErrInvalidLighthouseInstruction
-							} else if reference {
-								want = ErrFeePayerTransferringFunds
 							}
 							assert.Equal(t, want, verifyReason(t, NewExactSvmScheme(signer, config), f))
 							assert.Zero(t, signer.innerCalls)

@@ -350,10 +350,7 @@ class TestInstructionSecurity:
     @pytest.mark.parametrize("postflight", [False, True])
     @pytest.mark.parametrize("allowlisted", [False, True])
     def test_lighthouse_policy(self, data, reference, postflight, allowlisted):
-        from x402.mechanisms.svm.constants import (
-            ERR_FEE_PAYER_TRANSFERRING,
-            ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
-        )
+        from x402.mechanisms.svm.constants import ERR_INVALID_LIGHTHOUSE_INSTRUCTION
 
         facilitator = Keypair()
         instruction = Instruction(
@@ -380,13 +377,7 @@ class TestInstructionSecurity:
         ):
             result = ExactSvmFacilitatorScheme(signer, **options).verify(payload, requirements)
         invalid = not data or not 2 <= data[0] <= 17
-        expected = (
-            ERR_INVALID_LIGHTHOUSE_INSTRUCTION
-            if invalid
-            else ERR_FEE_PAYER_TRANSFERRING
-            if reference
-            else None
-        )
+        expected = ERR_INVALID_LIGHTHOUSE_INSTRUCTION if invalid else None
         assert result.invalid_reason == expected
         assert result.is_valid is (expected is None)
         if expected:

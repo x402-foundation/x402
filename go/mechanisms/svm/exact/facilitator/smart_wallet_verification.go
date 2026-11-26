@@ -281,7 +281,7 @@ func verifySmartWalletTransaction(
 		if err != nil {
 			return nil, x402.NewVerifyError(ErrSmartWalletCannotDeriveATA, "", err.Error())
 		}
-		if err := assertFeePayerIsolatedWithAtaCreation(tx, feePayer, asset, markedOwners(legs), nil); err != nil {
+		if err := assertFeePayerIsolatedWithAtaCreation(tx, tx.Message.Instructions, feePayer, asset, markedOwners(legs), nil); err != nil {
 			return nil, splitVerifyError(err, "")
 		}
 	} else if err := assertFeePayerIsolated(tx, feePayer); err != nil {

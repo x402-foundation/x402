@@ -105,7 +105,7 @@ function matchTuple(
  * Validates Lighthouse assertion guards and removes them from the protocol sequence.
  *
  * @param instructions - Top-level instructions
- * @param feePayerAddress - Sponsor address that guards must not reference
+ * @param feePayerAddress - Sponsor address that no guard may invoke as its program
  * @returns The non-guard instructions, or the guard-policy error
  */
 export function stripAssertionGuards<T extends Ix>(
@@ -119,9 +119,10 @@ export function stripAssertionGuards<T extends Ix>(
     if (classify(ix) !== "guard") {
       return { errorReason: Errors.ErrInvalidLighthouseInstruction };
     }
-    try {
-      assertFeePayerIsolatedFromInstructions([ix], feePayerAddress);
-    } catch {
+    // A guard may list the fee payer as an account: account privileges are
+    // message-level (the fee payer is always a writable signer) and assertions
+    // only read. It must never be the invoked program.
+    if (ix.programAddress.toString() === feePayerAddress) {
       return { errorReason: Errors.ErrFeePayerTransferringFunds };
     }
   }

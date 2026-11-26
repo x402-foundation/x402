@@ -13,7 +13,10 @@ from solders.pubkey import Pubkey
 
 from x402.mechanisms.svm.constants import (
     COMPUTE_BUDGET_PROGRAM_ADDRESS,
+    ERR_FEE_PAYER_TRANSFERRING,
+    ERR_INVALID_LIGHTHOUSE_INSTRUCTION,
     ERR_NO_TRANSFER_INSTRUCTION,
+    ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
     ERR_PROTOCOL_INSTRUCTION_ORDER,
     ERR_UNKNOWN_INSTRUCTION,
     LIGHTHOUSE_PROGRAM_ADDRESS,
@@ -144,3 +147,50 @@ def test_isolation_ignores_lookup_table_accounts_in_an_allowlisted_block():
     result = layout([setup, *PROTOCOL], preflight=[[InstructionIdentity(SETUP, b"\xaa")]])
 
     assert result.transfer_ix == TRANSFER
+
+
+def guard_naming_fee_payer(discriminator: int) -> CompiledInstruction:
+    return ix(_LIGHTHOUSE, bytes([discriminator]), bytes([0, _SETUP]))
+
+
+def test_accepts_a_phantom_shaped_transaction_with_guards_naming_the_fee_payer():
+    instructions = [
+        GUARD,
+        LIMIT,
+        PRICE,
+        guard_naming_fee_payer(5),
+        TRANSFER,
+        ix(_MEMO, b"memo"),
+        guard_naming_fee_payer(2),
+    ]
+
+    assert layout(instructions).transfer_ix == TRANSFER
+
+
+def test_rejects_a_guard_whose_program_is_the_fee_payer():
+    with pytest.raises(LayoutError) as exc:
+        resolve_protocol_layout(
+            STATIC_ACCOUNTS,
+            [GUARD, *PROTOCOL],
+            [],
+            [],
+            Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS),
+        )
+
+    assert exc.value.reason == ERR_FEE_PAYER_TRANSFERRING
+
+
+@pytest.mark.parametrize("discriminator", [0, 1, 18, 255])
+def test_still_rejects_a_non_assertion_lighthouse_instruction_naming_the_fee_payer(discriminator):
+    instructions = [*PROTOCOL, guard_naming_fee_payer(discriminator)]
+
+    assert layout_error(instructions) == ERR_INVALID_LIGHTHOUSE_INSTRUCTION
+
+
+def test_still_rejects_a_non_guard_instruction_naming_the_fee_payer():
+    setup = ix(_SETUP, b"\xaa", bytes([0]))
+    preflight = [[InstructionIdentity(SETUP, b"\xaa")]]
+
+    error = layout_error([guard_naming_fee_payer(2), setup, *PROTOCOL], preflight=preflight)
+
+    assert error == ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED

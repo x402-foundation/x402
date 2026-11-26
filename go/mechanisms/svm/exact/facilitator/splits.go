@@ -59,6 +59,7 @@ func instructionAccounts(tx *solana.Transaction, ix solana.CompiledInstruction) 
 // a program. Every ATA-program instruction is validated against §5.4.
 func assertFeePayerIsolatedWithAtaCreation(
 	tx *solana.Transaction,
+	instructions []solana.CompiledInstruction,
 	feePayer solana.PublicKey,
 	asset solana.PublicKey,
 	marked map[solana.PublicKey]struct{},
@@ -71,7 +72,7 @@ func assertFeePayerIsolatedWithAtaCreation(
 		CreatedOwners: map[solana.PublicKey]struct{}{},
 		TokenProgram:  tokenProgram,
 	}
-	for _, ix := range tx.Message.Instructions {
+	for _, ix := range instructions {
 		programID, err := tx.Message.Program(ix.ProgramIDIndex)
 		if err != nil {
 			return fmt.Errorf("%s: %w", ErrSmartWalletFeePayerNotIsolated, err)
@@ -341,7 +342,7 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 
 	// Fee payer isolation with the bounded CreateIdempotent exception
 	// (§2.1.1); this also validates every creation against §5.4.
-	if err := assertFeePayerIsolatedWithAtaCreation(tx, feePayer, asset, markedOwners(legs), tokenProgram); err != nil {
+	if err := assertFeePayerIsolatedWithAtaCreation(tx, instructions, feePayer, asset, markedOwners(legs), tokenProgram); err != nil {
 		return "", splitVerifyError(err, payer)
 	}
 

@@ -768,16 +768,11 @@ describe("ExactSvmScheme", () => {
                 );
                 const invalid = !data.length || data[0] < 2 || data[0] > 17;
                 expect(result.invalidReason).toBe(
-                  invalid
-                    ? Errors.ErrInvalidLighthouseInstruction
-                    : reference
-                      ? Errors.ErrFeePayerTransferringFunds
-                      : undefined,
+                  invalid ? Errors.ErrInvalidLighthouseInstruction : undefined,
                 );
-                expect(result.isValid).toBe(!invalid && !reference);
+                expect(result.isValid).toBe(!invalid);
                 expect(mockSigner.simulateTransactionWithInnerInstructions).not.toHaveBeenCalled();
-                if (invalid || reference)
-                  expect(mockSigner.simulateTransaction).not.toHaveBeenCalled();
+                if (invalid) expect(mockSigner.simulateTransaction).not.toHaveBeenCalled();
               }
             }
           }
