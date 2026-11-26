@@ -1601,6 +1601,21 @@ describe("Bazaar Discovery Extension", () => {
       const result = validateDiscoveryExtension(extension);
       expect(result.valid).toBe(true);
     });
+
+    it.each([
+      ["text", "Sunny, 72°F"],
+      ["array", [{ ticker: "AAPL", score: 8.5 }]],
+      ["number", 0],
+    ])("should validate an MCP extension with a %s output example", (_, example) => {
+      const declared = declareDiscoveryExtension({
+        toolName: "my_tool",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        output: { example },
+      });
+
+      expect(declared.bazaar.info.output?.example).toEqual(example);
+      expect(validateDiscoveryExtension(declared.bazaar)).toEqual({ valid: true });
+    });
   });
 
   describe("extractDiscoveryInfo - MCP", () => {
