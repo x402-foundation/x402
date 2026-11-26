@@ -57,8 +57,6 @@ from ..constants import (
     MAX_SPLITS,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
-    TOKEN_2022_PROGRAM_ADDRESS,
-    TOKEN_PROGRAM_ADDRESS,
 )
 from ..errors import TransactionOnchainFailureError
 from ..settlement_cache import SettlementCache
@@ -86,6 +84,7 @@ from .instruction_layout import (
     strip_assertion_guards,
 )
 from .splits import (
+    TOKEN_PROGRAMS,
     InstructionView,
     PaymentLeg,
     SplitCapabilities,
@@ -98,7 +97,6 @@ from .splits import (
     uses_split_terms,
 )
 
-_TRANSFER_PROGRAMS = (TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS)
 _OPTIONAL_PROGRAMS = (LIGHTHOUSE_PROGRAM_ADDRESS, MEMO_PROGRAM_ADDRESS)
 
 
@@ -633,7 +631,7 @@ class ExactSvmScheme:
             # accounts would let the transfer's authority be something other
             # than the account the payer signed with.
             if (
-                transfer_ix.program not in _TRANSFER_PROGRAMS
+                transfer_ix.program not in TOKEN_PROGRAMS
                 or len(transfer_ix.data) != 10
                 or transfer_ix.data[0] != 12  # TransferChecked discriminator
                 or len(transfer_ix.accounts) != 4
