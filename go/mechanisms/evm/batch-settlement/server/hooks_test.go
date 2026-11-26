@@ -1758,6 +1758,19 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 }
 
+func TestApplyChannelStateExtra_StaleDepositKeepsRefundNonce(t *testing.T) {
+	next := ChannelSession{Balance: "1000", RefundNonce: 1}
+	applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{
+		Balance: "4000", RefundNonce: "4",
+	})
+	applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{
+		Balance: "5000", RefundNonce: "2",
+	})
+	if next.RefundNonce != 4 || next.Balance != "5000" {
+		t.Fatalf("session = %+v, want refundNonce 4 and balance 5000", next)
+	}
+}
+
 func TestApplyChannelStateExtra_TotalClaimedOnlyMovesForward(t *testing.T) {
 	cases := []struct {
 		name     string

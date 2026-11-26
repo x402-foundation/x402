@@ -1244,17 +1244,17 @@ func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettl
 	if cs.Balance != "" {
 		next.Balance = cs.Balance
 	}
-	// totalClaimed only moves forward: onchain it only increases, and deposit and refund responses
-	// can report a value read before the transaction, a lower bound.
+	// A response can carry an earlier read, so these fields only move forward.
 	if cs.TotalClaimed != "" && bigOrZero(cs.TotalClaimed).Cmp(bigOrZero(next.TotalClaimed)) > 0 {
 		next.TotalClaimed = cs.TotalClaimed
 	}
-	if cs.WithdrawRequestedAt != 0 {
+	if cs.WithdrawRequestedAt > next.WithdrawRequestedAt {
 		next.WithdrawRequestedAt = cs.WithdrawRequestedAt
 	}
 	if cs.RefundNonce != "" {
-		if n, ok := new(big.Int).SetString(cs.RefundNonce, 10); ok {
-			next.RefundNonce = int(n.Int64())
+		reported := bigOrZero(cs.RefundNonce)
+		if reported.Cmp(big.NewInt(int64(next.RefundNonce))) > 0 {
+			next.RefundNonce = int(reported.Int64())
 		}
 	}
 }
