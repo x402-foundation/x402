@@ -65,24 +65,33 @@ func ValidatePaymentRequirements(r PaymentRequirements) error {
 // This supports pattern matching for networks (e.g., "eip155:*")
 func findByNetworkAndScheme[T any](networkMap map[Network]map[string]T, scheme string, network Network) T {
 	var zero T
+	registeredNetwork, ok := findRegisteredNetwork(networkMap, scheme, network)
+	if !ok {
+		return zero
+	}
+	return networkMap[registeredNetwork][scheme]
+}
 
+// findRegisteredNetwork returns the registered network key that findByNetworkAndScheme resolves to
+// This lets a caller read a related map under the key of the same registration
+func findRegisteredNetwork[T any](networkMap map[Network]map[string]T, scheme string, network Network) (Network, bool) {
 	// Try exact match first
 	if schemeMap, exists := networkMap[network]; exists {
-		if impl, exists := schemeMap[scheme]; exists {
-			return impl
+		if _, exists := schemeMap[scheme]; exists {
+			return network, true
 		}
 	}
 
 	// Try pattern matching
 	for registeredNetwork, schemeMap := range networkMap {
 		if network.Match(registeredNetwork) || registeredNetwork.Match(network) {
-			if impl, exists := schemeMap[scheme]; exists {
-				return impl
+			if _, exists := schemeMap[scheme]; exists {
+				return registeredNetwork, true
 			}
 		}
 	}
 
-	return zero
+	return "", false
 }
 
 // findSchemesByNetwork finds all schemes for a given network
