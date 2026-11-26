@@ -32,6 +32,8 @@ The client's commitment is backed by onchain capital committed before or during 
 
 The client's commitment is backed by a verified identity associated with a billing account managed by a trusted network intermediary. No onchain capital is required from the client. The network authenticates the identity, underwrites the access obligation, and settles with the resource server through off-chain infrastructure on a defined schedule.
 
+A credit-backed binding may instead be **seller-underwritten**: the resource server extends the credit itself, and no intermediary guarantees settlement. Such a binding states how the seller bounds its exposure and what recourse it has when the client does not pay.
+
 ## Use cases
 
 **Escrow-backed micropayments.** An AI agent pre-funds an onchain escrow at session start. Each sub-cent API call produces a signed voucher drawn against that balance. The provider accumulates vouchers and redeems them in a single onchain transaction at session end, keeping per-request gas cost to zero.
@@ -64,7 +66,7 @@ Every `batch-settlement` network binding MUST specify:
 4. **Double-spend prevention** — how the network ensures the same commitment cannot be accepted or redeemed more than once.
 5. **Commitment expiry** — when commitments become invalid and what happens to unaccepted commitments after expiry.
 6. **Redemption** — who triggers redemption, when, and through what rail.
-7. **Trust model** — whether the trust anchor is the client's onchain capital (capital-backed) or a network intermediary (credit-backed), and what guarantee the seller has of eventual settlement.
+7. **Trust model** — whether the trust anchor is the client's onchain capital (capital-backed), a network intermediary (credit-backed), or the resource server itself (seller-underwritten credit), and what guarantee or recourse the seller has of eventual settlement.
 
 ### Extensions
 
