@@ -1303,11 +1303,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
   }
 
   /**
-   * Path 1: Static instruction-layout verification for standard wallets.
-   * Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, Memo)
-   * are found by program-ID/discriminator identity and must appear in that
-   * fixed relative order; guard instructions (Lighthouse) may appear
-   * anywhere in the instruction list.
+   * Verifies a standard-wallet transaction by instruction identity and order.
+   * Lighthouse guards may appear anywhere in the list.
    *
    * @param transaction - Decoded transaction to verify
    * @param compiled - Compiled message, whose version selects the layout and budget checks
@@ -1326,14 +1323,6 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
     signerAddresses: string[],
   ): Promise<VerifyResponse> {
     const instructions = decompiled.instructions ?? [];
-    // Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
-    // optional Memo) are identified by program ID + instruction discriminator
-    // and MUST appear in that fixed relative order. Guard instructions
-    // (currently only permitted Lighthouse assertion variants — Phantom/Solflare's
-    // wallet-protection assertions) may appear anywhere. A configured preflight/postflight
-    // allowlist block is stripped (and fee-payer-isolation-checked) first.
-    // See: https://github.com/x402-foundation/x402/issues/828
-    //  and: https://github.com/x402-foundation/x402/issues/2097
     const layout = resolveProtocolLayout(
       decompiled.instructions ?? [],
       this.options,
@@ -1660,9 +1649,8 @@ export class ExactSvmScheme implements SchemeNetworkFacilitator {
       const transferIx = instructions[firstTransfer + i];
       const programAddress = transferIx.programAddress.toString();
       const ixData = transferIx.data;
-      // Exactly 10 data bytes and 4 accounts: trailing multisig signer
-      // accounts would let the transfer's authority be something other than
-      // the account the payer signed with.
+      // Exactly 10 data bytes and 4 accounts. Extra signer accounts would
+      // make the authority someone other than the payer.
       if (
         !TOKEN_PROGRAMS.has(programAddress) ||
         !ixData ||

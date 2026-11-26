@@ -1,9 +1,6 @@
 /**
- * Multi-payee splits for the exact scheme (scheme_exact_svm.md §5).
- *
- * Shared by the client (transaction construction), the server (requirements
- * checks against the facilitator's advertisement) and the facilitator (Path 1,
- * Path 2 and post-settlement verification).
+ * Exact-scheme split terms (scheme_exact_svm.md §5), shared by every role.
+ * `verifyExpectedMemo` also covers a non-split smart-wallet payment.
  */
 
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";

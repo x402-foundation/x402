@@ -17,9 +17,8 @@ type Role = "computeLimit" | "computePrice" | "transfer" | "memo" | "guard" | "u
 const PROTOCOL_ORDER = ["computeLimit", "computePrice", "transfer", "memo"] as const;
 
 /**
- * Identifies an instruction's role by program ID and discriminator, not position.
- * `guard` (currently only Lighthouse) may appear anywhere. Payload validity is
- * checked separately by the per-instruction verifiers.
+ * Identifies an instruction's role by program ID and discriminator.
+ * A Lighthouse guard may appear anywhere. Verifiers check the payload.
  *
  * @param ix - Decompiled instruction
  * @returns The instruction's role
@@ -54,7 +53,7 @@ function classify(ix: Ix): Role {
  */
 export type InstructionIdentity = { programAddress: string; discriminator: Uint8Array };
 
-/** An ordered block of instructions (guards aside) allowed before/after the protocol instructions. */
+/** Ordered instructions allowed before or after the protocol instructions. */
 export type InstructionTuple = InstructionIdentity[];
 
 /**
@@ -127,13 +126,8 @@ export type PartitionedInstructions = {
 };
 
 /**
- * Resolves the Path 1 layout: strips a matched allowlisted preflight block from
- * the front and postflight block from the back (each fee-payer-isolation-checked,
- * since it is operator-configured arbitrary code), then partitions the rest by
- * identity. Protocol instructions (ComputeLimit, ComputePrice, TransferChecked,
- * optional Memo(s)) must appear in that relative order; permitted Lighthouse
- * assertion variants may appear anywhere as guards. Anything else, a duplicate or
- * out-of-order protocol instruction, or a missing transfer is rejected.
+ * Strips Lighthouse guards, then one allowlisted preflight or postflight block.
+ * ComputeLimit, ComputePrice, TransferChecked, and Memo must then follow that order.
  *
  * @param instructions - Decompiled top-level instructions
  * @param options - Scheme options; only the allowlists are read (empty/unset never match)
