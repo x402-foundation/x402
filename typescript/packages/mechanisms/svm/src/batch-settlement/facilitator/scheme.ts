@@ -75,19 +75,17 @@ import {
   type ConfirmedEvidence,
 } from "./recovery";
 import {
+  appliedFailure,
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
-  completeStates,
   depositResponse,
-  distributedSnapshot,
+  distributionStates,
   envelopeFailure,
   parseOptionalSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
-  redemptionSnapshot,
   refundResponse,
-  resyncFailure,
   settleFailure,
   settlementPending,
   verifiedChannelExtra,
@@ -495,14 +493,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             }),
           );
         }
-        if (applied) {
-          return resyncFailure(
-            requirements.network,
-            BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-            "claim already applied onchain",
-            completeStates(prepared, channels, redemptionSnapshot),
-          );
-        }
+        if (applied)
+          return appliedFailure(requirements, "claim already applied onchain", prepared, channels);
         if (this.settlementCache.isDuplicate(claimKey)) {
           return settleFailure(payment.accepted.network, CHANNEL_BUSY, payer);
         }
@@ -650,12 +642,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (instructions.length === 0) {
       if (previous) return JSON.parse(previous) as SettleResponse;
       // State alone cannot identify a previous payment or its amount.
-      return resyncFailure(
-        requirements.network,
-        BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-        "nothing to distribute onchain",
-        completeStates(prepared, channels, redemptionSnapshot),
-      );
+      return appliedFailure(requirements, "nothing to distribute onchain", prepared, channels);
     }
     // Different sweeps can share a recent blockhash. Give each new signed
     // transaction its own identity; recovery always reuses these exact bytes.
@@ -737,16 +724,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             throw new PayoutAttributionAmbiguousError();
           }
         }
-        // A recovered sweep re-reads the chain; an unreadable channel omits the field.
-        const channels =
-          channelsBefore ??
-          (await Promise.all(
-            prepared.map(item => this.readChannel(requirements.network, item.channelId)),
-          ).catch(() => undefined));
-        const channelStates = completeStates(
-          prepared,
-          channels,
-          channelsBefore ? distributedSnapshot : redemptionSnapshot,
+        const channelStates = await distributionStates(prepared, channelsBefore, channelId =>
+          this.readChannel(requirements.network, channelId),
         );
         response = {
           success: true,

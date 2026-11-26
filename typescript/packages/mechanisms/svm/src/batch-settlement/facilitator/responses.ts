@@ -200,6 +200,51 @@ export function completeStates(
 }
 
 /**
+ * Reject a claim or distribute whose effect is already onchain, with the
+ * channels' state when every one can be reported.
+ *
+ * @param requirements - The request's requirements
+ * @param message - Human-readable detail
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @returns The settle response
+ */
+export function appliedFailure(
+  requirements: PaymentRequirements,
+  message: string,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+): SettleResponse {
+  return resyncFailure(
+    requirements.network,
+    BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+    message,
+    completeStates(batch, channels, redemptionSnapshot),
+  );
+}
+
+/**
+ * The states a confirmed distribute reports. A fresh sweep reports the channels
+ * read before it; a recovered one re-reads the chain, and an unreadable channel
+ * omits the field.
+ *
+ * @param batch - The batch's channels
+ * @param channelsBefore - The channels read before the sweep, if it was just built
+ * @param readChannel - Reads a channel now
+ * @returns The states, or undefined when none can be reported for every channel
+ */
+export async function distributionStates(
+  batch: readonly { channelId: string }[],
+  channelsBefore: readonly (Channel | undefined)[] | undefined,
+  readChannel: (channelId: string) => Promise<Channel | undefined>,
+): Promise<BatchRedemptionChannelState[] | undefined> {
+  const channels =
+    channelsBefore ??
+    (await Promise.all(batch.map(item => readChannel(item.channelId))).catch(() => undefined));
+  return completeStates(batch, channels, channelsBefore ? distributedSnapshot : redemptionSnapshot);
+}
+
+/**
  * Reject a redemption whose effect is already onchain, carrying the channels'
  * state so the server adopts it instead of resubmitting. Without a complete
  * state it is a plain failure.
