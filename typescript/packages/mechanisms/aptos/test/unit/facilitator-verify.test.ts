@@ -19,6 +19,7 @@ import {
   TypeTagStruct,
   U64,
 } from "@aptos-labs/ts-sdk";
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ExactAptosScheme as ExactAptosFacilitator } from "../../src/exact/facilitator/scheme";
 import { toFacilitatorAptosSigner } from "../../src/signer";
@@ -44,6 +45,16 @@ const FUTURE_EXPIRATION = BigInt(Math.floor(Date.now() / 1000) + 3600);
 const PAST_EXPIRATION = BigInt(Math.floor(Date.now() / 1000) - 100);
 const TEST_PAY_TO = "0x0000000000000000000000000000000000000000000000000000000000000001";
 const TEST_AMOUNT = 1000n;
+
+// 0x1::primary_fungible_store::primary_store_address: sha3_256(owner | metadata | 0xFC).
+function primaryStoreAddress(owner: string, metadata: string): string {
+  const bytes = Buffer.concat([
+    AccountAddress.from(owner).toUint8Array(),
+    AccountAddress.from(metadata).toUint8Array(),
+    Buffer.from([0xfc]),
+  ]);
+  return `0x${createHash("sha3-256").update(bytes).digest("hex")}`;
+}
 
 function buildTransferEntryFn(
   asset: string,
@@ -625,6 +636,65 @@ describe("ExactAptosFacilitator.verify() - payload validation", () => {
       sender,
       expiration: FUTURE_EXPIRATION,
       entryFn: buildTransferEntryFn(USDC_TESTNET_FA, wrongRecipient, TEST_AMOUNT),
+    });
+
+    const result = await facilitator.verify(buildPayload(encodedTx), buildRequirements());
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_aptos_payload_recipient_mismatch");
+  });
+
+  it("accepts fungible_asset::transfer between the primary stores of sender and payTo", async () => {
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      expiration: FUTURE_EXPIRATION,
+      entryFn: buildTransferEntryFn(USDC_TESTNET_FA, TEST_PAY_TO, TEST_AMOUNT, {
+        moduleName: "fungible_asset",
+        args: [
+          AccountAddress.from(
+            primaryStoreAddress(sender.accountAddress.toString(), USDC_TESTNET_FA),
+          ),
+          AccountAddress.from(primaryStoreAddress(TEST_PAY_TO, USDC_TESTNET_FA)),
+          new U64(TEST_AMOUNT),
+        ],
+      }),
+    });
+
+    const result = await facilitator.verify(buildPayload(encodedTx), buildRequirements());
+
+    expect(result.isValid).toBe(true);
+  });
+
+  it("rejects fungible_asset::transfer whose from argument is the asset metadata", async () => {
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      expiration: FUTURE_EXPIRATION,
+      entryFn: buildTransferEntryFn(USDC_TESTNET_FA, TEST_PAY_TO, TEST_AMOUNT, {
+        moduleName: "fungible_asset",
+      }),
+    });
+
+    const result = await facilitator.verify(buildPayload(encodedTx), buildRequirements());
+
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe("invalid_exact_aptos_payload_asset_mismatch");
+  });
+
+  it("rejects fungible_asset::transfer to a store that is not payTo's primary store", async () => {
+    const other = Account.generate().accountAddress.toString();
+    const encodedTx = buildEncodedTransaction({
+      sender,
+      expiration: FUTURE_EXPIRATION,
+      entryFn: buildTransferEntryFn(USDC_TESTNET_FA, TEST_PAY_TO, TEST_AMOUNT, {
+        moduleName: "fungible_asset",
+        args: [
+          AccountAddress.from(
+            primaryStoreAddress(sender.accountAddress.toString(), USDC_TESTNET_FA),
+          ),
+          AccountAddress.from(primaryStoreAddress(other, USDC_TESTNET_FA)),
+          new U64(TEST_AMOUNT),
+        ],
+      }),
     });
 
     const result = await facilitator.verify(buildPayload(encodedTx), buildRequirements());
