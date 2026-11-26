@@ -358,6 +358,36 @@ func refundedReceiptLog(t *testing.T, channelId string, amount *big.Int) *goetht
 	}
 }
 
+func depositedReceiptLog(t *testing.T, channelId string, amount, newBalance *big.Int) *goethtypes.Log {
+	t.Helper()
+	data, err := depositedEvent.Inputs.NonIndexed().Pack(amount, newBalance)
+	if err != nil {
+		t.Fatalf("pack Deposited data: %v", err)
+	}
+	return &goethtypes.Log{
+		Address: common.HexToAddress(batchsettlement.BatchSettlementAddress),
+		Topics: []common.Hash{
+			depositedEvent.ID,
+			common.HexToHash(channelId),
+			common.BytesToHash(common.LeftPadBytes(common.HexToAddress(managedFacilitator).Bytes(), 32)),
+		},
+		Data: data,
+	}
+}
+
+func depositedReceipt(t *testing.T, txHash string, payload *batchsettlement.BatchSettlementDepositPayload, newBalance int64) *evm.TransactionReceipt {
+	t.Helper()
+	amount, ok := new(big.Int).SetString(payload.Deposit.Amount, 10)
+	if !ok {
+		t.Fatalf("deposit amount %q", payload.Deposit.Amount)
+	}
+	return &evm.TransactionReceipt{
+		Status: evm.TxStatusSuccess,
+		TxHash: txHash,
+		Logs:   []*goethtypes.Log{depositedReceiptLog(t, payload.Voucher.ChannelId, amount, big.NewInt(newBalance))},
+	}
+}
+
 func channelIDFromContractConfig(t *testing.T, cfg ContractChannelConfigTuple) string {
 	t.Helper()
 	delay := 0
@@ -392,6 +422,23 @@ func refundCallFromArgs(args []interface{}) (ContractChannelConfigTuple, *big.In
 		return ContractChannelConfigTuple{}, nil, false
 	}
 	return cfg, new(big.Int).Set(amount), true
+}
+
+func depositedLogsFromWrite(t *testing.T, rpc *managedRPC, functionName string, args []interface{}) []*goethtypes.Log {
+	t.Helper()
+	if functionName != "deposit" || len(args) < 2 {
+		return nil
+	}
+	cfg, ok := args[0].(ContractChannelConfigTuple)
+	if !ok {
+		t.Fatalf("deposit config arg: %T", args[0])
+	}
+	amount, ok := args[1].(*big.Int)
+	if !ok {
+		t.Fatalf("deposit amount arg: %T", args[1])
+	}
+	newBalance := new(big.Int).Add(rpc.balance, amount)
+	return []*goethtypes.Log{depositedReceiptLog(t, channelIDFromContractConfig(t, cfg), amount, newBalance)}
 }
 
 // refundedLogsFromWrite returns the Refunded logs a successful refund, refundWithSignature,
@@ -610,6 +657,7 @@ func newManagedSigner(t *testing.T, rpc *managedRPC) *fakeFacilitatorSigner {
 		},
 		writeContract: func(functionName string, args ...interface{}) (string, error) {
 			lastLogs = append(managedClaimedLogs(t, rpc, functionName, args), refundedLogsFromWrite(t, functionName, args)...)
+			lastLogs = append(lastLogs, depositedLogsFromWrite(t, rpc, functionName, args)...)
 			if functionName == "refundWithSignature" || functionName == "refund" || functionName == "multicall" {
 				if rpc.balance.Sign() > 0 && rpc.totalClaimed != nil {
 					remain := new(big.Int).Sub(rpc.balance, rpc.totalClaimed)

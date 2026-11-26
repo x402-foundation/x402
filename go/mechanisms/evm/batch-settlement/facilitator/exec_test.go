@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	goethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -231,12 +232,66 @@ func TestExecuteRefundWithSignature_SimulationFailed_DirectPath(t *testing.T) {
 		Amount:        "100",
 		RefundNonce:   "1",
 	}
-	resp, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner, nil)
+	resp, err := ExecuteRefundWithSignature(context.Background(), refundChannelReader(t), payload, reqsFor(testNetwork), scheme.authorizerSigner, nil)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if resp.Success || resp.ErrorReason != ErrRefundSimulationFailed {
 		t.Fatalf("got %+v", resp)
+	}
+}
+
+func refundChannelReader(t *testing.T) *fakeFacilitatorSigner {
+	t.Helper()
+	return &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == evm.FunctionTryAggregate {
+				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
+			}
+			return nil, errors.New("execution reverted")
+		},
+	}
+}
+
+func TestRefund_PreReadFailureRejectsBeforeBroadcast(t *testing.T) {
+	cfg := validConfig()
+	cfg.ReceiverAuthorizer = "0xauthorizer"
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Amount:        "100",
+		RefundNonce:   "0",
+	}
+	cases := []struct {
+		name   string
+		refund func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error)
+	}{
+		{"refundWithSignature", func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error) {
+			return ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
+		}},
+		{"refund", func(signer *fakeFacilitatorSigner) (*x402.SettleResponse, error) {
+			return ExecuteRefund(context.Background(), signer, payload, testNetwork, nil)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := &fakeFacilitatorSigner{
+				addresses: []string{"0xfacilitator"},
+				readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+					if functionName == evm.FunctionTryAggregate {
+						return nil, errors.New("rpc down")
+					}
+					return nil, nil
+				},
+				writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("ab", 32), nil },
+			}
+			_, err := tc.refund(signer)
+			requireSettleErrorReason(t, err, ErrRpcReadFailed)
+			if signer.writeCalls != 0 {
+				t.Fatalf("writeCalls = %d, want 0", signer.writeCalls)
+			}
+		})
 	}
 }
 
@@ -274,37 +329,50 @@ func TestExecuteRefundWithSignature_NoBalance(t *testing.T) {
 func TestExecuteRefundWithSignature_FailsClosedWithoutRefundedEvent(t *testing.T) {
 	cfg := validConfig()
 	cfg.ReceiverAuthorizer = "0xauthorizer"
-	txHash := "0x" + strings.Repeat("ab", 32)
-	signer := &fakeFacilitatorSigner{
-		addresses: []string{"0xfacilitator"},
-		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
-			if functionName == evm.FunctionTryAggregate {
-				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
-			}
-			if functionName == "refundWithSignature" {
-				return nil, nil
-			}
-			return nil, errors.New("unexpected rpc")
-		},
-		writeContract: func(functionName string, _ ...interface{}) (string, error) {
-			return txHash, nil
-		},
-		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got}, nil
-		},
-	}
-	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
-		Type:          "refund",
-		ChannelConfig: cfg,
-		Amount:        "1000",
-		RefundNonce:   "0",
-	}
-	resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		t.Fatalf("channel id: %v", err)
 	}
-	if resp.Success || resp.ErrorReason != ErrRefundedEventMismatch {
-		t.Fatalf("got %+v", resp)
+	cases := []struct {
+		name   string
+		logs   []*goethtypes.Log
+		reason string
+	}{
+		{"nil logs", nil, ErrReceiptLogsUnavailable},
+		{"empty logs", []*goethtypes.Log{}, ErrRefundedEventMismatch},
+		{"zero Refunded", []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(0))}, ErrRefundedEventMismatch},
+		{"another channel's Refunded", []*goethtypes.Log{refundedReceiptLog(t, "0x"+strings.Repeat("77", 32), big.NewInt(1000))}, ErrRefundedEventMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			txHash := "0x" + strings.Repeat("ab", 32)
+			signer := &fakeFacilitatorSigner{
+				addresses: []string{"0xfacilitator"},
+				readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+					if functionName == evm.FunctionTryAggregate {
+						return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(0)), nil
+					}
+					return nil, nil
+				},
+				writeContract: func(string, ...interface{}) (string, error) { return txHash, nil },
+				waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+					return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got, Logs: tc.logs}, nil
+				},
+			}
+			payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
+				Type:          "refund",
+				ChannelConfig: cfg,
+				Amount:        "1000",
+				RefundNonce:   "0",
+			}
+			resp, err := ExecuteRefundWithSignature(context.Background(), signer, payload, reqsFor(testNetwork), &fakeAuthorizerSigner{addr: "0xauthorizer"}, nil)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if resp.Success || resp.ErrorReason != tc.reason || resp.Transaction != txHash {
+				t.Fatalf("got %+v, want failure %s with tx %s", resp, tc.reason, txHash)
+			}
+		})
 	}
 }
 
@@ -329,7 +397,7 @@ func TestExecuteRefund_DirectPath_ReceiptWithoutRefundedEventFailsClosed(t *test
 		},
 		writeContract: func(string, ...interface{}) (string, error) { return txHash, nil },
 		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
-			receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got}
+			receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got, Logs: []*goethtypes.Log{}}
 			if emitRefunded {
 				receipt.Logs = append(receipt.Logs, refundedReceiptLog(t, channelId, big.NewInt(1000)))
 			}
@@ -377,7 +445,7 @@ func TestExecuteRefundWithSignature_BadProvidedClaimSig(t *testing.T) {
 		ClaimAuthorizerSignature:  "not-hex",
 		RefundAuthorizerSignature: "0xdead",
 	}
-	_, err := ExecuteRefundWithSignature(context.Background(), scheme.signer, payload, reqsFor(testNetwork), scheme.authorizerSigner, nil)
+	_, err := ExecuteRefundWithSignature(context.Background(), refundChannelReader(t), payload, reqsFor(testNetwork), scheme.authorizerSigner, nil)
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrInvalidRefundPayload {
 		t.Fatalf("got err = %v", err)
@@ -698,32 +766,20 @@ func signedPermit2Deposit(t *testing.T, network, amount, maxClaimable string) (*
 	return payload, reqs
 }
 
-// TestSettleDeposit_PostReceiptBalanceNotDoubled pins that SettleDeposit anchors
-// optimistic balance to the pre-submit channel read. When the post-receipt RPC
-// already reflects deposit=100 (balance=100), the settle extra must report 100
-// — not 200 from adding depositAmount again on top of the post-deposit read.
-func TestSettleDeposit_PostReceiptBalanceNotDoubled(t *testing.T) {
-	payload, reqs := signedErc3009Deposit(t, testNetwork, "100", "100")
+func TestSettleDeposit_ChannelStateFromDepositedEvent(t *testing.T) {
+	payload, reqs := signedErc3009Deposit(t, testNetwork, "100", "150")
 
-	var tryAggregateCalls int
-	var writeSeen bool
+	tryAggregateCalls := 0
 	signer := &fakeFacilitatorSigner{
 		addresses: []string{"0xfacilitator"},
 		getBalance: func(string, string) (*big.Int, error) {
 			return big.NewInt(1000), nil
 		},
-		writeContract: func(functionName string, _ ...interface{}) (string, error) {
-			if functionName != "deposit" {
-				t.Fatalf("unexpected write: %s", functionName)
-			}
-			if tryAggregateCalls < 1 {
-				t.Fatal("expected pre-submit ReadChannelState before WriteContract")
-			}
-			writeSeen = true
+		writeContract: func(string, ...interface{}) (string, error) {
 			return "0x" + strings.Repeat("ab", 32), nil
 		},
 		waitForReceipt: func(txHash string) (*evm.TransactionReceipt, error) {
-			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: txHash}, nil
+			return depositedReceipt(t, txHash, payload, 150), nil
 		},
 		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
 			if functionName == "deposit" {
@@ -733,31 +789,64 @@ func TestSettleDeposit_PostReceiptBalanceNotDoubled(t *testing.T) {
 				return nil, errors.New("unexpected rpc")
 			}
 			tryAggregateCalls++
-			if !writeSeen {
-				// Pre-submit: channel empty.
-				return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
-			}
-			// Post-receipt: RPC already includes the mined deposit.
-			return multicallChannelStateResult(t, big.NewInt(100), big.NewInt(0), 0, big.NewInt(0)), nil
+			return multicallChannelStateResult(t, big.NewInt(50), big.NewInt(30), 0, big.NewInt(2)), nil
 		},
 	}
 
-	resp, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, nil)
+	resp, syncedAt, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("SettleDeposit: %v", err)
-	}
-	if !resp.Success {
-		t.Fatalf("expected success, got %+v", resp)
 	}
 	cs, ok := resp.Extra["channelState"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("missing channelState in extra: %+v", resp.Extra)
 	}
-	if got, _ := cs["balance"].(string); got != "100" {
-		t.Fatalf("channelState.balance = %q, want \"100\" (not doubled)", got)
+	if cs["balance"] != "150" || cs["totalClaimed"] != "30" || cs["refundNonce"] != "2" || cs["withdrawRequestedAt"] != 0 {
+		t.Fatalf("channelState = %+v, want balance 150 from Deposited and the verify read's other fields", cs)
 	}
-	if tryAggregateCalls < 2 {
-		t.Fatalf("tryAggregateCalls = %d, want at least pre-submit + post-receipt", tryAggregateCalls)
+	if tryAggregateCalls != 1 {
+		t.Fatalf("tryAggregate calls = %d, want 1 (verify read only)", tryAggregateCalls)
+	}
+	if syncedAt == 0 {
+		t.Fatal("syncedAt = 0, want the time the event-derived state was built")
+	}
+}
+
+func TestSettleDeposit_FailsWithoutMatchingDepositedEvent(t *testing.T) {
+	payload, reqs := signedErc3009Deposit(t, testNetwork, "100", "100")
+	amount := big.NewInt(100)
+	otherContract := depositedReceiptLog(t, payload.Voucher.ChannelId, amount, big.NewInt(100))
+	otherContract.Address = common.HexToAddress("0x9999999999999999999999999999999999999999")
+
+	cases := []struct {
+		name   string
+		logs   []*goethtypes.Log
+		reason string
+	}{
+		{"nil logs", nil, ErrReceiptLogsUnavailable},
+		{"empty logs", []*goethtypes.Log{}, ErrDepositTransactionFailed},
+		{"another contract's Deposited", []*goethtypes.Log{otherContract}, ErrDepositTransactionFailed},
+		{"another channel's Deposited", []*goethtypes.Log{depositedReceiptLog(t, "0x"+strings.Repeat("77", 32), amount, big.NewInt(100))}, ErrDepositTransactionFailed},
+		{"a Deposited for another amount", []*goethtypes.Log{depositedReceiptLog(t, payload.Voucher.ChannelId, big.NewInt(99), big.NewInt(99))}, ErrDepositTransactionFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			txHash := "0x" + strings.Repeat("ab", 32)
+			signer := &fakeFacilitatorSigner{
+				addresses:     []string{"0xfacilitator"},
+				getBalance:    func(string, string) (*big.Int, error) { return big.NewInt(1000), nil },
+				readContract:  depositChannelStateReader(t),
+				writeContract: func(string, ...interface{}) (string, error) { return txHash, nil },
+				waitForReceipt: func(hash string) (*evm.TransactionReceipt, error) {
+					return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: hash, Logs: tc.logs}, nil
+				},
+			}
+			_, _, err := SettleDeposit(context.Background(), signer, payload, reqs, nil, nil, nil, nil, nil, nil)
+			se := requireSettleErrorReason(t, err, tc.reason)
+			if se.Transaction != txHash {
+				t.Fatalf("transaction = %q, want %q", se.Transaction, txHash)
+			}
+		})
 	}
 }
 
@@ -782,7 +871,7 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 	extensionSigner := &singleHashExtensionSigner{
 		fakeFacilitatorSigner: &fakeFacilitatorSigner{
 			waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
-				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: gotTxHash}, nil
+				return depositedReceipt(t, gotTxHash, payload, 1000), nil
 			},
 		},
 		txHash: txHash,
@@ -798,11 +887,7 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 			if functionName != evm.FunctionTryAggregate {
 				return nil, errors.New("unexpected rpc")
 			}
-			balance := big.NewInt(0)
-			if extensionSigner.sent {
-				balance.SetInt64(1000)
-			}
-			return multicallChannelStateResult(t, balance, big.NewInt(0), 0, big.NewInt(0)), nil
+			return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
 		},
 	}
 	fctx := x402.NewFacilitatorContext(map[string]x402.FacilitatorExtension{
@@ -823,12 +908,7 @@ func TestSettleDeposit_Erc20ApprovalAcceptsSingleExtensionHash(t *testing.T) {
 	}
 }
 
-// TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails pins that a
-// single extension-signer hash is not blindly trusted as an atomic bundle. If the
-// hash's receipt succeeds (e.g. because it is only the approve transaction from a
-// non-conforming sequential signer) but the channel balance never reflects the
-// deposit, settlement must fail rather than report success without funds moving.
-func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *testing.T) {
+func TestSettleDeposit_Erc20ApprovalSingleHashWithoutDepositedEventFails(t *testing.T) {
 	payload, reqs := signedPermit2Deposit(t, testNetwork, "1000", "1000")
 	info := goodErc20ApprovalInfo()
 	info.From = payload.ChannelConfig.Payer
@@ -838,7 +918,7 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 	extensionSigner := &singleHashExtensionSigner{
 		fakeFacilitatorSigner: &fakeFacilitatorSigner{
 			waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
-				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: gotTxHash}, nil
+				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: gotTxHash, Logs: []*goethtypes.Log{}}, nil
 			},
 		},
 		txHash: txHash,
@@ -854,8 +934,6 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 			if functionName != evm.FunctionTryAggregate {
 				return nil, errors.New("unexpected rpc")
 			}
-			// Balance never reflects the deposit, e.g. because the single hash
-			// only broadcast the approve and the deposit call never ran.
 			return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
 		},
 	}
@@ -872,68 +950,6 @@ func TestSettleDeposit_Erc20ApprovalSingleHashWithoutBalanceIncreaseFails(t *tes
 	var se *x402.SettleError
 	if !errors.As(err, &se) || se.ErrorReason != ErrDepositTransactionFailed {
 		t.Fatalf("got err = %v, want ErrDepositTransactionFailed", err)
-	}
-}
-
-// TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPending pins
-// that a single extension-signer hash whose deposit cannot be confirmed is not reported
-// as success. The bundle receipt only proves some transaction did not revert, not that
-// the deposit landed; when the post-deposit balance read fails we cannot distinguish a
-// landed deposit from a non-conforming approve-only broadcast, so settlement is pending
-// (with the broadcast hash) for the caller to reconcile rather than an optimistic success.
-func TestSettleDeposit_Erc20ApprovalSingleHashWithReadErrorReturnsSettlementPending(t *testing.T) {
-	payload, reqs := signedPermit2Deposit(t, testNetwork, "1000", "1000")
-	info := goodErc20ApprovalInfo()
-	info.From = payload.ChannelConfig.Payer
-	info.Asset = payload.ChannelConfig.Token
-	info.Amount = "1000"
-	const txHash = "0x" + "abababababababababababababababababababababababababababababababab"
-	extensionSigner := &singleHashExtensionSigner{
-		fakeFacilitatorSigner: &fakeFacilitatorSigner{
-			waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
-				return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: gotTxHash}, nil
-			},
-		},
-		txHash: txHash,
-	}
-	channelReads := 0
-	signer := &fakeFacilitatorSigner{
-		getBalance: func(string, string) (*big.Int, error) {
-			return big.NewInt(10000), nil
-		},
-		waitForReceipt: func(gotTxHash string) (*evm.TransactionReceipt, error) {
-			return nil, errors.New("base signer must not wait for extension transaction")
-		},
-		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
-			if functionName != evm.FunctionTryAggregate {
-				return nil, errors.New("unexpected rpc")
-			}
-			channelReads++
-			if channelReads == 1 {
-				return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
-			}
-			return nil, errors.New("rpc: channel state unavailable")
-		},
-	}
-	fctx := x402.NewFacilitatorContext(map[string]x402.FacilitatorExtension{
-		erc20approvalgassponsor.ERC20ApprovalGasSponsoring.Key(): &erc20approvalgassponsor.Erc20ApprovalFacilitatorExtension{
-			Signer: extensionSigner,
-		},
-	})
-
-	_, _, err := SettleDeposit(
-		context.Background(), signer, payload, reqs,
-		extensionsWithErc20Approval(info), fctx, nil, nil, nil, nil,
-	)
-	var se *x402.SettleError
-	if !errors.As(err, &se) || se.ErrorReason != ErrSettlementPending {
-		t.Fatalf("got err = %v, want ErrSettlementPending", err)
-	}
-	if se.Transaction != txHash {
-		t.Fatalf("transaction = %q, want %q", se.Transaction, txHash)
-	}
-	if se.Payer != payload.ChannelConfig.Payer {
-		t.Fatalf("payer = %q, want %q", se.Payer, payload.ChannelConfig.Payer)
 	}
 }
 
@@ -1707,148 +1723,106 @@ func multicallChannelStateResult(
 	}
 }
 
-// ----- buildRefundResponse -----
+func TestDeriveRefundState(t *testing.T) {
+	pre := func(balance, totalClaimed, withdrawAmount int64, withdrawRequestedAt int) *onchainChannelState {
+		return &onchainChannelState{
+			ChannelState: batchsettlement.ChannelState{
+				Balance:             big.NewInt(balance),
+				TotalClaimed:        big.NewInt(totalClaimed),
+				WithdrawRequestedAt: withdrawRequestedAt,
+				RefundNonce:         big.NewInt(2),
+			},
+			withdrawAmount: big.NewInt(withdrawAmount),
+		}
+	}
+	cases := []struct {
+		name                    string
+		preState                *onchainChannelState
+		refunded                int64
+		claimedTotal            *big.Int
+		wantBalance             int64
+		wantTotalClaimed        int64
+		wantWithdrawRequestedAt int
+	}{
+		{"partial refund", pre(1000, 200, 0, 0), 300, nil, 700, 200, 0},
+		{"refund covering the pending withdrawal clears it", pre(1000, 0, 500, 77), 500, nil, 500, 0, 0},
+		{"refund below the pending withdrawal keeps it", pre(1000, 0, 500, 77), 499, nil, 501, 0, 77},
+		{"bundled claim sets totalClaimed", pre(1000, 200, 0, 0), 400, big.NewInt(600), 600, 600, 0},
+		{"refund above the pre-read balance clamps to zero", pre(100, 0, 0, 0), 150, nil, 0, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveRefundState(tc.preState, big.NewInt(tc.refunded), tc.claimedTotal, big.NewInt(4))
+			if got.Balance.Int64() != tc.wantBalance || got.TotalClaimed.Int64() != tc.wantTotalClaimed ||
+				got.WithdrawRequestedAt != tc.wantWithdrawRequestedAt || got.RefundNonce.Int64() != 5 {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
 
-// TestBuildRefundResponse pins the refund response shape:
-//   - top-level: success, tx, network, payer, amount
-//   - extra.channelState: channelId, balance, totalClaimed, withdrawRequestedAt, refundNonce
-//   - NO `refund: true` flag at any level; resource hooks use the payload type
-//     and channelState fields instead
-//   - NO `chargedCumulativeAmount` (the resource server's
-//     enrichSettlementResponse hook adds it via additive merge)
-func TestBuildRefundResponse(t *testing.T) {
-	details := refundSettlementDetails{
-		amount: "2000",
-		channelState: batchsettlement.BatchSettlementChannelStateExtra{
-			ChannelId:           "0xchan",
-			Balance:             "3000",
-			TotalClaimed:        "3000",
-			WithdrawRequestedAt: 0,
-			RefundNonce:         "1",
+func TestFinishRefundAfterReceipt_UsesTheChannelsLastClaimed(t *testing.T) {
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preState := &onchainChannelState{
+		ChannelState:   batchsettlement.ChannelState{Balance: big.NewInt(1000), TotalClaimed: big.NewInt(100), RefundNonce: big.NewInt(0)},
+		withdrawAmount: big.NewInt(0),
+	}
+	receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: []*goethtypes.Log{
+		claimedReceiptLog(t, channelId, big.NewInt(300)),
+		claimedReceiptLog(t, "0x"+strings.Repeat("77", 32), big.NewInt(900)),
+		claimedReceiptLog(t, channelId, big.NewInt(400)),
+		refundedReceiptLog(t, channelId, big.NewInt(600)),
+	}}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{ChannelConfig: cfg}
+
+	resp := finishRefundAfterReceipt(payload, channelId, preState, big.NewInt(0), "0xtx", testNetwork, receipt)
+	if !resp.Success || resp.Amount != "600" {
+		t.Fatalf("got %+v", resp)
+	}
+	cs := resp.Extra["channelState"].(map[string]interface{})
+	if cs["balance"] != "400" || cs["totalClaimed"] != "400" || cs["refundNonce"] != "1" {
+		t.Fatalf("channelState = %+v", cs)
+	}
+}
+
+func TestExecuteRefund_DirectPathAdvancesThePreReadNonce(t *testing.T) {
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == evm.FunctionTryAggregate {
+				reads++
+				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 0, big.NewInt(5)), nil
+			}
+			return nil, nil
+		},
+		writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("cd", 32), nil },
+		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got,
+				Logs: []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(1000))}}, nil
 		},
 	}
-	resp := buildRefundResponse("0xtx", x402.Network(testNetwork), "0xpayer", details)
-	if !resp.Success || resp.Transaction != "0xtx" || resp.Network != x402.Network(testNetwork) {
-		t.Fatalf("envelope: %+v", resp)
-	}
-	if resp.Payer != "0xpayer" {
-		t.Fatalf("payer = %q, want 0xpayer", resp.Payer)
-	}
-	if resp.Amount != "2000" {
-		t.Fatalf("amount = %q, want 2000", resp.Amount)
-	}
-	if _, hasLegacy := resp.Extra["refund"]; hasLegacy {
-		t.Fatalf("extra.refund must NOT be emitted; got %+v", resp.Extra)
-	}
-	cs, ok := resp.Extra["channelState"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("extra.channelState missing or wrong shape: %+v", resp.Extra)
-	}
-	if cs["channelId"] != "0xchan" {
-		t.Fatalf("channelId = %v", cs["channelId"])
-	}
-	if cs["balance"] != "3000" {
-		t.Fatalf("balance = %v", cs["balance"])
-	}
-	if cs["totalClaimed"] != "3000" {
-		t.Fatalf("totalClaimed = %v", cs["totalClaimed"])
-	}
-	if cs["refundNonce"] != "1" {
-		t.Fatalf("refundNonce = %v", cs["refundNonce"])
-	}
-	if _, hasCharged := cs["chargedCumulativeAmount"]; hasCharged {
-		t.Fatalf("chargedCumulativeAmount must NOT be emitted by facilitator (server enrichSettlementResponse adds it): %+v", cs)
-	}
-}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{Type: "refund", ChannelConfig: cfg, Amount: "1000"}
 
-// TestComputeRefundSettlementDetails_AnalyticPathNoClaims covers the common
-// case: no pending withdrawal, no claims accompanying the refund. The
-// snapshot is computed from preState + payload alone, without a post-state poll.
-func TestComputeRefundSettlementDetails_AnalyticPathNoClaims(t *testing.T) {
-	preState := &batchsettlement.ChannelState{
-		Balance:             big.NewInt(5000),
-		TotalClaimed:        big.NewInt(0),
-		WithdrawRequestedAt: 0,
-		RefundNonce:         big.NewInt(0),
+	resp, err := ExecuteRefund(context.Background(), signer, payload, testNetwork, nil)
+	if err != nil || !resp.Success {
+		t.Fatalf("resp=%+v err=%v", resp, err)
 	}
-	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
-		Type:        "refund",
-		Amount:      "2000",
-		RefundNonce: "0",
+	cs := resp.Extra["channelState"].(map[string]interface{})
+	if cs["refundNonce"] != "6" || cs["balance"] != "9000" {
+		t.Fatalf("channelState = %+v", cs)
 	}
-	details := computeRefundSettlementDetails(
-		context.Background(), nil /*signer not consulted*/, payload, "0xchan", preState, big.NewInt(2000),
-	)
-	if details.amount != "2000" {
-		t.Fatalf("amount = %q, want 2000 (no available cap)", details.amount)
-	}
-	if details.channelState.Balance != "3000" {
-		t.Fatalf("balance = %q, want 3000 (5000 - 2000)", details.channelState.Balance)
-	}
-	if details.channelState.TotalClaimed != "0" {
-		t.Fatalf("totalClaimed = %q, want 0 (no claims)", details.channelState.TotalClaimed)
-	}
-	if details.channelState.RefundNonce != "1" {
-		t.Fatalf("refundNonce = %q, want 1 (preNonce + 1)", details.channelState.RefundNonce)
-	}
-	if details.channelState.WithdrawRequestedAt != 0 {
-		t.Fatalf("withdrawRequestedAt = %d, want 0", details.channelState.WithdrawRequestedAt)
-	}
-}
-
-// TestComputeRefundSettlementDetails_CapsAtAvailable ensures a requested refund
-// above preBalance - postClaimTotalClaimed is capped at the available remainder.
-func TestComputeRefundSettlementDetails_CapsAtAvailable(t *testing.T) {
-	preState := &batchsettlement.ChannelState{
-		Balance:             big.NewInt(5000),
-		TotalClaimed:        big.NewInt(0),
-		WithdrawRequestedAt: 0,
-		RefundNonce:         big.NewInt(0),
-	}
-	// Claims up to totalClaimed=4000 → available = 5000 - 4000 = 1000.
-	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
-		Type:        "refund",
-		Amount:      "2000",
-		RefundNonce: "0",
-		Claims: []batchsettlement.BatchSettlementVoucherClaim{{
-			TotalClaimed: "4000",
-		}},
-	}
-	details := computeRefundSettlementDetails(
-		context.Background(), nil, payload, "0xchan", preState, big.NewInt(2000),
-	)
-	if details.amount != "1000" {
-		t.Fatalf("amount = %q, want 1000 (capped at available)", details.amount)
-	}
-	if details.channelState.Balance != "4000" {
-		t.Fatalf("balance = %q, want 4000 (5000 - 1000)", details.channelState.Balance)
-	}
-	if details.channelState.TotalClaimed != "4000" {
-		t.Fatalf("totalClaimed = %q, want 4000 (advances to last claim)", details.channelState.TotalClaimed)
-	}
-}
-
-// TestComputeRefundSettlementDetails_NoPreState exercises the RPC-failure
-// fallback: missing preState means zero available balance, zero actual refund,
-// zero postBalance, and refundNonce advances to 1. Ensures the response never
-// panics on a missing chain read.
-func TestComputeRefundSettlementDetails_NoPreState(t *testing.T) {
-	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{
-		Type:        "refund",
-		Amount:      "2000",
-		RefundNonce: "0",
-	}
-	details := computeRefundSettlementDetails(
-		context.Background(), nil, payload, "0xchan", nil, big.NewInt(2000),
-	)
-	if details.amount != "0" {
-		t.Fatalf("amount = %q, want 0 (no preState → no available)", details.amount)
-	}
-	if details.channelState.Balance != "0" {
-		t.Fatalf("balance = %q, want 0", details.channelState.Balance)
-	}
-	if details.channelState.RefundNonce != "1" {
-		t.Fatalf("refundNonce = %q, want 1", details.channelState.RefundNonce)
+	if reads != 1 {
+		t.Fatalf("channel reads = %d, want the pre-read only", reads)
 	}
 }
 

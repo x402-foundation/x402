@@ -1758,6 +1758,29 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 }
 
+func TestApplyChannelStateExtra_TotalClaimedOnlyMovesForward(t *testing.T) {
+	cases := []struct {
+		name     string
+		stored   string
+		reported string
+		want     string
+	}{
+		{"lower reported value keeps the stored one", "500", "300", "500"},
+		{"higher reported value advances", "300", "500", "500"},
+		{"omitted value keeps the stored one", "500", "", "500"},
+		{"empty stored value takes the reported one", "", "300", "300"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next := ChannelSession{TotalClaimed: tc.stored, Balance: "1000"}
+			applyChannelStateExtra(&next, &batchsettlement.BatchSettlementChannelStateExtra{Balance: "900", TotalClaimed: tc.reported})
+			if next.TotalClaimed != tc.want || next.Balance != "900" {
+				t.Fatalf("session = %+v, want totalClaimed %s and balance 900", next, tc.want)
+			}
+		})
+	}
+}
+
 func TestAfterSettleHook_RefundPendingMismatchReturnsBusy(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")

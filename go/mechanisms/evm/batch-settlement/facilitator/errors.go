@@ -119,7 +119,10 @@ const (
 	ErrUnknownSettleAction   = "invalid_batch_settlement_evm_unknown_settle_action"
 	ErrNothingToSettle       = "invalid_batch_settlement_evm_nothing_to_settle"
 	ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch"
-	ErrRefundNoBalance       = batchsettlement.ErrRefundNoBalance
+	// ErrReceiptLogsUnavailable is returned when the signer's confirmed receipt has no Logs,
+	// so channelState cannot be derived from the receipt events.
+	ErrReceiptLogsUnavailable = "invalid_batch_settlement_evm_receipt_logs_unavailable"
+	ErrRefundNoBalance        = batchsettlement.ErrRefundNoBalance
 
 	// Managed voucher-store / refund-authorizer reasons. Aliased from the root
 	// package so facilitator callers share a single wire value.

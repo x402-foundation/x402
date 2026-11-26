@@ -134,7 +134,13 @@ func verifyVoucherFields(
 		}
 	}
 
-	state, err := ReadChannelState(ctx, signer, voucher.ChannelId)
+	maxClaimable, ok := new(big.Int).SetString(voucher.MaxClaimableAmount, 10)
+	if !ok {
+		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,
+			"invalid maxClaimableAmount")
+	}
+
+	state, err := readChannelStateCovering(ctx, signer, voucher.ChannelId, maxClaimable)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrChannelStateReadFailed, channelConfig.Payer,
 			fmt.Sprintf("failed to read channel state: %s", err))
@@ -144,12 +150,6 @@ func verifyVoucherFields(
 	if state.Balance.Sign() == 0 {
 		return nil, x402.NewVerifyError(ErrChannelNotFound, channelConfig.Payer,
 			fmt.Sprintf("channel %s not found or fully drained (balance=0)", voucher.ChannelId))
-	}
-
-	maxClaimable, ok := new(big.Int).SetString(voucher.MaxClaimableAmount, 10)
-	if !ok {
-		return nil, x402.NewVerifyError(ErrInvalidVoucherPayload, channelConfig.Payer,
-			"invalid maxClaimableAmount")
 	}
 
 	// Refund vouchers are zero-charge and may equal totalClaimed; non-refund

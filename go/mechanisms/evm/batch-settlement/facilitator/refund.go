@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/common"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
@@ -70,7 +68,7 @@ func ExecuteRefundWithSignature(
 	dataSuffix []byte,
 	onClaimed ...OnClaimedRows,
 ) (*x402.SettleResponse, error) {
-	return executeRefundWithSignature(ctx, signer, payload, requirements, authorizerSigner, dataSuffix, firstOnClaimed(onClaimed), nil)
+	return executeRefundWithSignature(ctx, signer, payload, requirements, authorizerSigner, dataSuffix, firstOnClaimed(onClaimed), nil, nil)
 }
 
 func executeRefundWithSignature(
@@ -82,6 +80,7 @@ func executeRefundWithSignature(
 	dataSuffix []byte,
 	onClaimed OnClaimedRows,
 	store x402.PendingSettlementStore,
+	preState *onchainChannelState,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 
@@ -141,12 +140,11 @@ func executeRefundWithSignature(
 
 	refundKey := refundSettlementCacheKey(channelId, payload.RefundNonce)
 
-	// Read pre-refund onchain state. Errors are non-fatal — without a
-	// pre-state we still execute the refund and synthesize an extra from
-	// the payload alone, which the resource server's afterSettle hook can
-	// still parse.
-	preState, _ := ReadChannelState(ctx, signer, channelId)
-	if refundableAmount, ok := getRefundableAmount(payload, preState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
+	preState, err = refundPreState(ctx, signer, channelId, payload.ChannelConfig.Payer, network, preState)
+	if err != nil {
+		return nil, err
+	}
+	if refundableAmount, ok := getRefundableAmount(payload, &preState.ChannelState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
 		return &x402.SettleResponse{ //nolint:nilerr // no-op refund -> error encoded in response
 			Success:      false,
 			ErrorReason:  ErrRefundNoBalance,
@@ -241,7 +239,7 @@ func executeRefundWithSignature(
 		}
 		notifyClaimed(onClaimed, receipt)
 
-		return finishRefundAfterReceipt(ctx, signer, payload, channelId, preState, refundAmount, txHash, network, receipt)
+		return finishRefundAfterReceipt(payload, channelId, preState, nonce, txHash, network, receipt), nil
 	}
 
 	// No claims — direct refundWithSignature
@@ -288,7 +286,7 @@ func executeRefundWithSignature(
 		return nil, err
 	}
 
-	return finishRefundAfterReceipt(ctx, signer, payload, channelId, preState, refundAmount, txHash, network, receipt)
+	return finishRefundAfterReceipt(payload, channelId, preState, nonce, txHash, network, receipt), nil
 }
 
 // refundSettlementCacheKey keys a refund in the PendingSettlementStore. Every refund
@@ -348,244 +346,133 @@ func reconcilePendingRefund(
 	}
 	notifyClaimed(input.OnClaimed, receipt)
 
-	refundedAmt, ok := parseRefundedAmount(receipt, channelId)
-	if !ok || refundedAmt.Sign() <= 0 {
-		return &x402.SettleResponse{
-			Success:      false,
-			ErrorReason:  ErrRefundedEventMismatch,
-			ErrorMessage: "refund receipt missing Refunded event with positive amount (possible no-op early return)",
-			Transaction:  txHash,
-			Network:      network,
-		}, nil
+	refunded, failed := refundedAmount(receipt, channelId, txHash, network)
+	if failed != nil {
+		return failed, nil
 	}
 
 	consumedNonce, _ := new(big.Int).SetString(input.Payload.RefundNonce, 10)
-	deadline := time.Now().Add(channelStatePollDeadline)
-	for {
-		state, readErr := ReadChannelState(ctx, signer, channelId)
-		if readErr == nil && (consumedNonce == nil || state.RefundNonce.Cmp(consumedNonce) > 0) {
-			return &x402.SettleResponse{
-				Success:     true,
-				Transaction: txHash,
-				Network:     network,
-				Payer:       payer,
-				Amount:      refundedAmt.String(),
-				Extra:       BuildSettleExtra(channelId, state),
-			}, nil
-		}
-		if !time.Now().Before(deadline) {
-			return nil, x402.NewSettleError(ErrSettlementPending, payer, network, txHash,
-				"refund confirmed but the channel state is not visible yet")
-		}
-		time.Sleep(channelStatePollInterval)
+	state, readErr := ReadChannelState(ctx, signer, channelId)
+	if readErr != nil || (consumedNonce != nil && state.RefundNonce.Cmp(consumedNonce) <= 0) {
+		return nil, x402.NewSettleError(ErrSettlementPending, payer, network, txHash,
+			"refund confirmed but the channel state is not visible yet")
 	}
-}
-
-func finishRefundAfterReceipt(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
-	channelId string,
-	preState *batchsettlement.ChannelState,
-	refundAmount *big.Int,
-	txHash string,
-	network x402.Network,
-	receipt *evm.TransactionReceipt,
-) (*x402.SettleResponse, error) {
-	refundedAmt, ok := parseRefundedAmount(receipt, channelId)
-	if !ok || refundedAmt.Sign() <= 0 {
-		return &x402.SettleResponse{
-			Success:      false,
-			ErrorReason:  ErrRefundedEventMismatch,
-			ErrorMessage: "refund receipt missing Refunded event with positive amount (possible no-op early return)",
-			Transaction:  txHash,
-			Network:      network,
-		}, nil
-	}
-	details := computeRefundSettlementDetails(ctx, signer, payload, channelId, preState, refundAmount)
-	details.amount = refundedAmt.String()
-	return buildRefundResponse(txHash, network, payload.ChannelConfig.Payer, details), nil
-}
-
-func parseRefundedAmount(receipt *evm.TransactionReceipt, channelId string) (*big.Int, bool) {
-	if receipt == nil || len(receipt.Logs) == 0 {
-		return nil, false
-	}
-	parsedABI, err := abi.JSON(strings.NewReader(string(batchsettlement.BatchSettlementRefundedEventABI)))
-	if err != nil {
-		return nil, false
-	}
-	event, ok := parsedABI.Events["Refunded"]
-	if !ok {
-		return nil, false
-	}
-	contractAddr := common.HexToAddress(batchsettlement.BatchSettlementAddress)
-	wantChannel := common.HexToHash(channelId)
-	for _, log := range receipt.Logs {
-		if log == nil || log.Address != contractAddr || len(log.Topics) < 2 || log.Topics[0] != event.ID {
-			continue
-		}
-		if log.Topics[1] != wantChannel {
-			continue
-		}
-		values, err := event.Inputs.NonIndexed().Unpack(log.Data)
-		if err != nil || len(values) == 0 {
-			continue
-		}
-		if v, ok := values[0].(*big.Int); ok {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
-// refundSettlementDetails captures the per-refund response fields the
-// facilitator computes from pre/post onchain state and the enriched payload.
-type refundSettlementDetails struct {
-	// amount is the actual refund amount in token base units (decimal string).
-	// May differ from `payload.amount` when the requested amount exceeds the
-	// channel's available balance after preceding claims; in that case
-	// available is used.
-	amount string
-	// channelState is the post-refund snapshot. balance reflects
-	// `preBalance - actualRefund`; totalClaimed reflects the last claim's
-	// totalClaimed (or preTotalClaimed if no claims); refundNonce is
-	// `preRefundNonce + 1`; withdrawRequestedAt is 0 because a successful
-	// `refundWithSignature` clears the pending withdrawal.
-	channelState batchsettlement.BatchSettlementChannelStateExtra
-}
-
-// computeRefundSettlementDetails builds the response fields after a successful
-// refund onchain. When the pre-state shows an active pending withdrawal, the
-// facilitator polls for confirmation that the refund nonce advanced before
-// computing the snapshot from chain; in the common case the snapshot is
-// computed analytically from preState + payload.
-func computeRefundSettlementDetails(
-	ctx context.Context,
-	signer evm.FacilitatorEvmSigner,
-	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
-	channelId string,
-	preState *batchsettlement.ChannelState,
-	requestedAmount *big.Int,
-) refundSettlementDetails {
-	// Default zero values when preState is unavailable; skip pre-balance-based
-	// capping in that case.
-	preBalance := big.NewInt(0)
-	preTotalClaimed := big.NewInt(0)
-	preRefundNonce := big.NewInt(0)
-	preWithdrawRequestedAt := 0
-	if preState != nil {
-		if preState.Balance != nil {
-			preBalance = preState.Balance
-		}
-		if preState.TotalClaimed != nil {
-			preTotalClaimed = preState.TotalClaimed
-		}
-		if preState.RefundNonce != nil {
-			preRefundNonce = preState.RefundNonce
-		}
-		preWithdrawRequestedAt = preState.WithdrawRequestedAt
-	}
-
-	// If the channel was in pending withdrawal, polling the post-state is
-	// the only way to know the final balance because `refundWithSignature`
-	// also cancels the withdrawal in a single transaction. On RPC lag (deadline
-	// elapsed without nonce advancement) we fall through to the analytic path
-	// below.
-	if preState != nil && preWithdrawRequestedAt != 0 {
-		expectedNonce := new(big.Int).Add(preRefundNonce, big.NewInt(1))
-		var postState *batchsettlement.ChannelState
-		deadline := time.Now().Add(channelStatePollDeadline)
-		for {
-			s, err := ReadChannelState(ctx, signer, channelId)
-			if err == nil && s != nil && s.RefundNonce != nil && s.RefundNonce.Cmp(expectedNonce) >= 0 {
-				postState = s
-				break
-			}
-			if !time.Now().Before(deadline) {
-				break
-			}
-			time.Sleep(channelStatePollInterval)
-		}
-		if postState != nil {
-			actualRefund := big.NewInt(0)
-			if preBalance.Cmp(postState.Balance) > 0 {
-				actualRefund = new(big.Int).Sub(preBalance, postState.Balance)
-			}
-			return refundSettlementDetails{
-				amount: actualRefund.String(),
-				channelState: batchsettlement.BatchSettlementChannelStateExtra{
-					ChannelId:           channelId,
-					Balance:             postState.Balance.String(),
-					TotalClaimed:        postState.TotalClaimed.String(),
-					WithdrawRequestedAt: postState.WithdrawRequestedAt,
-					RefundNonce:         postState.RefundNonce.String(),
-				},
-			}
-		}
-	}
-
-	// Analytic path: compute the post-refund snapshot from preState + payload.
-	// totalClaimed advances to the last claim's totalClaimed (or stays at
-	// preTotalClaimed if no claims accompany the refund).
-	postClaimTotalClaimed := new(big.Int).Set(preTotalClaimed)
-	if n := len(payload.Claims); n > 0 {
-		if v, ok := new(big.Int).SetString(payload.Claims[n-1].TotalClaimed, 10); ok && v.Cmp(postClaimTotalClaimed) > 0 {
-			postClaimTotalClaimed = v
-		}
-	}
-	available := new(big.Int).Sub(preBalance, postClaimTotalClaimed)
-	if available.Sign() < 0 {
-		available = big.NewInt(0)
-	}
-	actualRefund := new(big.Int).Set(requestedAmount)
-	if actualRefund.Cmp(available) > 0 {
-		actualRefund = available
-	}
-
-	postBalance := new(big.Int).Sub(preBalance, actualRefund)
-	if postBalance.Sign() < 0 {
-		postBalance = big.NewInt(0)
-	}
-	postRefundNonce := new(big.Int).Add(preRefundNonce, big.NewInt(1))
-
-	return refundSettlementDetails{
-		amount: actualRefund.String(),
-		channelState: batchsettlement.BatchSettlementChannelStateExtra{
-			ChannelId:           channelId,
-			Balance:             postBalance.String(),
-			TotalClaimed:        postClaimTotalClaimed.String(),
-			WithdrawRequestedAt: 0, // refundWithSignature clears any pending withdrawal
-			RefundNonce:         postRefundNonce.String(),
-		},
-	}
-}
-
-// buildRefundResponse assembles a SettleResponse for a refund: success + tx +
-// payer + amount + extra.channelState. The resource server's
-// `enrichSettlementResponse` hook adds `chargedCumulativeAmount` on top via
-// additive merge.
-func buildRefundResponse(
-	txHash string,
-	network x402.Network,
-	payer string,
-	details refundSettlementDetails,
-) *x402.SettleResponse {
 	return &x402.SettleResponse{
 		Success:     true,
 		Transaction: txHash,
 		Network:     network,
 		Payer:       payer,
-		Amount:      details.amount,
-		Extra: map[string]interface{}{
-			"channelState": map[string]interface{}{
-				"channelId":           details.channelState.ChannelId,
-				"balance":             details.channelState.Balance,
-				"totalClaimed":        details.channelState.TotalClaimed,
-				"withdrawRequestedAt": details.channelState.WithdrawRequestedAt,
-				"refundNonce":         details.channelState.RefundNonce,
-			},
-		},
+		Amount:      refunded.String(),
+		Extra:       BuildSettleExtra(channelId, state),
+	}, nil
+}
+
+func refundPreState(
+	ctx context.Context,
+	signer evm.FacilitatorEvmSigner,
+	channelId string,
+	payer string,
+	network x402.Network,
+	preState *onchainChannelState,
+) (*onchainChannelState, error) {
+	if preState != nil {
+		return preState, nil
+	}
+	state, err := readOnchainChannelState(ctx, signer, channelId)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrRpcReadFailed, payer, network, "",
+			fmt.Sprintf("failed to read channel state: %s", err))
+	}
+	return state, nil
+}
+
+func finishRefundAfterReceipt(
+	payload *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	channelId string,
+	preState *onchainChannelState,
+	consumedNonce *big.Int,
+	txHash string,
+	network x402.Network,
+	receipt *evm.TransactionReceipt,
+) *x402.SettleResponse {
+	refunded, failed := refundedAmount(receipt, channelId, txHash, network)
+	if failed != nil {
+		return failed
+	}
+	// Claimed is emitted only when totalClaimed rises, so the channel's last event is the new total.
+	var claimedTotal *big.Int
+	if logs := claimedLogs(receipt, channelId); len(logs) > 0 {
+		claimedTotal = logs[len(logs)-1].newTotalClaimed
+	}
+	state := deriveRefundState(preState, refunded, claimedTotal, consumedNonce)
+	return &x402.SettleResponse{
+		Success:     true,
+		Transaction: txHash,
+		Network:     network,
+		Payer:       payload.ChannelConfig.Payer,
+		Amount:      refunded.String(),
+		Extra:       BuildSettleExtra(channelId, state),
+	}
+}
+
+func refundedAmount(
+	receipt *evm.TransactionReceipt,
+	channelId string,
+	txHash string,
+	network x402.Network,
+) (*big.Int, *x402.SettleResponse) {
+	if receipt.Logs == nil {
+		return nil, &x402.SettleResponse{
+			Success:      false,
+			ErrorReason:  ErrReceiptLogsUnavailable,
+			ErrorMessage: receiptLogsUnavailableMessage,
+			Transaction:  txHash,
+			Network:      network,
+		}
+	}
+	if logs := refundedLogs(receipt, channelId); len(logs) > 0 {
+		if amount := logs[0].amount; amount != nil && amount.Sign() > 0 {
+			return amount, nil
+		}
+	}
+	return nil, &x402.SettleResponse{
+		Success:      false,
+		ErrorReason:  ErrRefundedEventMismatch,
+		ErrorMessage: "refund receipt missing Refunded event with positive amount (possible no-op early return)",
+		Transaction:  txHash,
+		Network:      network,
+	}
+}
+
+// deriveRefundState derives the post-refund channel state from the receipt events and the
+// pre-transaction state, following the contract's _executeRefund.
+//
+// Refunded carries no post-refund balance, so balance assumes no other balance change landed
+// between the pre-read and inclusion. Likewise withdrawRequestedAt misses a withdrawal initiated
+// in that window, and without a bundled claim totalClaimed is a lower bound.
+func deriveRefundState(
+	preState *onchainChannelState,
+	refunded *big.Int,
+	claimedTotal *big.Int,
+	consumedNonce *big.Int,
+) *batchsettlement.ChannelState {
+	balance := new(big.Int).Sub(preState.Balance, refunded)
+	if balance.Sign() < 0 {
+		balance = big.NewInt(0)
+	}
+	totalClaimed := preState.TotalClaimed
+	if claimedTotal != nil {
+		totalClaimed = claimedTotal
+	}
+	withdrawRequestedAt := preState.WithdrawRequestedAt
+	if refunded.Cmp(preState.withdrawAmount) >= 0 {
+		withdrawRequestedAt = 0
+	}
+	return &batchsettlement.ChannelState{
+		Balance:             balance,
+		TotalClaimed:        totalClaimed,
+		WithdrawRequestedAt: withdrawRequestedAt,
+		RefundNonce:         new(big.Int).Add(consumedNonce, big.NewInt(1)),
 	}
 }
 
@@ -596,6 +483,7 @@ type SubmitRefundInput struct {
 	Payload    *batchsettlement.BatchSettlementEnrichedRefundPayload
 	DataSuffix []byte
 	OnClaimed  OnClaimedRows
+	cappedRead *onchainChannelState
 }
 
 // ExecuteRefund executes a cooperative refund via refund() as msg.sender. An optional onClaimed
@@ -609,7 +497,7 @@ func ExecuteRefund(
 	dataSuffix []byte,
 	onClaimed ...OnClaimedRows,
 ) (*x402.SettleResponse, error) {
-	return executeRefund(ctx, signer, payload, network, dataSuffix, firstOnClaimed(onClaimed), nil)
+	return executeRefund(ctx, signer, payload, network, dataSuffix, firstOnClaimed(onClaimed), nil, nil)
 }
 
 func executeRefund(
@@ -620,6 +508,7 @@ func executeRefund(
 	dataSuffix []byte,
 	onClaimed OnClaimedRows,
 	store x402.PendingSettlementStore,
+	preState *onchainChannelState,
 ) (*x402.SettleResponse, error) {
 	reqs := types.PaymentRequirements{Network: network}
 	refundAmount, ok := new(big.Int).SetString(payload.Amount, 10)
@@ -632,7 +521,7 @@ func executeRefund(
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidRefundPayload, "", x402.Network(network), "", err.Error())
 	}
-	return submitRefundCall(ctx, signer, payload, reqs, call.abiJSON, call.functionName, call.args, dataSuffix, refundAmount, onClaimed, store)
+	return submitRefundCall(ctx, signer, payload, reqs, call.abiJSON, call.functionName, call.args, dataSuffix, refundAmount, onClaimed, store, preState)
 }
 
 // SubmitRefund dispatches a refund through the relay or direct submit path, or reconciles
@@ -659,7 +548,7 @@ func submitRefund(ctx context.Context, input SubmitRefundInput, submitCtx Submit
 	hasAuthorizerSignature := input.Payload.RefundAuthorizerSignature != "" || input.Payload.ClaimAuthorizerSignature != ""
 	reqs := types.PaymentRequirements{Network: input.Network}
 	if ShouldRelaySubmit(submitCtx.SubmitMode, hasAuthorizerSignature) {
-		return executeRefundWithSignature(ctx, submitCtx.Signer, input.Payload, reqs, submitCtx.AuthorizerSigner, input.DataSuffix, input.OnClaimed, submitCtx.PendingStore)
+		return executeRefundWithSignature(ctx, submitCtx.Signer, input.Payload, reqs, submitCtx.AuthorizerSigner, input.DataSuffix, input.OnClaimed, submitCtx.PendingStore, input.cappedRead)
 	}
 	if submitCtx.AuthorizerSubmitter == nil {
 		return &x402.SettleResponse{
@@ -669,7 +558,7 @@ func submitRefund(ctx context.Context, input SubmitRefundInput, submitCtx Submit
 			Network:     x402.Network(input.Network),
 		}, nil
 	}
-	return executeRefund(ctx, submitCtx.AuthorizerSubmitter, input.Payload, input.Network, input.DataSuffix, input.OnClaimed, submitCtx.PendingStore)
+	return executeRefund(ctx, submitCtx.AuthorizerSubmitter, input.Payload, input.Network, input.DataSuffix, input.OnClaimed, submitCtx.PendingStore, input.cappedRead)
 }
 
 type refundCall struct {
@@ -731,6 +620,7 @@ func submitRefundCall(
 	refundAmount *big.Int,
 	onClaimed OnClaimedRows,
 	store x402.PendingSettlementStore,
+	preState *onchainChannelState,
 ) (*x402.SettleResponse, error) {
 	network := x402.Network(requirements.Network)
 	channelId, err := batchsettlement.ComputeChannelId(payload.ChannelConfig, string(network))
@@ -739,8 +629,11 @@ func submitRefundCall(
 			fmt.Sprintf("failed to compute channel id: %s", err))
 	}
 	refundKey := refundSettlementCacheKey(channelId, payload.RefundNonce)
-	preState, _ := ReadChannelState(ctx, signer, channelId)
-	if refundableAmount, ok := getRefundableAmount(payload, preState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
+	preState, err = refundPreState(ctx, signer, channelId, payload.ChannelConfig.Payer, network, preState)
+	if err != nil {
+		return nil, err
+	}
+	if refundableAmount, ok := getRefundableAmount(payload, &preState.ChannelState, channelId, string(network), refundAmount); ok && refundableAmount.Sign() == 0 {
 		return &x402.SettleResponse{ //nolint:nilerr // no-op refund -> error encoded in response
 			Success:      false,
 			ErrorReason:  ErrRefundNoBalance,
@@ -771,5 +664,6 @@ func submitRefundCall(
 		return nil, err
 	}
 	notifyClaimed(onClaimed, receipt)
-	return finishRefundAfterReceipt(ctx, signer, payload, channelId, preState, refundAmount, txHash, network, receipt)
+	// Direct refund() consumes whatever nonce is onchain, so it advances the pre-read nonce.
+	return finishRefundAfterReceipt(payload, channelId, preState, preState.RefundNonce, txHash, network, receipt), nil
 }

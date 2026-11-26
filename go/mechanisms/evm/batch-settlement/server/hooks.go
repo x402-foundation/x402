@@ -1244,7 +1244,9 @@ func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettl
 	if cs.Balance != "" {
 		next.Balance = cs.Balance
 	}
-	if cs.TotalClaimed != "" {
+	// totalClaimed only moves forward: onchain it only increases, and deposit and refund responses
+	// can report a value read before the transaction, a lower bound.
+	if cs.TotalClaimed != "" && bigOrZero(cs.TotalClaimed).Cmp(bigOrZero(next.TotalClaimed)) > 0 {
 		next.TotalClaimed = cs.TotalClaimed
 	}
 	if cs.WithdrawRequestedAt != 0 {
