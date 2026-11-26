@@ -1908,6 +1908,26 @@ func TestSettleManagedDeposit_DepositedEventStampsVerifyRead(t *testing.T) {
 	}
 }
 
+func TestSettleManagedDeposit_KeepsHigherRefundNonceAndWithdrawRequestedAt(t *testing.T) {
+	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
+	auth := managedAuthorizer()
+	cfg := managedConfig(auth.addr, "0a")
+	channelId := mustChannelId(t, cfg)
+	seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
+		ChargedCumulativeAmount: "0", Balance: "500", RefundNonce: 5, WithdrawRequestedAt: 77,
+	}))
+	deps := managedDeps(t, store, store, auth, depositSignerWithBalances(t, 500, 1500))
+
+	resp, err := SettleManaged(context.Background(), deps, signedManagedDeposit(t, cfg, channelId), managedRequirements(auth.addr), nil, nil)
+	if err != nil || !resp.Success {
+		t.Fatalf("got %+v %v", resp, err)
+	}
+	got, _ := store.Get(context.Background(), channelId)
+	if got.RefundNonce != 5 || got.WithdrawRequestedAt != 77 || got.Balance != "1500" || got.ChargedCumulativeAmount != "1000" {
+		t.Fatalf("stored refundNonce=%d withdrawRequestedAt=%d balance=%q charged=%q", got.RefundNonce, got.WithdrawRequestedAt, got.Balance, got.ChargedCumulativeAmount)
+	}
+}
+
 func TestSettleManagedDeposit_ReconciledReplayDoesNotDoubleCharge(t *testing.T) {
 	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
 	auth := managedAuthorizer()
@@ -2557,6 +2577,29 @@ func TestSettleManaged_RefundStoresDerivedStateFromOneRead(t *testing.T) {
 				t.Fatalf("OnchainSyncedAt = %d, want within [%d, %d]", got.OnchainSyncedAt, before, readEnd)
 			}
 		})
+	}
+}
+
+func TestSettleManaged_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T) {
+	fields := unclaimedFields()
+	fields.Balance = "9000"
+	fields.OnchainSyncedAt = 12_345
+	h := newHotRefund(t, fields, workerMarker(), nil)
+	h.signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+		return &evm.TransactionReceipt{
+			Status: evm.TxStatusSuccess,
+			TxHash: txHash,
+			Logs:   []*goethtypes.Log{refundedReceiptLog(t, h.channelID, big.NewInt(20_000))},
+		}, nil
+	}
+
+	resp, err := h.settle("1000")
+	if err != nil || resp == nil || !resp.Success {
+		t.Fatalf("refund %+v %v", resp, err)
+	}
+	got := h.row()
+	if got.Balance != "9000" || got.OnchainSyncedAt != 0 || got.RefundNonce != 1 {
+		t.Fatalf("stored balance=%q onchainSyncedAt=%d refundNonce=%d", got.Balance, got.OnchainSyncedAt, got.RefundNonce)
 	}
 }
 
