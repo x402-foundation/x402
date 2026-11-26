@@ -49,7 +49,7 @@ async def _enrich_siwx_payment_required_response(
     if opts.network:
         supported_networks = opts.network if isinstance(opts.network, list) else [opts.network]
     else:
-        supported_networks = list({req.network for req in context.requirements})
+        supported_networks = list(dict.fromkeys(req.network for req in context.requirements))
 
     nonce = secrets.token_hex(16)
     issued_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
