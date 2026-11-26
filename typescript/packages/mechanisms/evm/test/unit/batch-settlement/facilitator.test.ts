@@ -319,9 +319,12 @@ describe("BatchSettlementEvmScheme (Facilitator) — construction & metadata", (
     expect(scheme.caipFamily).toBe("eip155:*");
   });
 
-  it("getExtra returns the receiver-authorizer address from authorizerSigner", () => {
+  it("getExtra returns the receiver-authorizer address and delegatedRefund: false from authorizerSigner", () => {
     const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
-    expect(scheme.getExtra(NETWORK)).toEqual({ receiverAuthorizer: authorizer.address });
+    expect(scheme.getExtra(NETWORK)).toEqual({
+      receiverAuthorizer: authorizer.address,
+      delegatedRefund: false,
+    });
   });
 
   it("getExtra returns undefined when no authorizerSigner is configured", () => {
@@ -2418,6 +2421,84 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrRefundAuthorizerSignature);
     expect(signer.writeContract).not.toHaveBeenCalled();
+  });
+
+  describe("delegatedRefund opt-in", () => {
+    const unsignedRefund = (config: ChannelConfig): BatchSettlementEnrichedRefundPayload => ({
+      type: "refund",
+      channelConfig: config,
+      voucher: {
+        channelId: computeChannelId(config),
+        maxClaimableAmount: "0",
+        signature: "0xdead",
+      },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    });
+
+    it("advertises delegatedRefund: true in getExtra", () => {
+      const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer, {
+        delegatedRefund: true,
+      });
+      expect(scheme.getExtra(NETWORK)).toEqual({
+        receiverAuthorizer: authorizer.address,
+        delegatedRefund: true,
+      });
+    });
+
+    it("throws at construction without an authorizerSigner", () => {
+      expect(
+        () => new BatchSettlementEvmScheme(buildSigner(), undefined, { delegatedRefund: true }),
+      ).toThrow(/delegatedRefund requires an authorizerSigner/);
+    });
+
+    it("signs and submits an unsigned refund with the authorizer signer", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSuccessfulRefundSigner(computeChannelId(config), "9000");
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(signTypedData).toHaveBeenCalledTimes(1);
+      expect(signer.writeContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "refundWithSignature" }),
+      );
+    });
+
+    it("rejects an unsigned refund when the channel receiverAuthorizer is not the facilitator", async () => {
+      const config = buildChannelConfig();
+      const signer = buildSigner();
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const scheme = new BatchSettlementEvmScheme(signer, authorizer, { delegatedRefund: true });
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrAuthorizerAddressMismatch);
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
   });
 
   it("returns RefundNoBalance without submitting when a refund would transfer zero tokens", async () => {

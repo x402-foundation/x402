@@ -47,6 +47,18 @@ export interface BatchSettlementEvmSchemeConfig {
    * different replica still reconciles correctly.
    */
   pendingSettlementStore?: PendingSettlementStore;
+  /**
+   * Declares that the host authenticates `/settle` callers out of band (for example in the
+   * HTTP layer in front of this scheme) and only forwards a refund from the service that
+   * created the channel. When `true`, the scheme advertises `delegatedRefund: true` in
+   * `/supported` and signs a refund that carries no `refundAuthorizerSignature` with
+   * `authorizerSigner`. This scheme performs no authentication itself: setting it without
+   * that authentication lets any caller refund any channel that delegates to this
+   * facilitator. Requires `authorizerSigner`.
+   *
+   * @default false
+   */
+  delegatedRefund?: boolean;
 }
 
 /**
@@ -69,18 +81,23 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param authorizerSigner - Optional dedicated key that provides EIP-712 signatures for
    *   `claimWithSignature` / `refundWithSignature`. When provided, the facilitator advertises
    *   its address as `receiverAuthorizer` in `/supported` and signs a missing claim authorizer
-   *   signature using this key when the server omits it. Refunds are never signed on the server's
-   *   behalf: a refund without `refundAuthorizerSignature` is rejected, since this scheme has no
-   *   `/settle` caller authentication.
-   * @param config - Optional configuration (e.g. ERC-6492 factory allowlist).
+   *   signature using this key when the server omits it. Refunds are not signed on the server's
+   *   behalf unless `config.delegatedRefund` is set: otherwise a refund without
+   *   `refundAuthorizerSignature` is rejected, since this scheme has no `/settle` caller
+   *   authentication.
+   * @param config - Optional configuration (e.g. ERC-6492 factory allowlist, `delegatedRefund`).
    */
   constructor(
     private readonly signer: BatchSettlementFacilitatorEvmSigner,
     private readonly authorizerSigner?: AuthorizerSigner,
     config?: BatchSettlementEvmSchemeConfig,
   ) {
+    if (config?.delegatedRefund && !authorizerSigner) {
+      throw new Error("BatchSettlementEvmScheme: delegatedRefund requires an authorizerSigner");
+    }
     this.config = {
       eip6492AllowedFactories: config?.eip6492AllowedFactories ?? [],
+      delegatedRefund: config?.delegatedRefund ?? false,
     };
     this.pendingStore = config?.pendingSettlementStore ?? new InMemoryPendingSettlementStore();
   }
@@ -92,14 +109,22 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * embed it in `ChannelConfig`. Returns `undefined` when no authorizer signer is
    * configured, signalling that servers must supply their own authorizer signatures.
    *
+   * `delegatedRefund` is `false` unless the host opted in with
+   * {@link BatchSettlementEvmSchemeConfig.delegatedRefund}: this scheme has no `/settle` caller
+   * authentication of its own, so by default it never honors an unsigned refund. A server that
+   * delegates `receiverAuthorizer` to it then fails at startup instead of on its first refund.
+   *
    * @param _ - Network identifier (unused).
-   * @returns Extra fields containing `receiverAuthorizer`, or `undefined`.
+   * @returns Extra fields containing `receiverAuthorizer` and `delegatedRefund`, or `undefined`.
    */
-  getExtra(_: string): { receiverAuthorizer: `0x${string}` } | undefined {
+  getExtra(_: string): { receiverAuthorizer: `0x${string}`; delegatedRefund: boolean } | undefined {
     if (!this.authorizerSigner) {
       return undefined;
     }
-    return { receiverAuthorizer: this.authorizerSigner.address };
+    return {
+      receiverAuthorizer: this.authorizerSigner.address,
+      delegatedRefund: this.config.delegatedRefund,
+    };
   }
 
   /**
@@ -218,6 +243,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
         requirements,
         this.authorizerSigner,
         dataSuffix,
+        this.config.delegatedRefund,
       );
     }
 

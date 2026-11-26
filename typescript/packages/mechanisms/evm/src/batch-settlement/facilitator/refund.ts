@@ -9,7 +9,7 @@ import type {
 import { batchSettlementABI } from "../abi";
 import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import { computeChannelId } from "../utils";
-import { signClaimBatch } from "../authorizerSigner";
+import { signClaimBatch, signRefund } from "../authorizerSigner";
 import * as Errors from "../errors";
 import { truncateErrorMessage } from "../../utils";
 import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
@@ -93,10 +93,14 @@ function deriveRefundState(
 /**
  * Executes a cooperative refund via `refundWithSignature`.
  *
- * `refundAuthorizerSignature` is required: the facilitator has no caller authentication, so
- * it never signs a refund on the server's behalf and rejects an unsigned refund with
- * {@link Errors.ErrRefundAuthorizerSignature}. When `claimAuthorizerSignature` is absent the
- * facilitator signs the claim digest using `authorizerSigner`.
+ * `refundAuthorizerSignature` is required unless `delegatedRefund` is set: the scheme has no
+ * built-in caller authentication, so by default it never signs a refund on the server's behalf
+ * and rejects an unsigned refund with {@link Errors.ErrRefundAuthorizerSignature}. When
+ * `delegatedRefund` is `true` the operator asserts that `/settle` callers are authenticated out
+ * of band as the service that created the channel, and an unsigned refund is signed with
+ * `authorizerSigner` (after checking it is the channel's `receiverAuthorizer`). When
+ * `claimAuthorizerSignature` is absent the facilitator signs the claim digest using
+ * `authorizerSigner`.
  *
  * If `payload.claims` is non-empty, the claim and refund are batched atomically via
  * the contract's `multicall`.
@@ -107,6 +111,8 @@ function deriveRefundState(
  * @param authorizerSigner - Optional dedicated key for producing EIP-712 signatures.
  *   When omitted, the payload must already carry the required authorizer signatures.
  * @param dataSuffix - Optional hex suffix appended to the refund transaction.
+ * @param delegatedRefund - When `true`, sign a refund that carries no `refundAuthorizerSignature`
+ *   with `authorizerSigner`. Only safe when `/settle` callers are authenticated out of band.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
 export async function executeRefundWithSignature(
@@ -115,12 +121,13 @@ export async function executeRefundWithSignature(
   requirements: PaymentRequirements,
   authorizerSigner: AuthorizerSigner | undefined,
   dataSuffix?: `0x${string}`,
+  delegatedRefund = false,
 ): Promise<SettleResponse> {
   const network = requirements.network;
 
   try {
-    const refundSig = payload.refundAuthorizerSignature;
-    if (!refundSig) {
+    const canSignRefund = delegatedRefund && authorizerSigner !== undefined;
+    if (!payload.refundAuthorizerSignature && !canSignRefund) {
       return {
         success: false,
         errorReason: Errors.ErrRefundAuthorizerSignature,
@@ -142,6 +149,28 @@ export async function executeRefundWithSignature(
         transaction: "",
         network,
       };
+    }
+
+    let refundSig = payload.refundAuthorizerSignature;
+    if (!refundSig) {
+      if (
+        getAddress(payload.channelConfig.receiverAuthorizer) !==
+        getAddress(authorizerSigner!.address)
+      ) {
+        return {
+          success: false,
+          errorReason: Errors.ErrAuthorizerAddressMismatch,
+          transaction: "",
+          network,
+        };
+      }
+      refundSig = await signRefund(
+        authorizerSigner!,
+        channelId,
+        payload.amount,
+        payload.refundNonce,
+        network,
+      );
     }
 
     const refundCalldata = encodeFunctionData({
