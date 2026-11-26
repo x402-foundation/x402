@@ -942,6 +942,8 @@ Register `BatchSvmScheme` for `solana:*`. The SDK opens or tops up the channel o
 
 #### Facilitator Setup (SVM)
 
+`BatchSvmScheme` requires the facilitator signer to implement `getConfirmedTransaction` with confirmed token-balance metadata. `toFacilitatorSvmSigner` provides this automatically. Custom signer implementations must include it or construction will throw.
+
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
