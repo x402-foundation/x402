@@ -97,7 +97,7 @@ export async function verifyPermit2(
   if (payload.accepted.scheme !== "exact" || requirements.scheme !== "exact") {
     return {
       isValid: false,
-      invalidReason: Errors.ErrUnsupportedPayloadType,
+      invalidReason: Errors.ErrInvalidScheme,
       payer,
     };
   }

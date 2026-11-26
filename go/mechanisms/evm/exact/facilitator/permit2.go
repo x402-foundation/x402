@@ -102,7 +102,7 @@ func VerifyPermit2(
 
 	// Verify scheme matches
 	if payload.Accepted.Scheme != evm.SchemeExact || requirements.Scheme != evm.SchemeExact {
-		return nil, x402.NewVerifyError(ErrUnsupportedPayloadType, payer, "scheme mismatch")
+		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "scheme mismatch")
 	}
 
 	// Verify network matches

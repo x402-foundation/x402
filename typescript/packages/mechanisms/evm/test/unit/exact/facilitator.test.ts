@@ -182,6 +182,7 @@ describe("ExactEvmScheme (Facilitator)", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.invalidReason).toBe(Errors.ErrInvalidScheme);
+      expect(result.invalidReason).toBe("unsupported_scheme");
     });
 
     it("should reject if missing EIP-712 domain parameters", async () => {
@@ -328,6 +329,40 @@ describe("ExactEvmScheme (Facilitator)", () => {
   });
 
   describe("Permit2 payload verification", () => {
+    it("should reject a Permit2 payload whose scheme is not exact with unsupported_scheme", async () => {
+      const requirements: PaymentRequirements = {
+        scheme: "exact",
+        network: "eip155:84532",
+        amount: "1000000",
+        asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        payTo: "0x742D35CC6634c0532925A3b844BC9E7595F0BEb0",
+        maxTimeoutSeconds: 300,
+        extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" },
+      };
+
+      const permit2Payload: PaymentPayload = {
+        x402Version: 2,
+        payload: {
+          signature: "0xmocksignature",
+          permit2Authorization: {
+            from: mockClientSigner.address,
+            permitted: { token: requirements.asset, amount: requirements.amount },
+            spender: x402ExactPermit2ProxyAddress,
+            nonce: "12345",
+            deadline: "999999999999",
+            witness: { to: requirements.payTo, validAfter: "0" },
+          },
+        },
+        accepted: { ...requirements, scheme: "intent" },
+        resource: { url: "", description: "", mimeType: "" },
+      };
+
+      const result = await facilitator.verify(permit2Payload, requirements);
+
+      expect(result.isValid).toBe(false);
+      expect(result.invalidReason).toBe("unsupported_scheme");
+    });
+
     it("should verify Permit2 payloads with valid signature and simulation success", async () => {
       const requirements: PaymentRequirements = {
         scheme: "exact",
