@@ -1,6 +1,5 @@
 /**
  * Exact-scheme split terms (scheme_exact_svm.md §5), shared by every role.
- * `verifyExpectedMemo` also covers a non-split smart-wallet payment.
  */
 
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
@@ -21,7 +20,6 @@ const U64_MAX = (1n << 64n) - 1n;
 const CANONICAL_AMOUNT = /^[1-9][0-9]*$/;
 const IX_CREATE_IDEMPOTENT = 1;
 
-/** SPL Token and Token-2022 program addresses. */
 export const TOKEN_PROGRAMS: ReadonlySet<string> = new Set([
   TOKEN_PROGRAM_ADDRESS.toString(),
   TOKEN_2022_PROGRAM_ADDRESS.toString(),

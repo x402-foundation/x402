@@ -677,7 +677,6 @@ export async function verifySmartWalletTransaction(
       getCompiledTransactionMessageDecoder().decode(transaction.messageBytes).staticAccounts ?? []
     ).map(String);
 
-  // Seller memo is a top-level instruction, checked before transfer matching.
   const memoError = verifyExpectedMemo(decompiledInstructions, requirements);
   if (memoError) {
     return {

@@ -126,7 +126,7 @@ export type PartitionedInstructions = {
 };
 
 /**
- * Strips Lighthouse guards, then one allowlisted preflight or postflight block.
+ * Strips Lighthouse guards, then at most one allowlisted preflight block and one postflight block.
  * ComputeLimit, ComputePrice, TransferChecked, and Memo must then follow that order.
  *
  * @param instructions - Decompiled top-level instructions
