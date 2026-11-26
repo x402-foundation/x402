@@ -18,7 +18,6 @@ import { rethrowLockImplementationError } from "./storage";
 import {
   parseRefundSettlementSnapshot,
   readChannelStateExtra,
-  readExtraNumber,
   readExtraString,
   readExtraUintString,
 } from "./utils";
@@ -44,6 +43,20 @@ function maxTotalClaimed(stored: string, settled: string | undefined): string {
  * @returns The larger nonce.
  */
 function maxRefundNonce(stored: number, settled: string | undefined): number {
+  if (settled === undefined) return stored;
+  const parsed = Number(settled);
+  if (!Number.isSafeInteger(parsed) || parsed <= stored) return stored;
+  return parsed;
+}
+
+/**
+ * Keeps the later `withdrawRequestedAt`. `deposit` does not clear a pending withdrawal.
+ *
+ * @param stored - `withdrawRequestedAt` already on the channel record.
+ * @param settled - `withdrawRequestedAt` from the settle response, if present and canonical.
+ * @returns The later timestamp.
+ */
+function laterWithdrawRequestedAt(stored: number, settled: string | undefined): number {
   if (settled === undefined) return stored;
   const parsed = Number(settled);
   if (!Number.isSafeInteger(parsed) || parsed <= stored) return stored;
@@ -387,10 +400,13 @@ export async function handleAfterSettle(
         }
         return {
           ...existing,
-          ...snapshot,
           balance: snapshot.balance ?? existing.balance,
           totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
-          refundNonce: maxRefundNonce(existing.refundNonce, String(snapshot.refundNonce)),
+          withdrawRequestedAt: snapshot.withdrawRequestedAt ?? existing.withdrawRequestedAt,
+          refundNonce: maxRefundNonce(
+            existing.refundNonce,
+            snapshot.refundNonce === undefined ? undefined : String(snapshot.refundNonce),
+          ),
           network: requirements.network || existing.network,
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
@@ -469,10 +485,9 @@ export async function handleAfterSettle(
             existing.totalClaimed,
             readExtraUintString(channelState, "totalClaimed"),
           ),
-          withdrawRequestedAt: readExtraNumber(
-            channelState,
-            "withdrawRequestedAt",
+          withdrawRequestedAt: laterWithdrawRequestedAt(
             existing.withdrawRequestedAt,
+            readExtraUintString(channelState, "withdrawRequestedAt"),
           ),
           refundNonce: maxRefundNonce(
             existing.refundNonce,

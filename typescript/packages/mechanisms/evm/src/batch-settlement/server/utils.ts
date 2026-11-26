@@ -80,9 +80,9 @@ export function readExtraUintString(
 
 export type RefundSettlementSnapshot = {
   balance?: string;
-  totalClaimed: string;
-  withdrawRequestedAt: number;
-  refundNonce: number;
+  totalClaimed?: string;
+  withdrawRequestedAt?: number;
+  refundNonce?: number;
 };
 
 /**
@@ -95,15 +95,45 @@ export function parseRefundSettlementSnapshot(
   extra: Record<string, unknown> | undefined,
 ): RefundSettlementSnapshot {
   const channelState = readChannelStateExtra(extra);
+  if (channelState === undefined) {
+    throw new Error(ErrRefundPayload);
+  }
   return {
-    balance:
-      channelState?.balance === undefined
-        ? undefined
-        : parseUintStringExtra(channelState, "balance"),
-    totalClaimed: parseUintStringExtra(channelState, "totalClaimed"),
-    withdrawRequestedAt: parseUintNumberExtra(channelState, "withdrawRequestedAt"),
-    refundNonce: parseUintNumberExtra(channelState, "refundNonce"),
+    balance: optionalUintString(channelState, "balance"),
+    totalClaimed: optionalUintString(channelState, "totalClaimed"),
+    withdrawRequestedAt: optionalUintNumber(channelState, "withdrawRequestedAt"),
+    refundNonce: optionalUintNumber(channelState, "refundNonce"),
   };
+}
+
+/**
+ * Reads a uint string when the field is present.
+ *
+ * @param extra - Settlement response extra fields from the facilitator.
+ * @param key - Field name: `balance` or `totalClaimed`.
+ * @returns The decimal string, or `undefined` when the field is absent.
+ */
+function optionalUintString(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
+  key: "balance" | "totalClaimed",
+): string | undefined {
+  if (extra[key] === undefined) return undefined;
+  return parseUintStringExtra(extra, key);
+}
+
+/**
+ * Reads a uint when the field is present.
+ *
+ * @param extra - Settlement response extra fields from the facilitator.
+ * @param key - Field name: `withdrawRequestedAt` or `refundNonce`.
+ * @returns The parsed integer, or `undefined` when the field is absent.
+ */
+function optionalUintNumber(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
+  key: "withdrawRequestedAt" | "refundNonce",
+): number | undefined {
+  if (extra[key] === undefined) return undefined;
+  return parseUintNumberExtra(extra, key);
 }
 
 /**

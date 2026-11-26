@@ -3581,6 +3581,131 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(channel?.withdrawRequestedAt).toBe(77);
   });
 
+  it("keeps a stored withdrawRequestedAt when a deposit snapshot reports 0", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "1000",
+      totalClaimed: "400",
+      withdrawRequestedAt: 77,
+      refundNonce: 5,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildDepositPayload(channelId, config, "10000", "1000"),
+      requirements: makeRequirements({ amount: "1000" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "11000",
+            totalClaimed: "400",
+            withdrawRequestedAt: 0,
+            refundNonce: "1",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.withdrawRequestedAt).toBe(77);
+    expect(channel?.balance).toBe("11000");
+    expect(channel?.refundNonce).toBe(5);
+  });
+
+  it("clears withdrawRequestedAt when a refund snapshot reports 0", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "100",
+      withdrawRequestedAt: 77,
+      refundNonce: 2,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildRefundPayload(channelId, "0", config, "2000"),
+      requirements: makeRequirements({ amount: "0" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "8000",
+            totalClaimed: "100",
+            withdrawRequestedAt: 0,
+            refundNonce: "3",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.withdrawRequestedAt).toBe(0);
+    expect(channel?.balance).toBe("8000");
+    expect(channel?.refundNonce).toBe(3);
+  });
+
+  it("keeps a stored withdrawRequestedAt when a refund response omits it", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "0",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "100",
+      withdrawRequestedAt: 77,
+      refundNonce: 2,
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildRefundPayload(channelId, "0", config, "2000"),
+      requirements: makeRequirements({ amount: "0" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            balance: "8000",
+            totalClaimed: "100",
+            refundNonce: "3",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.withdrawRequestedAt).toBe(77);
+    expect(channel?.balance).toBe("8000");
+    expect(channel?.refundNonce).toBe(3);
+  });
+
   it("keeps a stored refundNonce above the refund snapshot", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);

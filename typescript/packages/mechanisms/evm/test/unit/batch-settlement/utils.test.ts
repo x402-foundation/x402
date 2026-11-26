@@ -549,10 +549,14 @@ describe("server extra parsers", () => {
     });
   });
 
-  it("rejects a refund snapshot that omits required uint fields", () => {
-    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toThrow(
-      ErrRefundPayload,
-    );
+  it("keeps omitted refund snapshot fields absent and rejects invalid ones", () => {
+    expect(parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toEqual({
+      balance: "1",
+      totalClaimed: undefined,
+      withdrawRequestedAt: undefined,
+      refundNonce: undefined,
+    });
+    expect(() => parseRefundSettlementSnapshot({})).toThrow(ErrRefundPayload);
     expect(() =>
       parseRefundSettlementSnapshot({
         channelState: {
