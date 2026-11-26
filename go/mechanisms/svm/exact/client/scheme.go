@@ -127,7 +127,7 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 	}
 
 	if legs == nil {
-		// Single payee: one leg of the full amount, built exactly as before.
+		// No parsed splits: one primary leg for the full amount.
 		amount, err := strconv.ParseUint(requirements.Amount, 10, 64)
 		if err != nil {
 			return types.PaymentPayload{}, fmt.Errorf(ErrInvalidAmount+": %w", err)
@@ -151,10 +151,8 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, err
 	}
 
-	// One TransferChecked per leg: the primary remainder to payTo, then each
-	// split in extra.splits order (§5.7). A recipient marked
-	// ataCreationRequired gets a fee-payer-funded CreateIdempotent unless its
-	// ATA is confirmed to exist (§5.4).
+	// One TransferChecked per leg, primary first (§5.7). A marked recipient gets
+	// a fee-payer-funded CreateIdempotent unless its ATA is confirmed (§5.4).
 	var createIxs, transferIxs []solana.Instruction
 	for _, leg := range legs {
 		destinationATA, err := svm.DeriveATA(leg.Owner, mintPubkey, tokenProgramID)
@@ -235,9 +233,8 @@ func (c *ExactSvmScheme) CreatePaymentPayload(
 		return types.PaymentPayload{}, fmt.Errorf(ErrFailedToEncodeTransaction+": %w", err)
 	}
 
-	// Each split adds a transfer and possibly an ATA creation (§5.2); refuse a
-	// transaction over its version's size limit (1232 bytes for version 0, 4096
-	// for version 1) rather than fail at the facilitator.
+	// Each leg adds a transfer and maybe an ATA creation (§5.2). Reject a
+	// transaction over its version's size limit instead of failing at settlement.
 	if size, limit, exceeded := svm.TransactionSizeExceeded(base64Tx, version); exceeded {
 		return types.PaymentPayload{}, fmt.Errorf("%s: transaction is %d bytes, over the %d-byte limit; reduce extra.splits or ATA creations",
 			ErrTransactionTooLarge, size, limit)
@@ -274,9 +271,8 @@ func (c *ExactSvmScheme) resolveRecentBlockhash(
 	return latestBlockhash.Value.Blockhash, nil
 }
 
-// accountExists reports whether an account is confirmed to exist. An RPC
-// failure counts as "not confirmed", so the caller includes the idempotent
-// creation rather than risk a transfer to a missing ATA.
+// accountExists reports a confirmed account. An RPC failure counts as absent,
+// so the caller includes an idempotent creation.
 func accountExists(ctx context.Context, rpcClient *rpc.Client, address solana.PublicKey) bool {
 	out, err := rpcClient.GetAccountInfoWithOpts(ctx, address, &rpc.GetAccountInfoOpts{
 		Encoding:   solana.EncodingBase64,

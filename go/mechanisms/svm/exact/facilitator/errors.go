@@ -20,9 +20,8 @@ const (
 	ErrSignatureInvalid              = "invalid_exact_solana_payload_signature_invalid"
 	ErrExcessiveSigners              = "invalid_exact_solana_payload_excessive_signers"
 
-	// Deprecated: positional instruction-count checks were replaced by
-	// identity-based classification (see ErrUnknownInstruction and
-	// ErrProtocolInstructionOrder); these are no longer returned.
+	// ErrTransactionInstructionsLength is a static split transaction with fewer
+	// protocol instructions than its legs require.
 	ErrTransactionInstructionsLength = "invalid_exact_solana_payload_transaction_instructions_length"
 	// Deprecated: see ErrUnknownInstruction; no longer returned.
 	ErrUnknownFourthInstruction = "invalid_exact_solana_payload_unknown_fourth_instruction"
@@ -32,7 +31,8 @@ const (
 	ErrUnknownSixthInstruction = "invalid_exact_solana_payload_unknown_sixth_instruction"
 	// Deprecated: see ErrUnknownInstruction; no longer returned.
 	ErrUnknownSeventhInstruction = "invalid_exact_solana_payload_unknown_seventh_instruction"
-	// Deprecated: see ErrUnknownInstruction; no longer returned.
+	// ErrUnknownOptionalInstruction is an instruction after the transfers that is
+	// neither a Memo nor a Lighthouse assertion.
 	ErrUnknownOptionalInstruction = "invalid_exact_solana_payload_unknown_optional_instruction"
 
 	ErrComputeLimitInstructionTooHigh = "invalid_exact_solana_payload_transaction_instructions_compute_limit_instruction_too_high"
@@ -71,18 +71,15 @@ const (
 	ErrMemoMismatch = "invalid_exact_solana_payload_memo_mismatch"
 	ErrMemoCount    = "invalid_exact_solana_payload_memo_count"
 
-	// Multi-payee split errors (scheme_exact_svm.md §5). The bare `split_*`
-	// codes are the names the spec defines. Unlike the codes above, these use
-	// the TypeScript SDK's strings verbatim (including its invalid_exact_svm_
-	// prefix). They are defined in the svm package so the client and server
-	// can report them without importing this package.
-	ErrSplitsInvalid                 = svm.ErrSplitsInvalid                 // "invalid_exact_svm_splits_invalid"
-	ErrSplitCountExceeded            = svm.ErrSplitCountExceeded            // "split_count_exceeded"
-	ErrSplitAtaCreationNotAuthorized = svm.ErrSplitAtaCreationNotAuthorized // "split_ata_creation_not_authorized"
-	ErrSplitRemainderNotPositive     = svm.ErrSplitRemainderNotPositive     // "split_remainder_not_positive"
-	ErrSplitLegUnmatched             = svm.ErrSplitLegUnmatched             // "split_leg_unmatched"
-	ErrSplitUnexpectedTransfer       = svm.ErrSplitUnexpectedTransfer       // "split_unexpected_transfer"
-	ErrSplitAuthorityMismatch        = svm.ErrSplitAuthorityMismatch        // "invalid_exact_svm_payload_split_authority_mismatch"
+	// Split errors (scheme_exact_svm.md §5), defined in package svm so the client
+	// and server can report them without importing this package.
+	ErrSplitsInvalid                 = svm.ErrSplitsInvalid
+	ErrSplitCountExceeded            = svm.ErrSplitCountExceeded
+	ErrSplitAtaCreationNotAuthorized = svm.ErrSplitAtaCreationNotAuthorized
+	ErrSplitRemainderNotPositive     = svm.ErrSplitRemainderNotPositive
+	ErrSplitLegUnmatched             = svm.ErrSplitLegUnmatched
+	ErrSplitUnexpectedTransfer       = svm.ErrSplitUnexpectedTransfer
+	ErrSplitAuthorityMismatch        = svm.ErrSplitAuthorityMismatch
 
 	// Settle errors
 	ErrVerificationFailed                 = "invalid_exact_solana_verification_failed"

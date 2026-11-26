@@ -42,9 +42,8 @@ const (
 	// AssociatedTokenProgramAddress is the SPL Associated Token Account program.
 	AssociatedTokenProgramAddress = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 
-	// SplitTransferComputeUnits and AtaCreationComputeUnits are added on top of
-	// DefaultComputeUnitLimit per extra TransferChecked and per CreateIdempotent.
-	// Sized for Token-2022, which costs more than SPL Token on both.
+	// SplitTransferComputeUnits and AtaCreationComputeUnits are added per extra
+	// transfer and per CreateIdempotent, sized for Token-2022.
 	SplitTransferComputeUnits uint32 = 15_000
 	AtaCreationComputeUnits   uint32 = 40_000
 

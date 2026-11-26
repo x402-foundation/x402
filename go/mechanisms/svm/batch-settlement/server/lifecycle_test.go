@@ -1330,9 +1330,8 @@ func TestBatchServerLifecycleBoundaries(t *testing.T) {
 	})
 }
 
-// Processes of one server copy /supported at their own times, so the process
-// that receives a payment may hold a different redemption capacity than the
-// one that issued its 402.
+// Redemption capacity is copied from /supported and can differ between the
+// process that issued the 402 and the process that receives the payment.
 func TestFindMatchingRequirementsIgnoresCopiedRedemptionCapacity(t *testing.T) {
 	f := newLifecycleFixture(t)
 	scheme := NewBatchSvmScheme(&Config{ReceiverAuthorizer: f.receiverAuthorizer})
