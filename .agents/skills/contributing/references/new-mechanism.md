@@ -71,6 +71,7 @@ pnpm install:all && pnpm test --testnet --min --families=<chain> --versions=2
 
 - Add network to server, client and facilitator examples under `examples/<sdk>/*/advanced/all_networks`. 
 - Manually confirm a successful payment by running facilitator, server and client examples locally.
+- Keep example code inline in the existing entry file; examples have no test files.
 
 ## Docs
 
