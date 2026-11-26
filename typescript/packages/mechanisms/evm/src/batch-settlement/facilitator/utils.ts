@@ -1,4 +1,5 @@
-import { getAddress, hashTypedData } from "viem";
+import { getAddress, hashTypedData, isAddressEqual, parseEventLogs, type Log } from "viem";
+import type { Network, SettleResponse } from "@x402/core/types";
 import { verifyECDSA, verifyHashSignatureWithCode } from "../../shared/verifySignature";
 import { FacilitatorEvmSigner } from "../../signer";
 import { multicall } from "../../multicall";
@@ -152,6 +153,8 @@ export function parseRequirementsAmount(amount: unknown): bigint | undefined {
   return typeof amount === "string" && /^\d+$/.test(amount) ? BigInt(amount) : undefined;
 }
 
+export type OnchainChannelState = ChannelState & { withdrawAmount: bigint };
+
 /**
  * Reads onchain channel state via a 3-call multicall:
  * `channels(channelId)`, `pendingWithdrawals(channelId)`, `refundNonce(channelId)`.
@@ -161,12 +164,12 @@ export function parseRequirementsAmount(amount: unknown): bigint | undefined {
  *
  * @param signer - Facilitator signer for onchain reads.
  * @param channelId - The `bytes32` channel id.
- * @returns Fresh {@link ChannelState}.
+ * @returns Fresh {@link OnchainChannelState}.
  */
 export async function readChannelState(
   signer: FacilitatorEvmSigner,
   channelId: `0x${string}`,
-): Promise<ChannelState> {
+): Promise<OnchainChannelState> {
   const target = getAddress(BATCH_SETTLEMENT_ADDRESS);
   const mcResults = await multicall(signer.readContract.bind(signer), [
     { address: target, abi: batchSettlementABI, functionName: "channels", args: [channelId] },
@@ -185,8 +188,76 @@ export async function readChannelState(
   }
 
   const [balance, totalClaimed] = chRes.result as [bigint, bigint];
-  const [, wdInitiatedAt] = wdRes.result as [bigint, bigint];
+  const [withdrawAmount, wdInitiatedAt] = wdRes.result as [bigint, bigint];
   const refundNonce = rnRes.result as bigint;
 
-  return { balance, totalClaimed, withdrawRequestedAt: Number(wdInitiatedAt), refundNonce };
+  return {
+    balance,
+    totalClaimed,
+    withdrawRequestedAt: Number(wdInitiatedAt),
+    refundNonce,
+    withdrawAmount,
+  };
+}
+
+/**
+ * Serializes channel state into the wire `channelState` shape.
+ *
+ * @param channelId - The `bytes32` channel id.
+ * @param state - Channel state to serialize.
+ * @returns Wire channel state with decimal-string amounts.
+ */
+export function toChannelStateExtra(channelId: `0x${string}`, state: ChannelState) {
+  return {
+    channelId,
+    balance: state.balance.toString(),
+    totalClaimed: state.totalClaimed.toString(),
+    withdrawRequestedAt: state.withdrawRequestedAt,
+    refundNonce: state.refundNonce.toString(),
+  };
+}
+
+/**
+ * Decodes the `eventName` logs the batch-settlement contract emitted for `channelId`.
+ *
+ * @param logs - Receipt logs.
+ * @param eventName - Channel-scoped event to decode.
+ * @param channelId - The `bytes32` channel id.
+ * @returns Decoded events for the channel, in log order.
+ */
+export function findChannelEvents<TEventName extends "Deposited" | "Claimed" | "Refunded">(
+  logs: readonly Log[],
+  eventName: TEventName,
+  channelId: `0x${string}`,
+) {
+  const contract = getAddress(BATCH_SETTLEMENT_ADDRESS);
+  return parseEventLogs({
+    abi: batchSettlementABI,
+    eventName,
+    logs: logs.filter(log => isAddressEqual(log.address, contract)),
+  }).filter(log => channelIdsEqual(channelId, log.args.channelId));
+}
+
+/**
+ * Builds the terminal failure for a successful receipt whose `logs` field is missing.
+ *
+ * @param transaction - The confirmed transaction hash.
+ * @param network - Network the transaction was broadcast to.
+ * @param payer - The payer address.
+ * @returns Failed settle response with reason {@link Errors.ErrReceiptLogsUnavailable}.
+ */
+export function receiptLogsUnavailableResponse(
+  transaction: `0x${string}`,
+  network: Network,
+  payer: string | undefined,
+): SettleResponse {
+  return {
+    success: false,
+    errorReason: Errors.ErrReceiptLogsUnavailable,
+    errorMessage:
+      "signer returned a receipt without logs; batch settlement requires waitForTransactionReceipt to return receipt logs",
+    transaction,
+    network,
+    payer,
+  };
 }

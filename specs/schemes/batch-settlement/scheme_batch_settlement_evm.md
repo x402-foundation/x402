@@ -799,6 +799,7 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_permit2_deadline_expired`                  | Permit2 authorization deadline has expired                                   |
 | `invalid_batch_settlement_evm_permit2_invalid_signature`                 | Permit2 authorization signature is invalid                                   |
 | `invalid_batch_settlement_evm_permit2_invalid_spender`                   | Permit2 authorization spender is not the expected spender                  |
+| `invalid_batch_settlement_evm_receipt_logs_unavailable`                  | Facilitator signer returned a confirmed receipt without its logs, so `channelState` cannot be derived from the receipt events |
 | `invalid_batch_settlement_evm_receive_authorization_signature`           | ERC-3009 `receiveWithAuthorization` signature is invalid                     |
 | `invalid_batch_settlement_evm_receiver_authorizer_mismatch`              | Channel receiver authorizer does not match `extra.receiverAuthorizer`        |
 | `invalid_batch_settlement_evm_receiver_mismatch`                         | Channel receiver does not match `payTo`                                      |

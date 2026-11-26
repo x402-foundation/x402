@@ -36,6 +36,7 @@ import { BatchSettlementEvmScheme } from "../../../src/batch-settlement/facilita
 import { computeChannelId as computeChannelIdForNetwork } from "../../../src/batch-settlement/utils";
 import {
   BATCH_SETTLEMENT_ADDRESS,
+  CHANNEL_STATE_REREAD_DELAYS_MS,
   ERC3009_DEPOSIT_COLLECTOR_ADDRESS,
   PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
 } from "../../../src/batch-settlement/constants";
@@ -206,6 +207,61 @@ function buildRefundedLog(
   } as Log;
 }
 
+function buildDepositedLog(overrides: {
+  channelId: `0x${string}`;
+  newBalance: string;
+  amount?: string;
+  address?: `0x${string}`;
+}): Log {
+  return {
+    address: overrides.address ?? BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: batchSettlementABI,
+      eventName: "Deposited",
+      args: { channelId: overrides.channelId, sender: FACILITATOR_ADDRESS },
+    }),
+    data: encodeAbiParameters(
+      [{ type: "uint128" }, { type: "uint128" }],
+      [BigInt(overrides.amount ?? "10000"), BigInt(overrides.newBalance)],
+    ),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+}
+
+function buildClaimedLog(overrides: {
+  channelId: `0x${string}`;
+  newTotalClaimed: string;
+  claimAmount?: string;
+}): Log {
+  return {
+    address: BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: batchSettlementABI,
+      eventName: "Claimed",
+      args: { channelId: overrides.channelId, sender: FACILITATOR_ADDRESS },
+    }),
+    data: encodeAbiParameters(
+      [{ type: "uint128" }, { type: "uint128" }],
+      [BigInt(overrides.claimAmount ?? "1"), BigInt(overrides.newTotalClaimed)],
+    ),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+}
+
+function successReceipt(logs: Log[] | undefined) {
+  return vi.fn().mockResolvedValue({ status: "success", logs });
+}
+
 function buildSuccessfulRefundSigner(
   channelId: `0x${string}`,
   amount: string,
@@ -264,9 +320,12 @@ describe("BatchSettlementEvmScheme (Facilitator) — construction & metadata", (
     expect(scheme.caipFamily).toBe("eip155:*");
   });
 
-  it("getExtra returns the receiver-authorizer address from authorizerSigner", () => {
+  it("getExtra returns the receiver-authorizer address and delegatedRefund: false from authorizerSigner", () => {
     const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
-    expect(scheme.getExtra(NETWORK)).toEqual({ receiverAuthorizer: authorizer.address });
+    expect(scheme.getExtra(NETWORK)).toEqual({
+      receiverAuthorizer: authorizer.address,
+      delegatedRefund: false,
+    });
   });
 
   it("getExtra returns undefined when no authorizerSigner is configured", () => {
@@ -468,34 +527,73 @@ describe("BatchSettlementEvmScheme (Facilitator) — verifyVoucher", () => {
     );
   });
 
-  it("returns ChannelNotFound when balance is zero", async () => {
+  async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    try {
+      const pending = run();
+      await vi.runAllTimersAsync();
+      return await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  function channelRead(balance: bigint, totalClaimed = 0n) {
+    return [
+      { status: "success" as const, result: [balance, totalClaimed] },
+      { status: "success" as const, result: [0n, 0n] },
+      { status: "success" as const, result: 0n },
+    ];
+  }
+
+  it("returns ChannelNotFound when balance stays zero through the re-read window", async () => {
     const signer = buildSigner();
-    mockedMulticall.mockResolvedValue([
-      { status: "success", result: [0n, 0n] },
-      { status: "success", result: [0n, 0n] },
-      { status: "success", result: 0n },
-    ]);
+    mockedMulticall.mockResolvedValue(channelRead(0n));
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
     const { payload } = makeVoucherPayload();
 
-    const result = await scheme.verify(payload, makeRequirements());
+    const result = await withFakeTimers(() => scheme.verify(payload, makeRequirements()));
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBe(Errors.ErrChannelNotFound);
+    expect(mockedMulticall).toHaveBeenCalledTimes(CHANNEL_STATE_REREAD_DELAYS_MS.length + 1);
   });
 
-  it("returns CumulativeExceedsBalance when maxClaimable > balance", async () => {
+  it("returns CumulativeExceedsBalance when maxClaimable stays above balance through the re-read window", async () => {
     const signer = buildSigner();
-    mockedMulticall.mockResolvedValue([
-      { status: "success", result: [500n, 0n] },
-      { status: "success", result: [0n, 0n] },
-      { status: "success", result: 0n },
-    ]);
+    mockedMulticall.mockResolvedValue(channelRead(500n));
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1000" } });
+
+    const result = await withFakeTimers(() => scheme.verify(payload, makeRequirements()));
+    expect(result.isValid).toBe(false);
+    expect(result.invalidReason).toBe(Errors.ErrCumulativeExceedsBalance);
+    expect(mockedMulticall).toHaveBeenCalledTimes(CHANNEL_STATE_REREAD_DELAYS_MS.length + 1);
+  });
+
+  it("re-reads a stale balance until it covers maxClaimable", async () => {
+    const signer = buildSigner();
+    mockedMulticall
+      .mockResolvedValueOnce(channelRead(500n))
+      .mockResolvedValueOnce(channelRead(500n))
+      .mockResolvedValue(channelRead(10000n));
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1000" } });
+
+    const result = await withFakeTimers(() => scheme.verify(payload, makeRequirements()));
+    expect(result.isValid).toBe(true);
+    expect(result.extra?.balance).toBe("10000");
+    expect(mockedMulticall).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads once when the first balance already covers maxClaimable", async () => {
+    const signer = buildSigner();
+    mockedMulticall.mockResolvedValue(channelRead(1000n));
     const scheme = new BatchSettlementEvmScheme(signer, authorizer);
     const { payload } = makeVoucherPayload({ voucher: { maxClaimableAmount: "1000" } });
 
     const result = await scheme.verify(payload, makeRequirements());
-    expect(result.isValid).toBe(false);
-    expect(result.invalidReason).toBe(Errors.ErrCumulativeExceedsBalance);
+    expect(result.isValid).toBe(true);
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
   });
 
   it("returns CumulativeAmountBelowClaimed when maxClaimable <= totalClaimed", async () => {
@@ -1403,28 +1501,10 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.errorReason).toBe(Errors.ErrInvalidPayloadType);
   });
 
-  it("dispatches deposit settle payloads via settleDeposit", async () => {
-    const signer = buildSigner();
-    // verifyDeposit uses a 4-call batch; post-tx readChannelState uses 3 calls with a
-    // different shape — reusing the 4-tuple for the second batch mis-associates
-    // token balance with pendingWithdrawals and throws.
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1_000_000n },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [10_000n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ]);
-    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+  function buildEip3009Deposit(): { channelId: `0x${string}`; dp: BatchSettlementDepositPayload } {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
     const now = Math.floor(Date.now() / 1000);
-
     const dp: BatchSettlementDepositPayload = {
       type: "deposit",
       channelConfig: config,
@@ -1441,6 +1521,23 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
         },
       },
     };
+    return { channelId, dp };
+  }
+
+  it("dispatches deposit settle payloads via settleDeposit", async () => {
+    const { channelId, dp } = buildEip3009Deposit();
+    const signer = buildSigner({
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: "10000" }),
+      ]),
+    });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
 
     const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
     expect(result.success).toBe(true);
@@ -1460,6 +1557,92 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
         functionName: "deposit",
       }),
     );
+  });
+
+  it("takes the balance from Deposited and the other fields from the verify snapshot, with no read after the receipt", async () => {
+    const { channelId, dp } = buildEip3009Deposit();
+    const depositedNewBalance = "12345";
+    const signer = buildSigner({
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: depositedNewBalance }),
+      ]),
+    });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [500n, 200n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [100n, 1234n] },
+      { status: "success", result: 3n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements({ amount: "100" }));
+
+    expect(result.success).toBe(true);
+    expect(result.extra).toEqual({
+      channelState: {
+        channelId,
+        balance: depositedNewBalance,
+        totalClaimed: "200",
+        withdrawRequestedAt: 1234,
+        refundNonce: "3",
+      },
+    });
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["empty logs", () => [] as Log[]],
+    [
+      "a Deposited log from another contract",
+      (channelId: `0x${string}`) => [
+        buildDepositedLog({ channelId, newBalance: "10000", address: RECEIVER }),
+      ],
+    ],
+    [
+      "a Deposited log for another channel",
+      () => [buildDepositedLog({ channelId: `0x${"77".repeat(32)}`, newBalance: "10000" })],
+    ],
+    [
+      "a Deposited log for another amount",
+      (channelId: `0x${string}`) => [
+        buildDepositedLog({ channelId, newBalance: "10001", amount: "10001" }),
+      ],
+    ],
+  ])("fails terminally when the deposit receipt has %s", async (_, logs) => {
+    const { channelId, dp } = buildEip3009Deposit();
+    const signer = buildSigner({ waitForTransactionReceipt: successReceipt(logs(channelId)) });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
+    expect(result.transaction).toBe("0x" + "ab".repeat(32));
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails with ErrReceiptLogsUnavailable when the signer drops the deposit receipt logs", async () => {
+    const { dp } = buildEip3009Deposit();
+    const signer = buildSigner({ waitForTransactionReceipt: successReceipt(undefined) });
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrReceiptLogsUnavailable);
+    expect(result.transaction).toBe("0x" + "ab".repeat(32));
   });
 
   it("maps a deposit broadcast failure after verify succeeds", async () => {
@@ -1497,52 +1680,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
     expect(result.errorMessage).toContain("replacement underpriced");
-  });
-
-  it("keeps a successful deposit when the post-receipt channel-state read fails", async () => {
-    const signer = buildSigner();
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1_000_000n },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ])
-      .mockRejectedValueOnce(new Error("rpc: channel state unavailable"));
-    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
-    const now = Math.floor(Date.now() / 1000);
-    const dp: BatchSettlementDepositPayload = {
-      type: "deposit",
-      channelConfig: config,
-      voucher: { channelId, maxClaimableAmount: "1000", signature: "0xcafebabe" },
-      deposit: {
-        amount: "10000",
-        authorization: {
-          erc3009Authorization: {
-            validAfter: String(now - 600),
-            validBefore: String(now + 3600),
-            salt: "0x0000000000000000000000000000000000000000000000000000000000000001",
-            signature: "0xfeedface",
-          },
-        },
-      },
-    };
-
-    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
-
-    expect(result.success).toBe(true);
-    expect(result.transaction).toBe("0x" + "ab".repeat(32));
-    expect(result.extra).toMatchObject({
-      channelState: {
-        channelId,
-        balance: "10000",
-        totalClaimed: "0",
-        withdrawRequestedAt: 0,
-        refundNonce: "0",
-      },
-    });
   });
 
   it("returns settlement_pending when the deposit receipt wait fails", async () => {
@@ -1627,13 +1764,16 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
    * `verifyDeposit`, once via `settleDeposit`'s own execution resolution) to force the
    * erc20Approval branch without needing a full ERC-20-approval-extension payload.
    */
-  function mockErc20ApprovalBranch(sendTransactions: () => Promise<`0x${string}`[]>): void {
+  function mockErc20ApprovalBranch(
+    sendTransactions: () => Promise<`0x${string}`[]>,
+    receiptLogs?: Log[],
+  ): void {
     const branch = {
       kind: "erc20Approval" as const,
       collectorData: "0x" as `0x${string}`,
       signedTransaction: "0xsigned" as `0x${string}`,
       extensionSigner: {
-        ...buildSigner(),
+        ...buildSigner({ waitForTransactionReceipt: successReceipt(receiptLogs) }),
         sendTransactions: vi.fn(sendTransactions),
       } as Erc20ApprovalGasSponsoringSigner,
     };
@@ -1641,33 +1781,28 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     mockedResolvePermit2DepositBranch.mockResolvedValueOnce(branch);
   }
 
-  it("accepts a single extension-signer hash for an erc20-approval deposit bundle when the balance confirms", async () => {
+  it("accepts a single extension-signer hash for an erc20-approval deposit bundle whose receipt carries Deposited", async () => {
     const signer = buildSigner();
     const bundleTxHash = ("0x" + "ab".repeat(32)) as `0x${string}`;
-    let sent = false;
-    mockErc20ApprovalBranch(async () => {
-      sent = true;
-      return [bundleTxHash];
-    });
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1_000_000n },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ])
-      .mockImplementation(async () => [
-        { status: "success", result: [sent ? 10_000n : 0n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ]);
+    const { channelId, dp, reqs } = buildErc20ApprovalPermit2Deposit();
+    mockErc20ApprovalBranch(
+      async () => [bundleTxHash],
+      [buildDepositedLog({ channelId, newBalance: "10000" })],
+    );
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
     const scheme = new BatchSettlementEvmScheme(signer, buildAuthorizerSigner());
-    const { dp, reqs } = buildErc20ApprovalPermit2Deposit();
 
     const result = await scheme.settle(envelopeDeposit(dp), reqs);
 
     expect(result.success).toBe(true);
     expect(result.transaction).toBe(bundleTxHash);
+    expect(result.extra).toMatchObject({ channelState: { balance: "10000" } });
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
   });
 
   it("fails settle when deposit execution cannot be resolved after verify succeeded", async () => {
@@ -1713,24 +1848,16 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(result.errorMessage).toMatch(/expected 1 \(atomic bundle\) or 2/);
   });
 
-  it("fails an erc20-approval deposit bundle when a single extension-signer hash's balance never confirms", async () => {
+  it("fails a single-hash erc20-approval deposit bundle whose receipt has no Deposited event", async () => {
     const signer = buildSigner();
     const bundleTxHash = ("0x" + "ab".repeat(32)) as `0x${string}`;
-    mockErc20ApprovalBranch(async () => [bundleTxHash]);
-    // Balance never reflects the deposit — e.g. because the single hash only
-    // broadcast the approve and the deposit call never ran.
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1_000_000n },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ]);
+    mockErc20ApprovalBranch(async () => [bundleTxHash], []);
+    mockedMulticall.mockResolvedValueOnce([
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 1_000_000n },
+      { status: "success", result: [0n, 0n] },
+      { status: "success", result: 0n },
+    ]);
     const scheme = new BatchSettlementEvmScheme(signer, buildAuthorizerSigner());
     const { dp, reqs } = buildErc20ApprovalPermit2Deposit();
 
@@ -1738,32 +1865,9 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
 
     expect(result.success).toBe(false);
     expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
-  }, 10_000);
-
-  it("returns settlement_pending for a single-hash erc20-approval bundle when the balance read errors", async () => {
-    const signer = buildSigner();
-    const bundleTxHash = ("0x" + "ab".repeat(32)) as `0x${string}`;
-    mockErc20ApprovalBranch(async () => [bundleTxHash]);
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1_000_000n },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
-      ])
-      .mockRejectedValue(new Error("rpc: channel state unavailable"));
-    const scheme = new BatchSettlementEvmScheme(signer, buildAuthorizerSigner());
-    const { dp, reqs } = buildErc20ApprovalPermit2Deposit();
-
-    const result = await scheme.settle(envelopeDeposit(dp), reqs);
-
-    // The bundle receipt only proves some tx did not revert, not that the deposit
-    // landed. With the confirming read failing, the outcome is unconfirmed rather than
-    // a success, so settlement is pending with the broadcast hash for reconciliation.
-    expect(result.success).toBe(false);
-    expect(result.errorReason).toBe("settlement_pending");
     expect(result.transaction).toBe(bundleTxHash);
-  }, 10_000);
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
+  });
 
   it('rejects voucher-less type:"deposit" envelopes as unknown payload type', async () => {
     const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
@@ -2326,6 +2430,110 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(signer.writeContract).not.toHaveBeenCalled();
   });
 
+  describe("delegatedRefund opt-in", () => {
+    const unsignedRefund = (config: ChannelConfig): BatchSettlementEnrichedRefundPayload => ({
+      type: "refund",
+      channelConfig: config,
+      voucher: {
+        channelId: computeChannelId(config),
+        maxClaimableAmount: "0",
+        signature: "0xdead",
+      },
+      amount: "9000",
+      refundNonce: "0",
+      claims: [],
+    });
+
+    const delegatedRequirements = (overrides: Partial<PaymentRequirements> = {}) => {
+      const base = makeRequirements(overrides);
+      return { ...base, extra: { ...base.extra, receiverAuthorizer: authorizer.address } };
+    };
+
+    it("advertises delegatedRefund: true in getExtra", () => {
+      const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer, {
+        delegatedRefund: true,
+      });
+      expect(scheme.getExtra(NETWORK)).toEqual({
+        receiverAuthorizer: authorizer.address,
+        delegatedRefund: true,
+      });
+    });
+
+    it("throws at construction without an authorizerSigner", () => {
+      expect(
+        () => new BatchSettlementEvmScheme(buildSigner(), undefined, { delegatedRefund: true }),
+      ).toThrow(/delegatedRefund requires an authorizerSigner/);
+    });
+
+    it("signs and submits an unsigned refund with the authorizer signer", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSuccessfulRefundSigner(computeChannelId(config), "9000");
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        delegatedRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(signTypedData).toHaveBeenCalledTimes(1);
+      expect(signer.writeContract).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "refundWithSignature" }),
+      );
+    });
+
+    it("rejects an unsigned refund whose channel does not match the requirements without signing", async () => {
+      const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
+      const signer = buildSigner();
+      const signTypedData = vi.fn(authorizer.signTypedData);
+      const scheme = new BatchSettlementEvmScheme(
+        signer,
+        { address: authorizer.address, signTypedData },
+        { delegatedRefund: true },
+      );
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        delegatedRequirements({ payTo: PAYER }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrReceiverMismatch);
+      expect(signTypedData).not.toHaveBeenCalled();
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unsigned refund when the channel receiverAuthorizer is not the facilitator", async () => {
+      const config = buildChannelConfig();
+      const signer = buildSigner();
+      mockedMulticall.mockResolvedValue([
+        { status: "success", result: [10000n, 0n] },
+        { status: "success", result: [0n, 0n] },
+        { status: "success", result: 0n },
+      ]);
+      const scheme = new BatchSettlementEvmScheme(signer, authorizer, { delegatedRefund: true });
+
+      const result = await scheme.settle(
+        envelopeSettle(unsignedRefund(config) as unknown as Record<string, unknown>),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrAuthorizerAddressMismatch);
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
+  });
+
   it("returns RefundNoBalance without submitting when a refund would transfer zero tokens", async () => {
     const signer = buildSigner();
     mockedMulticall.mockResolvedValue([
@@ -2360,57 +2568,180 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     expect(signer.writeContract).not.toHaveBeenCalled();
   });
 
-  it("polls post-refund state when a withdrawal is pending", async () => {
+  describe("refund channelState derivation", () => {
     const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
     const channelId = computeChannelId(config);
-    const signer = buildSigner({
-      waitForTransactionReceipt: vi.fn().mockResolvedValue({
-        status: "success",
-        logs: [buildRefundedLog({ channelId, amount: "2000" })],
-      }),
-    });
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [10000n, 0n] },
-        { status: "success", result: [5000n, 1234n] },
+
+    function refundPayload(
+      overrides: Partial<BatchSettlementEnrichedRefundPayload> = {},
+    ): PaymentPayload {
+      const rp: BatchSettlementEnrichedRefundPayload = {
+        type: "refund",
+        channelConfig: config,
+        voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
+        amount: "2000",
+        refundNonce: "7",
+        refundAuthorizerSignature: "0xserversig" as `0x${string}`,
+        claims: [],
+        ...overrides,
+      };
+      return envelopeSettle(rp as unknown as Record<string, unknown>);
+    }
+
+    function mockPreState(
+      balance: bigint,
+      totalClaimed: bigint,
+      withdrawAmount: bigint,
+      withdrawRequestedAt: bigint,
+    ): void {
+      mockedMulticall.mockResolvedValueOnce([
+        { status: "success", result: [balance, totalClaimed] },
+        { status: "success", result: [withdrawAmount, withdrawRequestedAt] },
         { status: "success", result: 7n },
-      ])
-      .mockResolvedValueOnce([
-        { status: "success", result: [8000n, 0n] },
-        { status: "success", result: [3000n, 1234n] },
-        { status: "success", result: 8n },
       ]);
-    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
-    const rp: BatchSettlementEnrichedRefundPayload = {
-      type: "refund",
-      channelConfig: config,
-      voucher: {
-        channelId,
-        maxClaimableAmount: "0",
-        signature: "0xdead",
-      },
-      amount: "2000",
-      refundNonce: "7",
-      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
-      claims: [],
-    };
+    }
 
-    const result = await scheme.settle(
-      envelopeSettle(rp as unknown as Record<string, unknown>),
-      makeRequirements(),
-    );
+    it.each([
+      ["keeps withdrawRequestedAt on a partial withdrawal reduction", 5000n, 1234],
+      ["clears withdrawRequestedAt when the refund covers the withdrawal", 2000n, 0],
+      ["reports zero withdrawRequestedAt with no pending withdrawal", 0n, 0],
+    ])("%s, with no read after the receipt", async (_, withdrawAmount, expectedRequestedAt) => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(10000n, 0n, withdrawAmount, withdrawAmount > 0n ? 1234n : 0n);
 
-    expect(result.success).toBe(true);
-    expect(result.amount).toBe("2000");
-    expect(result.extra).toMatchObject({
-      channelState: {
-        channelId,
-        balance: "8000",
-        withdrawRequestedAt: 1234,
-        refundNonce: "8",
-      },
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.amount).toBe("2000");
+      expect(result.extra).toEqual({
+        channelState: {
+          channelId,
+          balance: "8000",
+          totalClaimed: "0",
+          withdrawRequestedAt: expectedRequestedAt,
+          refundNonce: "8",
+        },
+      });
+      expect(mockedMulticall).toHaveBeenCalledTimes(1);
     });
-    expect(mockedMulticall).toHaveBeenCalledTimes(2);
+
+    it("subtracts the capped Refunded amount, not the requested amount", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "6000" }),
+        ]),
+      });
+      mockPreState(10000n, 4000n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload({ amount: "9000" }),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.amount).toBe("6000");
+      expect(result.extra).toMatchObject({
+        channelState: { balance: "4000", totalClaimed: "4000", refundNonce: "8" },
+      });
+    });
+
+    it("takes totalClaimed from the channel's last Claimed event in a claim+refund", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildClaimedLog({ channelId, newTotalClaimed: "1500" }),
+          buildClaimedLog({ channelId, newTotalClaimed: "3000" }),
+          buildClaimedLog({ channelId: `0x${"77".repeat(32)}`, newTotalClaimed: "9999" }),
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(10000n, 1000n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload({
+          claims: [
+            {
+              voucher: { channel: config, maxClaimableAmount: "3000" },
+              signature: "0xcafe",
+              totalClaimed: "3000",
+            },
+            {
+              voucher: { channel: config, maxClaimableAmount: "1500" },
+              signature: "0xcafe",
+              totalClaimed: "1500",
+            },
+          ],
+        }),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.extra).toMatchObject({
+        channelState: { balance: "8000", totalClaimed: "3000" },
+      });
+    });
+
+    it("keeps the pre-refund totalClaimed when the bundled claim was a no-op", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(10000n, 3000n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload({
+          claims: [
+            {
+              voucher: { channel: config, maxClaimableAmount: "2500" },
+              signature: "0xcafe",
+              totalClaimed: "2500",
+            },
+          ],
+        }),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.extra).toMatchObject({
+        channelState: { balance: "8000", totalClaimed: "3000" },
+      });
+    });
+
+    it("fails with ErrReceiptLogsUnavailable when the signer drops the refund receipt logs", async () => {
+      const signer = buildSigner({ waitForTransactionReceipt: successReceipt(undefined) });
+      mockPreState(10000n, 0n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrReceiptLogsUnavailable);
+      expect(result.transaction).toBe("0x" + "ab".repeat(32));
+    });
+
+    it("does not broadcast when the pre-refund state read fails", async () => {
+      const signer = buildSigner();
+      mockedMulticall.mockRejectedValueOnce(new Error("rpc down"));
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.errorReason).toBe(Errors.ErrRpcReadFailed);
+      expect(result.transaction).toBe("");
+      expect(signer.writeContract).not.toHaveBeenCalled();
+    });
   });
 
   it("returns ErrRpcReadFailed when the receivers() read throws", async () => {
@@ -2675,7 +3006,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
   });
 
   it("broadcasts but fails closed when a zero refund emits no Refunded event", async () => {
-    const signer = buildSigner();
+    const signer = buildSigner({ waitForTransactionReceipt: successReceipt([]) });
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
       { status: "success", result: [0n, 0n] },
@@ -2822,86 +3153,6 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     expect(result.errorReason).toBe(Errors.ErrRefundNoBalance);
     expect(signer.writeContract).not.toHaveBeenCalled();
   });
-
-  it("reads post-refund channel state when a withdrawal is already pending", async () => {
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
-    const signer = buildSuccessfulRefundSigner(channelId, "9000");
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [10000n, 0n] },
-        { status: "success", result: [0n, 50n] },
-        { status: "success", result: 0n },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [1000n, 1000n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 1n },
-      ]);
-    const scheme = new BatchSettlementEvmScheme(signer);
-    const rp: BatchSettlementEnrichedRefundPayload = {
-      type: "refund",
-      channelConfig: config,
-      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
-      amount: "9000",
-      refundNonce: "0",
-      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
-      claims: [],
-    };
-
-    const result = await scheme.settle(
-      envelopeSettle(rp as unknown as Record<string, unknown>),
-      makeRequirements(),
-    );
-    expect(result.success).toBe(true);
-    expect(result.amount).toBe("9000");
-    expect(result.extra).toMatchObject({
-      channelState: {
-        channelId,
-        balance: "1000",
-        totalClaimed: "1000",
-        withdrawRequestedAt: 0,
-        refundNonce: "1",
-      },
-    });
-  });
-
-  it("falls back to the pre-refund snapshot when the post-refund state read fails", async () => {
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
-    const signer = buildSuccessfulRefundSigner(channelId, "9000");
-    mockedMulticall
-      .mockResolvedValueOnce([
-        { status: "success", result: [10000n, 0n] },
-        { status: "success", result: [0n, 50n] },
-        { status: "success", result: 0n },
-      ])
-      .mockRejectedValueOnce(new Error("rpc lag"));
-    const scheme = new BatchSettlementEvmScheme(signer);
-    const rp: BatchSettlementEnrichedRefundPayload = {
-      type: "refund",
-      channelConfig: config,
-      voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
-      amount: "9000",
-      refundNonce: "0",
-      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
-      claims: [],
-    };
-
-    const result = await scheme.settle(
-      envelopeSettle(rp as unknown as Record<string, unknown>),
-      makeRequirements(),
-    );
-    expect(result.success).toBe(true);
-    expect(result.amount).toBe("9000");
-    expect(result.extra).toMatchObject({
-      channelState: {
-        channelId,
-        balance: "1000",
-        withdrawRequestedAt: 0,
-      },
-    });
-  });
 });
 
 describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
@@ -3023,12 +3274,8 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
       .mockResolvedValueOnce([
         { status: "success", result: undefined },
         { status: "success", result: undefined },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [10_000n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
       ]);
+    const { payload, channelId } = await buildCounterfactualDeposit();
     const signer = buildSigner({
       getCode: vi
         .fn()
@@ -3036,11 +3283,13 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
           Promise.resolve(address.toLowerCase() === PAYER.toLowerCase() ? "0x" : "0x6080604052"),
         ),
       sendTransaction: vi.fn().mockResolvedValue(("0x" + "dd".repeat(32)) as `0x${string}`),
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: "10000" }),
+      ]),
     });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       eip6492AllowedFactories: [FACTORY],
     });
-    const { payload } = await buildCounterfactualDeposit();
     const result = await scheme.settle(payload, makeRequirements());
     expect(result.success).toBe(true);
     expect(signer.sendTransaction).toHaveBeenCalledWith(
@@ -3094,12 +3343,8 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
       .mockResolvedValueOnce([
         { status: "success", result: undefined },
         { status: "success", result: undefined },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [10_000n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
       ]);
+    const { payload, channelId } = await buildCounterfactualDeposit();
     const signer = buildSigner({
       getCode: vi.fn().mockImplementation(({ address }: { address: `0x${string}` }) => {
         if (address.toLowerCase() !== PAYER.toLowerCase()) {
@@ -3109,11 +3354,13 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
         // First lookup (verify) is undeployed; settle's deploy check sees code.
         return Promise.resolve(payerLookups === 1 ? "0x" : "0x6080604052");
       }),
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: "10000" }),
+      ]),
     });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       eip6492AllowedFactories: [FACTORY],
     });
-    const { payload } = await buildCounterfactualDeposit();
     const result = await scheme.settle(payload, makeRequirements());
     expect(result.success).toBe(true);
     expect(signer.sendTransaction).not.toHaveBeenCalled();
@@ -3130,13 +3377,9 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
       .mockResolvedValueOnce([
         { status: "success", result: undefined },
         { status: "success", result: undefined },
-      ])
-      .mockResolvedValue([
-        { status: "success", result: [10_000n, 0n] },
-        { status: "success", result: [0n, 0n] },
-        { status: "success", result: 0n },
       ]);
     let payerLookups = 0;
+    const { payload, channelId } = await buildCounterfactualDeposit();
     const signer = buildSigner({
       getCode: vi.fn().mockImplementation(({ address }: { address: `0x${string}` }) => {
         if (address.toLowerCase() !== PAYER.toLowerCase()) {
@@ -3147,11 +3390,13 @@ describe("BatchSettlementEvmScheme (Facilitator) — ERC-6492 deposit", () => {
         return Promise.reject(new Error("eth_getCode timeout"));
       }),
       sendTransaction: vi.fn().mockResolvedValue(("0x" + "dd".repeat(32)) as `0x${string}`),
+      waitForTransactionReceipt: successReceipt([
+        buildDepositedLog({ channelId, newBalance: "10000" }),
+      ]),
     });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       eip6492AllowedFactories: [FACTORY],
     });
-    const { payload } = await buildCounterfactualDeposit();
     const result = await scheme.settle(payload, makeRequirements());
     expect(result.success).toBe(true);
     expect(signer.sendTransaction).toHaveBeenCalled();
