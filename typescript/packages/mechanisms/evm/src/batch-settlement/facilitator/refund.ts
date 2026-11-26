@@ -1,5 +1,5 @@
 import { SettleResponse, PaymentRequirements } from "@x402/core/types";
-import { encodeFunctionData, getAddress, isAddressEqual } from "viem";
+import { encodeFunctionData, getAddress, isAddressEqual, type Log } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import type {
   AuthorizerSigner,
@@ -64,9 +64,53 @@ function getRefundableAmount(
 }
 
 /**
+ * Folds `Deposited` and `Refunded` in log order onto the pre-read balance.
+ *
+ * `Deposited.newBalance` replaces the running balance. A pre-read below
+ * `Refunded.amount` stays above 0, so a missed deposit does not delete the channel.
+ *
+ * @param logs - Receipt logs.
+ * @param channelId - The refunded channel.
+ * @param preBalance - Balance read before the transaction.
+ * @returns Balance after the receipt events.
+ */
+function balanceAfterReceiptEvents(
+  logs: readonly Log[],
+  channelId: `0x${string}`,
+  preBalance: bigint,
+): bigint {
+  let balance = preBalance;
+  let sawDeposit = false;
+  for (const log of logs) {
+    const deposited = findChannelEvents([log], "Deposited", channelId);
+    const depositedEvent = deposited[0];
+    if (depositedEvent) {
+      balance = depositedEvent.args.newBalance;
+      sawDeposit = true;
+      continue;
+    }
+    const refundedEvent = findChannelEvents([log], "Refunded", channelId)[0];
+    if (!refundedEvent) continue;
+    const amount = refundedEvent.args.amount;
+    if (balance > amount) {
+      balance -= amount;
+      continue;
+    }
+    if (sawDeposit || balance === amount) {
+      balance = 0n;
+      continue;
+    }
+    if (balance === 0n) balance = amount;
+  }
+  return balance;
+}
+
+/**
  * Builds the post-refund channel state from the pre-read and receipt events.
  *
  * @param preState - Channel state read before the transaction.
+ * @param logs - Receipt logs.
+ * @param channelId - The refunded channel.
  * @param refunded - Amount of the receipt `Refunded` event.
  * @param claimedTotal - Last `Claimed.newTotalClaimed` in the receipt, if any.
  * @param refundNonce - Nonce the refund consumed.
@@ -74,12 +118,14 @@ function getRefundableAmount(
  */
 function deriveRefundState(
   preState: OnchainChannelState,
+  logs: readonly Log[],
+  channelId: `0x${string}`,
   refunded: bigint,
   claimedTotal: bigint | undefined,
   refundNonce: bigint,
 ): ChannelState {
   return {
-    balance: preState.balance > refunded ? preState.balance - refunded : 0n,
+    balance: balanceAfterReceiptEvents(logs, channelId, preState.balance),
     totalClaimed: claimedTotal ?? preState.totalClaimed,
     withdrawRequestedAt: refunded >= preState.withdrawAmount ? 0 : preState.withdrawRequestedAt,
     refundNonce: refundNonce + 1n,
@@ -290,6 +336,8 @@ export async function executeRefundWithSignature(
         const claimed = findChannelEvents(receipt.logs, "Claimed", channelId);
         const postState = deriveRefundState(
           preState,
+          receipt.logs,
+          channelId,
           refundedAmount,
           claimed[claimed.length - 1]?.args.newTotalClaimed,
           BigInt(payload.refundNonce),

@@ -258,11 +258,11 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
     expect(await store.get("0xfeedface3")).toBeUndefined();
   });
 
-  it("cache-hit: omits extra when the post-confirm read fails", async () => {
+  it("cache-hit: returns the Deposited balance when the post-confirm read fails", async () => {
     mockedMulticall.mockRejectedValueOnce(new Error("rpc read failed"));
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
-    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId) });
+    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId, 12_345n) });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       pendingSettlementStore: store,
     });
@@ -273,7 +273,10 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
 
     expect(result.success).toBe(true);
     expect(result.transaction).toBe(MOCK_TX_HASH);
-    expect(result.extra).toBeUndefined();
+    expect(result.extra).toEqual({
+      channelState: { channelId, balance: "12345" },
+    });
+    expect(await store.get("0xfeedface7")).toBeUndefined();
   });
 
   it("cache-hit: fails terminally without reading when the receipt has no Deposited event", async () => {

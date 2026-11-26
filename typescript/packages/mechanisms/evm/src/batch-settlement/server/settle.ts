@@ -37,6 +37,20 @@ function maxTotalClaimed(stored: string, settled: string | undefined): string {
 }
 
 /**
+ * Keeps the larger `refundNonce`. A settle response can carry the verify-time nonce.
+ *
+ * @param stored - `refundNonce` already on the channel record.
+ * @param settled - `refundNonce` from the settle response, if present and canonical.
+ * @returns The larger nonce.
+ */
+function maxRefundNonce(stored: number, settled: string | undefined): number {
+  if (settled === undefined) return stored;
+  const parsed = Number(settled);
+  if (!Number.isSafeInteger(parsed) || parsed <= stored) return stored;
+  return parsed;
+}
+
+/**
  * Inspects the admission lock for this request.
  *
  * Used for deposit/refund holder checks and snapshot recovery. This request
@@ -372,6 +386,7 @@ export async function handleAfterSettle(
           ...existing,
           ...snapshot,
           totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
+          refundNonce: maxRefundNonce(existing.refundNonce, String(snapshot.refundNonce)),
           network: requirements.network || existing.network,
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
@@ -455,7 +470,10 @@ export async function handleAfterSettle(
             "withdrawRequestedAt",
             existing.withdrawRequestedAt,
           ),
-          refundNonce: readExtraNumber(channelState, "refundNonce", existing.refundNonce),
+          refundNonce: maxRefundNonce(
+            existing.refundNonce,
+            readExtraUintString(channelState, "refundNonce"),
+          ),
           onchainSyncedAt: now,
           lastRequestTimestamp: now,
         };

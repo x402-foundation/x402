@@ -2632,6 +2632,45 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       expect(mockedMulticall).toHaveBeenCalledTimes(1);
     });
 
+    it("uses Deposited.newBalance when a deposit lands ahead of the refund", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildDepositedLog({ channelId, newBalance: "6000", amount: "5000" }),
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(1000n, 0n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.extra).toMatchObject({
+        channelState: { balance: "4000" },
+      });
+    });
+
+    it("does not report balance 0 when the pre-read is below Refunded.amount", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(500n, 0n, 0n, 0n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.extra).toMatchObject({
+        channelState: { balance: "500" },
+      });
+    });
+
     it("subtracts the capped Refunded amount, not the requested amount", async () => {
       const signer = buildSigner({
         waitForTransactionReceipt: successReceipt([

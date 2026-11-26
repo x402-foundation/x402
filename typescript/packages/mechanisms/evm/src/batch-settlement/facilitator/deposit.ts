@@ -438,20 +438,23 @@ async function reconcilePendingDeposit(
         if (typeof deposited !== "bigint") {
           return deposited;
         }
-        let extra: Record<string, unknown> | undefined;
+        let channelState: { channelId: `0x${string}`; balance: string } = {
+          channelId: voucher.channelId,
+          balance: deposited.toString(),
+        };
         try {
           const state = await readChannelState(signer, voucher.channelId);
-          extra = {
-            channelState: toChannelStateExtra(voucher.channelId, { ...state, balance: deposited }),
-          };
-        } catch {}
+          channelState = toChannelStateExtra(voucher.channelId, { ...state, balance: deposited });
+        } catch {
+          // The event balance is enough. Missing fields stay off the wire.
+        }
         return {
           success: true,
           transaction: cachedTx,
           network: requirements.network,
           payer,
           amount: deposit.amount,
-          ...(extra ? { extra } : {}),
+          extra: { channelState },
         };
       },
     }),
