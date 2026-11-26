@@ -149,7 +149,22 @@ export const findByNetworkAndScheme = <T>(
   scheme: string,
   network: Network,
 ): T | undefined => {
-  return findSchemesByNetwork(map, network)?.get(scheme);
+  const exact = map.get(network)?.get(scheme);
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  // An exact-network entry without this scheme must not hide a pattern that has it
+  for (const [registeredNetworkPattern, implementations] of map.entries()) {
+    const implementation = implementations.get(scheme);
+    if (
+      implementation !== undefined &&
+      networkMatchesPattern(registeredNetworkPattern as Network, network)
+    ) {
+      return implementation;
+    }
+  }
+  return undefined;
 };
 
 /**
