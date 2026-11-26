@@ -90,8 +90,7 @@ func (f *BatchSvmScheme) expiredWithoutLanding(ctx context.Context, signature so
 		return false
 	}
 	validity, ok := f.raw.(svm.FacilitatorBlockhashCapabilities)
-	history, historyOK := f.raw.(svm.FacilitatorConfirmedTransactionReader)
-	if !ok || !historyOK {
+	if !ok {
 		return false
 	}
 	hash, err := solana.HashFromBase58(blockhash)
@@ -102,7 +101,7 @@ func (f *BatchSvmScheme) expiredWithoutLanding(ctx context.Context, signature so
 	if err != nil || valid {
 		return false
 	}
-	confirmed, err := history.GetConfirmedTransaction(ctx, signature, network)
+	confirmed, err := f.raw.GetConfirmedTransaction(ctx, signature, network)
 	return err == nil && confirmed == nil
 }
 

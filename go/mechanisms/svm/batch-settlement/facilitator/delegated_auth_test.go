@@ -198,6 +198,9 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 		fixture.scheme.hooks.sealDependencies = func() SealDependencies {
 			deps := fixture.scheme.defaultSealDependencies()
 			deps.NowSeconds = func() int64 { return delegatedNow }
+			deps.AttributeClose = func(context.Context, string, types.PaymentRequirements, BatchTerms, string) (CloseAttribution, error) {
+				return CloseAttribution{PaidToReceiver: 1_000}, nil
+			}
 			return deps
 		}
 	}

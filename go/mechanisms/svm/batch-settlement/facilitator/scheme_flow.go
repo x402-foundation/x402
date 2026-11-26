@@ -993,17 +993,13 @@ func (f *BatchSvmScheme) completePayout(ctx context.Context, key string, respons
 // for the metadata to become visible, and rejects one that failed onchain. It records the
 // transaction's slot so later channel reads reach it.
 func (f *BatchSvmScheme) confirmedEvidence(ctx context.Context, signature, network string) (*svm.FacilitatorConfirmedTransaction, error) {
-	reader, ok := f.raw.(svm.FacilitatorConfirmedTransactionReader)
-	if !ok {
-		return nil, fmt.Errorf("getConfirmedTransaction is required for payout accounting")
-	}
 	parsed, err := solana.SignatureFromBase58(signature)
 	if err != nil {
 		return nil, err
 	}
 	var evidence *svm.FacilitatorConfirmedTransaction
 	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
-		evidence, err = reader.GetConfirmedTransaction(ctx, parsed, network)
+		evidence, err = f.raw.GetConfirmedTransaction(ctx, parsed, network)
 		if err == nil && evidence != nil && evidence.Meta != nil && evidence.Meta.PreTokenBalances != nil && evidence.Meta.PostTokenBalances != nil {
 			break
 		}

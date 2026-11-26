@@ -15,6 +15,7 @@ try:
         ERR_INVALID_PAYLOAD_TYPE,
         ERR_INVALID_SCHEME,
         ERR_NETWORK_MISMATCH,
+        ERR_REFUND_AUTHORIZER_SIGNATURE,
         ERR_SETTLE_TRANSACTION_FAILED,
     )
     from x402.mechanisms.evm.batch_settlement.facilitator import refund as refund_mod
@@ -35,6 +36,7 @@ try:
         EnrichedRefundPayload,
         SettlePayload,
         VoucherClaim,
+        VoucherFields,
     )
     from x402.mechanisms.evm.constants import ERR_SETTLEMENT_PENDING, TX_STATUS_SUCCESS
     from x402.schemas import PaymentPayload, PaymentRequirements, VerifyResponse
@@ -207,6 +209,15 @@ class _SuccessfulSigner:
         return _FakeReceipt()
 
 
+class _RecordingSigner(_SuccessfulSigner):
+    def __init__(self) -> None:
+        self.write_calls = 0
+
+    def write_contract(self, *args, **kwargs):
+        self.write_calls += 1
+        return super().write_contract(*args, **kwargs)
+
+
 class TestClaimAuthorizerNotConfigured:
     def test_missing_signature_without_signer_returns_not_configured(self):
         payload = ClaimPayload(claims=[_voucher_claim()], claim_authorizer_signature=None)
@@ -252,7 +263,41 @@ class TestRefundAuthorizerNotConfigured:
         payload.claim_authorizer_signature = None
         return payload
 
-    def test_missing_refund_signature_without_signer_returns_not_configured(self, monkeypatch):
+    @pytest.mark.parametrize("authorizer_signer", [None, _FakeAuthorizerSigner("0x" + "44" * 20)])
+    @pytest.mark.parametrize("with_claims", [False, True])
+    @pytest.mark.parametrize("refund_sig", [None, ""])
+    def test_unsigned_refund_is_rejected_without_onchain_access(
+        self, authorizer_signer, with_claims, refund_sig
+    ):
+        payload = self._enriched_refund(with_claims=with_claims, refund_sig=refund_sig)
+
+        out = execute_refund_with_signature(
+            _SignerNotExpected(),  # type: ignore[arg-type]
+            payload,
+            _requirements(),
+            authorizer_signer,  # type: ignore[arg-type]
+        )
+
+        assert out.success is False
+        assert out.error_reason == ERR_REFUND_AUTHORIZER_SIGNATURE
+        assert out.transaction == ""
+
+    def test_facilitator_settle_rejects_unsigned_refund(self):
+        fac = BatchSettlementEvmFacilitator(
+            _SignerNotExpected(),  # type: ignore[arg-type]
+            _FakeAuthorizerSigner("0x" + "44" * 20),  # type: ignore[arg-type]
+        )
+        refund = self._enriched_refund(with_claims=False, refund_sig=None)
+        refund.voucher = VoucherFields(
+            channel_id="0x" + "00" * 32, max_claimable_amount="0", signature="0x" + "22" * 65
+        )
+
+        out = fac.settle(_payload(refund.to_dict()), _requirements())
+
+        assert out.success is False
+        assert out.error_reason == ERR_REFUND_AUTHORIZER_SIGNATURE
+
+    def test_signed_refund_is_submitted_without_signer(self, monkeypatch):
         monkeypatch.setattr(
             refund_mod,
             "read_channel_state",
@@ -260,17 +305,18 @@ class TestRefundAuthorizerNotConfigured:
                 balance=1000, total_claimed=0, withdraw_requested_at=0, refund_nonce=0
             ),
         )
-        payload = self._enriched_refund(with_claims=False, refund_sig=None)
+        signer = _RecordingSigner()
+        payload = self._enriched_refund(with_claims=False, refund_sig="0x" + "11" * 65)
 
         out = execute_refund_with_signature(
-            _SignerNotExpected(),  # type: ignore[arg-type]
+            signer,  # type: ignore[arg-type]
             payload,
             _requirements(),
             None,
         )
 
-        assert out.success is False
-        assert out.error_reason == ERR_AUTHORIZER_NOT_CONFIGURED
+        assert signer.write_calls == 1
+        assert out.error_reason != ERR_REFUND_AUTHORIZER_SIGNATURE
 
     def test_missing_claim_signature_without_signer_returns_not_configured(self, monkeypatch):
         monkeypatch.setattr(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -176,26 +177,90 @@ func normalizeSimulatedInnerInstructions(groups []simulateInnerGroup, keys solan
 // ConfirmedTransactionInnerInstructions fetches a confirmed transaction's CPI
 // trace and the loaded account-key list inner-instruction indices address.
 func ConfirmedTransactionInnerInstructions(ctx context.Context, client *rpc.Client, signature solana.Signature) ([]rpc.InnerInstruction, solana.PublicKeySlice, error) {
-	maxVersion := MaxSupportedTxVersion
-	result, err := client.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
-		Encoding:                       solana.EncodingBase64,
-		Commitment:                     DefaultCommitment,
-		MaxSupportedTransactionVersion: &maxVersion,
-	})
+	result, err := getConfirmedTransaction(ctx, client, signature)
 	if err != nil {
 		return nil, nil, err
 	}
 	if result == nil || result.Meta == nil || result.Transaction == nil {
 		return nil, nil, fmt.Errorf("transaction not indexed")
 	}
+	keys, err := confirmedAccountKeys(result)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result.Meta.InnerInstructions, keys, nil
+}
+
+// ConfirmedTransactionEvidence fetches a confirmed transaction's slot, account keys
+// (loaded addresses included) and raw token balances, for batch payout attribution.
+// It returns (nil, nil) when the signature is unknown, and no Meta while the RPC has
+// not indexed it yet.
+func ConfirmedTransactionEvidence(ctx context.Context, client *rpc.Client, signature solana.Signature) (*FacilitatorConfirmedTransaction, error) {
+	result, err := getConfirmedTransaction(ctx, client, signature)
+	if errors.Is(err, rpc.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Transaction == nil {
+		return nil, nil
+	}
+	keys, err := confirmedAccountKeys(result)
+	if err != nil {
+		return nil, err
+	}
+	evidence := &FacilitatorConfirmedTransaction{Slot: result.Slot, AccountKeys: make([]string, len(keys))}
+	for i, key := range keys {
+		evidence.AccountKeys[i] = key.String()
+	}
+	if result.Meta == nil {
+		return evidence, nil
+	}
+	evidence.Meta = &FacilitatorConfirmedMeta{
+		Err:               result.Meta.Err,
+		PreTokenBalances:  facilitatorTokenBalances(result.Meta.PreTokenBalances),
+		PostTokenBalances: facilitatorTokenBalances(result.Meta.PostTokenBalances),
+	}
+	return evidence, nil
+}
+
+func getConfirmedTransaction(ctx context.Context, client *rpc.Client, signature solana.Signature) (*rpc.GetTransactionResult, error) {
+	maxVersion := MaxSupportedTxVersion
+	return client.GetTransaction(ctx, signature, &rpc.GetTransactionOpts{
+		Encoding:                       solana.EncodingBase64,
+		Commitment:                     DefaultCommitment,
+		MaxSupportedTransactionVersion: &maxVersion,
+	})
+}
+
+func confirmedAccountKeys(result *rpc.GetTransactionResult) (solana.PublicKeySlice, error) {
 	tx, err := result.Transaction.GetTransaction()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decode confirmed transaction: %w", err)
+		return nil, fmt.Errorf("failed to decode confirmed transaction: %w", err)
 	}
 	keys := append(solana.PublicKeySlice{}, tx.Message.AccountKeys...)
+	if result.Meta == nil {
+		return keys, nil
+	}
 	keys = append(keys, result.Meta.LoadedAddresses.Writable...)
 	keys = append(keys, result.Meta.LoadedAddresses.ReadOnly...)
-	return result.Meta.InnerInstructions, keys, nil
+	return keys, nil
+}
+
+func facilitatorTokenBalances(balances []rpc.TokenBalance) []FacilitatorTokenBalance {
+	out := make([]FacilitatorTokenBalance, 0, len(balances))
+	for _, balance := range balances {
+		entry := FacilitatorTokenBalance{AccountIndex: int(balance.AccountIndex), Mint: balance.Mint.String()}
+		if balance.Owner != nil {
+			entry.Owner = balance.Owner.String()
+		}
+		if balance.UiTokenAmount != nil {
+			entry.UITokenAmount.Amount = balance.UiTokenAmount.Amount
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // TokenAccountBalance returns the raw token amount of an ATA. The bool is

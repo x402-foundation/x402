@@ -187,6 +187,9 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 			s.keys = nil
 			NewBatchSvmScheme(ctx, s, nil)
 		})
+		require.PanicsWithValue(t, "BatchSvmScheme requires GetConfirmedTransaction on the signer", func() {
+			NewBatchSvmScheme(ctx, withoutConfirmedReads{newScriptedSigner(t, 1)}, nil)
+		})
 	})
 
 	// assertAccounts runs the settlement-account preflight for the test payer.
@@ -657,8 +660,12 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 		}
 		stale := payment(batchsettlement.BatchVoucherPayload{
 			Type: batchsettlement.PayloadTypeVoucher, ChannelConfig: channelConfig, Voucher: voucher,
-		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1")))
-		fresh := requirements(withExtra(batchsettlement.ExtraRecentSlot, "2"), withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"))
+		}, requirements(withExtra(batchsettlement.ExtraRecentSlot, "1"), withExtra(batchsettlement.ExtraLastValidBlockHeight, "1")))
+		fresh := requirements(
+			withExtra(batchsettlement.ExtraRecentSlot, "2"),
+			withExtra(batchsettlement.ExtraRecentBlockhash, "fresh"),
+			withExtra(batchsettlement.ExtraLastValidBlockHeight, "2"),
+		)
 		result, err = scheme.Verify(ctx, stale, fresh, nil)
 		require.NoError(t, err)
 		require.True(t, result.IsValid, result.InvalidReason)
@@ -2307,6 +2314,11 @@ func (s *lifecycleSigner) SimulateTransaction(ctx context.Context, tx *solana.Tr
 		return s.simulateFn(ctx, tx, network)
 	}
 	return s.scriptedSigner.SimulateTransaction(ctx, tx, network, opts)
+}
+
+// withoutConfirmedReads hides every method of its signer beyond the payment-channel set.
+type withoutConfirmedReads struct {
+	paymentchannels.PaymentChannelFacilitatorSigner
 }
 
 type addressesOnlySigner struct {

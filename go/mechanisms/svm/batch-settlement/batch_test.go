@@ -511,6 +511,9 @@ func (s stubFacilitatorSigner) GetLatestBlockhash(context.Context, string) (sola
 func (s stubFacilitatorSigner) GetSlot(context.Context, string, rpc.CommitmentType) (uint64, error) {
 	return 0, nil
 }
+func (s stubFacilitatorSigner) GetConfirmedTransaction(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+	return nil, nil
+}
 
 func newFacilitator(t *testing.T, ctx context.Context, feePayer *batchclient.PrivateKeySigner, idle *int64) *batchfacilitator.BatchSvmScheme {
 	t.Helper()
