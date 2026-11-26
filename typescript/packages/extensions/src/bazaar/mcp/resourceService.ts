@@ -34,7 +34,7 @@ export function createMcpDiscoveryExtension({
         inputSchema,
         ...(example !== undefined ? { example } : {}),
       },
-      ...(output?.example
+      ...(output?.example !== undefined
         ? {
             output: {
               type: "json",
@@ -88,7 +88,7 @@ export function createMcpDiscoveryExtension({
           required: ["type", "toolName", "inputSchema"] as ("type" | "toolName" | "inputSchema")[],
           additionalProperties: false,
         },
-        ...(output?.example
+        ...(output?.example !== undefined
           ? {
               output: {
                 type: "object" as const,
@@ -97,7 +97,6 @@ export function createMcpDiscoveryExtension({
                     type: "string" as const,
                   },
                   example: {
-                    type: "object" as const,
                     ...(output.schema && typeof output.schema === "object" ? output.schema : {}),
                   },
                 },
