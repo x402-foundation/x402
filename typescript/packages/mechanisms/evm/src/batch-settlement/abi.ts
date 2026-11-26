@@ -195,6 +195,17 @@ export const batchSettlementABI = [
   },
   {
     type: "event",
+    name: "Deposited",
+    inputs: [
+      { name: "channelId", type: "bytes32", indexed: true },
+      { name: "sender", type: "address", indexed: true },
+      { name: "amount", type: "uint128", indexed: false },
+      { name: "newBalance", type: "uint128", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
     name: "Claimed",
     inputs: [
       { name: "channelId", type: "bytes32", indexed: true },

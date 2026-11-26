@@ -7,7 +7,6 @@ import {
   VerifyResponse,
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
-import { FacilitatorEvmSigner } from "../../signer";
 import { BATCH_SETTLEMENT_SCHEME } from "../constants";
 import {
   isBatchSettlementDepositPayload,
@@ -17,7 +16,7 @@ import {
   isBatchSettlementRefundPayload,
   isBatchSettlementEnrichedRefundPayload,
 } from "../types";
-import type { AuthorizerSigner } from "../types";
+import type { AuthorizerSigner, BatchSettlementFacilitatorEvmSigner } from "../types";
 import { verifyDeposit, settleDeposit } from "./deposit";
 import { verifyVoucher } from "./voucher";
 import { executeClaimWithSignature } from "./claim";
@@ -65,7 +64,8 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
   /**
    * Creates a facilitator scheme for verifying and settling batch-settlement payments.
    *
-   * @param signer - Facilitator EVM signer(s) used for tx submission and onchain reads.
+   * @param signer - Facilitator EVM signer(s) used for tx submission and onchain reads. Its
+   *   `waitForTransactionReceipt` must return the receipt `logs`.
    * @param authorizerSigner - Optional dedicated key that provides EIP-712 signatures for
    *   `claimWithSignature` / `refundWithSignature`. When provided, the facilitator advertises
    *   its address as `receiverAuthorizer` in `/supported` and signs a missing claim authorizer
@@ -75,7 +75,7 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param config - Optional configuration (e.g. ERC-6492 factory allowlist).
    */
   constructor(
-    private readonly signer: FacilitatorEvmSigner,
+    private readonly signer: BatchSettlementFacilitatorEvmSigner,
     private readonly authorizerSigner?: AuthorizerSigner,
     config?: BatchSettlementEvmSchemeConfig,
   ) {

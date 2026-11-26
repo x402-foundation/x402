@@ -294,6 +294,7 @@ export type UptoPermit2Payload = {
 // Batch-settlement EVM scheme payload types
 export type {
   AuthorizerSigner,
+  BatchSettlementFacilitatorEvmSigner,
   ChannelConfig,
   ChannelState,
   BatchSettlementDepositPayload,

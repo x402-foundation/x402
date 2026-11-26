@@ -20,9 +20,22 @@ import {
   readChannelStateExtra,
   readExtraNumber,
   readExtraString,
+  readExtraUintString,
 } from "./utils";
 
 type AdmissionHold = "self" | "other" | "none";
+
+/**
+ * Keeps the larger of the stored and settled `totalClaimed`. Onchain `totalClaimed` only
+ * increases, and a deposit response reports the verify-time value, a lower bound.
+ *
+ * @param stored - `totalClaimed` already on the channel record.
+ * @param settled - `totalClaimed` from the settle response, if present and canonical.
+ * @returns The larger value as a decimal string.
+ */
+function maxTotalClaimed(stored: string, settled: string | undefined): string {
+  return settled !== undefined && BigInt(settled) > BigInt(stored) ? settled : stored;
+}
 
 /**
  * Inspects the admission lock for this request.
@@ -433,7 +446,10 @@ export async function handleAfterSettle(
           signedMaxClaimable,
           signature: raw.voucher.signature,
           balance: readExtraString(channelState, "balance", existing.balance),
-          totalClaimed: readExtraString(channelState, "totalClaimed", existing.totalClaimed),
+          totalClaimed: maxTotalClaimed(
+            existing.totalClaimed,
+            readExtraUintString(channelState, "totalClaimed"),
+          ),
           withdrawRequestedAt: readExtraNumber(
             channelState,
             "withdrawRequestedAt",

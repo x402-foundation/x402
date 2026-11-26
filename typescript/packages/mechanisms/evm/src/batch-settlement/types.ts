@@ -1,4 +1,5 @@
-import type { TypedData } from "viem";
+import type { Log, TypedData } from "viem";
+import type { FacilitatorEvmSigner } from "../signer";
 
 export interface AuthorizerSigner {
   address: `0x${string}`;
@@ -9,6 +10,20 @@ export interface AuthorizerSigner {
     message: Record<string, unknown>;
   }): Promise<`0x${string}`>;
 }
+
+/**
+ * Facilitator signer for the batch-settlement scheme. Receipts must carry their logs: deposit
+ * and refund settle responses derive `channelState` from the `Deposited` / `Claimed` /
+ * `Refunded` events. Signers built with `toFacilitatorEvmSigner` over a viem client conform.
+ */
+export type BatchSettlementFacilitatorEvmSigner = Omit<
+  FacilitatorEvmSigner,
+  "waitForTransactionReceipt"
+> & {
+  waitForTransactionReceipt(
+    args: Parameters<FacilitatorEvmSigner["waitForTransactionReceipt"]>[0],
+  ): Promise<{ status: string; logs: readonly Log[] }>;
+};
 
 export type ChannelState = {
   balance: bigint;

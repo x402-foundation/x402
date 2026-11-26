@@ -15,10 +15,8 @@ export const PERMIT2_DEPOSIT_COLLECTOR_ADDRESS =
   "0x4020425FAf3B746C082C2f942b4E5159887B0005" as const;
 
 /**
- * Bounds for the post-transaction channel-state polling loops in refund.ts and
- * deposit.ts, which re-read onchain state until it reflects a just-confirmed
- * change (a pending-withdrawal cancellation or a deposit balance increase).
- * Shared so both call sites stay in lockstep.
+ * Bounds for the voucher channel-state re-read (`readChannelStateCovering`), which waits out a
+ * lagging RPC node when the balance cannot cover what was already admitted.
  */
 export const CHANNEL_STATE_POLL_MS = 2_000;
 export const CHANNEL_STATE_POLL_INTERVAL_MS = 150;

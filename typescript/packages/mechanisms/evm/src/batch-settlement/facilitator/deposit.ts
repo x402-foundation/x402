@@ -1,32 +1,35 @@
 import {
   FacilitatorContext,
+  Network,
   PaymentPayload,
   PaymentRequirements,
   VerifyResponse,
   SettleResponse,
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
-import { getAddress, parseErc6492Signature, isAddressEqual } from "viem";
+import { getAddress, parseErc6492Signature, isAddressEqual, type Log } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import type { Erc20ApprovalGasSponsoringSigner } from "../../exact/extensions";
-import { BatchSettlementAssetTransferMethod, BatchSettlementDepositPayload } from "../types";
-import { batchSettlementABI, erc20BalanceOfABI } from "../abi";
 import {
-  BATCH_SETTLEMENT_ADDRESS,
-  CHANNEL_STATE_POLL_MS,
-  CHANNEL_STATE_POLL_INTERVAL_MS,
-} from "../constants";
+  BatchSettlementAssetTransferMethod,
+  BatchSettlementDepositPayload,
+  ChannelState,
+} from "../types";
+import { batchSettlementABI, erc20BalanceOfABI } from "../abi";
+import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import { finalHashFromTwoRequestSend, getEvmChainId, truncateErrorMessage } from "../../utils";
 import { multicall } from "../../multicall";
 import * as Errors from "../errors";
-import { ErrSettlementPending } from "../../exact/facilitator/errors";
 import {
   waitAndReturnSettleResponse,
   withPendingSettlementStore,
 } from "../../shared/settleReceipt";
 import {
+  findChannelEvents,
   parseRequirementsAmount,
   readChannelState,
+  receiptLogsUnavailableResponse,
+  toChannelStateExtra,
   toContractChannelConfig,
   validateChannelConfig,
   verifyBatchSettlementVoucherTypedData,
@@ -73,6 +76,43 @@ export async function verifyDeposit(
   context?: FacilitatorContext,
   allowedFactories: string[] = [],
 ): Promise<VerifyResponse> {
+  const result = await verifyDepositPreState(
+    signer,
+    payment,
+    payload,
+    requirements,
+    context,
+    allowedFactories,
+  );
+  if ("isValid" in result) {
+    return result;
+  }
+  return {
+    isValid: true,
+    payer: payload.channelConfig.payer,
+    extra: toChannelStateExtra(payload.voucher.channelId, result.preState),
+  };
+}
+
+/**
+ * Runs the {@link verifyDeposit} checks and returns the pre-deposit channel state on success.
+ *
+ * @param signer - Facilitator signer for onchain reads and signature verification.
+ * @param payment - Full payment envelope containing optional extensions.
+ * @param payload - The full deposit payload including channelConfig, amount, authorization, and voucher.
+ * @param requirements - Server payment requirements (asset, EIP-712 domain info, timeout, etc.).
+ * @param context - Optional facilitator extension context.
+ * @param allowedFactories - Allowlisted ERC-6492 factory addresses for counterfactual deposits.
+ * @returns The pre-deposit channel state, or a failed {@link VerifyResponse}.
+ */
+async function verifyDepositPreState(
+  signer: FacilitatorEvmSigner,
+  payment: PaymentPayload,
+  payload: BatchSettlementDepositPayload,
+  requirements: PaymentRequirements,
+  context: FacilitatorContext | undefined,
+  allowedFactories: string[],
+): Promise<VerifyResponse | { preState: ChannelState }> {
   const payer = payload.channelConfig.payer;
   const chainId = getEvmChainId(requirements.network);
   const configErr = validateChannelConfig(
@@ -124,7 +164,7 @@ export async function verifyDeposit(
     return shared.response;
   }
 
-  const { depositAmount, chBalance, chTotalClaimed, wdInitiatedAt, refundNonceVal } = shared;
+  const { depositAmount, preState } = shared;
 
   const execution = await resolveDepositExecution(signer, payment, payload, requirements, context);
   if ("isValid" in execution) {
@@ -169,17 +209,7 @@ export async function verifyDeposit(
     }
   }
 
-  return {
-    isValid: true,
-    payer,
-    extra: {
-      channelId: payload.voucher.channelId,
-      balance: chBalance.toString(),
-      totalClaimed: chTotalClaimed.toString(),
-      withdrawRequestedAt: Number(wdInitiatedAt),
-      refundNonce: refundNonceVal.toString(),
-    },
-  };
+  return { preState };
 }
 
 /**
@@ -200,10 +230,7 @@ async function verifySharedDepositState(
       chainId: number;
       depositAmount: bigint;
       payer: `0x${string}`;
-      chBalance: bigint;
-      chTotalClaimed: bigint;
-      wdInitiatedAt: bigint;
-      refundNonceVal: bigint;
+      preState: ChannelState;
     }
   | { ok: false; response: VerifyResponse }
 > {
@@ -319,10 +346,12 @@ async function verifySharedDepositState(
     chainId,
     depositAmount,
     payer,
-    chBalance,
-    chTotalClaimed,
-    wdInitiatedAt,
-    refundNonceVal,
+    preState: {
+      balance: chBalance,
+      totalClaimed: chTotalClaimed,
+      withdrawRequestedAt: Number(wdInitiatedAt),
+      refundNonce: refundNonceVal,
+    },
   };
 }
 
@@ -352,11 +381,10 @@ function depositSettlementCacheKey(
  * Handles a `PendingSettlementStore` cache hit for {@link settleDeposit}: a
  * prior call already broadcast `cachedTx` (its nonce/signature is now
  * consumed onchain, so re-broadcasting is not an option) but couldn't
- * confirm it before returning `settlement_pending`. Unlike the normal path,
- * there is no reliable pre-broadcast channel-state snapshot available here
- * (it lived in the earlier, now-returned call), so this reads whatever the
- * RPC currently reports on confirmation instead of the optimistic
- * balance-add fallback the normal path uses.
+ * confirm it before returning `settlement_pending`. The balance comes from the
+ * receipt's `Deposited` event; with no pre-broadcast snapshot here, one read
+ * supplies the fields `deposit()` does not touch, so a lagging node still
+ * returns them correctly. If that read fails, `extra` is omitted.
  *
  * @param signer - Facilitator signer used for the receipt wait and channel-state read.
  * @param payment - Full payment envelope containing optional extensions.
@@ -367,13 +395,6 @@ function depositSettlementCacheKey(
  * @param store - Pending-settlement store to update.
  * @param cacheKey - The key this deposit is cached under.
  * @returns A {@link SettleResponse} reconciled against the cached transaction.
- *
- * Known limitation: the cache-miss path's unconfirmedBundleHash check (guarding against a
- * non-conforming ERC-20-approval extension signer that bundles a single hash covering only
- * approve(), never running deposit()) has no equivalent here, since it needs the
- * pre-broadcast channel state this path doesn't have — a receipt success here is trusted at
- * face value. Only affects a non-conforming extension signer combined with a confirm-timeout
- * on the original request.
  */
 async function reconcilePendingDeposit(
   signer: FacilitatorEvmSigner,
@@ -405,46 +426,28 @@ async function reconcilePendingDeposit(
   }
   const receiptSigner = execution.kind === "erc20Approval" ? execution.extensionSigner : signer;
 
-  // Best-effort optimistic fallback for the spec-required extra.channelState, used
-  // only if the post-confirm read below fails. Not a true pre-broadcast snapshot
-  // (the deposit may already be reflected here), but the best available base,
-  // mirroring the optimistic balance-add the main deposit path uses.
-  let optimisticExtra: Record<string, unknown> | undefined;
-  try {
-    const preState = await readChannelState(signer, voucher.channelId);
-    optimisticExtra = {
-      channelState: {
-        channelId: voucher.channelId,
-        balance: (preState.balance + BigInt(deposit.amount)).toString(),
-        totalClaimed: preState.totalClaimed.toString(),
-        withdrawRequestedAt: preState.withdrawRequestedAt,
-        refundNonce: preState.refundNonce.toString(),
-      },
-    };
-  } catch {
-    // No optimistic fallback available; extra stays undefined below if the
-    // post-confirm read also fails.
-  }
-
   return withPendingSettlementStore(store, cacheKey, () =>
     waitAndReturnSettleResponse(receiptSigner, cachedTx, requirements.network, payer, {
       failedStatusReason: Errors.ErrDepositTransactionFailed,
-      onSuccess: async () => {
-        let extra = optimisticExtra;
+      onSuccess: async receipt => {
+        const deposited = depositedBalanceFromReceipt(
+          receipt,
+          voucher.channelId,
+          cachedTx,
+          requirements.network,
+          payer,
+        );
+        if (typeof deposited !== "bigint") {
+          return deposited;
+        }
+        let extra: Record<string, unknown> | undefined;
         try {
           const state = await readChannelState(signer, voucher.channelId);
           extra = {
-            channelState: {
-              channelId: voucher.channelId,
-              balance: state.balance.toString(),
-              totalClaimed: state.totalClaimed.toString(),
-              withdrawRequestedAt: state.withdrawRequestedAt,
-              refundNonce: state.refundNonce.toString(),
-            },
+            channelState: toChannelStateExtra(voucher.channelId, { ...state, balance: deposited }),
           };
         } catch {
-          // Keep the optimistic snapshot (if any) when the post-confirm read fails;
-          // the transaction is still reported as confirmed.
+          // The deposit is still reported as confirmed, without a channel snapshot.
         }
         return {
           success: true,
@@ -521,7 +524,7 @@ export async function settleDeposit(
     }
   }
 
-  const verified = await verifyDeposit(
+  const verified = await verifyDepositPreState(
     signer,
     payment,
     payload,
@@ -529,7 +532,7 @@ export async function settleDeposit(
     context,
     allowedFactories,
   );
-  if (!verified.isValid) {
+  if ("isValid" in verified) {
     const reason = verified.invalidReason ?? Errors.ErrInvalidPayloadType;
     return {
       success: false,
@@ -580,11 +583,9 @@ export async function settleDeposit(
 
     let tx: `0x${string}`;
     let receiptSigner: FacilitatorEvmSigner;
-    // A single hash from the two-request (approve + deposit) send means the signer bundled
-    // them atomically, but a non-conforming signer could return one hash after broadcasting
-    // only the approve. Its receipt then proves some transaction didn't revert, not that the
-    // deposit ran, so success requires the balance check below.
-    let unconfirmedBundleHash = false;
+    // A single hash from the two-request (approve + deposit) send means the signer bundled them
+    // atomically. The required `Deposited` event rejects a non-conforming signer whose single
+    // hash covers only the approve.
     if (execution.kind === "erc20Approval") {
       const txHashes = await execution.extensionSigner.sendTransactions([
         execution.signedTransaction,
@@ -598,7 +599,6 @@ export async function settleDeposit(
       }
       tx = finalHash;
       receiptSigner = execution.extensionSigner;
-      unconfirmedBundleHash = txHashes.length === 1;
     } else {
       tx = await signer.writeContract({
         address: getAddress(BATCH_SETTLEMENT_ADDRESS),
@@ -618,82 +618,32 @@ export async function settleDeposit(
     return await withPendingSettlementStore(store, cacheKey, () =>
       waitAndReturnSettleResponse(receiptSigner, tx, requirements.network, payer, {
         failedStatusReason: Errors.ErrDepositTransactionFailed,
-        onSuccess: async () => {
-          const optimisticExtra = {
-            channelState: {
-              channelId: voucher.channelId,
-              balance: (
-                BigInt(String(verified.extra?.balance ?? "0")) + BigInt(deposit.amount)
-              ).toString(),
-              totalClaimed: String(verified.extra?.totalClaimed ?? "0"),
-              withdrawRequestedAt: Number(verified.extra?.withdrawRequestedAt ?? 0),
-              refundNonce: String(verified.extra?.refundNonce ?? "0"),
-            },
-          };
-
-          // Poll until RPC reflects the confirmed deposit so later verify reads see this balance.
-          const expectedMinBalance = BigInt(optimisticExtra.channelState.balance);
-          const rpcDeadline = Date.now() + CHANNEL_STATE_POLL_MS;
-          let balanceConfirmed = false;
-          // Set only when a read succeeds and shows the deposit missing, as opposed to a read
-          // that failed outright and leaves the balance unknown.
-          let balanceReadWithoutConfirmation = false;
-          try {
-            let postState = await readChannelState(signer, voucher.channelId);
-            while (postState.balance < expectedMinBalance && Date.now() < rpcDeadline) {
-              await new Promise(resolve => setTimeout(resolve, CHANNEL_STATE_POLL_INTERVAL_MS));
-              postState = await readChannelState(signer, voucher.channelId);
-            }
-
-            if (postState.balance >= expectedMinBalance) {
-              balanceConfirmed = true;
-              optimisticExtra.channelState = {
-                channelId: voucher.channelId,
-                balance: postState.balance.toString(),
-                totalClaimed: postState.totalClaimed.toString(),
-                withdrawRequestedAt: postState.withdrawRequestedAt,
-                refundNonce: postState.refundNonce.toString(),
-              };
-            } else {
-              balanceReadWithoutConfirmation = true;
-            }
-          } catch {
-            // Keep optimistic channel state when post-deposit reads fail.
+        onSuccess: async receipt => {
+          const deposited = depositedBalanceFromReceipt(
+            receipt,
+            voucher.channelId,
+            tx,
+            requirements.network,
+            payer,
+          );
+          if (typeof deposited !== "bigint") {
+            return deposited;
           }
-
-          if (unconfirmedBundleHash && !balanceConfirmed) {
-            // A read showing the deposit missing is terminal; a failed read leaves it
-            // unconfirmed, so report settlement_pending for the caller to reconcile.
-            return balanceReadWithoutConfirmation
-              ? {
-                  success: false,
-                  errorReason: Errors.ErrDepositTransactionFailed,
-                  errorMessage:
-                    "extension signer returned a single transaction hash for the erc20 approval + " +
-                    "deposit bundle, but the resulting channel balance does not reflect the deposit",
-                  transaction: tx,
-                  network: requirements.network,
-                  payer,
-                }
-              : {
-                  success: false,
-                  errorReason: ErrSettlementPending,
-                  errorMessage:
-                    "extension signer returned a single transaction hash for the erc20 approval + " +
-                    "deposit bundle and the post-deposit balance read failed, so the deposit could not be confirmed",
-                  transaction: tx,
-                  network: requirements.network,
-                  payer,
-                };
-          }
-
+          // `deposit()` leaves totalClaimed, withdrawRequestedAt and refundNonce untouched, so the
+          // verify snapshot supplies them. A claim landing between verify and inclusion makes
+          // totalClaimed a lower bound.
           return {
             success: true,
             transaction: tx,
             network: requirements.network,
             payer,
             amount: deposit.amount,
-            extra: optimisticExtra,
+            extra: {
+              channelState: toChannelStateExtra(voucher.channelId, {
+                ...verified.preState,
+                balance: deposited,
+              }),
+            },
           };
         },
       }),
@@ -708,6 +658,42 @@ export async function settleDeposit(
       payer,
     };
   }
+}
+
+/**
+ * Reads the post-deposit balance from a successful deposit receipt. A successful `deposit()`
+ * always emits `Deposited`, so a receipt without one means the deposit did not run.
+ *
+ * @param receipt - Successful receipt of the deposit (or approve + deposit bundle) transaction.
+ * @param receipt.logs - Receipt logs; `undefined` when the signer dropped them.
+ * @param channelId - The deposited channel.
+ * @param tx - The deposit transaction hash.
+ * @param network - Network the transaction was broadcast to.
+ * @param payer - The payer address.
+ * @returns The `Deposited.newBalance`, or a terminal failure.
+ */
+function depositedBalanceFromReceipt(
+  receipt: { logs?: readonly Log[] },
+  channelId: `0x${string}`,
+  tx: `0x${string}`,
+  network: Network,
+  payer: `0x${string}`,
+): bigint | SettleResponse {
+  if (receipt.logs === undefined) {
+    return receiptLogsUnavailableResponse(tx, network, payer);
+  }
+  const balance = findChannelEvents(receipt.logs, "Deposited", channelId)[0]?.args.newBalance;
+  if (balance === undefined) {
+    return {
+      success: false,
+      errorReason: Errors.ErrDepositTransactionFailed,
+      errorMessage: "receipt has no Deposited event for the channel",
+      transaction: tx,
+      network,
+      payer,
+    };
+  }
+  return balance;
 }
 
 type DepositExecution =

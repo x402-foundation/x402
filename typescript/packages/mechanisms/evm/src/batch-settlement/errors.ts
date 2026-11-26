@@ -80,6 +80,7 @@ export const ErrChargeExceedsSignedCumulative =
 export const ErrMissingChannel = "invalid_batch_settlement_evm_missing_channel";
 export const ErrRefundNoBalance = "invalid_batch_settlement_evm_refund_no_balance";
 export const ErrRefundedEventMismatch = "invalid_batch_settlement_evm_refunded_event_mismatch";
+export const ErrReceiptLogsUnavailable = "invalid_batch_settlement_evm_receipt_logs_unavailable";
 export const ErrRefundAmountInvalid = "invalid_batch_settlement_evm_refund_amount_invalid";
 export const ErrRefundAuthorizerMismatch =
   "invalid_batch_settlement_evm_refund_authorizer_mismatch";

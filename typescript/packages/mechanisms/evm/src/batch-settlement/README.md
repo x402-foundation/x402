@@ -238,6 +238,8 @@ const facilitator = new x402Facilitator().register(
 
 The optional `authorizerSigner` produces the EIP-712 signatures advertised in `/supported.kinds[].extra.receiverAuthorizer`. Servers may delegate to it (see above) or supply their own. The `evmSigner` (the wallet account) submits transactions for `deposit`, `claimWithSignature`, `settle`, and `refundWithSignature` — anyone can submit a valid claim/refund tx, but only the configured signer here will be used by this facilitator.
 
+The `evmSigner` is a `BatchSettlementFacilitatorEvmSigner`: its `waitForTransactionReceipt` must return the receipt `logs`. Deposit and refund settle responses build `extra.channelState` from the receipt's `Deposited`, `Claimed` and `Refunded` events, so a receipt without `logs` fails with `invalid_batch_settlement_evm_receipt_logs_unavailable`. A signer built with `toFacilitatorEvmSigner` over a viem client conforms.
+
 A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each cooperative refund request originates from the service that created the channel (e.g. SIWX, JWT, or an API credential bound at channel-creation time). If the facilitator has no such authentication mechanism, omit `authorizerSigner` so no `receiverAuthorizer` is advertised in `/supported`; servers then supply their own authorizer signatures for claims and refunds.
 
 ## Facilitator-managed custody

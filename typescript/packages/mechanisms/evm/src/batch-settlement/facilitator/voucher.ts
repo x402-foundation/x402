@@ -4,7 +4,9 @@ import {
   BatchSettlementRefundPayload,
   BatchSettlementVoucherPayload,
   ChannelConfig,
+  ChannelState,
 } from "../types";
+import { CHANNEL_STATE_POLL_INTERVAL_MS, CHANNEL_STATE_POLL_MS } from "../constants";
 import { getEvmChainId } from "../../utils";
 import * as Errors from "../errors";
 import {
@@ -12,7 +14,35 @@ import {
   validateChannelConfig,
   verifyBatchSettlementVoucherTypedData,
   readChannelState,
+  toChannelStateExtra,
 } from "./utils";
+
+/**
+ * Reads channel state, re-reading for a bounded window while the balance is below `minBalance`.
+ *
+ * A balance that cannot cover the voucher is either a lagging RPC node or a real shortfall;
+ * after `CHANNEL_STATE_POLL_MS` the last read is returned and treated as real. A zero
+ * `minBalance` is raised to 1 so an empty channel also re-reads. Read errors throw at once.
+ *
+ * @param signer - Facilitator signer for onchain reads.
+ * @param channelId - The `bytes32` channel id.
+ * @param minBalance - Balance the channel must cover.
+ * @returns The first state covering `minBalance`, or the last read once the window elapses.
+ */
+async function readChannelStateCovering(
+  signer: FacilitatorEvmSigner,
+  channelId: `0x${string}`,
+  minBalance: bigint,
+): Promise<ChannelState> {
+  const floor = minBalance > 0n ? minBalance : 1n;
+  const deadline = Date.now() + CHANNEL_STATE_POLL_MS;
+  let state = await readChannelState(signer, channelId);
+  while (state.balance < floor && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, CHANNEL_STATE_POLL_INTERVAL_MS));
+    state = await readChannelState(signer, channelId);
+  }
+  return state;
+}
 
 /**
  * Verifies a cumulative voucher payload against onchain channel state.
@@ -69,13 +99,12 @@ export async function verifyVoucher(
     };
   }
 
-  const state = await readChannelState(signer, channelId);
+  const maxClaimableAmount = BigInt(voucher.maxClaimableAmount);
+  const state = await readChannelStateCovering(signer, channelId, maxClaimableAmount);
 
   if (state.balance === 0n) {
     return { isValid: false, invalidReason: Errors.ErrChannelNotFound, payer: channelConfig.payer };
   }
-
-  const maxClaimableAmount = BigInt(voucher.maxClaimableAmount);
 
   if (maxClaimableAmount > state.balance) {
     return {
@@ -101,12 +130,6 @@ export async function verifyVoucher(
   return {
     isValid: true,
     payer: channelConfig.payer,
-    extra: {
-      channelId,
-      balance: state.balance.toString(),
-      totalClaimed: state.totalClaimed.toString(),
-      withdrawRequestedAt: state.withdrawRequestedAt,
-      refundNonce: state.refundNonce.toString(),
-    },
+    extra: toChannelStateExtra(channelId, state),
   };
 }
