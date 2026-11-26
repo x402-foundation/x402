@@ -1058,6 +1058,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 
 	// --- Deposit: storage update from facilitator channelState ---
 	if batchsettlement.IsDepositPayload(payload) {
+		defer func() { _ = s.ReleasePendingRequest(ctx.Payload) }()
 		dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
 		if parseErr != nil {
 			log.Printf("[batched] AfterSettle deposit: parse payload failed: %v", parseErr)
@@ -1123,7 +1124,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		}
 		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
 			s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
-			_ = s.ReleasePendingRequest(ctx.Payload)
 			return nil
 		}
 		if missingRow {
@@ -1134,6 +1134,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 
 	// --- Refund: storage update from facilitator post-refund snapshot ---
 	if batchsettlement.IsEnrichedRefundPayload(payload) {
+		defer func() { _ = s.ReleasePendingRequest(ctx.Payload) }()
 		refundPayload, err := batchsettlement.EnrichedRefundPayloadFromMap(payload)
 		if err != nil {
 			log.Printf("[batched] AfterSettle refund: parse payload failed: %v", err)
@@ -1198,7 +1199,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		if updateRes.Status == ChannelUnchanged {
 			return errors.New(batchsettlement.ErrChannelBusy)
 		}
-		_ = s.ReleasePendingRequest(ctx.Payload)
 		return nil
 	}
 

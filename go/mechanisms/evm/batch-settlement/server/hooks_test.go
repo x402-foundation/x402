@@ -1884,6 +1884,65 @@ func TestAfterSettleHook_DepositKeepsWithdrawRequestedAt(t *testing.T) {
 	}
 }
 
+func TestAfterSettleHook_ReleasesLockWhenChannelStateOmittedOrRejected(t *testing.T) {
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	refund := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId": id, "maxClaimableAmount": "100", "signature": "0xsig",
+		},
+		"amount": "100", "refundNonce": "4", "claims": []interface{}{},
+	}
+	cases := []struct {
+		name    string
+		data    map[string]interface{}
+		extra   map[string]interface{}
+		wantErr bool
+	}{
+		{name: "refund omits channelState", data: refund},
+		{name: "refund rejects a malformed field", data: refund, wantErr: true, extra: map[string]interface{}{
+			"channelState": map[string]interface{}{"balance": "01"},
+		}},
+		{name: "deposit rejects a malformed field", data: depositPayloadFor(id, "100", "0xsig"), wantErr: true, extra: map[string]interface{}{
+			"channelState": map[string]interface{}{"balance": "01"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			sess := sampleSession(id, "100")
+			sess.ChannelConfig = testConfig()
+			sess.Balance = "1000"
+			sess.WithdrawRequestedAt = 77
+			seedSession(t, s, id, sess)
+			reserveDepositPending(t, s, id, "p-lock")
+			stub := &stubPayload{data: tc.data}
+			s.MergeRequestContext(stub, BatchSettlementRequestContext{
+				ChannelId: id, PendingId: "p-lock", ReservationCommitted: reservationFlag(true),
+			})
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+				Result:        &x402.SettleResponse{Success: true, Extra: tc.extra},
+			})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), facilitator.ErrInvalidRefundPayload) {
+					t.Fatalf("err = %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if lockHeld(t, s, id, "p-lock") {
+				t.Fatal("admission lock still held")
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != "1000" || got.WithdrawRequestedAt != 77 {
+				t.Fatalf("session = %+v", got)
+			}
+		})
+	}
+}
+
 func TestAfterSettleHook_RejectsMalformedChannelState(t *testing.T) {
 	cases := []struct {
 		name    string
