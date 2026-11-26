@@ -3684,6 +3684,12 @@ describe("resolveSettlementOverrideAmount", () => {
     it("passes through '0'", () => {
       expect(resolveSettlementOverrideAmount("0", baseRequirements)).toBe("0");
     });
+
+    it.each(["", "-1", "0x10", " 100", "1.5"])("rejects non-decimal raw amount %j", raw => {
+      expect(() => resolveSettlementOverrideAmount(raw, baseRequirements)).toThrow(
+        /Invalid settlement override amount/,
+      );
+    });
   });
 
   describe("percent format", () => {
