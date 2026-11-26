@@ -79,7 +79,7 @@ After distribution, `BatchChannelManager` reads the confirmed channel payout wat
 
 Custom signers should return the execution slot from `confirmTransaction`, honor `minContextSlot`, and implement `getConfirmedTransaction` with confirmed token-balance metadata. The default adapter supports these capabilities. Missing payout metadata leaves the original transaction pending.
 
-When a sealed channel's receiver is also the refund recipient or protocol treasury, aggregate token balances can combine earnings with other credits. That payout is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and the sweep queue is released so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
+When a channel's receiver is also its payer or the protocol treasury, aggregate token balances can combine earnings with other credits. A sweep, seal or cooperative refund of that channel is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and a sweep releases its queue so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
 
 ### V1 Package (`@x402/svm/v1`)
 

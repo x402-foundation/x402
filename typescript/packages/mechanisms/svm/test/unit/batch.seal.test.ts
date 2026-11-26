@@ -112,7 +112,7 @@ function channel(overrides: Partial<Channel> = {}): Channel {
 
 function signer(confirmed?: () => FacilitatorConfirmedTransaction | null) {
   return {
-    ...(confirmed ? { getConfirmedTransaction: vi.fn(async () => confirmed()) } : {}),
+    getConfirmedTransaction: vi.fn(async () => confirmed?.() ?? null),
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
     getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
     getAddresses: vi.fn(() => [feePayer.address]),

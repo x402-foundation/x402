@@ -34,10 +34,6 @@ import {
 import { requireTokenProgramHint } from "../../payment-channels/requirements";
 import { encodeVoucherMessageBytes, verifyVoucherSignature } from "../../payment-channels/voucher";
 import { SettlementCache } from "../../settlement-cache";
-import {
-  assertPaymentChannelFacilitatorSigner,
-  type PaymentChannelFacilitatorSigner,
-} from "../../payment-channels/signer";
 import type {
   FacilitatorAccountInfo,
   FacilitatorConfirmedTransaction,
@@ -65,12 +61,14 @@ import { BatchSvmRentCleanupManager } from "./rentCleanupManager";
 import {
   InMemoryBatchPendingSettlementStore,
   PayoutAttributionAmbiguousError,
+  assertBatchFacilitatorSigner,
   broadcastExpiredWithoutLanding,
   discardWire,
   distributionsForStore,
   hasTokenBalances,
   ownerBalanceChange,
   reserveBroadcast,
+  type BatchFacilitatorSigner,
   type BatchPendingSettlementStore,
   type ConfirmedEvidence,
 } from "./recovery";
@@ -183,7 +181,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   private readonly settlementCache = new SettlementCache();
   private readonly pendingStore: BatchPendingSettlementStore;
   private readonly confirmationSlots = new Map<string, bigint>();
-  private readonly signer: PaymentChannelFacilitatorSigner;
+  private readonly signer: BatchFacilitatorSigner;
   private readonly distributionPasses: Map<string, Promise<SettleResponse>>;
   private readonly maxIdleSecs: number;
   private readonly receiverBindingHistoryReader: BatchReceiverBindingHistoryReader | undefined;
@@ -195,7 +193,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     signer: FacilitatorSvmSigner,
     private readonly config: BatchSvmFacilitatorConfig = {},
   ) {
-    assertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme");
+    assertBatchFacilitatorSigner(signer, "BatchSvmScheme");
     if (signer.getAddresses().length === 0) {
       throw new Error("BatchSvmScheme requires at least one fee payer signer");
     }
@@ -686,14 +684,12 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         const keys = evidence.transaction.message.accountKeys.map(item =>
           typeof item === "string" ? item : item.pubkey,
         );
-        const [recipient] = await findAssociatedTokenPda({
-          mint: address(requirements.asset),
-          owner: address(requirements.payTo),
-          tokenProgram: address(prepared[0]!.terms.tokenProgram),
-        });
-        const recipientIndex = keys.indexOf(recipient);
-        if (recipientIndex < 0)
-          throw new Error("recipient is absent from distribution transaction");
+        const amount = await ownerBalanceChange(
+          evidence,
+          requirements.payTo,
+          requirements.asset,
+          prepared[0]!.terms.tokenProgram,
+        );
         // A sealed payout can also refund the payer or sweep treasury funds.
         // Balance evidence cannot separate those legs when beneficiaries alias.
         const swept: PreparedDistribution[] = [];
@@ -717,16 +713,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             throw new PayoutAttributionAmbiguousError();
           }
         }
-        const balance = (balances: NonNullable<typeof evidence.meta.preTokenBalances>) => {
-          const entry = balances.find(item => item.accountIndex === recipientIndex);
-          if (!entry) return 0n;
-          if (entry.mint !== requirements.asset || entry.owner !== requirements.payTo)
-            throw new Error("payout recipient balance mismatch");
-          return parseU64(entry.uiTokenAmount.amount, "payout balance");
-        };
-        const amount =
-          balance(evidence.meta.postTokenBalances) - balance(evidence.meta.preTokenBalances);
-        if (amount < 0n) throw new Error("negative recipient payout");
         response = {
           success: true,
           network: requirements.network,
@@ -769,8 +755,6 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   // Waits for the transaction's token balances to become visible, and remembers
   // its slot so later channel reads reach it.
   private async confirmedEvidence(signature: string, network: Network): Promise<ConfirmedEvidence> {
-    if (!this.signer.getConfirmedTransaction)
-      throw new Error("getConfirmedTransaction is required for payout accounting");
     let evidence: FacilitatorConfirmedTransaction | null | undefined;
     for (let attempt = 0; attempt < CHANNEL_READ_ATTEMPTS; attempt += 1) {
       try {
@@ -803,10 +787,11 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       throw new PayoutAttributionAmbiguousError();
     const evidence = await this.confirmedEvidence(signature, network);
     try {
-      const [paidToReceiver, refundedToPayer] = await Promise.all(
-        [payTo, payer].map(owner => ownerBalanceChange(evidence, owner, asset, terms.tokenProgram)),
-      );
-      return { paidToReceiver: paidToReceiver!, refundedToPayer: refundedToPayer! };
+      const [paidToReceiver, refundedToPayer] = await Promise.all([
+        ownerBalanceChange(evidence, payTo, asset, terms.tokenProgram),
+        ownerBalanceChange(evidence, payer, asset, terms.tokenProgram),
+      ]);
+      return { paidToReceiver, refundedToPayer };
     } catch (error) {
       throw new PayoutAttributionAmbiguousError(error);
     }
@@ -1779,9 +1764,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
    * @param signer - Facilitator signer supplied to the scheme
    * @returns The same signer, with confirmation slots recorded on this scheme
    */
-  private withConfirmationSlot(
-    signer: PaymentChannelFacilitatorSigner,
-  ): PaymentChannelFacilitatorSigner {
+  private withConfirmationSlot(signer: BatchFacilitatorSigner): BatchFacilitatorSigner {
     return new Proxy(signer, {
       get: (target, property) => {
         if (property === "confirmTransaction") {

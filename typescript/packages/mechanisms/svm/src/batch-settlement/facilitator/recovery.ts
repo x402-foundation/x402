@@ -1,20 +1,49 @@
 /* eslint-disable jsdoc/require-jsdoc */
 import {
+  address,
   getBase64Codec,
   getCompiledTransactionMessageDecoder,
   getTransactionDecoder,
 } from "@solana/kit";
 import type { PendingSettlementStore } from "@x402/core/facilitator";
 
-import { address } from "@solana/kit";
 import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
 import { parseU64 } from "../../payment-channels/open";
+import {
+  assertPaymentChannelFacilitatorSigner,
+  type PaymentChannelFacilitatorSigner,
+} from "../../payment-channels/signer";
 import type {
   FacilitatorConfirmedTransaction,
   FacilitatorSvmSigner,
   FacilitatorTokenBalance,
 } from "../../signer";
+
+/**
+ * {@link PaymentChannelFacilitatorSigner} plus the confirmed-transaction read
+ * every batch payout is attributed from. `upto` never reads it.
+ */
+export type BatchFacilitatorSigner = PaymentChannelFacilitatorSigner & {
+  getConfirmedTransaction: NonNullable<FacilitatorSvmSigner["getConfirmedTransaction"]>;
+};
+
+/**
+ * Assert a facilitator signer exposes every cap batch settlement needs.
+ *
+ * @param signer - Facilitator signer to validate
+ * @param label - Component name for error messages
+ * @throws Error when a required capability is missing
+ */
+export function assertBatchFacilitatorSigner(
+  signer: FacilitatorSvmSigner,
+  label: string,
+): asserts signer is BatchFacilitatorSigner {
+  assertPaymentChannelFacilitatorSigner(signer, label);
+  if (typeof signer.getConfirmedTransaction !== "function") {
+    throw new Error(`${label} requires getConfirmedTransaction on the signer.`);
+  }
+}
 
 /** Batch recovery records must outlive an unresolved transaction. */
 export interface BatchPendingSettlementStore extends PendingSettlementStore {
@@ -132,12 +161,12 @@ export class PayoutAttributionAmbiguousError extends Error {
  * @returns `true` only when the blockhash is invalid and no record of the signature exists
  */
 export async function broadcastExpiredWithoutLanding(
-  signer: Pick<FacilitatorSvmSigner, "isBlockhashValid" | "getConfirmedTransaction">,
+  signer: Pick<BatchFacilitatorSigner, "isBlockhashValid" | "getConfirmedTransaction">,
   signature: string,
   network: string,
   wire: string | undefined,
 ): Promise<boolean> {
-  if (!wire || !signer.isBlockhashValid || !signer.getConfirmedTransaction) return false;
+  if (!wire || !signer.isBlockhashValid) return false;
   try {
     const transaction = getTransactionDecoder().decode(getBase64Codec().encode(wire));
     const { lifetimeToken } = getCompiledTransactionMessageDecoder().decode(
