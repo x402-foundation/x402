@@ -31,12 +31,6 @@ import { encodeVoucherMessageBytes } from "./voucher";
 
 export { RECLAIM_DISCRIMINATOR, ChannelStatus };
 
-/**
- * The name of an onchain channel status.
- *
- * @param status - Channel status byte
- * @returns `Open`, `Sealed`, `Closing`, `Distributed`, or `Unknown(n)`
- */
 export function channelStatusName(status: number): string {
   return ChannelStatus[status] ?? `Unknown(${status})`;
 }

@@ -744,10 +744,7 @@ type closeGateSlot struct {
 	known bool
 }
 
-// channelPastCloseGate reports whether network's current slot is past
-// openSlot + OpenSlotWindow, when a channel PDA can have been deallocated
-// (and can no longer be opened). cache avoids repeated GetSlot calls
-// across a batch.
+// Cache avoids a GetSlot per channel in one batch.
 func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network string, openSlot int64, cache *closeGateSlot) bool {
 	if openSlot <= 0 {
 		return false
@@ -766,10 +763,7 @@ func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network strin
 	return cache.value > uint64(openSlot)+paymentchannels.OpenSlotWindow
 }
 
-// fetchChannelOrClosed reads channelID. When the account is absent onchain and
-// past openSlot + OpenSlotWindow, it returns (nil, true, nil) without polling
-// so callers can emit a closed-channel resync failure; otherwise it falls back
-// to fetchChannel polling.
+// An account past the close gate is closed without polling, so the caller resyncs instead of waiting.
 func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, channelID string, openSlot int64, cache *closeGateSlot) (*generated.Channel, bool, error) {
 	if f.hooks.fetchChannel != nil {
 		channel, err := f.hooks.fetchChannel(ctx, network, channelID)

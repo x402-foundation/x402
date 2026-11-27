@@ -39,7 +39,6 @@ import {
 /** Reason reported when a channel is already mid-operation. */
 export const CHANNEL_BUSY = "duplicate_settlement";
 
-/** Every known onchain channel status byte accepted by this scheme. */
 export const ALL_CHANNEL_STATUSES: readonly ChannelStatus[] = [
   ChannelStatus.Open,
   ChannelStatus.Closing,

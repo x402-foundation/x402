@@ -29,7 +29,6 @@ import type { BatchChannelStatus, ChannelState, ChannelStore } from "./types";
 /** Channels per claim or settle request when the facilitator advertises no capacity. */
 const DEFAULT_CHANNELS_PER_BATCH = 4;
 
-/** Largest unsigned 64-bit integer a channel watermark can hold. */
 const U64_MAX = (1n << 64n) - 1n;
 
 /** Submits a server-authored redemption payload; normally a facilitator. */
@@ -106,7 +105,6 @@ export interface BatchChannelManagerConfig {
   receiverAuthorizer?: MessagePartialSigner | undefined;
 }
 
-/** A channel's confirmed onchain state, as the facilitator reported it in `extra.channelStates`. */
 type ObservedChannel = {
   status: BatchRedemptionStatus;
   settled: bigint;
@@ -311,10 +309,8 @@ export class BatchChannelManager {
       return;
     }
     {
-      // The spec's claim response is just `success`/`transaction`/`network`/
-      // `amount`; the reference facilitator adds `extra.accepts[]` with each
-      // channel's confirmed watermark. Use it when present. Otherwise read a
-      // configured settled reader or `rpcUrl`, or record the voucher amount.
+      // The spec's claim response has no per-channel watermark. `extra.accepts[]`
+      // is a facilitator addition.
       const accepts = response.extra?.accepts;
       if (accepts !== undefined) {
         if (
@@ -671,10 +667,7 @@ export class BatchChannelManager {
       );
       return [];
     }
-    // `extra.channels[]` is the reference facilitator's addition, not a
-    // spec field; when present it must name exactly this batch. The paid
-    // watermark comes from `extra.channelStates`, then a configured reader
-    // or `rpcUrl`; without one the channel stays payable.
+    // `extra.channels[]` is not a spec field. When present it must name this batch.
     const channels = response.extra?.channels;
     if (
       channels !== undefined &&

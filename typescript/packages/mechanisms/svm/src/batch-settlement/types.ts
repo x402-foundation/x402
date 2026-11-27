@@ -216,7 +216,6 @@ export type BatchChannelState = {
   chargedCumulativeAmount?: string | undefined;
 };
 
-/** Onchain channel status a redemption snapshot reports. */
 export type BatchRedemptionStatus = "open" | "closing" | "sealed" | "distributed" | "closed";
 
 /**

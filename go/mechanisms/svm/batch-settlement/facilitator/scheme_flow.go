@@ -801,10 +801,7 @@ func distributionPassKey(key string, prepared []PreparedDistribution, channels [
 	return key + ":pass:" + strings.Join(parts, ",")
 }
 
-// distributionChannels reads and checks prepared's channels. While recovering,
-// an absent (possibly reclaimed) channel is left nil rather than awaited.
-// On a fresh call, a channel absent past open_slot + OpenSlotWindow sets
-// hasClosed so distributeKeyed returns a closed-channel resync failure.
+// While recovering, an absent channel is left nil rather than awaited.
 func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements, recovering bool) ([]*generated.Channel, bool, error) {
 	channels := make([]*generated.Channel, len(prepared))
 	var cachedSlot closeGateSlot
@@ -981,11 +978,8 @@ func completeStates(prepared []PreparedDistribution, channels []*generated.Chann
 	return states
 }
 
-// replayDistributionStates builds channelStates for a replayed successful distribute:
-// live channels use redemptionSnapshot, absent channels preserve a terminal distributed
-// snapshot from previous when present, and report closed only when allowClosed is true
-// (meaning the channel reads were constrained to the confirmation slot). Returns nil
-// for a non-success response or if any channel cannot be safely reported.
+// A recorded distributed snapshot is kept when the account is gone.
+// Closed is reported only for a read pinned to the confirmation slot.
 func replayDistributionStates(prepared []PreparedDistribution, channels []*generated.Channel, previous *x402.SettleResponse, allowClosed bool) []batchsettlement.BatchRedemptionChannelState {
 	if !previous.Success {
 		return nil

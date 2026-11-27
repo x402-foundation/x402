@@ -593,8 +593,6 @@ func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []Channel
 	return covered
 }
 
-// observePayout is a channel's confirmed payout watermark: the facilitator's
-// state, else a configured reader.
 func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel) (observedChannel, bool) {
 	if state, ok := states[channel.ChannelID]; ok {
 		return state, true
@@ -614,8 +612,6 @@ func (m *BatchChannelManager) observePayout(ctx context.Context, channel Channel
 	return observedChannel{payout: paid}, true
 }
 
-// observeSettled is a channel's confirmed settled watermark from the
-// facilitator's state or a configured reader.
 func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID string, states map[string]observedChannel) (uint64, bool) {
 	if state, ok := states[channelID]; ok {
 		return state.settled, true
@@ -631,9 +627,7 @@ func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID stri
 	return settled, ok
 }
 
-// recordObserved raises a channel's watermarks to the observed ones (a zero value
-// leaves its field alone) and marks it sealed or distributed once the chain says it is.
-// Adopting ChannelStatusClosed reports any unclaimed voucher delta after the update persists.
+// recordObserved reports unclaimed voucher value after a closed channel is persisted.
 func (m *BatchChannelManager) recordObserved(channelID string, observed observedChannel) error {
 	var closed *ChannelState
 	if err := m.record(channelID, func(state ChannelState) ChannelState {
