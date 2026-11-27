@@ -56,7 +56,6 @@ async def test_x402_mcp_client_async_free_tool():
 
 @pytest.mark.asyncio
 async def test_x402_mcp_client_async_forwards_structured_content_from_free_tool():
-    """Free tool results keep the tool's structured content."""
     mock_mcp = MockAsyncMCPClient()
     mock_payment = MockAsyncPaymentClient()
     mock_mcp.call_tool.return_value = MockAsyncMCPResult(
@@ -126,7 +125,6 @@ async def test_x402_mcp_client_async_payment_required_auto_payment():
 
 @pytest.mark.asyncio
 async def test_x402_mcp_client_async_forwards_structured_content_from_paid_tool():
-    """Paid tool results keep structured content after settlement."""
     mock_mcp = MockAsyncMCPClient()
     mock_payment = MockAsyncPaymentClient()
 
@@ -675,7 +673,6 @@ async def test_x402_mcp_client_async_get_tool_payment_requirements():
 
 @pytest.mark.asyncio
 async def test_x402_mcp_session_forwards_structured_content_from_free_tool():
-    """Session results keep structured content on a free call."""
     session = MockAsyncMCPClient()
     payment = MockAsyncPaymentClient()
     session.call_tool.return_value = MockAsyncMCPResult(
@@ -691,7 +688,6 @@ async def test_x402_mcp_session_forwards_structured_content_from_free_tool():
 
 @pytest.mark.asyncio
 async def test_x402_mcp_session_forwards_structured_content_from_paid_tool():
-    """Session results keep structured content after a paid retry."""
     session = MockAsyncMCPClient()
     payment = MockAsyncPaymentClient()
     session.call_tool.side_effect = [

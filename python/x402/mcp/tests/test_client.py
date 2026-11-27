@@ -54,7 +54,6 @@ def test_x402_mcp_client_free_tool():
 
 
 def test_x402_mcp_client_forwards_structured_content_from_free_tool():
-    """Free tool results keep the tool's structured content."""
     mock_mcp = MockMCPClient()
     mock_payment = MockPaymentClient()
 
@@ -133,7 +132,6 @@ def test_x402_mcp_client_payment_required_auto_payment():
 
 
 def test_x402_mcp_client_forwards_structured_content_from_paid_tool():
-    """Paid tool results keep structured content after settlement."""
     mock_mcp = MockMCPClient()
     mock_payment = MockPaymentClient()
 
