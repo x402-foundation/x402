@@ -15,14 +15,34 @@ import type { AuthorizerSigner } from "../types";
 import type { BatchSettlementEvmScheme } from "./scheme";
 import type { Channel } from "./storage";
 import { rethrowLockImplementationError } from "./storage";
-import {
-  parseRefundSettlementSnapshot,
-  readChannelStateExtra,
-  readExtraNumber,
-  readExtraString,
-} from "./utils";
+import { parseRefundSettlementSnapshot } from "./utils";
 
 type AdmissionHold = "self" | "other" | "none";
+
+/**
+ * Keeps the larger of the stored and settled `totalClaimed`.
+ *
+ * @param stored - `totalClaimed` already on the channel record.
+ * @param settled - `totalClaimed` from the settle response, if present and canonical.
+ * @returns The larger value as a decimal string.
+ */
+function maxTotalClaimed(stored: string, settled: string | undefined): string {
+  return settled !== undefined && BigInt(settled) > BigInt(stored) ? settled : stored;
+}
+
+/**
+ * Keeps the larger of the stored and settled counter.
+ *
+ * `deposit` does not clear a pending withdrawal, and a settle response can carry the
+ * verify-time nonce. Callers pass counters `parseRefundSettlementSnapshot` already checked.
+ *
+ * @param stored - Counter already on the channel record.
+ * @param settled - Counter from the settle response, if present.
+ * @returns The larger counter.
+ */
+function maxSafeCount(stored: number, settled: number | undefined): number {
+  return settled !== undefined && settled > stored ? settled : stored;
+}
 
 /**
  * Inspects the admission lock for this request.
@@ -341,26 +361,36 @@ export async function handleAfterSettle(
     const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
     const now = Date.now();
 
-    const snapshot = parseRefundSettlementSnapshot(result.extra);
     const recovered = scheme.readRequestContext(paymentPayload)?.channelSnapshot;
     const hold = await inspectAdmission(scheme, channelId, pendingId);
     if (hold === "other") {
       throw new Error(Errors.ErrChannelBusy);
     }
     try {
+      const snapshot = parseRefundSettlementSnapshot(result.extra);
+      if (!snapshot) {
+        return;
+      }
       const updateResult = await storage.updateChannel(channelId, current => {
         const existing = current ?? (hold === "self" ? recovered : undefined);
         if (!existing) {
           return current;
         }
-        if (BigInt(snapshot.balance) <= BigInt(existing.chargedCumulativeAmount)) {
+        if (
+          snapshot.balance !== undefined &&
+          BigInt(snapshot.balance) <= BigInt(existing.chargedCumulativeAmount)
+        ) {
           return undefined;
         }
         return {
           ...existing,
-          ...snapshot,
+          balance: snapshot.balance ?? existing.balance,
+          totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot.totalClaimed),
+          withdrawRequestedAt: snapshot.withdrawRequestedAt ?? existing.withdrawRequestedAt,
+          refundNonce: maxSafeCount(existing.refundNonce, snapshot.refundNonce),
           network: requirements.network || existing.network,
-          onchainSyncedAt: now,
+          // Omitted balance is still the pre-refund figure, so the next voucher must re-read.
+          onchainSyncedAt: snapshot.balance === undefined ? 0 : now,
           lastRequestTimestamp: now,
         };
       });
@@ -392,7 +422,6 @@ export async function handleAfterSettle(
     const channelId = raw.voucher.channelId;
     const pendingId = scheme.readRequestContext(paymentPayload)?.pendingId;
     const ex = result.extra ?? {};
-    const channelState = readChannelStateExtra(ex);
     const config = raw.channelConfig;
     const signedMaxClaimable = raw.voucher.maxClaimableAmount;
     const now = Date.now();
@@ -416,6 +445,7 @@ export async function handleAfterSettle(
     let abortReason: string | undefined;
     let abortMessage: string | undefined;
     try {
+      const snapshot = parseRefundSettlementSnapshot(ex);
       const updateResult = await storage.updateChannel(channelId, current => {
         const existing = current ?? (hold === "self" ? recovered : undefined);
         if (!existing) {
@@ -425,6 +455,8 @@ export async function handleAfterSettle(
         const chargedActual = (
           BigInt(existing.chargedCumulativeAmount) + BigInt(requirements.amount)
         ).toString();
+        const reportedCounters =
+          snapshot?.totalClaimed !== undefined && snapshot?.withdrawRequestedAt !== undefined;
         return {
           channelId,
           channelConfig: config,
@@ -432,15 +464,15 @@ export async function handleAfterSettle(
           chargedCumulativeAmount: chargedActual,
           signedMaxClaimable,
           signature: raw.voucher.signature,
-          balance: readExtraString(channelState, "balance", existing.balance),
-          totalClaimed: readExtraString(channelState, "totalClaimed", existing.totalClaimed),
-          withdrawRequestedAt: readExtraNumber(
-            channelState,
-            "withdrawRequestedAt",
+          balance: snapshot?.balance ?? existing.balance,
+          totalClaimed: maxTotalClaimed(existing.totalClaimed, snapshot?.totalClaimed),
+          withdrawRequestedAt: maxSafeCount(
             existing.withdrawRequestedAt,
+            snapshot?.withdrawRequestedAt,
           ),
-          refundNonce: readExtraNumber(channelState, "refundNonce", existing.refundNonce),
-          onchainSyncedAt: now,
+          refundNonce: maxSafeCount(existing.refundNonce, snapshot?.refundNonce),
+          // An omitted counter was not refreshed by this deposit.
+          onchainSyncedAt: reportedCounters ? now : existing.onchainSyncedAt,
           lastRequestTimestamp: now,
         };
       });
@@ -463,8 +495,12 @@ export async function handleAfterSettle(
         }
       }
     } catch (err) {
-      abortReason = Errors.ErrVoucherStoreUnavailable;
-      abortMessage = err instanceof Error ? err.message : String(err);
+      if (err instanceof Error && err.message === Errors.ErrRefundPayload) {
+        abortReason = Errors.ErrRefundPayload;
+      } else {
+        abortReason = Errors.ErrVoucherStoreUnavailable;
+        abortMessage = err instanceof Error ? err.message : String(err);
+      }
     } finally {
       if (hold === "self") {
         try {

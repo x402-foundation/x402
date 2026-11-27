@@ -349,17 +349,20 @@ export function evaluateVoucherAgainstCachedState(
 /**
  * Returns whether cached onchain fields for a channel are still within the freshness window.
  *
+ * A pending withdrawal is never fresh: `finalizeWithdraw` can lower the balance once
+ * `withdrawDelay` elapses, which may be before the ttl does.
+ *
  * @param channel - Cached channel row.
  * @param ttlMs - Maximum age of `onchainSyncedAt` in milliseconds. `0` or negative disables the cache.
  * @param now - Current wall-clock time in milliseconds.
  * @returns `true` if onchain sync time is present and still within `ttlMs` of `now`.
  */
 export function isOnchainStateFresh(
-  channel: Pick<CachedChannelOnchain, "onchainSyncedAt">,
+  channel: Pick<CachedChannelOnchain, "onchainSyncedAt" | "withdrawRequestedAt">,
   ttlMs: number,
   now: number,
 ): boolean {
-  if (ttlMs <= 0) {
+  if (ttlMs <= 0 || channel.withdrawRequestedAt !== 0) {
     return false;
   }
   return channel.onchainSyncedAt !== undefined && now - channel.onchainSyncedAt <= ttlMs;

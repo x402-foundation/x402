@@ -238,7 +238,17 @@ const facilitator = new x402Facilitator().register(
 
 The optional `authorizerSigner` produces the EIP-712 signatures advertised in `/supported.kinds[].extra.receiverAuthorizer`. Servers may delegate to it (see above) or supply their own. The `evmSigner` (the wallet account) submits transactions for `deposit`, `claimWithSignature`, `settle`, and `refundWithSignature` — anyone can submit a valid claim/refund tx, but only the configured signer here will be used by this facilitator.
 
-A facilitator that advertises a `receiverAuthorizer` (so servers can delegate to it) must authenticate that each cooperative refund request originates from the service that created the channel (e.g. SIWX, JWT, or an API credential bound at channel-creation time). If the facilitator has no such authentication mechanism, omit `authorizerSigner` so no `receiverAuthorizer` is advertised in `/supported`; servers then supply their own authorizer signatures for claims and refunds.
+The `evmSigner` is a `BatchSettlementFacilitatorEvmSigner`: its `waitForTransactionReceipt` must return the receipt `logs`. Deposit and refund settle responses build `extra.channelState` from the receipt's `Deposited`, `Claimed` and `Refunded` events, so a receipt without `logs` fails with `invalid_batch_settlement_evm_receipt_logs_unavailable`, and the response carries the transaction hash. The transaction may still have deposited or refunded, so reconcile it from that hash; deposited funds stay in the channel and are refundable or withdrawable as usual. A signer built with `toFacilitatorEvmSigner` over a viem client conforms.
+
+### Delegated refunds
+
+By default the scheme has no `/settle` caller authentication, so it never signs a refund on a server's behalf: a refund without `refundAuthorizerSignature` is rejected with `invalid_batch_settlement_evm_refund_authorizer_signature`. `/supported` advertises `extra.delegatedRefund: false` next to `receiverAuthorizer`, so a self-managed server that delegates `receiverAuthorizer` to this facilitator (no `receiverAuthorizerSigner`) fails at `initialize()` instead of on its first refund. Delegation still works for claims, which the facilitator signs with `authorizerSigner`. If you don't want servers to delegate at all, omit `authorizerSigner` so no `receiverAuthorizer` is advertised.
+
+```typescript
+new BatchSettlementEvmScheme(evmSigner, authorizerSigner, { delegatedRefund: true });
+```
+
+> **Warning:** only set `delegatedRefund: true` if you authenticate every `/settle` caller out of band and forward a refund only when the caller is the service that created the channel (e.g. SIWX, JWT, or an API credential bound at channel-creation time). This scheme does no caller authentication itself. With the flag set, it advertises `delegatedRefund: true` and signs any refund that carries no `refundAuthorizerSignature` for a channel whose `receiverAuthorizer` is your `authorizerSigner`. A cooperative refund skips the withdrawal delay, so without caller authentication anyone who can reach `/settle` can refund, and so drain, those channels. The flag requires `authorizerSigner`; the constructor throws without it.
 
 ## Facilitator-managed custody
 

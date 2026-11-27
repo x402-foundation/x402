@@ -1,5 +1,5 @@
 import { SettleResponse, PaymentRequirements } from "@x402/core/types";
-import { encodeFunctionData, getAddress, isAddressEqual, parseEventLogs } from "viem";
+import { encodeFunctionData, getAddress, isAddressEqual, type Log } from "viem";
 import { FacilitatorEvmSigner } from "../../signer";
 import type {
   AuthorizerSigner,
@@ -7,33 +7,21 @@ import type {
   ChannelState,
 } from "../types";
 import { batchSettlementABI } from "../abi";
-import {
-  BATCH_SETTLEMENT_ADDRESS,
-  CHANNEL_STATE_POLL_MS,
-  CHANNEL_STATE_POLL_INTERVAL_MS,
-} from "../constants";
+import { BATCH_SETTLEMENT_ADDRESS } from "../constants";
 import { computeChannelId } from "../utils";
-import { signClaimBatch } from "../authorizerSigner";
+import { signClaimBatch, signRefund } from "../authorizerSigner";
 import * as Errors from "../errors";
 import { truncateErrorMessage } from "../../utils";
 import { waitAndReturnSettleResponse } from "../../shared/settleReceipt";
 import { buildVoucherClaimArgs } from "./claim";
-import { readChannelState, toContractChannelConfig } from "./utils";
-
-type RefundSettlementExtra = {
-  channelState: {
-    channelId: `0x${string}`;
-    balance: string;
-    totalClaimed: string;
-    withdrawRequestedAt: number;
-    refundNonce: string;
-  };
-};
-
-type RefundSettlementDetails = {
-  amount: string;
-  extra: RefundSettlementExtra;
-};
+import {
+  findChannelEvents,
+  type OnchainChannelState,
+  readChannelState,
+  receiptLogsUnavailableResponse,
+  toContractChannelConfig,
+  validateChannelConfig,
+} from "./utils";
 
 /**
  * Computes the token amount that `refundWithSignature` would transfer after any
@@ -75,114 +63,107 @@ function getRefundableAmount(
 }
 
 /**
- * Builds facilitator-owned response details for a refund settlement after applying the refund amount.
+ * Post-refund balance from a same-receipt deposit.
  *
- * @param payload - Refund payload containing claims and amount.
- * @param channelId - Canonical channel id for the refund.
- * @param preState - Onchain channel state before this refund, or null if unknown.
- * @returns Actual refund amount and extra fields for the settlement response.
+ * `Deposited.newBalance` is absolute. One `Refunded` after the last deposit is subtracted.
+ * A negative result returns `undefined` so the pre-read is used instead.
+ *
+ * @param logs - Receipt logs.
+ * @param channelId - The refunded channel.
+ * @returns Balance after that deposit, or `undefined` when the receipt has none or the result is negative.
  */
-function buildRefundExtra(
-  payload: BatchSettlementEnrichedRefundPayload,
-  channelId: `0x${string}`,
-  preState: ChannelState | null,
-): RefundSettlementDetails {
-  const preTotalClaimed = preState?.totalClaimed ?? 0n;
-  const preBalance = preState?.balance ?? 0n;
+function eventRefundBalance(logs: readonly Log[], channelId: `0x${string}`): bigint | undefined {
+  let balance: bigint | undefined;
+  let depositAt = -1;
+  for (let index = 0; index < logs.length; index++) {
+    const log = logs[index];
+    if (log === undefined) continue;
+    const deposited = findChannelEvents([log], "Deposited", channelId)[0];
+    if (!deposited) continue;
+    balance = deposited.args.newBalance;
+    depositAt = index;
+  }
+  if (balance === undefined) return undefined;
+  for (let index = depositAt + 1; index < logs.length; index++) {
+    const log = logs[index];
+    if (log === undefined) continue;
+    const refunded = findChannelEvents([log], "Refunded", channelId)[0];
+    if (!refunded || refunded.args.amount <= 0n) continue;
+    const next = balance - refunded.args.amount;
+    if (next < 0n) return undefined;
+    return next;
+  }
+  return balance;
+}
 
-  const lastClaimTotal =
-    payload.claims.length > 0
-      ? BigInt(payload.claims[payload.claims.length - 1].totalClaimed)
-      : preTotalClaimed;
-  const postClaimTotalClaimed = lastClaimTotal > preTotalClaimed ? lastClaimTotal : preTotalClaimed;
+type RefundChannelState = Omit<ChannelState, "balance"> & { balance?: bigint };
 
-  const available = preBalance - postClaimTotalClaimed;
-  const requestedAmount = BigInt(payload.amount);
-  const actualRefund = requestedAmount > available ? available : requestedAmount;
-
-  return {
-    amount: actualRefund.toString(),
-    extra: {
-      channelState: {
-        channelId,
-        balance: (preBalance - actualRefund).toString(),
-        totalClaimed: postClaimTotalClaimed.toString(),
-        withdrawRequestedAt: 0,
-        refundNonce: String((preState?.refundNonce ?? 0n) + 1n),
-      },
-    },
-  };
+/**
+ * Pre-read balance minus the refunded amount, or `undefined` when it cannot be trusted.
+ *
+ * `finalizeWithdraw` lowers the balance without a `Refunded` event or a `refundNonce` change.
+ * It is only callable once a withdrawal is pending and `withdrawDelay` has elapsed, so the
+ * figure is an upper bound on the onchain balance only while no withdrawal was pending at the
+ * pre-read and less than half of `withdrawDelay` has passed since then.
+ *
+ * @param preState - Channel state read before the transaction.
+ * @param refunded - Amount of the receipt `Refunded` event.
+ * @param withdrawDelay - Channel withdraw delay in seconds.
+ * @returns The balance, or `undefined` when a withdrawal may have finalized or the result is negative.
+ */
+function preReadRefundBalance(
+  preState: OnchainChannelState,
+  refunded: bigint,
+  withdrawDelay: number,
+): bigint | undefined {
+  const withdrawMayHaveFinalized =
+    preState.withdrawRequestedAt !== 0 || Date.now() - preState.readAt >= withdrawDelay * 500;
+  const balance = preState.balance - refunded;
+  return withdrawMayHaveFinalized || balance < 0n ? undefined : balance;
 }
 
 /**
- * Reads the post-refund state when pending withdrawal state can be affected.
+ * Builds the post-refund channel state from the pre-read and receipt events.
  *
- * @param signer - Facilitator signer used for onchain reads.
- * @param channelId - Channel that was refunded.
- * @param submittedNonce - Nonce used for this refund transaction.
- * @returns Fresh channel state once the nonce advances, or `null` if RPC reads lag.
- */
-async function readPostRefundState(
-  signer: FacilitatorEvmSigner,
-  channelId: `0x${string}`,
-  submittedNonce: string,
-): Promise<ChannelState | null> {
-  const expectedNonce = BigInt(submittedNonce) + 1n;
-  const deadline = Date.now() + CHANNEL_STATE_POLL_MS;
-
-  do {
-    let state: ChannelState;
-    try {
-      state = await readChannelState(signer, channelId);
-    } catch {
-      return null;
-    }
-    if (state.refundNonce >= expectedNonce) {
-      return state;
-    }
-    await new Promise(resolve => setTimeout(resolve, CHANNEL_STATE_POLL_INTERVAL_MS));
-  } while (Date.now() < deadline);
-
-  return null;
-}
-
-/**
- * Builds refund response details from confirmed post-transaction state.
+ * A same-receipt `Deposited.newBalance` wins. Next, a same-receipt `ChannelClosed` means the
+ * channel is empty with no pending withdrawal. Otherwise balance comes from the pre-read
+ * minus `Refunded.amount`, and is omitted when that figure cannot be trusted.
  *
- * @param channelId - Canonical channel id for the refund.
- * @param preState - Onchain state read before the transaction.
- * @param postState - Onchain state after the transaction.
- * @returns Actual refund amount and extra fields for the settlement response.
+ * @param preState - Channel state read before the transaction.
+ * @param logs - Receipt logs.
+ * @param channelId - The refunded channel.
+ * @param refunded - Amount of the receipt `Refunded` event.
+ * @param claimedTotal - Last `Claimed.newTotalClaimed` in the receipt, if any.
+ * @param refundNonce - Nonce the refund consumed.
+ * @param withdrawDelay - Channel withdraw delay in seconds.
+ * @returns Post-refund channel state. `balance` is absent when it cannot be derived safely.
  */
-function buildRefundExtraFromPostState(
+function deriveRefundState(
+  preState: OnchainChannelState,
+  logs: readonly Log[],
   channelId: `0x${string}`,
-  preState: ChannelState,
-  postState: ChannelState,
-): RefundSettlementDetails {
-  const actualRefund =
-    preState.balance > postState.balance ? preState.balance - postState.balance : 0n;
-
+  refunded: bigint,
+  claimedTotal: bigint | undefined,
+  refundNonce: bigint,
+  withdrawDelay: number,
+): RefundChannelState {
+  const eventBalance = eventRefundBalance(logs, channelId);
+  if (
+    eventBalance === undefined &&
+    findChannelEvents(logs, "ChannelClosed", channelId).length > 0
+  ) {
+    return { balance: 0n, totalClaimed: 0n, withdrawRequestedAt: 0, refundNonce: refundNonce + 1n };
+  }
   return {
-    amount: actualRefund.toString(),
-    extra: {
-      channelState: {
-        channelId,
-        balance: postState.balance.toString(),
-        totalClaimed: postState.totalClaimed.toString(),
-        withdrawRequestedAt: postState.withdrawRequestedAt,
-        refundNonce: postState.refundNonce.toString(),
-      },
-    },
+    balance: eventBalance ?? preReadRefundBalance(preState, refunded, withdrawDelay),
+    totalClaimed: claimedTotal ?? preState.totalClaimed,
+    withdrawRequestedAt: refunded >= preState.withdrawAmount ? 0 : preState.withdrawRequestedAt,
+    refundNonce: refundNonce + 1n,
   };
 }
 
 /**
  * Executes a cooperative refund via `refundWithSignature`.
- *
- * `refundAuthorizerSignature` is required: the facilitator has no caller authentication, so
- * it never signs a refund on the server's behalf and rejects an unsigned refund with
- * {@link Errors.ErrRefundAuthorizerSignature}. When `claimAuthorizerSignature` is absent the
- * facilitator signs the claim digest using `authorizerSigner`.
  *
  * If `payload.claims` is non-empty, the claim and refund are batched atomically via
  * the contract's `multicall`.
@@ -193,6 +174,8 @@ function buildRefundExtraFromPostState(
  * @param authorizerSigner - Optional dedicated key for producing EIP-712 signatures.
  *   When omitted, the payload must already carry the required authorizer signatures.
  * @param dataSuffix - Optional hex suffix appended to the refund transaction.
+ * @param delegatedRefund - When `true`, sign a refund that carries no `refundAuthorizerSignature`
+ *   with `authorizerSigner`. Only safe when `/settle` callers are authenticated out of band.
  * @returns A {@link SettleResponse} with the transaction hash on success.
  */
 export async function executeRefundWithSignature(
@@ -201,22 +184,51 @@ export async function executeRefundWithSignature(
   requirements: PaymentRequirements,
   authorizerSigner: AuthorizerSigner | undefined,
   dataSuffix?: `0x${string}`,
+  delegatedRefund = false,
 ): Promise<SettleResponse> {
   const network = requirements.network;
 
   try {
-    const refundSig = payload.refundAuthorizerSignature;
+    const channelId = computeChannelId(payload.channelConfig, network);
+
+    let refundSig = payload.refundAuthorizerSignature;
     if (!refundSig) {
+      if (!delegatedRefund || authorizerSigner === undefined) {
+        return {
+          success: false,
+          errorReason: Errors.ErrRefundAuthorizerSignature,
+          transaction: "",
+          network,
+        };
+      }
+      if (!isAddressEqual(payload.channelConfig.receiverAuthorizer, authorizerSigner.address)) {
+        return {
+          success: false,
+          errorReason: Errors.ErrAuthorizerAddressMismatch,
+          transaction: "",
+          network,
+        };
+      }
+      const configErr = validateChannelConfig(payload.channelConfig, channelId, requirements);
+      if (configErr) {
+        return { success: false, errorReason: configErr, transaction: "", network };
+      }
+    }
+
+    let preState: OnchainChannelState;
+    try {
+      preState = await readChannelState(signer, channelId);
+    } catch (e) {
       return {
         success: false,
-        errorReason: Errors.ErrRefundAuthorizerSignature,
+        errorReason: Errors.ErrRpcReadFailed,
+        errorMessage: truncateErrorMessage(
+          `failed to read channel state: ${e instanceof Error ? e.message : String(e)}`,
+        ),
         transaction: "",
         network,
       };
     }
-
-    const channelId = computeChannelId(payload.channelConfig, network);
-    const preState = await readChannelState(signer, channelId);
     const contractAddr = getAddress(BATCH_SETTLEMENT_ADDRESS);
     const refundableAmount = getRefundableAmount(payload, preState, channelId, network);
 
@@ -228,6 +240,24 @@ export async function executeRefundWithSignature(
         transaction: "",
         network,
       };
+    }
+
+    if (!refundSig) {
+      if (authorizerSigner === undefined) {
+        return {
+          success: false,
+          errorReason: Errors.ErrRefundAuthorizerSignature,
+          transaction: "",
+          network,
+        };
+      }
+      refundSig = await signRefund(
+        authorizerSigner,
+        channelId,
+        payload.amount,
+        payload.refundNonce,
+        network,
+      );
     }
 
     const refundCalldata = encodeFunctionData({
@@ -326,18 +356,13 @@ export async function executeRefundWithSignature(
 
     return await waitAndReturnSettleResponse(signer, tx, network, payload.channelConfig.payer, {
       failedStatusReason: Errors.ErrRefundTransactionFailed,
+      revertedReason: Errors.ErrTransactionReverted,
       onSuccess: async receipt => {
-        const logs = receipt.logs
-          ? parseEventLogs({
-              abi: batchSettlementABI,
-              eventName: "Refunded",
-              logs: receipt.logs.filter(log => isAddressEqual(log.address, contractAddr)),
-            })
-          : [];
-        const refundedLog = logs.find(
-          log => log.args.channelId.toLowerCase() === channelId.toLowerCase(),
-        );
-        const refundedAmount = refundedLog?.args.amount ?? 0n;
+        if (receipt.logs === undefined) {
+          return receiptLogsUnavailableResponse(tx, network, payload.channelConfig.payer);
+        }
+        const refundedAmount =
+          findChannelEvents(receipt.logs, "Refunded", channelId)[0]?.args.amount ?? 0n;
         if (refundedAmount <= 0n) {
           return {
             success: false,
@@ -350,14 +375,16 @@ export async function executeRefundWithSignature(
           };
         }
 
-        const postState =
-          preState && preState.withdrawRequestedAt !== 0
-            ? await readPostRefundState(signer, channelId, payload.refundNonce)
-            : null;
-        const refundDetails =
-          preState && postState
-            ? buildRefundExtraFromPostState(channelId, preState, postState)
-            : buildRefundExtra(payload, channelId, preState);
+        const claimed = findChannelEvents(receipt.logs, "Claimed", channelId);
+        const postState = deriveRefundState(
+          preState,
+          receipt.logs,
+          channelId,
+          refundedAmount,
+          claimed[claimed.length - 1]?.args.newTotalClaimed,
+          BigInt(payload.refundNonce),
+          payload.channelConfig.withdrawDelay,
+        );
 
         return {
           success: true,
@@ -365,7 +392,15 @@ export async function executeRefundWithSignature(
           network,
           payer: payload.channelConfig.payer,
           amount: refundedAmount.toString(),
-          extra: refundDetails.extra,
+          extra: {
+            channelState: {
+              channelId,
+              totalClaimed: postState.totalClaimed.toString(),
+              withdrawRequestedAt: postState.withdrawRequestedAt,
+              refundNonce: postState.refundNonce.toString(),
+              ...(postState.balance !== undefined ? { balance: postState.balance.toString() } : {}),
+            },
+          },
         };
       },
     });
