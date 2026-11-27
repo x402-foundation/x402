@@ -255,6 +255,9 @@ func ParseBuilderCodeSuffixFromCalldata(calldata string) (*BuilderCodeSuffixData
 	}
 
 	cborLength := parseHexInt(h[markerPos-6 : markerPos-2])
+	if cborLength < 0 {
+		return nil, false
+	}
 	suffixStart := markerPos - 6 - cborLength*2
 	if suffixStart < 0 || suffixStart+(cborLength+19)*2 != len(h) {
 		return nil, false
@@ -269,7 +272,7 @@ func ParseBuilderCodeSuffixFromCalldata(calldata string) (*BuilderCodeSuffixData
 
 // parseHexInt parses a hex substring into an int, returning -1 on failure.
 func parseHexInt(s string) int {
-	v, err := strconv.ParseInt(s, 16, 0)
+	v, err := strconv.ParseUint(s, 16, 16)
 	if err != nil {
 		return -1
 	}
@@ -417,7 +420,7 @@ func readCborValue(bytes []byte, o *int) (any, bool) {
 		if !ok {
 			return nil, false
 		}
-		items := make([]any, 0, size)
+		items := []any{}
 		for i := 0; i < size; i++ {
 			item, ok := readCborValue(bytes, o)
 			if !ok {
@@ -443,7 +446,7 @@ func readCborMap(bytes []byte, o *int) (map[string]any, bool) {
 		return nil, false
 	}
 
-	entries := make(map[string]any, size)
+	entries := make(map[string]any)
 	for i := 0; i < size; i++ {
 		key, ok := readCborText(bytes, o)
 		if !ok {
