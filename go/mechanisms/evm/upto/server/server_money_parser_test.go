@@ -186,3 +186,30 @@ func TestEnhancePaymentRequirements_SetsPermit2(t *testing.T) {
 		t.Error("Expected version in extra")
 	}
 }
+
+func TestEnhancePaymentRequirements_UnregisteredToken(t *testing.T) {
+	server := NewUptoEvmScheme()
+	requirements := x402.PaymentRequirements{
+		Scheme:  "upto",
+		Network: "eip155:84532",
+		Amount:  "1000",
+		Asset:   "0x1111111111111111111111111111111111111111",
+		PayTo:   "0x1234567890123456789012345678901234567890",
+	}
+
+	enhanced, err := server.EnhancePaymentRequirements(context.TODO(), requirements, x402.SupportedKind{}, nil)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if _, ok := enhanced.Extra["name"]; ok {
+		t.Errorf("Expected no name in extra, got %v", enhanced.Extra["name"])
+	}
+	if _, ok := enhanced.Extra["version"]; ok {
+		t.Errorf("Expected no version in extra, got %v", enhanced.Extra["version"])
+	}
+
+	requirements.Amount = "0.01"
+	if _, err := server.EnhancePaymentRequirements(context.TODO(), requirements, x402.SupportedKind{}, nil); err == nil {
+		t.Error("Expected error for dotted amount on unregistered token")
+	}
+}
