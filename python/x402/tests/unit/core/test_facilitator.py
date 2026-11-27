@@ -394,6 +394,16 @@ class TestFindFacilitator:
 
         assert found is None
 
+    def test_listed_network_wins_over_earlier_wildcard(self):
+        facilitator = x402Facilitator()
+        wildcard = MockSchemeNetworkFacilitator("exact")
+        listed = MockSchemeNetworkFacilitator("exact")
+        facilitator.register(["eip155:1", "eip155:8453"], wildcard)
+        facilitator.register(["eip155:137"], listed)
+
+        assert facilitator._find_facilitator("exact", "eip155:137") is listed
+        assert facilitator._find_facilitator("exact", "eip155:10") is wildcard
+
 
 class TestFindFacilitatorV1:
     """Tests for _find_facilitator_v1 internal method."""

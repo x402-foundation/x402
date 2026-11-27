@@ -593,6 +593,27 @@ func TestFacilitatorNetworkPatternMatching(t *testing.T) {
 	}
 }
 
+func TestFacilitatorListedNetworkWinsOverEarlierWildcard(t *testing.T) {
+	verifyAs := func(payer string) func(context.Context, types.PaymentPayload, types.PaymentRequirements) (*VerifyResponse, error) {
+		return func(context.Context, types.PaymentPayload, types.PaymentRequirements) (*VerifyResponse, error) {
+			return &VerifyResponse{IsValid: true, Payer: payer}, nil
+		}
+	}
+	facilitator := Newx402Facilitator()
+	facilitator.Register([]Network{"eip155:1", "eip155:8453"}, &mockSchemeNetworkFacilitator{scheme: "exact", verifyFunc: verifyAs("wildcard")})
+	facilitator.Register([]Network{"eip155:137"}, &mockSchemeNetworkFacilitator{scheme: "exact", verifyFunc: verifyAs("listed")})
+
+	for network, want := range map[string]string{"eip155:137": "listed", "eip155:10": "wildcard"} {
+		result, err := verifyExactNetwork(t, facilitator, network)
+		if err != nil {
+			t.Fatalf("verify %s: %v", network, err)
+		}
+		if result.Payer != want {
+			t.Fatalf("%s routed to %q, want %q", network, result.Payer, want)
+		}
+	}
+}
+
 func TestFacilitatorKeepsNamespaceWildcardWhenMixed(t *testing.T) {
 	facilitator := Newx402Facilitator()
 	mockFacilitator := &mockSchemeNetworkFacilitator{scheme: "exact"}
