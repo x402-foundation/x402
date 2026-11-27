@@ -1,0 +1,3 @@
+kind: fixed
+body: 'The exact and upto EVM servers no longer add `extra.name: "Unknown Token"` and `extra.version: "1"` to requirements for a token outside the default-asset table, and reject a decimal amount for such a token instead of converting it with 18 decimals. A Permit2 token priced without an EIP-712 domain now reaches clients without one, so they fall back to ERC-20 approval instead of signing an EIP-2612 permit for a made-up domain. This matches the TypeScript and Python servers.'
+time: 2026-11-25T12:00:00Z
