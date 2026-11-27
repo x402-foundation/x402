@@ -3,6 +3,7 @@ package buildercode
 import (
 	"encoding/hex"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +239,47 @@ func TestParseRejectsUnsupportedMetadata(t *testing.T) {
 			calldata := "0xdeadbeef" + cborHex + hex.EncodeToString([]byte{byte(length >> 8), byte(length)}) + "02" + ERC_8021_MARKER
 			if _, ok := ParseBuilderCodeSuffixFromCalldata(calldata); ok {
 				t.Fatalf("expected %s to be rejected", name)
+			}
+		})
+	}
+}
+
+func TestParseRejectsMalformedSuffixLength(t *testing.T) {
+	for _, lengthHex := range []string{"-001", "+001", "zzzz"} {
+		calldata := "0xdeadbeef" + "a0" + lengthHex + "02" + ERC_8021_MARKER
+		if _, ok := ParseBuilderCodeSuffixFromCalldata(calldata); ok {
+			t.Fatalf("expected length %q to be rejected", lengthHex)
+		}
+	}
+}
+
+func TestParseNestedContainersAllocateByContent(t *testing.T) {
+	const depth = 1000
+	for name, level := range map[string]struct{ prefix, header, entry string }{
+		"map":   {prefix: "a1616d", header: "b9", entry: "616b"},
+		"array": {prefix: "a1616da1616b", header: "99", entry: "8080"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Each level declares as many entries as there are bytes left, then
+			// nests the next level after its first entry.
+			prefixLen := len(level.prefix) / 2
+			total := prefixLen + 5*depth
+			cborHex := level.prefix
+			for i := 0; i < depth; i++ {
+				remaining := total - (prefixLen + 3 + 5*i)
+				cborHex += level.header + hex.EncodeToString([]byte{byte(remaining >> 8), byte(remaining)}) + level.entry
+			}
+			length := len(cborHex) / 2
+			calldata := "0xdeadbeef" + cborHex + hex.EncodeToString([]byte{byte(length >> 8), byte(length)}) + "02" + ERC_8021_MARKER
+
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			if _, ok := ParseBuilderCodeSuffixFromCalldata(calldata); ok {
+				t.Fatal("expected truncated nested containers to be rejected")
+			}
+			runtime.ReadMemStats(&after)
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 8<<20 {
+				t.Fatalf("parsing %d bytes allocated %d bytes", length, allocated)
 			}
 		})
 	}

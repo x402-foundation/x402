@@ -1,0 +1,3 @@
+kind: fixed
+body: ParseBuilderCodeSuffixFromCalldata rejects a malformed or signed suffix length instead of panicking, and CBOR maps and arrays no longer preallocate from their declared size, so nested containers cannot allocate far beyond the input size.
+time: 2026-11-27T00:00:00Z
