@@ -140,3 +140,39 @@ func TestEnhancePaymentRequirementsRejectsNonCanonicalAtomicAmount(t *testing.T)
 		})
 	}
 }
+
+func TestEnhancePaymentRequirementsLeavesUnregisteredTokenDomainUnset(t *testing.T) {
+	server := NewExactEvmScheme()
+	requirements := types.PaymentRequirements{
+		Scheme:            "exact",
+		Network:           "eip155:8453",
+		Asset:             "0x1111111111111111111111111111111111111111",
+		Amount:            "1000",
+		PayTo:             "0x1234567890123456789012345678901234567890",
+		MaxTimeoutSeconds: 3600,
+		Extra:             map[string]interface{}{"assetTransferMethod": "permit2"},
+	}
+
+	result, err := server.EnhancePaymentRequirements(context.Background(), requirements, types.SupportedKind{}, nil)
+
+	require.NoError(t, err)
+	assert.NotContains(t, result.Extra, "name")
+	assert.NotContains(t, result.Extra, "version")
+}
+
+func TestEnhancePaymentRequirementsRejectsDottedAmountForUnregisteredToken(t *testing.T) {
+	server := NewExactEvmScheme()
+	requirements := types.PaymentRequirements{
+		Scheme:            "exact",
+		Network:           "eip155:8453",
+		Asset:             "0x1111111111111111111111111111111111111111",
+		Amount:            "0.01",
+		PayTo:             "0x1234567890123456789012345678901234567890",
+		MaxTimeoutSeconds: 3600,
+	}
+
+	_, err := server.EnhancePaymentRequirements(context.Background(), requirements, types.SupportedKind{}, nil)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "not a registered asset")
+}
