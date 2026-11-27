@@ -1,6 +1,7 @@
 package http
 
 import (
+	"maps"
 	"net/http"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -31,15 +32,9 @@ func (s *x402HTTPResourceServer) ResolveCancelledSettlement(
 	)
 }
 
-// RestoreHeaders resets responseHeaders to snapshot in place, dropping headers
-// a route handler set after the snapshot was taken. Adapters use it when
-// settlement fails so the error response does not carry the paid route's
-// Set-Cookie, Content-Disposition or Content-Type.
+// RestoreHeaders resets responseHeaders in place to snapshot, dropping headers
+// a route handler set after the snapshot was taken.
 func RestoreHeaders(responseHeaders http.Header, snapshot http.Header) {
-	for key := range responseHeaders {
-		delete(responseHeaders, key)
-	}
-	for key, values := range snapshot {
-		responseHeaders[key] = values
-	}
+	clear(responseHeaders)
+	maps.Copy(responseHeaders, snapshot)
 }
