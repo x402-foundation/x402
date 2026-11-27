@@ -1,10 +1,4 @@
-"""Direct tests for the exact SVM Path 1 instruction layout.
-
-The facilitator tests cover guards and allowlists through ``verify()``, but their
-fixture always includes a valid compute limit, compute price and transfer. These
-tests cover what that fixture doesn't: look-alike protocol instructions, compute
-budget order, a missing transfer, and indexes outside the static accounts.
-"""
+"""Path 1 layout: look-alike instructions, budget order, a missing transfer, and out-of-range indexes."""
 
 import pytest
 from solders.instruction import CompiledInstruction

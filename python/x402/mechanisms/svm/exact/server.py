@@ -157,9 +157,7 @@ class ExactSvmScheme:
         if "feePayer" in extra:
             requirements.extra["feePayer"] = extra["feePayer"]
 
-        # A server MUST NOT issue splits the selected facilitator does not
-        # advertise (§5.5), so a misconfigured route fails here rather than as a
-        # verify rejection after the client has signed.
+        # Requirements are built before the client signs, so unsupported splits fail here.
         if uses_split_terms(requirements):
             assert_within_capabilities(
                 parse_payment_legs(requirements), get_split_capabilities(extra)

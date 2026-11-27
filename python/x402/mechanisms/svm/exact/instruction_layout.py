@@ -236,8 +236,6 @@ def resolve_protocol_layout(
     memo_count = 0
     for ix in instructions:
         role = _classify(static_accounts, ix)
-        if role is InstructionRole.GUARD:
-            continue
         if role is InstructionRole.UNKNOWN:
             raise LayoutError(ERR_UNKNOWN_INSTRUCTION)
         if role is InstructionRole.MEMO and role in found:
