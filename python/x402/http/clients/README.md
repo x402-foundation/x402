@@ -67,6 +67,7 @@ async with x402HttpxClient(client) as http:
 ```python
 from x402 import x402ClientSync
 from x402.http.clients import x402SyncTransport
+from x402.mechanisms.evm.exact import ExactEvmScheme
 import httpx
 
 client = x402ClientSync()

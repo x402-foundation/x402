@@ -434,6 +434,77 @@ class TestX402AsyncTransport:
         assert len(mock_client.create_calls) == 2
         assert mock_transport.handle_async_request.call_count == 3
 
+    @pytest.mark.asyncio
+    async def test_recovery_closes_non_402_paid_response(self):
+        """A non-402 paid response is closed before the recovery retry."""
+        encoded_required = encode_payment_required_header(
+            PaymentRequired(x402_version=2, accepts=[make_payment_requirements()])
+        )
+        settle = SettleResponse(
+            success=False, error_reason="failed", transaction="0x0", network="eip155:8453"
+        )
+        paid_stream = _TrackingAsyncStream(5)
+        initial_402 = httpx.Response(402, headers={"PAYMENT-REQUIRED": encoded_required})
+        paid_500 = httpx.Response(
+            500,
+            headers={"PAYMENT-RESPONSE": encode_payment_response_header(settle)},
+            stream=paid_stream,
+        )
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = AsyncMock(
+            side_effect=[initial_402, paid_500, httpx.Response(200)]
+        )
+        transport = x402AsyncTransport(MockRecoveringClient(), mock_transport)
+
+        response = await transport.handle_async_request(
+            httpx.Request("GET", "https://example.com/api")
+        )
+
+        assert response.status_code == 200
+        assert paid_stream.closed
+
+    @pytest.mark.asyncio
+    async def test_retry_headers_replace_existing_values(self):
+        """Hook and payment headers replace same-named request headers."""
+        encoded_required = encode_payment_required_header(
+            PaymentRequired(x402_version=2, accepts=[make_payment_requirements()])
+        )
+        http_client = x402HTTPClient(MockX402Client())
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer new"})
+        )
+        sent: list[httpx.Request] = []
+
+        async def handle_request(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+            if len(sent) < 3:
+                return httpx.Response(402, headers={"PAYMENT-REQUIRED": encoded_required})
+            return httpx.Response(200)
+
+        mock_transport = AsyncMock()
+        mock_transport.handle_async_request = handle_request
+        transport = x402AsyncTransport(http_client, mock_transport)
+
+        await transport.handle_async_request(
+            httpx.Request(
+                "GET",
+                "https://example.com/api",
+                headers=[
+                    ("authorization", "Bearer old"),
+                    ("payment-signature", "stale"),
+                    ("x-multi", "1"),
+                    ("x-multi", "2"),
+                ],
+            )
+        )
+
+        hook_retry, paid_retry = sent[1], sent[2]
+        assert hook_retry.headers.get_list("Authorization") == ["Bearer new"]
+        assert paid_retry.headers.get_list("PAYMENT-SIGNATURE") != ["stale"]
+        assert len(paid_retry.headers.get_list("PAYMENT-SIGNATURE")) == 1
+        assert paid_retry.headers.get_list("x-multi") == ["1", "2"]
+
 
 class _TrackingAsyncStream(httpx.AsyncByteStream):
     def __init__(self, nbytes: int) -> None:

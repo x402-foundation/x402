@@ -91,12 +91,13 @@ def _retry_request(
 ) -> Request:
     """Clone a buffered request with extra headers and x402 retry markers."""
     # The retry sends the buffered body, so httpx sets its own Content-Length.
-    new_headers = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower() not in ("content-length", "transfer-encoding")
-    }
-    new_headers.update(extra_headers)
+    new_headers = request.headers.copy()
+    for name in ("content-length", "transfer-encoding"):
+        if name in new_headers:
+            del new_headers[name]
+    # Replace case-insensitively so an existing header is not sent twice.
+    for name, value in extra_headers.items():
+        new_headers[name] = value
     new_extensions = dict(request.extensions)
     if payment_retry:
         new_extensions[_RETRY_KEY] = True

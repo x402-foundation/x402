@@ -96,6 +96,35 @@ def make_http(client, server: Server) -> httpx.Client:
     return httpx.Client(transport=x402SyncTransport(client, server))
 
 
+# Large enough that the transport stops reading before the stream ends, so
+# httpx does not close the response on its own.
+OVERSIZED = 2 * MAX_CONTROL_PLANE_RESPONSE_BYTES
+
+
+class TrackingStream(httpx.SyncByteStream):
+    def __init__(self, nbytes: int) -> None:
+        self.closed = False
+        self._nbytes = nbytes
+
+    def __iter__(self):
+        remaining = self._nbytes
+        while remaining > 0:
+            n = min(65536, remaining)
+            remaining -= n
+            yield b"\x00" * n
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def recovered_settle_header() -> str:
+    return encode_payment_response_header(
+        SettleResponse(
+            success=False, error_reason="failed", transaction="0x0", network="eip155:8453"
+        )
+    )
+
+
 class TestX402SyncTransport:
     def test_lazy_export(self):
         assert lazy_sync_transport is x402SyncTransport
@@ -246,29 +275,105 @@ class TestX402SyncTransport:
         assert signatures[0] != signatures[1]
 
     def test_recovery_closes_non_402_paid_response(self):
-        settle = SettleResponse(
-            success=False, error_reason="failed", transaction="0x0", network="eip155:8453"
-        )
-        closed: list[bool] = []
-
-        class TrackedStream(httpx.SyncByteStream):
-            def __iter__(self):
-                yield b"error"
-
-            def close(self):
-                closed.append(True)
-
+        stream = TrackingStream(5)
         failed = httpx.Response(
-            500,
-            headers={"PAYMENT-RESPONSE": encode_payment_response_header(settle)},
-            stream=TrackedStream(),
+            500, headers={"PAYMENT-RESPONSE": recovered_settle_header()}, stream=stream
         )
         server = Server(payment_required_response(), failed, httpx.Response(200))
 
         with make_http(MockRecoveringClientSync(), server) as http:
             assert http.get("https://example.com/paid").status_code == 200
 
+        assert stream.closed
+
+    def test_hook_retry_402_falls_through_to_payment(self):
+        http_client = x402HTTPClientSync(MockX402ClientSync())
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer x"})
+        )
+        stream = TrackingStream(2)
+        server = Server(
+            payment_required_response(),
+            httpx.Response(402, stream=stream),
+            httpx.Response(200),
+        )
+
+        with make_http(http_client, server) as http:
+            assert http.get("https://example.com/paid").status_code == 200
+
+        assert stream.closed
+        assert len(server.requests) == 3
+
+    def test_retry_headers_replace_existing_values(self):
+        http_client = x402HTTPClientSync(MockX402ClientSync())
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer new"})
+        )
+        server = Server(
+            payment_required_response(), payment_required_response(), httpx.Response(200)
+        )
+
+        with httpx.Client(
+            transport=x402SyncTransport(http_client, server),
+            headers={"Authorization": "Bearer old"},
+        ) as http:
+            http.get(
+                "https://example.com/paid",
+                headers=[("payment-signature", "stale"), ("x-multi", "1"), ("x-multi", "2")],
+            )
+
+        hook_retry, paid_retry = server.requests[1], server.requests[2]
+        assert hook_retry.headers.get_list("Authorization") == ["Bearer new"]
+        signatures = paid_retry.headers.get_list("PAYMENT-SIGNATURE")
+        assert len(signatures) == 1 and signatures != ["stale"]
+        assert paid_retry.headers.get_list("x-multi") == ["1", "2"]
+
+    def test_retry_keeps_request_extensions(self):
+        client = MockX402ClientSync()
+        server = Server(payment_required_response(), httpx.Response(200))
+        transport = x402SyncTransport(client, server)
+        request = httpx.Request("GET", "https://example.com/paid", extensions={"custom": "kept"})
+
+        transport.handle_request(request)
+
+        paid = server.requests[1]
+        assert paid.extensions["custom"] == "kept"
+        assert paid.extensions[x402SyncTransport.RETRY_KEY] is True
+        assert x402SyncTransport.RETRY_KEY not in request.extensions
+        assert "PAYMENT-SIGNATURE" not in request.headers
+
+    def test_close_delegates(self):
+        closed: list[bool] = []
+
+        class Inner(httpx.BaseTransport):
+            def close(self) -> None:
+                closed.append(True)
+
+        x402SyncTransport(MockX402ClientSync(), Inner()).close()
+
         assert closed == [True]
+
+    def test_client_error_is_wrapped(self):
+        class FailingClient(MockX402ClientSync):
+            def create_payment_payload(self, payment_required):
+                raise RuntimeError("signer offline")
+
+        server = Server(payment_required_response())
+
+        with make_http(FailingClient(), server) as http:
+            with pytest.raises(PaymentError, match="Failed to handle payment: signer offline"):
+                http.get("https://example.com/paid")
+
+    def test_payment_error_propagates(self):
+        class FailingClient(MockX402ClientSync):
+            def create_payment_payload(self, payment_required):
+                raise PaymentError("custom payment error")
+
+        server = Server(payment_required_response())
+
+        with make_http(FailingClient(), server) as http:
+            with pytest.raises(PaymentError, match="^custom payment error$"):
+                http.get("https://example.com/paid")
 
     def test_returned_gzip_402_is_decoded(self):
         rejected = httpx.Response(
@@ -284,18 +389,63 @@ class TestX402SyncTransport:
         assert response.status_code == 402
         assert response.json() == {"error": "rejected"}
 
-    def test_rejects_oversized_402(self):
+    def test_rejects_oversized_initial_402(self):
+        stream = TrackingStream(OVERSIZED)
         server = Server(
-            httpx.Response(
-                402,
-                headers={"PAYMENT-REQUIRED": ENCODED_REQUIRED},
-                content=b"x" * (MAX_CONTROL_PLANE_RESPONSE_BYTES + 1),
-            )
+            httpx.Response(402, headers={"PAYMENT-REQUIRED": ENCODED_REQUIRED}, stream=stream)
         )
 
         with make_http(MockX402ClientSync(), server) as http:
             with pytest.raises(ResponseBodyTooLargeError):
                 http.get("https://example.com/paid")
+        assert stream.closed
+
+    def test_rejects_oversized_hook_retry_402(self):
+        http_client = x402HTTPClientSync(MockX402ClientSync())
+        http_client.on_payment_required(
+            lambda ctx: PaymentRequiredHeadersResult(headers={"Authorization": "Bearer x"})
+        )
+        stream = TrackingStream(OVERSIZED)
+        server = Server(payment_required_response(), httpx.Response(402, stream=stream))
+
+        with make_http(http_client, server) as http:
+            with pytest.raises(ResponseBodyTooLargeError):
+                http.get("https://example.com/paid")
+        assert stream.closed
+
+    def test_rejects_oversized_paid_retry_402(self):
+        stream = TrackingStream(OVERSIZED)
+        server = Server(payment_required_response(), httpx.Response(402, stream=stream))
+
+        with make_http(MockX402ClientSync(), server) as http:
+            with pytest.raises(ResponseBodyTooLargeError):
+                http.get("https://example.com/paid")
+        assert stream.closed
+
+    def test_rejects_oversized_recovery_402(self):
+        stream = TrackingStream(OVERSIZED)
+        server = Server(
+            payment_required_response(),
+            httpx.Response(402, headers={"PAYMENT-RESPONSE": recovered_settle_header()}),
+            httpx.Response(402, stream=stream),
+        )
+
+        with make_http(MockRecoveringClientSync(), server) as http:
+            with pytest.raises(ResponseBodyTooLargeError):
+                http.get("https://example.com/paid")
+        assert stream.closed
+
+    def test_rejects_oversized_already_retried_402(self):
+        stream = TrackingStream(OVERSIZED)
+        server = Server(httpx.Response(402, stream=stream))
+        transport = x402SyncTransport(MockX402ClientSync(), server)
+        request = httpx.Request(
+            "GET", "https://example.com/paid", extensions={x402SyncTransport.RETRY_KEY: True}
+        )
+
+        with pytest.raises(ResponseBodyTooLargeError):
+            transport.handle_request(request)
+        assert stream.closed
 
     def test_unparseable_402_raises_payment_error(self):
         server = Server(httpx.Response(402, text="not x402"))
