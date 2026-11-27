@@ -11,6 +11,7 @@ import type { SIWxExtension } from "./types";
 import { SIGN_IN_WITH_X } from "./types";
 import { createSIWxPayload } from "./client";
 import { encodeSIWxHeader } from "./encode";
+import { isSolanaSigner } from "./solana";
 
 /**
  * Wraps fetch to automatically handle SIWX authentication.
@@ -68,19 +69,15 @@ export function wrapFetchWithSIWx(fetch: typeof globalThis.fetch, signer: SIWxSi
       throw new Error("SIWX authentication already attempted");
     }
 
-    // Get network from payment requirements
-    const paymentNetwork = paymentRequired.accepts?.[0]?.network;
-    if (!paymentNetwork) {
-      return response; // No network in payment requirements
-    }
-
-    // Find matching chain in supportedChains
+    // Find a chain that matches the signer's signature type. Auth-only routes
+    // (accepts: []) have no payment network, so don't key off accepts.
+    const expectedSignatureType = isSolanaSigner(signer) ? "ed25519" : "eip191";
     const matchingChain = siwxExtension.supportedChains.find(
-      chain => chain.chainId === paymentNetwork,
+      chain => chain.type === expectedSignatureType,
     );
 
     if (!matchingChain) {
-      return response; // Payment network not in SIWX supportedChains
+      return response; // No chain compatible with this signer type
     }
 
     // Build complete info with selected chain
