@@ -2096,6 +2096,47 @@ describe("SIWX Hooks", () => {
         }),
       ).rejects.toThrow("SIWX authentication already attempted");
     });
+
+    it.each([
+      { name: "an auth-only route (accepts: [])", accepts: [] },
+      {
+        name: "a route whose first accepts entry is on another chain family",
+        accepts: [{ scheme: "exact", network: SOLANA_MAINNET, amount: "1000", payTo: "x" }],
+      },
+    ])("wrapFetchWithSIWx should sign with a compatible chain for $name", async ({ accepts }) => {
+      const account = privateKeyToAccount(generatePrivateKey());
+      const challenge = createTestChallenge({
+        domain: "api.example.com",
+        resourceUri: "https://api.example.com/profile",
+        network: [SOLANA_MAINNET, "eip155:8453"],
+      });
+      const paymentRequired = {
+        x402Version: 2 as const,
+        resource: { url: "https://api.example.com/profile" },
+        accepts,
+        extensions: challenge,
+      };
+      const original402 = new Response(JSON.stringify(paymentRequired), {
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": safeBase64Encode(JSON.stringify(paymentRequired)) },
+      });
+      Object.defineProperty(original402, "url", { value: "https://api.example.com/profile" });
+
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(original402)
+        .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+      const fetchWithSIWx = wrapFetchWithSIWx(mockFetch, account);
+
+      const response = await fetchWithSIWx("https://api.example.com/profile");
+
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const retried = mockFetch.mock.calls[1][0] as Request;
+      const payload = parseSIWxHeader(retried.headers.get(SIGN_IN_WITH_X)!);
+      expect(payload.chainId).toBe("eip155:8453");
+      expect(payload.address).toBe(account.address);
+    });
   });
 
   describe("createSIWxClientHook", () => {
