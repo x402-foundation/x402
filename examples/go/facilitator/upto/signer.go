@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -96,36 +95,13 @@ func (s *facilitatorSvmSigner) SendTransaction(
 }
 
 // ConfirmTransaction polls until the transaction is confirmed or the attempt
-// budget runs out.
+// budget runs out. A confirmed or finalized execution failure is returned as
+// svm.TransactionOnchainFailureError so exact settlement does not report it
+// as settlement_pending.
 func (s *facilitatorSvmSigner) ConfirmTransaction(
 	ctx context.Context, signature solana.Signature, _ string,
 ) error {
-	for attempt := 0; attempt < svmmech.MaxConfirmAttempts; attempt++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		statuses, err := s.rpcClient.GetSignatureStatuses(ctx, true, signature)
-		if err == nil && statuses != nil && statuses.Value != nil && len(statuses.Value) > 0 {
-			if status := statuses.Value[0]; status != nil {
-				if status.Err != nil {
-					return fmt.Errorf("transaction %s failed onchain", signature)
-				}
-				if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed ||
-					status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-					return nil
-				}
-			}
-		}
-		delay := svmmech.ConfirmRetryDelay
-		if attempt < svmmech.ConfirmInitialAttempts {
-			delay = svmmech.ConfirmInitialRetryDelay
-		}
-		time.Sleep(delay)
-	}
-	return fmt.Errorf("transaction %s was not confirmed in time", signature)
+	return svmmech.ConfirmSignature(ctx, s.rpcClient, signature, svmmech.ConfirmPolicy{})
 }
 
 func (s *facilitatorSvmSigner) GetAccountInfo(
