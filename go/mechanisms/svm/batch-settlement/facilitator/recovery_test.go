@@ -949,6 +949,170 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		})
 	}
 
+	t.Run("refreshes channelStates on a stored payout result when channels are readable", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
+		key := "batch:distribute:" + network + ":" + channelID
+		storedWithoutStates := &x402.SettleResponse{
+			Success:     true,
+			Network:     x402.Network(network),
+			Transaction: tx,
+			Amount:      "1500",
+			Extra:       map[string]any{"channels": []string{channelID}},
+		}
+		require.NoError(t, storePayoutResult(context.Background(), store, key, storedWithoutStates))
+		var recorded atomic.Int32
+		hook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			recorded.Add(1)
+			return nil
+		}
+		scheme := newScheme(t, confirming(t, 0, nil), store, hook)
+		configure(scheme)
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return channel(func(ch *generated.Channel) {
+				ch.Settlement = generated.SettlementWatermarks{PayoutWatermark: 3000, Settled: 3000}
+			}), nil
+		}
+		var submits atomic.Int32
+		scheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+			submits.Add(1)
+			return durableResult{}, errors.New("should not submit")
+		}
+
+		refreshed, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.True(t, refreshed.Success)
+		require.Equal(t, tx, refreshed.Transaction)
+		require.Equal(t, "1500", refreshed.Amount)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID:       channelID,
+			Status:          batchsettlement.ChannelStatusOpen,
+			Balance:         "10000",
+			TotalClaimed:    "3000",
+			PayoutWatermark: "3000",
+		}}, refreshed.Extra[batchsettlement.ExtraChannelStates])
+		require.Equal(t, int32(1), recorded.Load())
+		require.Zero(t, submits.Load())
+
+		// Without a persisted confirmation slot, an absent read fails closed so a
+		// lagging RPC node cannot falsely retire a live channel.
+		require.NoError(t, storePayoutResult(context.Background(), store, key, storedWithoutStates))
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		unconstrained, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.Equal(t, storedWithoutStates, unconstrained)
+		require.Equal(t, int32(2), recorded.Load())
+		require.Zero(t, submits.Load())
+
+		// With a persisted confirmation slot, a stored result without channelStates
+		// reports an absent account as closed.
+		require.NoError(t, storeDistributionResult(context.Background(), store, key, storedWithoutStates, 100))
+		closedReplay, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.True(t, closedReplay.Success)
+		require.Equal(t, tx, closedReplay.Transaction)
+		require.Equal(t, "1500", closedReplay.Amount)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID:       channelID,
+			Status:          batchsettlement.ChannelStatusClosed,
+			Balance:         "0",
+			TotalClaimed:    "0",
+			PayoutWatermark: "0",
+		}}, closedReplay.Extra[batchsettlement.ExtraChannelStates])
+		require.Equal(t, int32(3), recorded.Load())
+		require.Zero(t, submits.Load())
+
+		// When the account is absent, a stored result's terminal distributed states are preserved.
+		storedWithStates := &x402.SettleResponse{
+			Success:     true,
+			Network:     x402.Network(network),
+			Transaction: tx,
+			Amount:      "3000",
+			Extra: map[string]any{
+				"channels": []string{channelID},
+				batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+					ChannelID:       channelID,
+					Status:          batchsettlement.ChannelStatusDistributed,
+					Balance:         "10000",
+					TotalClaimed:    "3000",
+					PayoutWatermark: "3000",
+				}},
+			},
+		}
+		require.NoError(t, storePayoutResult(context.Background(), store, key, storedWithStates))
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		absent, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.Equal(t, storedWithStates, absent)
+		require.Zero(t, submits.Load())
+	})
+
+	t.Run("restores the persisted confirmation slot on replay after restart before reporting closed", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
+		key := "batch:distribute:" + network + ":" + channelID
+		require.NoError(t, store.Set(context.Background(), key, tx))
+
+		firstInner := newScriptedSigner(t, 1)
+		firstInner.keys[0] = feePayer
+		firstSigner := &capabilitySigner{
+			scriptedSigner: firstInner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return payoutEvidence(t, "200", "1700"), nil
+			},
+		}
+		firstHook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			return errors.New("ledger unavailable")
+		}
+		firstScheme := newScheme(t, firstSigner, store, firstHook)
+		configure(firstScheme)
+		var firstReads atomic.Int32
+		firstScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if firstReads.Add(1) == 1 {
+				return nil, nil
+			}
+			return nil, errors.New("rpc unavailable")
+		}
+
+		// Recovery confirms at slot 100, fails to read states, and fails the hook,
+		// persisting the payout result together with its confirmation slot.
+		pending, err := firstScheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+
+		// A fresh facilitator (empty confirmationSlots) restores slot 100 onto
+		// GetAccountInfo.MinContextSlot before treating an absent account as closed.
+		restartedInner := newScriptedSigner(t, 1)
+		restartedInner.keys[0] = feePayer
+		var recorded atomic.Int32
+		restartedHook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			recorded.Add(1)
+			return nil
+		}
+		restarted := newScheme(t, &confirmingSigner{scriptedSigner: restartedInner}, store, restartedHook)
+		configure(restarted)
+
+		replayed, err := restarted.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.True(t, replayed.Success)
+		require.Equal(t, tx, replayed.Transaction)
+		require.Equal(t, "1500", replayed.Amount)
+		require.Equal(t, int32(1), recorded.Load())
+		calls := restartedInner.accountCalls()
+		require.Len(t, calls, 1)
+		require.NotNil(t, calls[0].opts.MinContextSlot, "replay read must be constrained to the persisted confirmation slot")
+		require.Equal(t, uint64(100), *calls[0].opts.MinContextSlot)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID:       channelID,
+			Status:          batchsettlement.ChannelStatusClosed,
+			Balance:         "0",
+			TotalClaimed:    "0",
+			PayoutWatermark: "0",
+		}}, replayed.Extra[batchsettlement.ExtraChannelStates])
+	})
+
 	t.Run("attributes a timed-out sweep that landed before a claim moved the settled watermark", func(t *testing.T) {
 		inner := newScriptedSigner(t, 1)
 		inner.keys[0] = feePayer
@@ -1055,8 +1219,189 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 			require.Equal(t, int32(1), submits.Load())
 			require.Zero(t, waits.Load(), "an absent channel is not polled when a recovery record exists")
 			require.Equal(t, []string{tx + "=1500"}, delivered)
+			if unattributed {
+				require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+					ChannelID: channelID, Status: batchsettlement.ChannelStatusClosed, Balance: "0", TotalClaimed: "0", PayoutWatermark: "0",
+				}}, response.Extra[batchsettlement.ExtraChannelStates], "a recovered sweep reports an absent channel as closed")
+			}
 		})
 	}
+
+	t.Run("reports closed and live channel states together when a recovered distribute closed one channel of a batch", func(t *testing.T) {
+		secondChannelID := svm.USDCDevnetAddress
+		secondConfig := channelConfig
+		secondConfig.Salt = "2"
+		mixedPayload := batchsettlement.BatchSettlePayload{
+			Type: batchsettlement.PayloadTypeSettle,
+			Channels: []batchsettlement.BatchSettleChannel{
+				{ChannelID: channelID, ChannelConfig: channelConfig},
+				{ChannelID: secondChannelID, ChannelConfig: secondConfig},
+			},
+		}
+		key := distributionKey(network, []PreparedDistribution{
+			{ChannelID: channelID},
+			{ChannelID: secondChannelID},
+		})
+		store := x402.NewInMemoryPendingSettlementStore()
+		require.NoError(t, store.Set(context.Background(), key, tx))
+		inner := newScriptedSigner(t, 1)
+		inner.keys[0] = feePayer
+		signer := &capabilitySigner{
+			scriptedSigner: inner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return payoutEvidence(t, "200", "1700"), nil
+			},
+		}
+		scheme := newScheme(t, signer, store, nil)
+		configure(scheme)
+		scheme.hooks.deriveChannelID = func(_ context.Context, cfg batchsettlement.BatchChannelConfig, _ string) (string, error) {
+			if cfg.Salt == "2" {
+				return secondChannelID, nil
+			}
+			return channelID, nil
+		}
+		scheme.hooks.readChannel = func(_ context.Context, _, id string) (*generated.Channel, error) {
+			if id == channelID {
+				return nil, nil
+			}
+			return channel(func(ch *generated.Channel) {
+				ch.Salt = 2
+				ch.Settlement = generated.SettlementWatermarks{Settled: 2200, PayoutWatermark: 1700}
+			}), nil
+		}
+		response, err := scheme.settleDistributions(context.Background(), mixedPayload, requirements)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{
+			{ChannelID: channelID, Status: batchsettlement.ChannelStatusClosed, Balance: "0", TotalClaimed: "0", PayoutWatermark: "0"},
+			{ChannelID: secondChannelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "2200", PayoutWatermark: "1700"},
+		}, response.Extra[batchsettlement.ExtraChannelStates])
+	})
+
+	t.Run("finishes a recovered claim whose channel was closed and deallocated after confirmation", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
+		key := "batch:claim:" + network + ":" + channelID + ":1000"
+		require.NoError(t, store.Set(context.Background(), key, tx))
+		scheme := newScheme(t, confirming(t, 1, nil), store, nil)
+		configure(scheme)
+		scheme.hooks.waitForChannelRead = func(int) error { return nil }
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		response, err := scheme.settleClaims(context.Background(), claimPayload(t, 1000), requirements)
+		require.NoError(t, err)
+		require.True(t, response.Success)
+		require.Equal(t, tx, response.Transaction)
+		_, ok, err := store.Get(context.Background(), key)
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+
+	t.Run("fresh claim and distribute report closed channel states only past open_slot + OpenSlotWindow", func(t *testing.T) {
+		secondChannelID := svm.USDCDevnetAddress
+		secondConfig := channelConfig
+		secondConfig.Salt = "2"
+		secondSig, err := paymentchannels.SignVoucher(context.Background(), ed25519Signer{payer}, solana.MustPublicKeyFromBase58(secondChannelID), 1000, 0)
+		require.NoError(t, err)
+		mixedClaim := batchsettlement.BatchClaimPayload{
+			Type: batchsettlement.PayloadTypeClaim,
+			Claims: []batchsettlement.BatchVoucherClaim{
+				claimPayload(t, 1000).Claims[0],
+				{
+					ChannelID:     secondChannelID,
+					ChannelConfig: secondConfig,
+					Voucher: batchsettlement.BatchVoucher{
+						ChannelID: secondChannelID, ExpiresAt: 0, MaxClaimableAmount: "1000", Signature: secondSig,
+					},
+				},
+			},
+		}
+		mixedDistribute := batchsettlement.BatchSettlePayload{
+			Type: batchsettlement.PayloadTypeSettle,
+			Channels: []batchsettlement.BatchSettleChannel{
+				{ChannelID: channelID, ChannelConfig: channelConfig},
+				{ChannelID: secondChannelID, ChannelConfig: secondConfig},
+			},
+		}
+
+		setupScheme := func(slot uint64, slotErr error) (*BatchSvmScheme, *atomic.Int32) {
+			inner := newScriptedSigner(t, 1)
+			inner.keys[0] = feePayer
+			inner.clusterSlot = slot
+			inner.slotErr = slotErr
+			scheme := newScheme(t, &confirmingSigner{scriptedSigner: inner}, nil, nil)
+			configure(scheme)
+			scheme.hooks.waitForChannelRead = func(int) error { return nil }
+			scheme.hooks.deriveChannelID = func(_ context.Context, cfg batchsettlement.BatchChannelConfig, _ string) (string, error) {
+				if cfg.Salt == "2" {
+					return secondChannelID, nil
+				}
+				return channelID, nil
+			}
+			scheme.hooks.readChannel = func(_ context.Context, _, id string) (*generated.Channel, error) {
+				if id == channelID {
+					return nil, nil
+				}
+				return channel(func(ch *generated.Channel) {
+					ch.Salt = 2
+					ch.Settlement = generated.SettlementWatermarks{Settled: 500, PayoutWatermark: 0}
+				}), nil
+			}
+			var submits atomic.Int32
+			scheme.hooks.submitRedemption = func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error) {
+				submits.Add(1)
+				return durableResult{}, errors.New("should not submit")
+			}
+			return scheme, &submits
+		}
+
+		t.Run("past close gate returns ErrChannelState with closed and live channelStates", func(t *testing.T) {
+			pastGate := uint64(channelConfig.OpenSlot) + paymentchannels.OpenSlotWindow + 1
+			scheme, submits := setupScheme(pastGate, nil)
+			wantStates := []batchsettlement.BatchRedemptionChannelState{
+				{ChannelID: channelID, Status: batchsettlement.ChannelStatusClosed, Balance: "0", TotalClaimed: "0", PayoutWatermark: "0"},
+				{ChannelID: secondChannelID, Status: batchsettlement.ChannelStatusOpen, Balance: "10000", TotalClaimed: "500", PayoutWatermark: "0"},
+			}
+
+			claimResp, err := scheme.settleClaims(context.Background(), mixedClaim, requirements)
+			require.NoError(t, err)
+			require.False(t, claimResp.Success)
+			require.Equal(t, batchsettlement.ErrChannelState, claimResp.ErrorReason)
+			require.Equal(t, wantStates, claimResp.Extra[batchsettlement.ExtraChannelStates])
+
+			distResp, err := scheme.settleDistributions(context.Background(), mixedDistribute, requirements)
+			require.NoError(t, err)
+			require.False(t, distResp.Success)
+			require.Equal(t, batchsettlement.ErrChannelState, distResp.ErrorReason)
+			require.Equal(t, wantStates, distResp.Extra[batchsettlement.ExtraChannelStates])
+			require.Zero(t, submits.Load())
+		})
+
+		t.Run("within close gate or on GetSlot error returns plain ErrChannelState without channelStates", func(t *testing.T) {
+			atBoundary := uint64(channelConfig.OpenSlot) + paymentchannels.OpenSlotWindow
+			for _, tc := range []struct {
+				name    string
+				slot    uint64
+				slotErr error
+			}{
+				{name: "at window boundary", slot: atBoundary},
+				{name: "GetSlot error", slot: atBoundary + 100, slotErr: errors.New("slot rpc unavailable")},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					scheme, submits := setupScheme(tc.slot, tc.slotErr)
+
+					claimResp, err := scheme.settleClaims(context.Background(), mixedClaim, requirements)
+					require.Nil(t, claimResp)
+					require.ErrorContains(t, err, batchsettlement.ErrChannelState)
+
+					distResp, err := scheme.settleDistributions(context.Background(), mixedDistribute, requirements)
+					require.Nil(t, distResp)
+					require.ErrorContains(t, err, batchsettlement.ErrChannelState)
+					require.Zero(t, submits.Load())
+				})
+			}
+		})
+	})
 
 	for _, withHook := range []bool{true, false} {
 		name := "a distribute pass, its identical retry and a later pass cost the same storage operations without the hook"

@@ -738,6 +738,51 @@ func (f *BatchSvmScheme) fetchChannel(ctx context.Context, network, channelID st
 	return channel, nil
 }
 
+// closeGateSlot remembers one cluster slot for a batch of close-gate checks.
+type closeGateSlot struct {
+	value uint64
+	known bool
+}
+
+// Cache avoids a GetSlot per channel in one batch.
+func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network string, openSlot int64, cache *closeGateSlot) bool {
+	if openSlot <= 0 {
+		return false
+	}
+	if cache == nil || !cache.known {
+		current, err := f.signer.GetSlot(ctx, network, paymentchannels.SlotCommitment)
+		if err != nil {
+			return false
+		}
+		if cache != nil {
+			cache.value = current
+			cache.known = true
+		}
+		return current > uint64(openSlot)+paymentchannels.OpenSlotWindow
+	}
+	return cache.value > uint64(openSlot)+paymentchannels.OpenSlotWindow
+}
+
+// An account past the close gate is closed without polling, so the caller resyncs instead of waiting.
+func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, channelID string, openSlot int64, cache *closeGateSlot) (*generated.Channel, bool, error) {
+	if f.hooks.fetchChannel != nil {
+		channel, err := f.hooks.fetchChannel(ctx, network, channelID)
+		return channel, false, err
+	}
+	channel, err := f.readChannel(ctx, network, channelID)
+	if err != nil {
+		return nil, false, err
+	}
+	if channel != nil {
+		return channel, false, nil
+	}
+	if f.channelPastCloseGate(ctx, network, openSlot, cache) {
+		return nil, true, nil
+	}
+	channel, err = f.fetchChannel(ctx, network, channelID)
+	return channel, false, err
+}
+
 func (f *BatchSvmScheme) fetchChannelUntil(ctx context.Context, network, channelID string, predicate func(*generated.Channel) bool) (*generated.Channel, bool, error) {
 	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
 		channel, err := f.readChannel(ctx, network, channelID)
@@ -1059,8 +1104,11 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		ResolveDelegatedIdentity: func(ctx context.Context, settle DelegatedSettleContext) (string, error) {
 			return ResolveDelegatedIdentity(ctx, f.delegated, settle)
 		},
-		DeriveChannelID:         f.deriveChannelID,
-		FetchChannel:            f.fetchChannel,
+		DeriveChannelID: f.deriveChannelID,
+		FetchChannel:    f.fetchChannel,
+		FetchChannelOrClosed: func(ctx context.Context, network, channelID string, openSlot int64) (*generated.Channel, bool, error) {
+			return f.fetchChannelOrClosed(ctx, network, channelID, openSlot, nil)
+		},
 		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,

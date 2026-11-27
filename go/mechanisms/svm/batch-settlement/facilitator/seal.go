@@ -58,9 +58,12 @@ type SealDependencies struct {
 	ResolveDelegatedIdentity func(context.Context, DelegatedSettleContext) (string, error)
 	DeriveChannelID          func(context.Context, batchsettlement.BatchChannelConfig, string) (string, error)
 	FetchChannel             func(context.Context, string, string) (*generated.Channel, error)
-	AssertClaimChannel       func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
-	DistributeInstruction    func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
-	SubmitRedemption         func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
+	// FetchChannelOrClosed, when set, detects a channel absent past open_slot + OpenSlotWindow
+	// on CloseIntentSeal without polling. Nil falls back to FetchChannel.
+	FetchChannelOrClosed  func(context.Context, string, string, int64) (*generated.Channel, bool, error)
+	AssertClaimChannel    func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
+	DistributeInstruction func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
+	SubmitRedemption      func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
 	// AttributeClose reads what a confirmed close transaction paid the receiver and returned to the payer
 	// (signature, requirements, terms, payer).
 	AttributeClose func(context.Context, string, types.PaymentRequirements, BatchTerms, string) (CloseAttribution, error)
@@ -164,9 +167,20 @@ func settleSeal(
 	if response, recovered, err := run.recoverPending(ctx, payer); err != nil || recovered {
 		return response, err
 	}
-	channel, err := deps.FetchChannel(ctx, network, channelID)
+	var channel *generated.Channel
+	var closed bool
+	if intent == CloseIntentSeal && deps.FetchChannelOrClosed != nil {
+		channel, closed, err = deps.FetchChannelOrClosed(ctx, network, channelID, payload.ChannelConfig.OpenSlot)
+	} else {
+		channel, err = deps.FetchChannel(ctx, network, channelID)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if closed {
+		response := ResyncFailure(x402.Network(network), batchsettlement.ErrChannelState, "channel closed onchain", []batchsettlement.BatchRedemptionChannelState{closedSnapshot(channelID)})
+		response.Payer = payer
+		return response, nil
 	}
 	if intent == CloseIntentRefund && generated.ChannelStatus(channel.Status) == generated.ChannelStatus_Closing {
 		if err := deps.AssertClaimChannel(channel, payload.ChannelConfig, terms, requirements, []generated.ChannelStatus{generated.ChannelStatus_Closing}); err != nil {

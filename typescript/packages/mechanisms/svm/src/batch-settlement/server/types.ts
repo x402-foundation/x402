@@ -1,6 +1,6 @@
 import type { BatchChannelConfig, BatchProof } from "../types";
 
-export type BatchChannelStatus = "open" | "closing" | "distributed";
+export type BatchChannelStatus = "open" | "closing" | "sealed" | "distributed";
 
 /** Ceiling held while a verified handler runs, keyed by reservation id on {@link ChannelState}. */
 export type ChannelReservation = {

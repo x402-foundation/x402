@@ -1108,20 +1108,30 @@ is the channel's confirmed onchain state:
 }
 ```
 
-`status` is one of `open`, `closing`, `sealed`, or `distributed`. `balance` is
-the deposit, `totalClaimed` is `settled`, and `payoutWatermark` is
-`payout_watermark`. On a successful settle the entries describe the channels
+`status` is one of `open`, `closing`, `sealed`, `distributed`, or `closed`.
+`balance` is the deposit, `totalClaimed` is `settled`, and `payoutWatermark` is
+`payout_watermark`. `closed` means the channel PDA is absent onchain and
+permanently terminal (either closed and deallocated, or past
+`open_slot + OPEN_SLOT_WINDOW` so it can never be opened); a `closed` entry
+carries `"0"` for `balance`, `totalClaimed`, and `payoutWatermark` and `0` for
+`withdrawRequestedAt`. On a successful settle the entries describe the channels
 after the transaction: `payoutWatermark` equals `totalClaimed`, and a sealed
 channel is reported as `distributed`. A settle answered from a remembered
 broadcast (section 6) reports the channels as read after its recovery instead:
 a claim that landed since may have advanced `totalClaimed` past
-`payoutWatermark`, and the unpaid difference stays payable.
+`payoutWatermark`, and the unpaid difference stays payable, while a channel
+account already absent at or past the confirmation slot is reported as `closed`.
 
 A server MUST NOT require any of these fields. It adopts `extra.accepts[]` or
 `extra.channelStates[]` only if the response is bound to the requested network,
 the entries name exactly the channels it submitted with no duplicates, and
-every entry satisfies `payoutWatermark <= totalClaimed <= balance`; otherwise it
-ignores the field. When the fields are absent or ignored, the server MAY infer
+every entry satisfies `payoutWatermark <= totalClaimed <= balance` (with
+`closed` entries carrying all zeroed fields); otherwise it ignores the field.
+When adopting a `closed` entry, the server records the channel as paid out
+(`distributed`) up to its already-known `settled` watermark (since the program
+forbids deallocating a channel before `distribute` pays `settled` to `payTo`),
+MUST NOT raise `settled` to unclaimed vouchers, and reports any unclaimed
+voucher delta. When the fields are absent or ignored, the server MAY infer
 the confirmed state from the values it submitted: a confirmed claim advanced
 `settled` to each voucher's `maxClaimableAmount`. It MUST NOT infer that a
 confirmed settle advanced `payout_watermark` to `settled`, since the settle may
@@ -1879,6 +1889,12 @@ duplicate request from executing but is not an HTTP response-recovery protocol:
   SHOULD attach `extra.channelStates[]` for every channel of the batch, and the
   server SHOULD resync the channels whose `totalClaimed` is at least their
   voucher and re-claim the rest once, rather than resubmit the whole batch.
+  Similarly, if a `claim`, `seal`, or `settle` finds a channel account absent
+  onchain past `open_slot + OPEN_SLOT_WINDOW`, the facilitator SHOULD reject
+  with `invalid_batch_settlement_svm_channel_state` carrying
+  `extra.channelStates[]` with `status: "closed"` for absent channels and live
+  states for present channels, so the server retires closed channels and
+  retries any remaining live channels in a batch once rather than looping.
 - **Open-channel distributions.** `distribute` advances `payout_watermark` to
   `settled`; a repeat cannot pay the same delta again. A concurrent duplicate
   distribution for the same channel and observed watermark MUST be rejected with
@@ -2024,8 +2040,9 @@ with the payout and refund read from the confirmed transaction, before the
 channel's status is read: the channel no longer has the status a new close
 needs, but the retry is not a new close. Once a remembered transaction is
 confirmed, a channel read that fails or lags MUST NOT keep the retry
-`settlement_pending`; a recovered `distribute` then omits
-`extra.channelStates[]`. A confirmed transaction whose payout cannot be
+`settlement_pending`: a recovered `distribute` omits `extra.channelStates[]`
+on RPC read failure and reports `status: "closed"` for any channel account
+absent onchain at or past the confirmation slot. A confirmed transaction whose payout cannot be
 attributed is answered with
 `invalid_batch_settlement_svm_payout_attribution_ambiguous` and its signature,
 and its remembered broadcast is dropped. A retry of a deposit whose `open` timed
@@ -2104,7 +2121,10 @@ Standard x402 codes apply. The facilitator reports verification failures in
   a local minimum-deposit policy and rejected a deposit below the advertised
   `extra.minDeposit` target.
 - `invalid_batch_settlement_svm_channel_state` - confirmed channel state does
-  not match the payload and challenge-bound requirements.
+  not match the payload and challenge-bound requirements, or the channel account
+  is absent onchain. When a server-authored `claim`, `seal`, or `settle` finds
+  an absent channel past `open_slot + OPEN_SLOT_WINDOW`, the rejection SHOULD
+  carry `extra.channelStates[]` (section 4.4, Phase 5).
 - `invalid_batch_settlement_svm_refund_transaction` - refund transaction is not
   a valid payer-signed `request_close` for the derived channel or contains an
   unauthorized instruction.

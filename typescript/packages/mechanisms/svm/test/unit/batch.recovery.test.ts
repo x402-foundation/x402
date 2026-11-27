@@ -21,6 +21,7 @@ import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAsse
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
 import { ChannelStatus } from "../../src/payment-channels/onchain";
+import { OPEN_SLOT_WINDOW } from "../../src/payment-channels/open";
 
 vi.mock("../../src/batch-settlement/facilitator/seal", async importOriginal => ({
   ...(await importOriginal<typeof import("../../src/batch-settlement/facilitator/seal")>()),
@@ -368,9 +369,24 @@ describe("batch-settlement outcome recovery", () => {
       .fn()
       .mockResolvedValue(channel({ settlement: { payoutWatermark: 0n, settled: 2_000n } }));
     unrelatedApi.submitRedemption = vi.fn();
-    await expect(unrelated.settleClaims(payment(payload), payload, requirements())).rejects.toThrow(
-      BatchError.CUMULATIVE_AMOUNT_MISMATCH,
-    );
+    const rejected = await unrelated.settleClaims(payment(payload), payload, requirements());
+    expect(rejected).toMatchObject({
+      errorReason: BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+      success: false,
+      transaction: "",
+    });
+    expect(rejected.extra).toEqual({
+      channelStates: [
+        {
+          balance: "10000",
+          channelId,
+          payoutWatermark: "0",
+          status: "open",
+          totalClaimed: "2000",
+          withdrawRequestedAt: 0,
+        },
+      ],
+    });
     expect(unrelatedApi.submitRedemption).not.toHaveBeenCalled();
   });
 
@@ -433,7 +449,19 @@ describe("batch-settlement outcome recovery", () => {
     const response = await first.settleDistributions(payment(payload), payload, requirements());
     expect(response).toEqual({
       amount: "1500",
-      extra: { channels: [channelId] },
+      extra: {
+        channelStates: [
+          {
+            balance: "0",
+            channelId,
+            payoutWatermark: "0",
+            status: "closed",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+          },
+        ],
+        channels: [channelId],
+      },
       network: NETWORK,
       payer: "",
       success: true,
@@ -451,9 +479,22 @@ describe("batch-settlement outcome recovery", () => {
       .fn()
       .mockResolvedValue(channel({ settlement: { payoutWatermark: 1700n, settled: 1700n } }));
     restartedApi.submitRedemption = vi.fn();
-    expect(await restarted.settleDistributions(payment(payload), payload, requirements())).toEqual(
-      response,
-    );
+    expect(await restarted.settleDistributions(payment(payload), payload, requirements())).toEqual({
+      ...response,
+      extra: {
+        channels: [channelId],
+        channelStates: [
+          {
+            balance: "10000",
+            channelId,
+            payoutWatermark: "1700",
+            status: "open",
+            totalClaimed: "1700",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+    });
     expect(restartedApi.submitRedemption).not.toHaveBeenCalled();
 
     // The identical request can legitimately pay a later claim. No permanent
@@ -465,6 +506,520 @@ describe("batch-settlement outcome recovery", () => {
     const next = await restarted.settleDistributions(payment(payload), payload, requirements());
     expect(next.transaction).toBe("second-transaction");
     expect(restartedApi.submitRedemption).toHaveBeenCalledOnce();
+  });
+
+  it("reports the onchain payout watermark of a recovered sweep that a later claim has passed", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const store = new InMemoryPendingSettlementStore();
+    await store.set(key, TX);
+    const facilitatorSigner = signer();
+    facilitatorSigner.getConfirmedTransaction.mockResolvedValue(
+      await payoutEvidence("200", "1200"),
+    );
+    const scheme = new BatchSvmScheme(facilitatorSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.submitRedemption = vi.fn();
+    // The timed-out sweep paid up to 1000; a claim then settled up to 3000.
+    api.readChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 1_000n, settled: 3_000n } }));
+    const response = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(response).toMatchObject({ amount: "1000", success: true });
+    expect(response.extra?.channelStates).toEqual([
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "1000",
+        status: "open",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    // The confirmed sweep does not wait on the optional field.
+    await store.set(key, TX);
+    await store.delete(`batch:transaction:${NETWORK}:${TX}:result`);
+    api.readChannel = vi.fn().mockRejectedValue(new Error("rpc unavailable"));
+    const unread = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(unread).toMatchObject({ amount: "1000", success: true, transaction: TX });
+    expect(unread.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
+
+    // The stored result has no channel states. A caught-up read replays that
+    // result with the states just read, and does not broadcast again.
+    api.readChannel = vi
+      .fn()
+      .mockResolvedValue(channel({ settlement: { payoutWatermark: 3_000n, settled: 3_000n } }));
+    api.submitRedemption = vi.fn();
+    const refreshed = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(refreshed.transaction).toBe(unread.transaction);
+    expect(refreshed.amount).toBe(unread.amount);
+    expect(refreshed.extra?.channelStates).toEqual([
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "3000",
+        status: "open",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+    expect(facilitatorSigner.sendTransaction).not.toHaveBeenCalled();
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(refreshed);
+
+    // Once the channel PDA is later absent onchain, replay reports it as closed
+    // and persists the refreshed response.
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const closedReplay = await scheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(closedReplay).toEqual({
+      ...unread,
+      extra: {
+        ...unread.extra,
+        channelStates: [
+          {
+            balance: "0",
+            channelId,
+            payoutWatermark: "0",
+            status: "closed",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+    });
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(closedReplay);
+
+    // An unrecognized status byte omits the field the same way.
+    await store.set(key, TX);
+    await store.delete(`batch:transaction:${NETWORK}:${TX}:result`);
+    api.readChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 1_000n, settled: 3_000n },
+        status: 99 as ChannelStatus,
+      }),
+    );
+    const unknown = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(unknown).toMatchObject({ amount: "1000", success: true, transaction: TX });
+    expect(unknown.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
+  });
+
+  it("reports closed channelStates statelessly when a recovered sealed distribute deletes the account", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const freshExpectedStates = [
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "3000",
+        status: "distributed",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ];
+    const closedExpectedStates = [
+      {
+        balance: "0",
+        channelId,
+        payoutWatermark: "0",
+        status: "closed",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+      },
+    ];
+
+    // 1. Fresh sealed distribute confirms and deallocates the PDA; a retry after
+    // response loss replays the cached success with those pre-broadcast states.
+    const freshStore = new InMemoryPendingSettlementStore();
+    const freshSigner = signer();
+    freshSigner.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const fresh = new BatchSvmScheme(freshSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: freshStore,
+    });
+    const freshApi = configure(fresh);
+    freshApi.fetchChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 0n, settled: 3_000n },
+        status: ChannelStatus.Sealed,
+      }),
+    );
+    freshApi.submitRedemption = vi.fn().mockResolvedValue({ ok: true, signature: TX });
+
+    const settled = await fresh.settleDistributions(payment(payload), payload, requirements());
+    expect(settled).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(settled.extra?.channelStates).toEqual(freshExpectedStates);
+    expect(await freshStore.get(`${key}:states`)).toBeUndefined();
+
+    freshApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const replayed = await fresh.settleDistributions(payment(payload), payload, requirements());
+    expect(replayed).toEqual(settled);
+    expect(freshApi.submitRedemption).toHaveBeenCalledOnce();
+
+    // 2. Timed-out sealed distribute deletes the PDA before recovery: recovery
+    // emits status: "closed" with zero extra storage keys, caches it onto the
+    // success result, and subsequent retries stop the loop.
+    const pendingStore = new InMemoryPendingSettlementStore();
+    const pendingSigner = signer();
+    pendingSigner.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const recovering = new BatchSvmScheme(pendingSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: pendingStore,
+    });
+    const recoveringApi = configure(recovering);
+    recoveringApi.fetchChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 0n, settled: 3_000n },
+        status: ChannelStatus.Sealed,
+      }),
+    );
+    recoveringApi.submitRedemption = vi.fn().mockImplementation(async () => {
+      await pendingStore.set(key, TX);
+      return {
+        ok: false as const,
+        response: {
+          errorReason: "settlement_pending",
+          network: NETWORK,
+          payer: "",
+          success: false,
+          transaction: TX,
+        },
+      };
+    });
+
+    const pending = await recovering.settleDistributions(payment(payload), payload, requirements());
+    expect(pending).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(await pendingStore.get(`${key}:states`)).toBeUndefined();
+
+    recoveringApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const recovered = await recovering.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(recovered).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(recovered.extra?.channelStates).toEqual(closedExpectedStates);
+    expect(await pendingStore.get(key)).toBeUndefined();
+    expect(await pendingStore.get(`${key}:states`)).toBeUndefined();
+
+    const replayAfterRecovery = await recovering.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(replayAfterRecovery).toEqual(recovered);
+    expect(recoveringApi.submitRedemption).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a sealed distribute when the first post-confirmation read errors and replay reads absent", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const closedExpectedStates = [
+      {
+        balance: "0",
+        channelId,
+        payoutWatermark: "0",
+        status: "closed",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+      },
+    ];
+
+    // 1. Pending sealed distribute confirms, but the first post-confirmation read
+    // errors so the cached response lacks channelStates. On replay, the absent
+    // PDA is reported as closed and persisted to `${key}:result`.
+    const store = new InMemoryPendingSettlementStore();
+    await store.set(key, TX);
+    const transport = signer();
+    transport.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const scheme = new BatchSvmScheme(transport as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.submitRedemption = vi.fn();
+    api.readChannel = vi.fn().mockRejectedValue(new Error("rpc unavailable"));
+
+    const first = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(first).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(first.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
+
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const replayed = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(replayed).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(replayed.extra?.channelStates).toEqual(closedExpectedStates);
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(replayed);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    const third = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(third).toEqual(replayed);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    // 1b. Without a persisted confirmation slot, a restarted facilitator fails
+    // closed and does not infer closed from an unconstrained absent read.
+    const unconstrainedStore = new InMemoryPendingSettlementStore();
+    await unconstrainedStore.set(`${key}:result`, JSON.stringify(first));
+    const unconstrainedScheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: unconstrainedStore,
+    });
+    const unconstrainedApi = configure(unconstrainedScheme);
+    unconstrainedApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const unconstrained = await unconstrainedScheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(unconstrained).toEqual(first);
+    expect(JSON.parse((await unconstrainedStore.get(`${key}:result`))!)).toEqual(first);
+
+    // 2. When onDistributionConfirmed also failed on the first recovery attempt,
+    // retrying finishDistribution refreshes the cached transaction result with
+    // closed channelStates instead of returning the stale state-less cache.
+    const hookStore = new InMemoryPendingSettlementStore();
+    await hookStore.set(key, TX);
+    const onDistributionConfirmed = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const hookTransport = signer();
+    hookTransport.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const hookScheme = new BatchSvmScheme(hookTransport as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      onDistributionConfirmed,
+      pendingSettlementStore: hookStore,
+    });
+    const hookApi = configure(hookScheme);
+    hookApi.readChannel = vi.fn().mockRejectedValueOnce(new Error("rpc unavailable"));
+
+    const pending = await hookScheme.settleDistributions(payment(payload), payload, requirements());
+    expect(pending).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(await hookStore.get(key)).toBe(TX);
+
+    hookApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const recovered = await hookScheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(recovered).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(recovered.extra?.channelStates).toEqual(closedExpectedStates);
+    expect(onDistributionConfirmed).toHaveBeenLastCalledWith(recovered, requirements());
+    expect(JSON.parse((await hookStore.get(`${key}:result`))!)).toEqual(recovered);
+  });
+
+  it("reports closed and live channelStates together when a recovered distribute closed one channel of a batch", async () => {
+    const secondChannelId = USDC_DEVNET_ADDRESS;
+    const secondConfig: BatchChannelConfig = { ...channelConfig, salt: "2" };
+    const mixedPayload: BatchSettlePayload = {
+      channels: [
+        { channelConfig, channelId },
+        { channelConfig: secondConfig, channelId: secondChannelId },
+      ],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${[channelId, secondChannelId]
+      .sort()
+      .join(",")}`;
+    const store = new InMemoryPendingSettlementStore();
+    await store.set(key, TX);
+    const transport = signer();
+    transport.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("200", "1700"));
+    const scheme = new BatchSvmScheme(transport as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.deriveChannelId = vi.fn(async (cfg: BatchChannelConfig) =>
+      cfg.salt === "2" ? secondChannelId : channelId,
+    );
+    api.readChannel = vi.fn(async (_network: string, id: string) =>
+      id === channelId
+        ? undefined
+        : channel({
+            salt: 2n,
+            settlement: { payoutWatermark: 1_700n, settled: 2_200n },
+          }),
+    );
+
+    const response = await scheme.settleDistributions(
+      payment(mixedPayload),
+      mixedPayload,
+      requirements(),
+    );
+    expect(response).toMatchObject({ amount: "1500", success: true, transaction: TX });
+    expect(response.extra?.channelStates).toEqual([
+      {
+        balance: "0",
+        channelId,
+        payoutWatermark: "0",
+        status: "closed",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+      },
+      {
+        balance: "10000",
+        channelId: secondChannelId,
+        payoutWatermark: "1700",
+        status: "open",
+        totalClaimed: "2200",
+        withdrawRequestedAt: 0,
+      },
+    ]);
+  });
+
+  it("finishes a recovered claim whose channel was closed and deallocated after confirmation", async () => {
+    const store = new InMemoryPendingSettlementStore();
+    const key = `batch:claim:${NETWORK}:${channelId}:1000`;
+    await store.set(key, TX);
+    const scheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.waitForChannelRead = vi.fn().mockResolvedValue(undefined);
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const payload = await claimPayload(1_000n);
+
+    const response = await scheme.settleClaims(payment(payload), payload, requirements());
+    expect(response).toMatchObject({ success: true, transaction: TX });
+    expect(await store.get(key)).toBeUndefined();
+  });
+
+  it("fresh claim and distribute report closed channelStates only past open_slot + OPEN_SLOT_WINDOW", async () => {
+    const secondChannelId = USDC_DEVNET_ADDRESS;
+    const secondConfig: BatchChannelConfig = { ...channelConfig, salt: "2" };
+    const firstClaim = (await claimPayload(1_000n)).claims[0]!;
+    const secondSigned = await signBatchVoucher(payer, {
+      channelId: secondChannelId,
+      expiresAt: 0,
+      maxClaimableAmount: 1_000n,
+    });
+    const mixedClaim: BatchClaimPayload = {
+      claims: [
+        firstClaim,
+        {
+          channelConfig: secondConfig,
+          channelId: secondChannelId,
+          voucher: {
+            channelId: secondChannelId,
+            expiresAt: 0,
+            maxClaimableAmount: "1000",
+            signature: secondSigned.signature,
+          },
+        },
+      ],
+      type: "claim",
+    };
+    const mixedDistribute: BatchSettlePayload = {
+      channels: [
+        { channelConfig, channelId },
+        { channelConfig: secondConfig, channelId: secondChannelId },
+      ],
+      type: "settle",
+    };
+
+    const setup = (slot: bigint | Error) => {
+      const transport = signer();
+      if (slot instanceof Error) {
+        transport.getSlot.mockRejectedValue(slot);
+      } else {
+        transport.getSlot.mockResolvedValue(slot);
+      }
+      const scheme = new BatchSvmScheme(transport as never, {
+        channelStorage: new InMemoryPaymentChannelStorage(),
+      });
+      const api = configure(scheme);
+      api.waitForChannelRead = vi.fn().mockResolvedValue(undefined);
+      api.deriveChannelId = vi.fn(async (cfg: BatchChannelConfig) =>
+        cfg.salt === "2" ? secondChannelId : channelId,
+      );
+      api.readChannel = vi.fn(async (_network: string, id: string) =>
+        id === channelId
+          ? undefined
+          : channel({
+              salt: 2n,
+              settlement: { payoutWatermark: 0n, settled: 500n },
+            }),
+      );
+      api.submitRedemption = vi.fn();
+      return { api, scheme, transport };
+    };
+
+    // Past open_slot + OPEN_SLOT_WINDOW -> CHANNEL_STATE resync failure with closed + live states.
+    const pastSlot = BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW + 1n;
+    const expectedStates = [
+      {
+        balance: "0",
+        channelId,
+        payoutWatermark: "0",
+        status: "closed",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+      },
+      {
+        balance: "10000",
+        channelId: secondChannelId,
+        payoutWatermark: "0",
+        status: "open",
+        totalClaimed: "500",
+        withdrawRequestedAt: 0,
+      },
+    ];
+    for (const run of [
+      (s: BatchSvmScheme) => s.settle(payment(mixedClaim), requirements()),
+      (s: BatchSvmScheme) => s.settle(payment(mixedDistribute), requirements()),
+    ]) {
+      const { api, scheme, transport } = setup(pastSlot);
+      const response = await run(scheme);
+      expect(response).toMatchObject({
+        errorReason: BatchError.CHANNEL_STATE,
+        extra: { channelStates: expectedStates },
+        success: false,
+      });
+      expect(api.submitRedemption).not.toHaveBeenCalled();
+      expect(transport.getSlot).toHaveBeenCalledOnce();
+    }
+
+    // Inside open_slot + OPEN_SLOT_WINDOW and on getSlot failure -> plain CHANNEL_STATE (no channelStates).
+    for (const slot of [
+      BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW,
+      new Error("rpc unavailable"),
+    ]) {
+      for (const run of [
+        (s: BatchSvmScheme) => s.settle(payment(mixedClaim), requirements()),
+        (s: BatchSvmScheme) => s.settle(payment(mixedDistribute), requirements()),
+      ]) {
+        const { api, scheme } = setup(slot);
+        const response = await run(scheme);
+        expect(response).toMatchObject({
+          errorReason: BatchError.CHANNEL_STATE,
+          success: false,
+        });
+        expect(response.extra).toBeUndefined();
+        expect(api.submitRedemption).not.toHaveBeenCalled();
+      }
+    }
   });
 
   it("waits for transaction metadata instead of estimating payout from a stale snapshot", async () => {

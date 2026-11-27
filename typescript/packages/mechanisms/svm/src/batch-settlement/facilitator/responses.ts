@@ -24,12 +24,27 @@ import {
 } from "../../payment-channels/facilitator";
 import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
+import type {
+  OpenBroadcastDisposition,
+  PaymentChannelRecord,
+} from "../../payment-channels/storage";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
-import type { BatchChannelState } from "../types";
+import {
+  redemptionStatusOf,
+  type BatchChannelState,
+  type BatchRedemptionChannelState,
+} from "../types";
 
 /** Reason reported when a channel is already mid-operation. */
 export const CHANNEL_BUSY = "duplicate_settlement";
+
+export const ALL_CHANNEL_STATUSES: readonly ChannelStatus[] = [
+  ChannelStatus.Open,
+  ChannelStatus.Closing,
+  ChannelStatus.Sealed,
+  ChannelStatus.Distributed,
+];
 
 /** Core x402 reason for a `paymentPayload.accepted` that does not equal the requirements. */
 export const INVALID_PAYMENT_REQUIREMENTS = "invalid_payment_requirements";
@@ -129,6 +144,257 @@ export function verifiedChannelExtra(
   const { chargedCumulativeAmount: _omitted, ...flat } = snapshotChannel(channelId, channel);
   void _omitted;
   return flat;
+}
+
+/**
+ * Project a decoded channel account onto a `extra.channelStates[]` entry.
+ *
+ * @param channelId - Channel PDA
+ * @param channel - Decoded channel account
+ * @returns The channel's confirmed onchain state, or undefined for a status byte this scheme does not report
+ */
+export function redemptionSnapshot(
+  channelId: string,
+  channel: Channel,
+): BatchRedemptionChannelState | undefined {
+  const status = redemptionStatusOf(channel.status);
+  if (status === undefined) return undefined;
+  return {
+    ...snapshotChannel(channelId, channel),
+    payoutWatermark: channel.settlement.payoutWatermark.toString(),
+    status,
+  };
+}
+
+/**
+ * Snapshot for a channel PDA that is absent onchain and permanently terminal
+ * (closed and deallocated, or past `open_slot + OPEN_SLOT_WINDOW` so it can
+ * never be opened). Watermarks are zeroed because no onchain account remains.
+ *
+ * @param channelId - Channel PDA
+ * @returns The closed snapshot entry for `extra.channelStates[]`
+ */
+export function closedSnapshot(channelId: string): BatchRedemptionChannelState {
+  return {
+    balance: "0",
+    channelId,
+    payoutWatermark: "0",
+    status: "closed",
+    totalClaimed: "0",
+    withdrawRequestedAt: 0,
+  };
+}
+
+/**
+ * The state a confirmed distribute leaves behind: payout caught up to settled,
+ * and a sealed channel paid out. It is valid only for a channel read before
+ * that distribute was built; one read after may have settled more since, so
+ * use {@link redemptionSnapshot} for it.
+ *
+ * @param channelId - Channel PDA
+ * @param channel - Decoded channel account read before the distribute
+ * @returns The channel's state after the distribute, or undefined for an unreported status byte
+ */
+export function distributedSnapshot(
+  channelId: string,
+  channel: Channel,
+): BatchRedemptionChannelState | undefined {
+  const state = redemptionSnapshot(channelId, channel);
+  if (!state) return undefined;
+  return {
+    ...state,
+    payoutWatermark: state.totalClaimed,
+    status: state.status === "sealed" ? "distributed" : state.status,
+  };
+}
+
+/**
+ * Snapshot a batch's channels, or none unless every one was read and has a
+ * reportable status: the server adopts only a complete batch.
+ *
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param snapshot - Projects a channel onto its reported state
+ * @returns The states, or undefined when a channel was not read or has no reportable state
+ */
+export function completeStates(
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[] | undefined,
+  snapshot: (channelId: string, channel: Channel) => BatchRedemptionChannelState | undefined,
+): BatchRedemptionChannelState[] | undefined {
+  if (!channels || channels.includes(undefined)) return undefined;
+  const states = batch.map((item, index) => snapshot(item.channelId, channels[index]!));
+  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
+    ? states
+    : undefined;
+}
+
+/**
+ * Reject a claim or distribute whose effect is already onchain, with the
+ * channels' state when every one can be reported.
+ *
+ * @param requirements - The request's requirements
+ * @param message - Human-readable detail
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @returns The settle response
+ */
+export function appliedFailure(
+  requirements: PaymentRequirements,
+  message: string,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+): SettleResponse {
+  return resyncFailure(
+    requirements.network,
+    BatchError.CUMULATIVE_AMOUNT_MISMATCH,
+    message,
+    completeStates(batch, channels, redemptionSnapshot),
+  );
+}
+
+/**
+ * Parse a persisted positive slot floor from recovery storage.
+ *
+ * @param raw - Stored decimal slot string, if present
+ * @returns Positive slot bigint, or undefined when absent or malformed
+ */
+export function parseStoredSlot(raw: string | undefined): bigint | undefined {
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const slot = BigInt(raw);
+  return slot > 0n ? slot : undefined;
+}
+
+/**
+ * Snapshot a batch read at or past a terminal point: live accounts use
+ * `redemptionSnapshot`, absent ones keep a preserved `distributed` snapshot
+ * when available or else become `closedSnapshot` when `allowClosed` is true.
+ * Returns undefined if any channel cannot be safely reported.
+ *
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param preserved - Previously recorded snapshots, if any
+ * @param allowClosed - Whether absent PDAs were read with a confirmation slot floor
+ * @returns The states, or undefined when a channel cannot be safely reported
+ */
+export function observedOrClosedStates(
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+  preserved?: readonly BatchRedemptionChannelState[],
+  allowClosed = true,
+): BatchRedemptionChannelState[] | undefined {
+  const byId = preserved ? new Map(preserved.map(entry => [entry.channelId, entry])) : undefined;
+  const states = batch.map((item, index) => {
+    const live = channels[index];
+    if (live) return redemptionSnapshot(item.channelId, live);
+    const existing = byId?.get(item.channelId);
+    if (existing?.status === "distributed") return existing;
+    return allowClosed ? closedSnapshot(item.channelId) : undefined;
+  });
+  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
+    ? states
+    : undefined;
+}
+
+/**
+ * Refresh `extra.channelStates` on a replayed successful distribute response,
+ * converting absent PDAs to `closed` only when `allowClosed` is true (unless a
+ * terminal `distributed` snapshot was already recorded). Non-success responses
+ * are returned unchanged.
+ *
+ * @param response - The previously cached distribute response
+ * @param batch - The batch's channels
+ * @param channels - Current chain reads for the batch, `undefined` where absent
+ * @param allowClosed - Whether the replay reads were constrained to the confirmation slot
+ * @returns The refreshed response, or `response` unchanged
+ */
+export function refreshDistributionReplay(
+  response: SettleResponse,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+  allowClosed = true,
+): SettleResponse {
+  if (!response.success) return response;
+  const existing = Array.isArray(response.extra?.channelStates)
+    ? (response.extra.channelStates as BatchRedemptionChannelState[])
+    : undefined;
+  const channelStates = observedOrClosedStates(batch, channels, existing, allowClosed);
+  return channelStates ? { ...response, extra: { ...response.extra, channelStates } } : response;
+}
+
+/**
+ * Reject a claim, seal, or distribute whose batch contains at least one channel
+ * absent onchain past `open_slot + OPEN_SLOT_WINDOW`, attaching `status: "closed"`
+ * for absent channels and live snapshots for present channels.
+ *
+ * @param network - CAIP-2 network of the request
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param payer - Channel payer when recoverable
+ * @returns The settle response
+ */
+export function closedFailure(
+  network: Network,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+  payer = "",
+): SettleResponse {
+  return resyncFailure(
+    network,
+    BatchError.CHANNEL_STATE,
+    "channel closed onchain",
+    observedOrClosedStates(batch, channels),
+    payer,
+  );
+}
+
+/**
+ * The states a confirmed distribute reports. A fresh sweep reports the channels
+ * read before it; a recovered one re-reads the chain, reporting `status: "closed"`
+ * for any account already absent at or past the confirmation slot. An RPC read
+ * error or an unrecognized onchain status byte omits the field.
+ *
+ * @param batch - The batch's channels
+ * @param channelsBefore - The channels read before the sweep, if it was just built
+ * @param readChannel - Reads a channel now
+ * @param allowClosed - Whether absent accounts were read with a confirmation slot floor
+ * @returns The states, or undefined when an RPC read failed or a channel has an unreported status
+ */
+export async function distributionStates(
+  batch: readonly { channelId: string }[],
+  channelsBefore: readonly (Channel | undefined)[] | undefined,
+  readChannel: (channelId: string) => Promise<Channel | undefined>,
+  allowClosed = true,
+): Promise<BatchRedemptionChannelState[] | undefined> {
+  if (channelsBefore) return completeStates(batch, channelsBefore, distributedSnapshot);
+  const channels = await Promise.all(batch.map(item => readChannel(item.channelId))).catch(
+    () => undefined,
+  );
+  if (!channels) return undefined;
+  return observedOrClosedStates(batch, channels, undefined, allowClosed);
+}
+
+/**
+ * Reject a redemption whose effect is already onchain, carrying the channels'
+ * state so the server adopts it instead of resubmitting. Without a complete
+ * state it is a plain failure.
+ *
+ * @param network - CAIP-2 network of the request
+ * @param reason - Machine-readable reason
+ * @param message - Human-readable detail
+ * @param states - The channels' confirmed onchain state, when every channel has one
+ * @param payer - Channel payer when recoverable
+ * @returns The settle response
+ */
+export function resyncFailure(
+  network: Network,
+  reason: string,
+  message: string,
+  states: readonly BatchRedemptionChannelState[] | undefined,
+  payer = "",
+): SettleResponse {
+  const failure = settleFailure(network, reason, payer, message);
+  return states ? { ...failure, extra: { channelStates: states } } : failure;
 }
 
 /**
@@ -413,4 +679,56 @@ export function classifyError(error: unknown): string {
 export function parseOptionalSlot(value: unknown): bigint | undefined {
   if (value === undefined || value === null) return undefined;
   return parseU64(value as string | number | bigint, "extra.recentSlot");
+}
+
+/**
+ * Whether an open broadcast failed definitively: the send was rejected, the
+ * transaction landed with an error, or its blockhash expired unlanded.
+ * Pending and a failed attempt to persist a pending signature are kept.
+ *
+ * @param result - Durable broadcast result
+ * @returns `revert` only for a definitive open failure
+ */
+export function openDisposition(
+  result: { signature: string; channel: unknown } | SettleResponse,
+): OpenBroadcastDisposition {
+  if ("channel" in result) return "keep";
+  if (result.success !== false || result.errorReason !== "transaction_failed") return "keep";
+  if (result.errorMessage?.includes("failed to persist")) return "keep";
+  return "revert";
+}
+
+/**
+ * Channel facts for an activity or open write. Bindings stay empty unless
+ * the caller sets them; activity never changes a stored binding.
+ *
+ * @param fields - Channel key and the facts this write knows
+ * @param fields.network - CAIP-2 network
+ * @param fields.channelId - Channel PDA
+ * @param fields.payTo - Distribution recipient
+ * @param fields.tokenProgram - Token program that owns the mint
+ * @param fields.expiresAt - Voucher expiry in Unix seconds, `0` for batch
+ * @param fields.receiverAuthorizer - Binding memo key, empty for activity
+ * @param fields.callerIdentity - Delegated caller, empty when not delegated
+ * @returns A storage record stamped with the current activity time
+ */
+export function activityRecord(fields: {
+  network: Network;
+  channelId: string;
+  payTo: string;
+  tokenProgram: string;
+  expiresAt: number;
+  receiverAuthorizer?: string;
+  callerIdentity?: string;
+}): PaymentChannelRecord {
+  return {
+    callerIdentity: fields.callerIdentity ?? "",
+    channelId: fields.channelId,
+    expiresAt: fields.expiresAt,
+    lastActivityAt: Date.now(),
+    network: fields.network,
+    payTo: fields.payTo,
+    receiverAuthorizer: fields.receiverAuthorizer ?? "",
+    tokenProgram: fields.tokenProgram,
+  };
 }
