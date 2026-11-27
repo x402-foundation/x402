@@ -634,6 +634,10 @@ The batch-settlement facilitator scheme accepts an optional `authorizerSigner`. 
         batchedfac.NewBatchSettlementEvmScheme(evmSigner, authorizer),
     )
     ```
+
+    <Callout type="warning">
+    `WaitForTransactionReceipt` on the facilitator signer (and on `AuthorizerSubmitter`) must return the receipt `Logs`. The facilitator derives deposit and refund `extra.channelState` from the receipt's `Deposited`, `Claimed`, `Refunded`, and `ChannelClosed` events. A confirmed receipt with nil `Logs` fails with `invalid_batch_settlement_evm_receipt_logs_unavailable` and returns the transaction hash so you can reconcile onchain. Deposited funds remain in the channel and are refundable or withdrawable as usual.
+    </Callout>
   </Tab>
   <Tab title="Python">
     ```python
