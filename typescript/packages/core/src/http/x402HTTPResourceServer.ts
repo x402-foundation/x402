@@ -816,6 +816,12 @@ export class x402HTTPResourceServer {
     // After-handler path for flows that do not settle again: echo before-handler settle or no-op.
     if (phase !== "before-handler" && !phases.settleAfterHandler) {
       if (beforeHandlerSettlement) {
+        await this.ResourceServer.notifyVerifiedPaymentCompleted(
+          beforeHandlerSettlement,
+          paymentPayload,
+          declaredExtensions,
+          transportContext,
+        );
         return {
           ...beforeHandlerSettlement.result,
           success: true,
