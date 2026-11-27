@@ -162,7 +162,11 @@ If the target chain has Permit2 at a non-canonical address:
 
 ```bash
 export PERMIT2_ADDRESS="0x..."
-forge script script/Deploy.s.sol --rpc-url <RPC_URL> --broadcast
+forge script script/Deploy.s.sol \
+  --rpc-url <RPC_URL> \
+  --account x402-deployment-signer \
+  --sender <DEPLOYMENT_SIGNER_ADDRESS> \
+  --broadcast
 ```
 
 > **Warning:** Overriding the Permit2 address changes the initCode for the Upto contract
@@ -265,23 +269,27 @@ forge script script/ComputeAddress.s.sol --sig "computeBatchStack(bytes32,bytes3
 
 Prerequisites: [Permit2](https://github.com/Uniswap/permit2) at `0x000000000022D473030F116dDEE9F6B43aC78BA3`, Arachnid [CREATE2 deployer](https://github.com/Arachnid/deterministic-deployment-proxy) at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, Cancun-compatible chain (transient storage), and native gas on the target chain.
 
+The script broadcasts with the wallet passed to `forge script`; it does not read a `PRIVATE_KEY` environment variable. Import a keystore once with `cast wallet import x402-deployment-signer --interactive`.
+
 **Base Sepolia:**
 ```bash
-export PRIVATE_KEY="..."
 forge script script/DeployBatchSettlement.s.sol \
   --rpc-url https://sepolia.base.org \
+  --account x402-deployment-signer \
+  --sender <DEPLOYMENT_SIGNER_ADDRESS> \
   --broadcast \
   --verify
 ```
 
 **Polygon Mainnet:**
 ```bash
-export PRIVATE_KEY="..."
 export POLYGON_RPC_URL="https://polygon-rpc.com"   # or your own node
 export POLYGONSCAN_API_KEY="..."
 
 forge script script/DeployBatchSettlement.s.sol \
   --rpc-url polygon \
+  --account x402-deployment-signer \
+  --sender <DEPLOYMENT_SIGNER_ADDRESS> \
   --broadcast \
   --verify
 ```
