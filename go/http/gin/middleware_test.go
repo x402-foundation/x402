@@ -1401,7 +1401,7 @@ func TestX402Payment_CreatesWorkingMiddleware(t *testing.T) {
 		Schemes: []SchemeConfig{
 			{Network: "eip155:1", Server: mockServer},
 		},
-		SyncFacilitatorOnStart: true,
+		SyncFacilitatorOnStart: spb(true),
 		Timeout:                5 * time.Second,
 	}))
 
@@ -1479,7 +1479,7 @@ func TestX402Payment_RegistersMultipleFacilitators(t *testing.T) {
 		Schemes: []SchemeConfig{
 			{Network: "eip155:1", Server: mockServer},
 		},
-		SyncFacilitatorOnStart: true,
+		SyncFacilitatorOnStart: spb(true),
 	}))
 
 	router.GET("/test", func(c *gin.Context) {
@@ -1520,7 +1520,7 @@ func TestX402Payment_RegistersMultipleSchemes(t *testing.T) {
 			{Network: "eip155:1", Server: mockServer1},
 			{Network: "eip155:8453", Server: mockServer2},
 		},
-		SyncFacilitatorOnStart: false,
+		SyncFacilitatorOnStart: spb(false),
 	}))
 
 	router.GET("/test", func(c *gin.Context) {
