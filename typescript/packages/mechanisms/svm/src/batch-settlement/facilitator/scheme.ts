@@ -56,7 +56,6 @@ import {
   ReceiverAuthorizerConflictError,
   reportStorageError,
   writeThenBroadcast,
-  type PaymentChannelRecord,
   type PaymentChannelStorage,
 } from "../../payment-channels/storage";
 import { assertMaxIdleSecs } from "../../payment-channels/rentCleanup";
@@ -65,21 +64,26 @@ import {
   InMemoryBatchPendingSettlementStore,
   PayoutAttributionAmbiguousError,
   broadcastExpiredWithoutLanding,
+  discardDistributionStates,
   discardWire,
   distributionsForStore,
   hasTokenBalances,
+  loadDistributionStates,
   ownerBalanceChange,
   reserveBroadcast,
+  saveDistributionStates,
   type BatchPendingSettlementStore,
   type ConfirmedEvidence,
 } from "./recovery";
 import {
+  activityRecord,
   appliedFailure,
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
   completeStates,
   depositResponse,
+  distributedSnapshot,
   distributionStates,
   envelopeFailure,
   openDisposition,
@@ -660,6 +664,11 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       data: new TextEncoder().encode(`x402:batch:${crypto.randomUUID()}`),
     });
     await this.pendingStore.delete(this.completedBroadcastKey(key));
+    await saveDistributionStates(
+      this.pendingStore,
+      key,
+      completeStates(prepared, channels, distributedSnapshot),
+    );
     const submitted = await writeThenBroadcast({
       kind: "activity",
       onStorageError: (error, network, channelId) =>
@@ -732,8 +741,11 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             throw new PayoutAttributionAmbiguousError();
           }
         }
-        const channelStates = await distributionStates(prepared, channelsBefore, channelId =>
-          this.readChannel(requirements.network, channelId),
+        const channelStates = await distributionStates(
+          prepared,
+          channelsBefore,
+          channelId => this.readChannel(requirements.network, channelId),
+          channelsBefore ? undefined : await loadDistributionStates(this.pendingStore, key),
         );
         response = {
           success: true,
@@ -1619,6 +1631,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       } else if ((await this.pendingStore.get(key)) === signature) {
         await this.pendingStore.delete(key);
       }
+      if (!(await this.pendingStore.get(key)))
+        await discardDistributionStates(this.pendingStore, key);
     } catch {
       // Best effort: the work is confirmed either way.
     }
@@ -1953,39 +1967,4 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         this.submitRedemption(feePayer, network, instructions, key, payer),
     };
   }
-}
-
-/**
- * Channel facts for an activity or open write. Bindings stay empty unless
- * the caller sets them; activity never changes a stored binding.
- *
- * @param fields - Channel key and the facts this write knows
- * @param fields.network - CAIP-2 network
- * @param fields.channelId - Channel PDA
- * @param fields.payTo - Distribution recipient
- * @param fields.tokenProgram - Token program that owns the mint
- * @param fields.expiresAt - Voucher expiry in Unix seconds, `0` for batch
- * @param fields.receiverAuthorizer - Binding memo key, empty for activity
- * @param fields.callerIdentity - Delegated caller, empty when not delegated
- * @returns A storage record stamped with the current activity time
- */
-function activityRecord(fields: {
-  network: Network;
-  channelId: string;
-  payTo: string;
-  tokenProgram: string;
-  expiresAt: number;
-  receiverAuthorizer?: string;
-  callerIdentity?: string;
-}): PaymentChannelRecord {
-  return {
-    callerIdentity: fields.callerIdentity ?? "",
-    channelId: fields.channelId,
-    expiresAt: fields.expiresAt,
-    lastActivityAt: Date.now(),
-    network: fields.network,
-    payTo: fields.payTo,
-    receiverAuthorizer: fields.receiverAuthorizer ?? "",
-    tokenProgram: fields.tokenProgram,
-  };
 }

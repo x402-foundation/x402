@@ -48,6 +48,7 @@ const (
 	ChannelStatusClosing     = "closing"
 	ChannelStatusSealed      = "sealed"
 	ChannelStatusDistributed = "distributed"
+	ChannelStatusClosed      = "closed"
 )
 
 // Redemption batch capacities (scheme_batch_settlement_svm.md, "Facilitator-built

@@ -1,3 +1,0 @@
-kind: fixed
-body: 'BatchChannelManager no longer sends settle for a sealed channel, which could retry forever after a final distribute deleted the channel account. Wire format is unchanged.'
-time: 2026-11-26T22:30:00Z

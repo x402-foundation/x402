@@ -607,13 +607,38 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 		network: requirements.Network,
 		payer:   payer,
 		beforeSend: func() (*x402.SettleResponse, error) {
-			states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
-			applied := false
+			channels := make([]*generated.Channel, len(prepared))
+			var cachedSlot *uint64
+			hasClosed := false
 			for i, item := range prepared {
-				channel, err := f.fetchChannel(ctx, requirements.Network, item.ChannelID)
+				channel, closed, err := f.fetchChannelOrClosed(ctx, requirements.Network, item.ChannelID, item.Claim.ChannelConfig.OpenSlot, &cachedSlot)
 				if err != nil {
 					return nil, err
 				}
+				if closed {
+					hasClosed = true
+					continue
+				}
+				channels[i] = channel
+			}
+			if hasClosed {
+				states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+				for i, item := range prepared {
+					if channels[i] == nil {
+						states[i] = closedSnapshot(item.ChannelID)
+						continue
+					}
+					if err := f.assertClaimChannel(channels[i], item.Claim.ChannelConfig, item.Terms, requirements, allChannelStatuses); err != nil {
+						return nil, err
+					}
+					states[i] = redemptionSnapshot(item.ChannelID, channels[i])
+				}
+				return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", states), nil
+			}
+			states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+			applied := false
+			for i, item := range prepared {
+				channel := channels[i]
 				if err := AssertNotClosing(channel, item.ChannelID); err != nil {
 					return nil, err
 				}
@@ -673,14 +698,20 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				},
 			})
 		},
-		postcondition: func(bool) error {
+		postcondition: func(fromPending bool) error {
 			ids := make([]string, len(prepared))
 			for i, item := range prepared {
 				ids[i] = item.ChannelID
 			}
 			channels, ok, err := f.fetchChannelsUntil(ctx, requirements.Network, ids, func(channels []*generated.Channel) bool {
 				for i, channel := range channels {
-					if channel == nil || channel.Settlement.Settled < prepared[i].Cumulative {
+					if channel == nil {
+						if fromPending {
+							continue
+						}
+						return false
+					}
+					if channel.Settlement.Settled < prepared[i].Cumulative {
 						return false
 					}
 				}
@@ -693,6 +724,9 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				return errors.New("claim confirmed but its channel watermark is not visible yet")
 			}
 			for i, channel := range channels {
+				if fromPending && channel == nil {
+					continue
+				}
 				if err := f.assertClaimChannel(channel, prepared[i].Claim.ChannelConfig, prepared[i].Terms, requirements, allChannelStatuses); err != nil {
 					return err
 				}
@@ -770,30 +804,47 @@ func distributionPassKey(key string, prepared []PreparedDistribution, channels [
 
 // distributionChannels reads and checks prepared's channels. While recovering,
 // an absent (possibly reclaimed) channel is left nil rather than awaited.
-func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements, recovering bool) ([]*generated.Channel, error) {
-	read := f.fetchChannel
-	if recovering {
-		read = f.readChannel
-	}
+// On a fresh call, a channel absent past open_slot + OpenSlotWindow sets
+// hasClosed so distributeKeyed returns a closed-channel resync failure.
+func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements, recovering bool) ([]*generated.Channel, bool, error) {
 	channels := make([]*generated.Channel, len(prepared))
+	var cachedSlot *uint64
+	hasClosed := false
 	for i, item := range prepared {
-		channel, err := read(ctx, requirements.Network, item.ChannelID)
+		var channel *generated.Channel
+		var closed bool
+		var err error
+		if recovering {
+			channel, err = f.readChannel(ctx, requirements.Network, item.ChannelID)
+		} else {
+			channel, closed, err = f.fetchChannelOrClosed(ctx, requirements.Network, item.ChannelID, item.ChannelConfig.OpenSlot, &cachedSlot)
+		}
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if channel == nil {
+		if closed {
+			hasClosed = true
 			continue
-		}
-		if err := f.assertClaimChannel(channel, item.ChannelConfig, item.Terms, requirements, []generated.ChannelStatus{
-			generated.ChannelStatus_Open,
-			generated.ChannelStatus_Sealed,
-			generated.ChannelStatus_Distributed,
-		}); err != nil {
-			return nil, err
 		}
 		channels[i] = channel
 	}
-	return channels, nil
+	allowed := []generated.ChannelStatus{
+		generated.ChannelStatus_Open,
+		generated.ChannelStatus_Sealed,
+		generated.ChannelStatus_Distributed,
+	}
+	if hasClosed {
+		allowed = allChannelStatuses
+	}
+	for i, item := range prepared {
+		if channels[i] == nil {
+			continue
+		}
+		if err := f.assertClaimChannel(channels[i], item.ChannelConfig, item.Terms, requirements, allowed); err != nil {
+			return nil, false, err
+		}
+	}
+	return channels, hasClosed, nil
 }
 
 // distributeKeyed finishes any unfinished payout under key before starting
@@ -823,9 +874,20 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		f.forgetPending(ctx, key, previous.Transaction)
 		hasPending = false
 	}
-	channels, err := f.distributionChannels(ctx, prepared, requirements, previous != nil || hasPending)
+	channels, hasClosed, err := f.distributionChannels(ctx, prepared, requirements, previous != nil || hasPending)
 	if err != nil {
 		return nil, err
+	}
+	if hasClosed {
+		states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+		for i, item := range prepared {
+			if channels[i] == nil {
+				states[i] = closedSnapshot(item.ChannelID)
+			} else {
+				states[i] = redemptionSnapshot(item.ChannelID, channels[i])
+			}
+		}
+		return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", states), nil
 	}
 	passKey := distributionPassKey(key, prepared, channels)
 	if hasPending {
@@ -855,6 +917,9 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	}
 	if len(instructions) == 0 {
 		if previous != nil {
+			if states := completeValidStates(prepared, channels, redemptionSnapshot); states != nil {
+				return withChannelStates(previous, states), nil
+			}
 			return previous, nil
 		}
 		return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrCumulativeAmountMismatch, "nothing to distribute onchain", observedStates(prepared, channels)), nil
@@ -921,22 +986,52 @@ func completeStates(prepared []PreparedDistribution, channels []*generated.Chann
 	return states
 }
 
+// completeValidStates is nil unless every channel was read and has a reportable status.
+func completeValidStates(prepared []PreparedDistribution, channels []*generated.Channel, snapshot func(string, *generated.Channel) batchsettlement.BatchRedemptionChannelState) []batchsettlement.BatchRedemptionChannelState {
+	states := completeStates(prepared, channels, snapshot)
+	if states == nil {
+		return nil
+	}
+	for _, state := range states {
+		if state.Status == "" {
+			return nil
+		}
+	}
+	return states
+}
+
+func withChannelStates(response *x402.SettleResponse, states []batchsettlement.BatchRedemptionChannelState) *x402.SettleResponse {
+	copied := *response
+	extra := make(map[string]any, len(response.Extra)+1)
+	for key, value := range response.Extra {
+		extra[key] = value
+	}
+	extra[batchsettlement.ExtraChannelStates] = states
+	copied.Extra = extra
+	return &copied
+}
+
 // confirmedStates reads the channels again, after a recovered sweep was attributed
 // (which records the slot the read must reach). The channels read before the
 // recovery may have moved on, for instance by a later claim, so they cannot say what
-// the recovered transaction left behind: the watermarks are the chain's own. It is
-// nil when a channel cannot be read, since the confirmed sweep does not wait on an
-// optional field.
+// the recovered transaction left behind: the watermarks are the chain's own. An
+// account absent onchain at or past the confirmation slot is reported as closed.
+// It returns nil on any RPC read error, since the confirmed sweep does not wait on
+// an optional field.
 func (f *BatchSvmScheme) confirmedStates(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements) []batchsettlement.BatchRedemptionChannelState {
-	channels := make([]*generated.Channel, len(prepared))
+	states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
 	for i, item := range prepared {
 		channel, err := f.readChannel(ctx, requirements.Network, item.ChannelID)
 		if err != nil {
 			return nil
 		}
-		channels[i] = channel
+		if channel == nil {
+			states[i] = closedSnapshot(item.ChannelID)
+			continue
+		}
+		states[i] = redemptionSnapshot(item.ChannelID, channel)
 	}
-	return completeStates(prepared, channels, redemptionSnapshot)
+	return states
 }
 
 func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature string, fromPending bool, prepared []PreparedDistribution, channels []*generated.Channel, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {

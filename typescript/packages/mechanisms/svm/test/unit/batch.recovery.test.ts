@@ -582,6 +582,107 @@ describe("batch-settlement outcome recovery", () => {
     expect(await store.get(key)).toBeUndefined();
   });
 
+  it("keeps pre-broadcast channelStates on the cached success when a sealed distribute deletes the account", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const expectedStates = [
+      {
+        balance: "10000",
+        channelId,
+        payoutWatermark: "3000",
+        status: "distributed",
+        totalClaimed: "3000",
+        withdrawRequestedAt: 0,
+      },
+    ];
+
+    // 1. Fresh sealed distribute confirms and deallocates the PDA; a retry after
+    // response loss replays the cached success with those pre-broadcast states.
+    const freshStore = new InMemoryPendingSettlementStore();
+    const freshSigner = signer();
+    freshSigner.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const fresh = new BatchSvmScheme(freshSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: freshStore,
+    });
+    const freshApi = configure(fresh);
+    freshApi.fetchChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 0n, settled: 3_000n },
+        status: ChannelStatus.Sealed,
+      }),
+    );
+    freshApi.submitRedemption = vi.fn().mockResolvedValue({ ok: true, signature: TX });
+
+    const settled = await fresh.settleDistributions(payment(payload), payload, requirements());
+    expect(settled).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(settled.extra?.channelStates).toEqual(expectedStates);
+    expect(await freshStore.get(`${key}:states`)).toBeUndefined();
+
+    freshApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const replayed = await fresh.settleDistributions(payment(payload), payload, requirements());
+    expect(replayed).toEqual(settled);
+    expect(freshApi.submitRedemption).toHaveBeenCalledOnce();
+
+    // 2. Timed-out sealed distribute deletes the PDA before recovery: recovery
+    // falls back to the pre-broadcast states saved before broadcast, caches them
+    // onto the success result, drops the temporary states key, and subsequent
+    // retries stop the loop.
+    const pendingStore = new InMemoryPendingSettlementStore();
+    const pendingSigner = signer();
+    pendingSigner.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const recovering = new BatchSvmScheme(pendingSigner as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: pendingStore,
+    });
+    const recoveringApi = configure(recovering);
+    recoveringApi.fetchChannel = vi.fn().mockResolvedValue(
+      channel({
+        settlement: { payoutWatermark: 0n, settled: 3_000n },
+        status: ChannelStatus.Sealed,
+      }),
+    );
+    recoveringApi.submitRedemption = vi.fn().mockImplementation(async () => {
+      await pendingStore.set(key, TX);
+      return {
+        ok: false as const,
+        response: {
+          errorReason: "settlement_pending",
+          network: NETWORK,
+          payer: "",
+          success: false,
+          transaction: TX,
+        },
+      };
+    });
+
+    const pending = await recovering.settleDistributions(payment(payload), payload, requirements());
+    expect(pending).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(await pendingStore.get(`${key}:states`)).toBeDefined();
+
+    recoveringApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const recovered = await recovering.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(recovered).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(recovered.extra?.channelStates).toEqual(expectedStates);
+    expect(await pendingStore.get(key)).toBeUndefined();
+    expect(await pendingStore.get(`${key}:states`)).toBeUndefined();
+
+    const replayAfterRecovery = await recovering.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(replayAfterRecovery).toEqual(recovered);
+    expect(recoveringApi.submitRedemption).toHaveBeenCalledOnce();
+  });
+
   it("waits for transaction metadata instead of estimating payout from a stale snapshot", async () => {
     const transport = signer();
     transport.getConfirmedTransaction

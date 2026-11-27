@@ -738,6 +738,53 @@ func (f *BatchSvmScheme) fetchChannel(ctx context.Context, network, channelID st
 	return channel, nil
 }
 
+// channelPastCloseGate reports whether network's current slot is past
+// openSlot + OpenSlotWindow, when a channel PDA can have been deallocated
+// (and can no longer be opened). cachedSlot avoids repeated GetSlot calls
+// across a batch.
+func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network string, openSlot int64, cachedSlot **uint64) bool {
+	if openSlot <= 0 {
+		return false
+	}
+	var slot uint64
+	if cachedSlot != nil && *cachedSlot != nil {
+		slot = **cachedSlot
+	} else {
+		current, err := f.signer.GetSlot(ctx, network, paymentchannels.SlotCommitment)
+		if err != nil {
+			return false
+		}
+		slot = current
+		if cachedSlot != nil {
+			*cachedSlot = &slot
+		}
+	}
+	return slot > uint64(openSlot)+paymentchannels.OpenSlotWindow
+}
+
+// fetchChannelOrClosed reads channelID. When the account is absent onchain and
+// past openSlot + OpenSlotWindow, it returns (nil, true, nil) without polling
+// so callers can emit a closed-channel resync failure; otherwise it falls back
+// to fetchChannel polling.
+func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, channelID string, openSlot int64, cachedSlot **uint64) (*generated.Channel, bool, error) {
+	if f.hooks.fetchChannel != nil {
+		channel, err := f.hooks.fetchChannel(ctx, network, channelID)
+		return channel, false, err
+	}
+	channel, err := f.readChannel(ctx, network, channelID)
+	if err != nil {
+		return nil, false, err
+	}
+	if channel != nil {
+		return channel, false, nil
+	}
+	if f.channelPastCloseGate(ctx, network, openSlot, cachedSlot) {
+		return nil, true, nil
+	}
+	channel, err = f.fetchChannel(ctx, network, channelID)
+	return channel, false, err
+}
+
 func (f *BatchSvmScheme) fetchChannelUntil(ctx context.Context, network, channelID string, predicate func(*generated.Channel) bool) (*generated.Channel, bool, error) {
 	for attempt := 0; attempt < ChannelReadAttempts; attempt++ {
 		channel, err := f.readChannel(ctx, network, channelID)
@@ -1059,9 +1106,12 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		ResolveDelegatedIdentity: func(ctx context.Context, settle DelegatedSettleContext) (string, error) {
 			return ResolveDelegatedIdentity(ctx, f.delegated, settle)
 		},
-		DeriveChannelID:         f.deriveChannelID,
-		FetchChannel:            f.fetchChannel,
-		AssertClaimChannel:      f.assertClaimChannel,
+		DeriveChannelID: f.deriveChannelID,
+		FetchChannel:    f.fetchChannel,
+		FetchChannelOrClosed: func(ctx context.Context, network, channelID string, openSlot int64) (*generated.Channel, bool, error) {
+			return f.fetchChannelOrClosed(ctx, network, channelID, openSlot, nil)
+		},
+		AssertClaimChannel: f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,
 		ReconcileBroadcast:      f.reconcileBroadcast,

@@ -12,6 +12,7 @@ import { findAssociatedTokenPda } from "@solana-program/token-2022";
 import { parseU64 } from "../../payment-channels/open";
 import type { BatchFacilitatorSigner } from "../../payment-channels/signer";
 import type { FacilitatorConfirmedTransaction, FacilitatorTokenBalance } from "../../signer";
+import type { BatchRedemptionChannelState } from "../types";
 
 /** Batch recovery records must outlive an unresolved transaction. */
 export interface BatchPendingSettlementStore extends PendingSettlementStore {
@@ -162,6 +163,71 @@ export async function discardWire(
 ): Promise<void> {
   try {
     await store.delete(`batch:transaction:${network}:${signature}:wire`);
+  } catch {
+    /* keep recorded outcome */
+  }
+}
+
+const DISTRIBUTION_STATES_SUFFIX = ":states";
+
+/**
+ * Remember the pre-broadcast distribution states for a pending sweep so
+ * recovery can still report a channel whose account was closed by the sweep.
+ *
+ * @param store - Recovery storage holding the pending record
+ * @param key - Distribution queue key
+ * @param states - Expected post-sweep states, or undefined to clear stale state
+ */
+export async function saveDistributionStates(
+  store: PendingSettlementStore,
+  key: string,
+  states: readonly BatchRedemptionChannelState[] | undefined,
+): Promise<void> {
+  const stateKey = `${key}${DISTRIBUTION_STATES_SUFFIX}`;
+  try {
+    if (states) {
+      await store.set(stateKey, JSON.stringify(states));
+    } else {
+      await store.delete(stateKey);
+    }
+  } catch {
+    /* optional recovery metadata must not block a broadcast */
+  }
+}
+
+/**
+ * Load pre-broadcast distribution states saved before a pending sweep.
+ *
+ * @param store - Recovery storage holding the pending record
+ * @param key - Distribution queue key
+ * @returns The saved states, or undefined when absent or unreadable
+ */
+export async function loadDistributionStates(
+  store: PendingSettlementStore,
+  key: string,
+): Promise<BatchRedemptionChannelState[] | undefined> {
+  try {
+    const raw = await store.get(`${key}${DISTRIBUTION_STATES_SUFFIX}`);
+    if (!raw) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as BatchRedemptionChannelState[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Drop saved pre-broadcast distribution states once the pending sweep ends.
+ *
+ * @param store - Recovery storage holding the pending record
+ * @param key - Distribution queue key
+ */
+export async function discardDistributionStates(
+  store: PendingSettlementStore,
+  key: string,
+): Promise<void> {
+  try {
+    await store.delete(`${key}${DISTRIBUTION_STATES_SUFFIX}`);
   } catch {
     /* keep recorded outcome */
   }

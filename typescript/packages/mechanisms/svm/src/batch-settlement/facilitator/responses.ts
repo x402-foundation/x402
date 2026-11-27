@@ -24,7 +24,10 @@ import {
 } from "../../payment-channels/facilitator";
 import { ChannelStatus } from "../../payment-channels/onchain";
 import { parseU64 } from "../../payment-channels/open";
-import type { OpenBroadcastDisposition } from "../../payment-channels/storage";
+import type {
+  OpenBroadcastDisposition,
+  PaymentChannelRecord,
+} from "../../payment-channels/storage";
 import { BATCH_SETTLEMENT_SCHEME, DYNAMIC_EXTRA_FIELDS } from "../constants";
 import { BatchError } from "../errors";
 import {
@@ -226,23 +229,36 @@ export function appliedFailure(
 
 /**
  * The states a confirmed distribute reports. A fresh sweep reports the channels
- * read before it; a recovered one re-reads the chain, and an unreadable channel
- * omits the field.
+ * read before it; a recovered one re-reads the chain, falling back per channel
+ * to `fallbackStates` only when that account is already gone (e.g. a sealed
+ * distribute closed it). An RPC read error or an unreadable/missing channel
+ * with no fallback omits the field.
  *
  * @param batch - The batch's channels
  * @param channelsBefore - The channels read before the sweep, if it was just built
  * @param readChannel - Reads a channel now
+ * @param fallbackStates - Pre-broadcast states saved before a pending sweep
  * @returns The states, or undefined when none can be reported for every channel
  */
 export async function distributionStates(
   batch: readonly { channelId: string }[],
   channelsBefore: readonly (Channel | undefined)[] | undefined,
   readChannel: (channelId: string) => Promise<Channel | undefined>,
+  fallbackStates?: readonly BatchRedemptionChannelState[],
 ): Promise<BatchRedemptionChannelState[] | undefined> {
-  const channels =
-    channelsBefore ??
-    (await Promise.all(batch.map(item => readChannel(item.channelId))).catch(() => undefined));
-  return completeStates(batch, channels, channelsBefore ? distributedSnapshot : redemptionSnapshot);
+  if (channelsBefore) return completeStates(batch, channelsBefore, distributedSnapshot);
+  const channels = await Promise.all(batch.map(item => readChannel(item.channelId))).catch(
+    () => undefined,
+  );
+  if (!channels) return undefined;
+  const fallbackById = new Map(fallbackStates?.map(state => [state.channelId, state]));
+  const states = batch.map((item, index) => {
+    const live = channels[index];
+    return live ? redemptionSnapshot(item.channelId, live) : fallbackById.get(item.channelId);
+  });
+  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
+    ? states
+    : undefined;
 }
 
 /**
@@ -567,4 +583,39 @@ export function openDisposition(
   if (result.success !== false || result.errorReason !== "transaction_failed") return "keep";
   if (result.errorMessage?.includes("failed to persist")) return "keep";
   return "revert";
+}
+
+/**
+ * Channel facts for an activity or open write. Bindings stay empty unless
+ * the caller sets them; activity never changes a stored binding.
+ *
+ * @param fields - Channel key and the facts this write knows
+ * @param fields.network - CAIP-2 network
+ * @param fields.channelId - Channel PDA
+ * @param fields.payTo - Distribution recipient
+ * @param fields.tokenProgram - Token program that owns the mint
+ * @param fields.expiresAt - Voucher expiry in Unix seconds, `0` for batch
+ * @param fields.receiverAuthorizer - Binding memo key, empty for activity
+ * @param fields.callerIdentity - Delegated caller, empty when not delegated
+ * @returns A storage record stamped with the current activity time
+ */
+export function activityRecord(fields: {
+  network: Network;
+  channelId: string;
+  payTo: string;
+  tokenProgram: string;
+  expiresAt: number;
+  receiverAuthorizer?: string;
+  callerIdentity?: string;
+}): PaymentChannelRecord {
+  return {
+    callerIdentity: fields.callerIdentity ?? "",
+    channelId: fields.channelId,
+    expiresAt: fields.expiresAt,
+    lastActivityAt: Date.now(),
+    network: fields.network,
+    payTo: fields.payTo,
+    receiverAuthorizer: fields.receiverAuthorizer ?? "",
+    tokenProgram: fields.tokenProgram,
+  };
 }
