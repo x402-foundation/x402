@@ -292,7 +292,10 @@ export class BatchChannelManager {
         if (await this.seal(channel)) result.sealed.push(channel.channelId);
         return;
       }
-      if (response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH) {
+      if (
+        response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH ||
+        response.errorReason === BatchError.CHANNEL_STATE
+      ) {
         await this.resyncClaim(batch, requirements, response, result, resynced);
         return;
       }
@@ -408,6 +411,26 @@ export class BatchChannelManager {
     const states = this.adoptChannelStates(response, batch);
     const behind: ChannelState[] = [];
     for (const channel of batch) {
+      const state = states?.get(channel.channelId);
+      if (state) {
+        switch (state.status) {
+          case "closed":
+            await this.recordObserved(channel.channelId, state);
+            this.reportClosedUnclaimed(channel);
+            continue;
+          case "distributed":
+          case "sealed":
+            await this.recordObserved(channel.channelId, state);
+            continue;
+          case "open":
+          case "closing":
+            break;
+          default: {
+            const unexpected: never = state.status;
+            throw new Error(String(unexpected));
+          }
+        }
+      }
       const settled = await this.observeSettled(channel.channelId, states);
       if (settled === undefined || settled < channel.signedMaxClaimable) {
         behind.push(channel);
@@ -420,6 +443,22 @@ export class BatchChannelManager {
       return;
     }
     if (behind.length > 0) await this.claimBatch(behind, requirements, result, true);
+  }
+
+  /**
+   * Report unclaimed voucher value lost when a channel closed onchain before
+   * its latest voucher was claimed.
+   *
+   * @param channel - The stored channel state before retiring
+   */
+  private reportClosedUnclaimed(channel: ChannelState): void {
+    if (channel.signedMaxClaimable > channel.settled) {
+      this.config.onError?.(
+        new Error(
+          `${BATCH_SETTLEMENT_SCHEME} channel ${channel.channelId} closed onchain with unclaimed voucher value (${channel.signedMaxClaimable} > settled ${channel.settled})`,
+        ),
+      );
+    }
   }
 
   /**
@@ -486,7 +525,11 @@ export class BatchChannelManager {
       requirements,
     );
     if (!response.success || response.network !== network) {
-      if (!response.success && response.errorReason === BatchError.CLOSE_STATE) {
+      if (
+        !response.success &&
+        (response.errorReason === BatchError.CLOSE_STATE ||
+          response.errorReason === BatchError.CHANNEL_STATE)
+      ) {
         if (await this.resyncSeal(channel, response)) return false;
       }
       this.config.onError?.(
@@ -533,12 +576,26 @@ export class BatchChannelManager {
         this.config.onError?.(error);
       }
     }
-    if (observed?.status === "distributed") {
-      await this.recordObserved(channel.channelId, observed);
-      return true;
+    if (!observed) return false;
+    switch (observed.status) {
+      case "closed":
+        await this.recordObserved(channel.channelId, observed);
+        this.reportClosedUnclaimed(channel);
+        return true;
+      case "distributed":
+        await this.recordObserved(channel.channelId, observed);
+        return true;
+      case "sealed":
+        await this.recordObserved(channel.channelId, observed);
+        return false;
+      case "open":
+      case "closing":
+        return false;
+      default: {
+        const unexpected: never = observed.status;
+        throw new Error(String(unexpected));
+      }
     }
-    if (observed?.status === "sealed") await this.recordObserved(channel.channelId, observed);
-    return false;
   }
 
   /**
@@ -556,74 +613,159 @@ export class BatchChannelManager {
     const distributed: string[] = [];
     for (const group of this.groupByTerms(payable)) {
       for (const batch of chunk(group.channels, this.batchSize("maxSettleChannels"))) {
-        const requirements = group.requirements;
-        const response = await this.config.settle(
-          {
-            accepted: requirements,
-            payload: {
-              channels: batch.map(channel => ({
-                channelConfig: channel.channelConfig,
-                channelId: channel.channelId,
-              })),
-              type: "settle",
-            },
-            x402Version: 2,
-          },
-          requirements,
-        );
-        if (!response.success) {
-          if (
-            response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH &&
-            (await this.recordPayouts(batch, this.adoptChannelStates(response, batch))).length > 0
-          ) {
-            continue;
-          }
-          this.config.onError?.(
-            new Error(
-              `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-            ),
-          );
-          continue;
-        }
-        if (response.network !== this.config.network) {
-          this.config.onError?.(
-            new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
-          );
-          continue;
-        }
-        // `extra.channels[]` is the reference facilitator's addition, not a
-        // spec field; when present it must name exactly this batch. The paid
-        // watermark comes from `extra.channelStates`, then a configured reader
-        // or `rpcUrl`; without one the channel stays payable.
-        const channels = response.extra?.channels;
-        if (
-          channels !== undefined &&
-          (!Array.isArray(channels) ||
-            channels.length !== batch.length ||
-            new Set(channels).size !== channels.length ||
-            batch.some(channel => !channels.includes(channel.channelId)))
-        ) {
-          this.config.onError?.(
-            new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
-          );
-          continue;
-        }
-        const states = this.adoptChannelStates(response, batch);
-        if (!states && !this.hasPayoutReader()) {
-          this.config.onError?.(
-            new Error(
-              "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set",
-            ),
-          );
-        }
-        const paidOut = await this.recordPayouts(batch, states);
-        distributed.push(...paidOut);
-        if (paidOut.length > 0) {
-          this.config.onSettle?.({ transaction: response.transaction ?? "" });
-        }
+        distributed.push(...(await this.distributeBatch(batch, group.requirements, false)));
       }
     }
     return distributed;
+  }
+
+  /**
+   * Distribute one batch of channels, resyncing and retrying live channels once
+   * if a closed channel poisoned the batch.
+   *
+   * @param batch - Channels packed into one settle transaction
+   * @param requirements - Terms the batch's channels were opened against
+   * @param resynced - Whether a closed-channel resync retry already ran in this chain
+   * @returns The channels paid up to their settled value
+   */
+  private async distributeBatch(
+    batch: ChannelState[],
+    requirements: PaymentRequirements,
+    resynced: boolean,
+  ): Promise<string[]> {
+    const response = await this.config.settle(
+      {
+        accepted: requirements,
+        payload: {
+          channels: batch.map(channel => ({
+            channelConfig: channel.channelConfig,
+            channelId: channel.channelId,
+          })),
+          type: "settle",
+        },
+        x402Version: 2,
+      },
+      requirements,
+    );
+    if (!response.success) {
+      if (
+        response.errorReason === BatchError.CUMULATIVE_AMOUNT_MISMATCH &&
+        (await this.recordPayouts(batch, this.adoptChannelStates(response, batch))).length > 0
+      ) {
+        return [];
+      }
+      if (response.errorReason === BatchError.CHANNEL_STATE) {
+        return this.resyncDistribute(batch, requirements, response, resynced);
+      }
+      this.config.onError?.(
+        new Error(
+          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+        ),
+      );
+      return [];
+    }
+    if (response.network !== this.config.network) {
+      this.config.onError?.(
+        new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response bound to another network`),
+      );
+      return [];
+    }
+    // `extra.channels[]` is the reference facilitator's addition, not a
+    // spec field; when present it must name exactly this batch. The paid
+    // watermark comes from `extra.channelStates`, then a configured reader
+    // or `rpcUrl`; without one the channel stays payable.
+    const channels = response.extra?.channels;
+    if (
+      channels !== undefined &&
+      (!Array.isArray(channels) ||
+        channels.length !== batch.length ||
+        new Set(channels).size !== channels.length ||
+        batch.some(channel => !channels.includes(channel.channelId)))
+    ) {
+      this.config.onError?.(
+        new Error(`${BATCH_SETTLEMENT_SCHEME} distribute response channel mismatch`),
+      );
+      return [];
+    }
+    const states = this.adoptChannelStates(response, batch);
+    if (!states && !this.hasPayoutReader()) {
+      this.config.onError?.(
+        new Error(
+          "distribute confirmed but payout unknown: facilitator sent no channelStates and neither rpcUrl nor readPayoutWatermark is set",
+        ),
+      );
+    }
+    const paidOut = await this.recordPayouts(batch, states);
+    if (paidOut.length > 0) {
+      this.config.onSettle?.({ transaction: response.transaction ?? "" });
+    }
+    return paidOut;
+  }
+
+  /**
+   * Resync from a distribute rejected with `CHANNEL_STATE`, retiring closed or
+   * non-payable channels and retrying any remaining live payable channels once.
+   *
+   * @param batch - The rejected distribute batch
+   * @param requirements - Terms the batch's channels were opened against
+   * @param response - The rejection, possibly carrying `extra.channelStates`
+   * @param resynced - Whether a resync retry already ran in this chain
+   * @returns The channels paid out by a retry, if any
+   */
+  private async resyncDistribute(
+    batch: ChannelState[],
+    requirements: PaymentRequirements,
+    response: SettleResponse,
+    resynced: boolean,
+  ): Promise<string[]> {
+    const states = this.adoptChannelStates(response, batch);
+    if (!states) {
+      this.config.onError?.(
+        new Error(
+          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+        ),
+      );
+      return [];
+    }
+    const remaining: ChannelState[] = [];
+    for (const channel of batch) {
+      const observed = states.get(channel.channelId)!;
+      try {
+        await this.recordObserved(channel.channelId, observed);
+      } catch (error) {
+        this.config.onError?.(error);
+        continue;
+      }
+      if (
+        observed.status === "closed" ||
+        observed.status === "distributed" ||
+        observed.status === "closing"
+      ) {
+        continue;
+      }
+      const settled = larger(channel.settled, observed.settled);
+      const payout = larger(channel.payoutWatermark, observed.payout);
+      if (settled > payout) {
+        remaining.push({
+          ...channel,
+          payoutWatermark: payout,
+          settled,
+          status: observed.status === "sealed" ? "sealed" : channel.status,
+        });
+      }
+    }
+    if (remaining.length === batch.length || (remaining.length > 0 && resynced)) {
+      this.config.onError?.(
+        new Error(
+          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+        ),
+      );
+      return [];
+    }
+    if (remaining.length > 0) {
+      return this.distributeBatch(remaining, requirements, true);
+    }
+    return [];
   }
 
   /**
@@ -646,7 +788,9 @@ export class BatchChannelManager {
       if (!observed) continue;
       try {
         await this.recordObserved(channel.channelId, observed);
-        if ((observed.payout ?? 0n) >= channel.settled) paidOut.push(channel.channelId);
+        if (observed.status === "closed" || (observed.payout ?? 0n) >= channel.settled) {
+          paidOut.push(channel.channelId);
+        }
       } catch (error) {
         // Leave the balance payable for the next pass, including after restart.
         this.config.onError?.(error);
@@ -759,13 +903,17 @@ export class BatchChannelManager {
     channelId: string,
     observed: Partial<ObservedChannel>,
   ): Promise<void> {
-    await this.record(channelId, state => ({
-      ...state,
-      onchainSyncedAt: Date.now(),
-      payoutWatermark: larger(state.payoutWatermark, observed.payout ?? 0n),
-      settled: larger(state.settled, observed.settled ?? 0n),
-      status: statusAfter(state.status, observed.status),
-    }));
+    await this.record(channelId, state => {
+      const settled = larger(state.settled, observed.settled ?? 0n);
+      const payout = larger(state.payoutWatermark, observed.payout ?? 0n);
+      return {
+        ...state,
+        onchainSyncedAt: Date.now(),
+        payoutWatermark: observed.status === "closed" ? larger(payout, settled) : payout,
+        settled,
+        status: statusAfter(state.status, observed.status),
+      };
+    });
   }
 
   /**
@@ -976,7 +1124,7 @@ function statusAfter(
   current: BatchChannelStatus,
   observed: BatchRedemptionStatus | undefined,
 ): BatchChannelStatus {
-  if (observed === "distributed") return "distributed";
+  if (observed === "distributed" || observed === "closed") return "distributed";
   if (observed === "sealed" && current !== "distributed") return "sealed";
   return current;
 }

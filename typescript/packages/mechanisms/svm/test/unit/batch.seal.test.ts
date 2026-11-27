@@ -20,7 +20,10 @@ import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAsse
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
 import { ChannelStatus } from "../../src/payment-channels/onchain";
-import { buildOpenPaymentChannelTransaction } from "../../src/payment-channels/open";
+import {
+  buildOpenPaymentChannelTransaction,
+  OPEN_SLOT_WINDOW,
+} from "../../src/payment-channels/open";
 import { signVoucher } from "../../src/payment-channels/voucher";
 import type { FacilitatorConfirmedTransaction } from "../../src/signer";
 
@@ -894,5 +897,92 @@ describe("batch-settlement seal", () => {
       requirements(),
     );
     expect(response).toMatchObject({ errorReason: BatchError.CHANNEL_CLOSING, success: false });
+  });
+
+  it("fresh seal reports closed channelState only past open_slot + OPEN_SLOT_WINDOW and keeps refund plain", async () => {
+    const setupAbsent = async (slot: bigint) => {
+      const transport = signer();
+      transport.getSlot.mockResolvedValue(slot);
+      const store = new InMemoryPaymentChannelStorage();
+      await store.recordOpen({
+        callerIdentity: "",
+        channelId,
+        expiresAt: 0,
+        lastActivityAt: Date.now(),
+        network: NETWORK,
+        payTo: RECEIVER,
+        receiverAuthorizer: authorizer.address,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+      const scheme = new BatchSvmScheme(transport as never, { channelStorage: store });
+      const api = scheme as unknown as Internals;
+      api.resolveTerms = vi.fn().mockResolvedValue({
+        feePayer: feePayer.address,
+        feePayerSigner: feePayer,
+        receiverAuthorizer: authorizer.address,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+        voucherSigner: "client",
+        withdrawDelay: 900,
+      });
+      api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
+      api.readChannel = vi.fn().mockResolvedValue(undefined);
+      api.waitForChannelRead = vi.fn().mockResolvedValue(undefined);
+      api.submitRedemption = vi.fn();
+      const original = api.sealDependencies.bind(scheme);
+      api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
+      return { api, scheme };
+    };
+
+    const payload = await sealPayload(3_000n);
+    const pastSlot = BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW + 1n;
+    const past = await setupAbsent(pastSlot);
+    const pastResponse = await settle(past.scheme, payload);
+    expect(pastResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      extra: {
+        channelStates: [
+          {
+            balance: "0",
+            channelId,
+            payoutWatermark: "0",
+            status: "closed",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+      payer: payer.address,
+      success: false,
+    });
+    expect(past.api.submitRedemption).not.toHaveBeenCalled();
+
+    const inside = await setupAbsent(BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW);
+    const insideResponse = await settle(inside.scheme, payload);
+    expect(insideResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      success: false,
+    });
+    expect(insideResponse.extra).toBeUndefined();
+
+    // Client-initiated refund past the close gate remains a plain CHANNEL_STATE error.
+    const refundCase = await setupAbsent(pastSlot);
+    const refundResponse = await refundCase.scheme.settle(
+      {
+        accepted: requirements(),
+        payload: {
+          channelConfig,
+          closeAuthorization: payload.closeAuthorization,
+          type: "refund",
+          voucher: payload.voucher,
+        },
+        x402Version: 2,
+      } as never,
+      requirements(),
+    );
+    expect(refundResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      success: false,
+    });
+    expect(refundResponse.extra).toBeUndefined();
   });
 });

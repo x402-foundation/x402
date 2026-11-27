@@ -39,6 +39,14 @@ import {
 /** Reason reported when a channel is already mid-operation. */
 export const CHANNEL_BUSY = "duplicate_settlement";
 
+/** Every known onchain channel status byte accepted by this scheme. */
+export const ALL_CHANNEL_STATUSES: readonly ChannelStatus[] = [
+  ChannelStatus.Open,
+  ChannelStatus.Closing,
+  ChannelStatus.Sealed,
+  ChannelStatus.Distributed,
+];
+
 /** Core x402 reason for a `paymentPayload.accepted` that does not equal the requirements. */
 export const INVALID_PAYMENT_REQUIREMENTS = "invalid_payment_requirements";
 
@@ -160,6 +168,25 @@ export function redemptionSnapshot(
 }
 
 /**
+ * Snapshot for a channel PDA that is absent onchain and permanently terminal
+ * (closed and deallocated, or past `open_slot + OPEN_SLOT_WINDOW` so it can
+ * never be opened). Watermarks are zeroed because no onchain account remains.
+ *
+ * @param channelId - Channel PDA
+ * @returns The closed snapshot entry for `extra.channelStates[]`
+ */
+export function closedSnapshot(channelId: string): BatchRedemptionChannelState {
+  return {
+    balance: "0",
+    channelId,
+    payoutWatermark: "0",
+    status: "closed",
+    totalClaimed: "0",
+    withdrawRequestedAt: 0,
+  };
+}
+
+/**
  * The state a confirmed distribute leaves behind: payout caught up to settled,
  * and a sealed channel paid out. It is valid only for a channel read before
  * that distribute was built; one read after may have settled more since, so
@@ -228,33 +255,64 @@ export function appliedFailure(
 }
 
 /**
+ * Reject a claim, seal, or distribute whose batch contains at least one channel
+ * absent onchain past `open_slot + OPEN_SLOT_WINDOW`, attaching `status: "closed"`
+ * for absent channels and live snapshots for present channels.
+ *
+ * @param network - CAIP-2 network of the request
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param payer - Channel payer when recoverable
+ * @returns The settle response
+ */
+export function closedFailure(
+  network: Network,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+  payer = "",
+): SettleResponse {
+  const states = batch.map((item, index) => {
+    const live = channels[index];
+    return live ? redemptionSnapshot(item.channelId, live) : closedSnapshot(item.channelId);
+  });
+  const complete = states.every(
+    (state): state is BatchRedemptionChannelState => state !== undefined,
+  )
+    ? states
+    : undefined;
+  return resyncFailure(
+    network,
+    BatchError.CHANNEL_STATE,
+    "channel closed onchain",
+    complete,
+    payer,
+  );
+}
+
+/**
  * The states a confirmed distribute reports. A fresh sweep reports the channels
- * read before it; a recovered one re-reads the chain, falling back per channel
- * to `fallbackStates` only when that account is already gone (e.g. a sealed
- * distribute closed it). An RPC read error or an unreadable/missing channel
- * with no fallback omits the field.
+ * read before it; a recovered one re-reads the chain, reporting `status: "closed"`
+ * for any account already absent at or past the confirmation slot. An RPC read
+ * error or an unrecognized onchain status byte omits the field.
  *
  * @param batch - The batch's channels
  * @param channelsBefore - The channels read before the sweep, if it was just built
  * @param readChannel - Reads a channel now
- * @param fallbackStates - Pre-broadcast states saved before a pending sweep
- * @returns The states, or undefined when none can be reported for every channel
+ * @returns The states, or undefined when an RPC read failed or a channel has an unreported status
  */
 export async function distributionStates(
   batch: readonly { channelId: string }[],
   channelsBefore: readonly (Channel | undefined)[] | undefined,
   readChannel: (channelId: string) => Promise<Channel | undefined>,
-  fallbackStates?: readonly BatchRedemptionChannelState[],
 ): Promise<BatchRedemptionChannelState[] | undefined> {
   if (channelsBefore) return completeStates(batch, channelsBefore, distributedSnapshot);
   const channels = await Promise.all(batch.map(item => readChannel(item.channelId))).catch(
     () => undefined,
   );
   if (!channels) return undefined;
-  const fallbackById = new Map(fallbackStates?.map(state => [state.channelId, state]));
   const states = batch.map((item, index) => {
     const live = channels[index];
-    return live ? redemptionSnapshot(item.channelId, live) : fallbackById.get(item.channelId);
+    return live ? redemptionSnapshot(item.channelId, live) : closedSnapshot(item.channelId);
   });
   return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
     ? states

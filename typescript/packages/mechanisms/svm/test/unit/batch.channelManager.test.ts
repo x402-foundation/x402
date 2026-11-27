@@ -1119,5 +1119,202 @@ describe("batch-settlement redemption resync from the facilitator", () => {
       expect(errors).toHaveLength(1);
       expect(await store.get(id)).toMatchObject({ settled: 0n, status: "closing" });
     });
+
+    it("adopts closed status on a recovered distribute success and stops retrying", async () => {
+      const store = new MemoryChannelStore();
+      await store.put(
+        channel("chan-a", {
+          highestVoucherSignature: undefined,
+          settled: 3_000n,
+          status: "sealed",
+        }),
+      );
+      const onSettle = vi.fn();
+      const errors: string[] = [];
+      const { settle, submitted } = recorder(() => ({
+        ...ok(),
+        extra: {
+          channelStates: [channelStateEntry("chan-a", "closed", 0, 0, 0)],
+          channels: ["chan-a"],
+        },
+      }));
+      const redeemer = manager(store, settle, errors, { onSettle });
+
+      const result = await redeemer.redeem();
+      expect(errors).toEqual([]);
+      expect(result.distributed).toEqual(["chan-a"]);
+      expect(onSettle).toHaveBeenCalledOnce();
+      expect(await store.get("chan-a")).toMatchObject({
+        payoutWatermark: 3_000n,
+        settled: 3_000n,
+        status: "distributed",
+      });
+
+      await redeemer.redeem();
+      expect(submitted).toHaveLength(1);
+    });
+
+    it("ignores malformed closed channel states with non-zero fields", async () => {
+      const store = new MemoryChannelStore();
+      await store.put(
+        channel("chan-a", {
+          highestVoucherSignature: undefined,
+          settled: 3_000n,
+          status: "sealed",
+        }),
+      );
+      const errors: string[] = [];
+      const { settle } = recorder(() => ({
+        ...ok(),
+        extra: {
+          channelStates: [channelStateEntry("chan-a", "closed", 10_000, 0, 0)],
+          channels: ["chan-a"],
+        },
+      }));
+      await manager(store, settle, errors, { readPayoutWatermark: undefined }).redeem();
+      expect(errors).toHaveLength(1);
+      expect(await store.get("chan-a")).toMatchObject({
+        payoutWatermark: 0n,
+        settled: 3_000n,
+        status: "sealed",
+      });
+    });
+
+    it("retires a closed channel on distribute CHANNEL_STATE and distributes remaining live channels in the same pass", async () => {
+      const store = new MemoryChannelStore();
+      await store.put(
+        channel("chan-a", {
+          highestVoucherSignature: undefined,
+          settled: 3_000n,
+          status: "sealed",
+        }),
+      );
+      await store.put(
+        channel("chan-b", {
+          highestVoucherSignature: undefined,
+          settled: 2_000n,
+        }),
+      );
+      const onSettle = vi.fn();
+      const errors: string[] = [];
+      const { settle, submitted } = recorder(payload => {
+        if (payload.type === "settle" && payload.channels.length === 2) {
+          return resyncFailure(
+            BatchError.CHANNEL_STATE,
+            channelStateEntry("chan-a", "closed", 0, 0, 0),
+            channelStateEntry("chan-b", "open", 10_000, 2_000, 0),
+          );
+        }
+        return {
+          ...ok(),
+          extra: {
+            channelStates: [channelStateEntry("chan-b", "open", 10_000, 2_000, 2_000)],
+            channels: ["chan-b"],
+          },
+        };
+      });
+      const redeemer = manager(store, settle, errors, { onSettle });
+
+      const result = await redeemer.redeem();
+      expect(errors).toEqual([]);
+      expect(result.distributed).toEqual(["chan-b"]);
+      expect(onSettle).toHaveBeenCalledOnce();
+      expect(await store.get("chan-a")).toMatchObject({
+        payoutWatermark: 3_000n,
+        settled: 3_000n,
+        status: "distributed",
+      });
+      expect(await store.get("chan-b")).toMatchObject({
+        payoutWatermark: 2_000n,
+        settled: 2_000n,
+      });
+
+      await redeemer.redeem();
+      expect(submitted).toHaveLength(2);
+    });
+
+    it("retires a closed channel on claim CHANNEL_STATE without inflating settled, reports unclaimed loss, and claims live peers", async () => {
+      const store = new MemoryChannelStore();
+      await store.put(
+        channel("chan-a", {
+          settled: 1_000n,
+          signedMaxClaimable: 3_000n,
+        }),
+      );
+      await store.put(
+        channel("chan-b", {
+          signedMaxClaimable: 2_000n,
+        }),
+      );
+      const errors: string[] = [];
+      const { settle, submitted } = recorder(payload => {
+        if (payload.type === "claim" && payload.claims.length === 2) {
+          return resyncFailure(
+            BatchError.CHANNEL_STATE,
+            channelStateEntry("chan-a", "closed", 0, 0, 0),
+            channelStateEntry("chan-b", "open", 10_000, 0, 0),
+          );
+        }
+        if (payload.type === "settle") {
+          return {
+            ...ok(),
+            extra: {
+              channelStates: [channelStateEntry("chan-b", "open", 10_000, 2_000, 2_000)],
+              channels: ["chan-b"],
+            },
+          };
+        }
+        return ok();
+      });
+      const redeemer = manager(store, settle, errors);
+
+      const result = await redeemer.redeem();
+      expect(result.claimed).toEqual(["chan-b"]);
+      expect(result.distributed).toEqual(["chan-b"]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("closed onchain with unclaimed voucher value");
+      expect(await store.get("chan-a")).toMatchObject({
+        payoutWatermark: 1_000n,
+        settled: 1_000n,
+        status: "distributed",
+      });
+      expect(await store.get("chan-b")).toMatchObject({
+        payoutWatermark: 2_000n,
+        settled: 2_000n,
+      });
+
+      const claimsBefore = submitted.filter(entry => entry.type === "claim").length;
+      await redeemer.redeem();
+      expect(submitted.filter(entry => entry.type === "claim")).toHaveLength(claimsBefore);
+    });
+
+    it("retires a closed channel on seal CHANNEL_STATE without calling onSeal and reports unclaimed loss", async () => {
+      const { id, store } = await closing();
+      await store.update(id, current => ({
+        ...current!,
+        settled: 1_000n,
+        signedMaxClaimable: 3_000n,
+      }));
+      const onSeal = vi.fn();
+      const errors: string[] = [];
+      const { settle, submitted } = recorder(() =>
+        resyncFailure(BatchError.CHANNEL_STATE, channelStateEntry(id, "closed", 0, 0, 0)),
+      );
+      const redeemer = manager(store, settle, errors, { onSeal });
+
+      const result = await redeemer.redeem();
+      expect(result.sealed).toEqual([]);
+      expect(onSeal).not.toHaveBeenCalled();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("closed onchain with unclaimed voucher value");
+      expect(await store.get(id)).toMatchObject({
+        payoutWatermark: 1_000n,
+        settled: 1_000n,
+        status: "distributed",
+      });
+
+      await redeemer.redeem();
+      expect(submitted).toHaveLength(1);
+    });
   });
 });

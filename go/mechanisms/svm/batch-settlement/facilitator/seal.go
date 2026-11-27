@@ -56,14 +56,14 @@ type SealDependencies struct {
 	ReadBinding              func(context.Context, string, string) (ChannelBinding, error)
 	IsDelegatedAuthorizer    func(string) bool
 	ResolveDelegatedIdentity func(context.Context, DelegatedSettleContext) (string, error)
-	DeriveChannelID func(context.Context, batchsettlement.BatchChannelConfig, string) (string, error)
-	FetchChannel    func(context.Context, string, string) (*generated.Channel, error)
+	DeriveChannelID          func(context.Context, batchsettlement.BatchChannelConfig, string) (string, error)
+	FetchChannel             func(context.Context, string, string) (*generated.Channel, error)
 	// FetchChannelOrClosed, when set, detects a channel absent past open_slot + OpenSlotWindow
 	// on CloseIntentSeal without polling. Nil falls back to FetchChannel.
-	FetchChannelOrClosed func(context.Context, string, string, int64) (*generated.Channel, bool, error)
-	AssertClaimChannel   func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
-	DistributeInstruction    func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
-	SubmitRedemption         func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
+	FetchChannelOrClosed  func(context.Context, string, string, int64) (*generated.Channel, bool, error)
+	AssertClaimChannel    func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
+	DistributeInstruction func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
+	SubmitRedemption      func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
 	// AttributeClose reads what a confirmed close transaction paid the receiver and returned to the payer
 	// (signature, requirements, terms, payer).
 	AttributeClose func(context.Context, string, types.PaymentRequirements, BatchTerms, string) (CloseAttribution, error)

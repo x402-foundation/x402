@@ -217,7 +217,7 @@ export type BatchChannelState = {
 };
 
 /** Onchain channel status a redemption snapshot reports. */
-export type BatchRedemptionStatus = "open" | "closing" | "sealed" | "distributed";
+export type BatchRedemptionStatus = "open" | "closing" | "sealed" | "distributed" | "closed";
 
 /**
  * The onchain channel snapshot a facilitator attaches to a settle success or to
@@ -457,7 +457,12 @@ export function isBatchChannelState(value: unknown): value is BatchChannelState 
   );
 }
 
-const REDEMPTION_STATUSES: readonly unknown[] = ["open", "closing", "sealed", "distributed"];
+const ONCHAIN_REDEMPTION_STATUSES: readonly BatchRedemptionStatus[] = [
+  "open",
+  "closing",
+  "sealed",
+  "distributed",
+];
 
 /**
  * The redemption status of an onchain channel status byte.
@@ -467,16 +472,23 @@ const REDEMPTION_STATUSES: readonly unknown[] = ["open", "closing", "sealed", "d
  */
 export function redemptionStatusOf(status: number): BatchRedemptionStatus | undefined {
   const name = channelStatusName(status).toLowerCase();
-  return REDEMPTION_STATUSES.find((known): known is BatchRedemptionStatus => known === name);
+  return ONCHAIN_REDEMPTION_STATUSES.find(known => known === name);
 }
 
 export function isBatchRedemptionChannelState(
   value: unknown,
 ): value is BatchRedemptionChannelState {
+  if (!isRecord(value) || !isString(value.channelId)) return false;
+  if (value.status === "closed") {
+    return (
+      value.balance === "0" &&
+      value.totalClaimed === "0" &&
+      value.payoutWatermark === "0" &&
+      value.withdrawRequestedAt === 0
+    );
+  }
   return (
-    isRecord(value) &&
-    isString(value.channelId) &&
-    REDEMPTION_STATUSES.includes(value.status) &&
+    ONCHAIN_REDEMPTION_STATUSES.includes(value.status as BatchRedemptionStatus) &&
     isDecimal(value.balance) &&
     isDecimal(value.totalClaimed) &&
     isDecimal(value.payoutWatermark) &&

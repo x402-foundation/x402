@@ -276,18 +276,18 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 			return entry
 		}
 		cases := map[string][]map[string]any{
-			"another channel":           {channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
-			"an extra channel":          {valid, channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
-			"a duplicate":               {valid, valid},
-			"no entries":                {},
-			"payout above settled":      {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 3000, 3001)},
-			"settled above the deposit": {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 2000, 3000, 0)},
-			"an unknown status":         {with("status", "frozen")},
+			"another channel":             {channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
+			"an extra channel":            {valid, channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
+			"a duplicate":                 {valid, valid},
+			"no entries":                  {},
+			"payout above settled":        {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 3000, 3001)},
+			"settled above the deposit":   {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 2000, 3000, 0)},
+			"an unknown status":           {with("status", "frozen")},
 			"closed with nonzero balance": {channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 10000, 0, 0)},
 			"closed with nonzero settled": {channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 1, 0)},
-			"a malformed amount":        {with("totalClaimed", "30x0")},
-			"a numeric amount":          {with("totalClaimed", float64(3000))},
-			"a missing amount":          {with("payoutWatermark", nil)},
+			"a malformed amount":          {with("totalClaimed", "30x0")},
+			"a numeric amount":            {with("totalClaimed", float64(3000))},
+			"a missing amount":            {with("payoutWatermark", nil)},
 		}
 		for name, entries := range cases {
 			t.Run(name, func(t *testing.T) {

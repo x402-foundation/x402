@@ -1111,7 +1111,7 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		FetchChannelOrClosed: func(ctx context.Context, network, channelID string, openSlot int64) (*generated.Channel, bool, error) {
 			return f.fetchChannelOrClosed(ctx, network, channelID, openSlot, nil)
 		},
-		AssertClaimChannel: f.assertClaimChannel,
+		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,
 		ReconcileBroadcast:      f.reconcileBroadcast,

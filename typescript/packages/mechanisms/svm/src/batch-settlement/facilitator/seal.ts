@@ -53,7 +53,9 @@ import {
   type BatchPendingSettlementStore,
 } from "./recovery";
 import {
+  ALL_CHANNEL_STATUSES,
   CHANNEL_BUSY,
+  closedFailure,
   completeStates,
   redemptionSnapshot,
   refundResponse,
@@ -66,13 +68,6 @@ import type { BatchDelegatedSettleContext, BatchTerms, DurableBroadcastResult } 
 
 /** Terms `seal` needs: everything {@link BatchTerms} carries except who signs vouchers. */
 export type SealTerms = Omit<BatchTerms, "voucherSigner">;
-
-const ALL_CHANNEL_STATUSES: readonly ChannelStatus[] = [
-  ChannelStatus.Open,
-  ChannelStatus.Closing,
-  ChannelStatus.Sealed,
-  ChannelStatus.Distributed,
-];
 
 /** A server-authored close: `seal` of a `Closing` channel or cooperative `refund` of an `Open` one. */
 export type CloseIntent = "seal" | "refund";
@@ -116,6 +111,15 @@ export interface SealDependencies {
   resolveDelegatedIdentity(ctx: BatchDelegatedSettleContext): Promise<string | undefined>;
   deriveChannelId(config: BatchChannelConfig, feePayer: string): Promise<string>;
   fetchChannel(network: string, channelId: string): Promise<Channel>;
+  /**
+   * Detect a channel absent past `open_slot + OPEN_SLOT_WINDOW` on `seal`
+   * without polling. Omitted falls back to `fetchChannel`.
+   */
+  fetchChannelOrClosed?(
+    network: string,
+    channelId: string,
+    openSlot: number,
+  ): Promise<{ channel: Channel; closed: false } | { channel: undefined; closed: true }>;
   readChannel(network: string, channelId: string): Promise<Channel | undefined>;
   assertClaimChannel(
     channel: Channel,
@@ -337,7 +341,20 @@ export async function settleSeal(
     return finishClose(deps, run, recovered.signature);
   }
 
-  const channel = await deps.fetchChannel(network, channelId);
+  let channel: Channel;
+  if (intent === "seal" && deps.fetchChannelOrClosed) {
+    const observed = await deps.fetchChannelOrClosed(
+      network,
+      channelId,
+      payload.channelConfig.openSlot,
+    );
+    if (observed.closed) {
+      return closedFailure(network, [{ channelId }], [undefined], payer);
+    }
+    channel = observed.channel;
+  } else {
+    channel = await deps.fetchChannel(network, channelId);
+  }
   // A refund of a channel the payer already started closing is a plain
   // close_state error. It is not a resync: the channel is still Closing.
   if (intent === "refund" && channel.status === ChannelStatus.Closing) {
