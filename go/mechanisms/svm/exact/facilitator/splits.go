@@ -15,13 +15,11 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-// Multi-payee split verification (scheme_exact_svm.md §5): Path 1 static
-// layout, fee payer isolation with the bounded CreateIdempotent exception,
-// Path 2 leg matching and post-settlement per-leg confirmation.
+// Split verification: static layout, fee-payer isolation, leg matching, and
+// post-settlement confirmation (scheme_exact_svm.md §5).
 
-// splitVerifyError converts a split rule violation into a VerifyError
-// carrying its reason code. Other errors keep their full text as the reason,
-// as the smart-wallet checks do.
+// splitVerifyError returns a VerifyError. A *SplitsError uses its reason code;
+// any other error uses its text as the reason.
 func splitVerifyError(err error, payer string) error {
 	var se *svm.SplitsError
 	if errors.As(err, &se) {
@@ -52,11 +50,8 @@ func instructionAccounts(tx *solana.Transaction, ix solana.CompiledInstruction) 
 	return accounts, nil
 }
 
-// assertFeePayerIsolatedWithAtaCreation is fee payer isolation with the
-// bounded §2.1.1 exception: inside a validated CreateIdempotent, the fee payer
-// may be the funding payer (account 0) and, when it is itself a recipient, the
-// wallet owner (account 2). It must not appear anywhere else or be invoked as
-// a program. Every ATA-program instruction is validated against §5.4.
+// assertFeePayerIsolatedWithAtaCreation allows the fee payer only inside a
+// validated CreateIdempotent, as funder or as a marked recipient's owner.
 func assertFeePayerIsolatedWithAtaCreation(
 	tx *solana.Transaction,
 	feePayer solana.PublicKey,
@@ -120,9 +115,8 @@ func deriveLegDestinations(legs []svm.PaymentLeg, asset solana.PublicKey) ([]leg
 	return out, nil
 }
 
-// transferPaysLeg reports whether a transfer pays a leg: right destination,
-// and the primary's amount at least the remainder or a split's amount exactly
-// its carve-out.
+// transferPaysLeg reports whether a transfer pays a leg: the right destination,
+// at least the remainder for the primary, or exactly the carve-out for a split.
 func transferPaysLeg(t transferCheckedInfo, leg legDestination) bool {
 	if _, ok := leg.atas[t.destination]; !ok {
 		return false
@@ -133,9 +127,8 @@ func transferPaysLeg(t transferCheckedInfo, leg legDestination) bool {
 	return t.amount == leg.Amount
 }
 
-// matchTransfersToLegs matches every asset transfer to exactly one leg and
-// every leg to exactly one transfer (§5.3, §5.5). Transfers of other mints are
-// ignored. Returns the transfer matched to each leg, in leg order.
+// matchTransfersToLegs pairs each leg with one asset transfer (§5.3, §5.5).
+// Transfers of other mints are ignored.
 func matchTransfersToLegs(transfers []transferCheckedInfo, legs []legDestination, asset solana.PublicKey) ([]transferCheckedInfo, error) {
 	matched := make([]*transferCheckedInfo, len(legs))
 	for i := range transfers {
@@ -174,40 +167,8 @@ func matchTransfersToLegs(transfers []transferCheckedInfo, legs []legDestination
 	return out, nil
 }
 
-// verifyExpectedMemo checks that exactly one Memo instruction carries
-// extra.memo when the requirements set one.
-func verifyExpectedMemo(tx *solana.Transaction, optional []solana.CompiledInstruction, requirements types.PaymentRequirements) string {
-	expectedMemo, ok := requirements.Extra["memo"].(string)
-	if !ok || expectedMemo == "" {
-		return ""
-	}
-	memoPubkey := solana.MustPublicKeyFromBase58(svm.MemoProgramAddress)
-	var memoCount int
-	var actual []byte
-	for _, ix := range optional {
-		programID, err := tx.Message.Program(ix.ProgramIDIndex)
-		if err != nil {
-			continue
-		}
-		if programID.Equals(memoPubkey) {
-			memoCount++
-			actual = ix.Data
-		}
-	}
-	if memoCount != 1 {
-		return ErrMemoCount
-	}
-	if string(actual) != expectedMemo {
-		return ErrMemoMismatch
-	}
-	return ""
-}
-
-// verifyStaticSplitPath is Path 1 for split charges (§5.7): on legacy and
-// version 0 a compute limit + compute price prefix (version 1 carries its
-// budget in the message config instead), K fee-payer-funded CreateIdempotent
-// for marked recipients, one TransferChecked for the primary remainder, one
-// per split in extra.splits order, then optional Memo instructions; assertion guards may appear anywhere.
+// verifyStaticSplitPath checks the ordered static split layout (§5.7), then simulates.
+// Version 1 carries its compute budget in the message config, not as instructions.
 func (f *ExactSvmScheme) verifyStaticSplitPath(
 	ctx context.Context,
 	tx *solana.Transaction,
@@ -291,10 +252,9 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 	for i, leg := range legs {
 		ix := instructions[firstTransfer+i]
 		programID, progErr := tx.Message.Program(ix.ProgramIDIndex)
-		// Exactly 10 data bytes and 4 accounts: trailing multisig signer
-		// accounts would let the transfer's authority be something other than
-		// the account the payer signed with.
-		if progErr != nil || !isTokenProgram(programID) ||
+		// Ten data bytes and four accounts. Extra accounts would let a multisig
+		// signer, not the payer, be the transfer authority.
+		if progErr != nil || !svm.IsSplTokenProgram(programID) ||
 			len(ix.Data) != 10 || ix.Data[0] != ixTokenTransferChecked || len(ix.Accounts) != 4 {
 			return "", x402.NewVerifyError(ErrNoTransferInstruction, payer, ErrNoTransferInstruction)
 		}
@@ -345,8 +305,9 @@ func (f *ExactSvmScheme) verifyStaticSplitLayout(
 		return "", splitVerifyError(err, payer)
 	}
 
-	if reason := verifyExpectedMemo(tx, optional, requirements); reason != "" {
-		return "", x402.NewVerifyError(reason, payer, reason)
+	expectedMemo, _ := requirements.Extra["memo"].(string)
+	if err := verifySmartWalletMemo(tx, expectedMemo); err != nil {
+		return "", x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
 	return payer, nil
@@ -367,14 +328,8 @@ const (
 	postSettlementUnverified        = "unverified"
 )
 
-// verifyPostSettlementLegs is post-settlement verification for split charges
-// (§3.4 with N + 1 legs).
-//
-// A confirmed transaction executed every top-level instruction, so legs paid
-// by a top-level transfer need no further check. Every other leg must appear
-// in the confirmed CPI trace, or, when the trace is unavailable, show the
-// expected balance delta on its ATA: at least the remainder for the primary
-// leg, exactly the carve-out for a split.
+// verifyPostSettlementLegs confirms each leg from a top-level transfer, the
+// CPI trace, or, when that trace is missing, the ATA balance delta.
 func verifyPostSettlementLegs(
 	ctx context.Context,
 	caps svm.SmartWalletRPCCapabilities,

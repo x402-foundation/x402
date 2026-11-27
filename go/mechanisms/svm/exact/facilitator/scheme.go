@@ -62,19 +62,12 @@ type Config struct {
 	// Default: nil (no postflight instructions are accepted; current behavior)
 	PostflightInstructionAllowlist []InstructionTuple
 
-	// MaxSplits is the maximum number of extra.splits entries accepted
-	// (scheme_exact_svm.md §5), 0-8. Advertised as maxSplits in /supported;
-	// requirements with more splits are rejected with split_count_exceeded.
-	// Default 0: splits are neither accepted nor advertised.
+	// MaxSplits is the maximum extra.splits count, 0-8, advertised as maxSplits.
+	// Default 0 rejects splits. More than the cap is split_count_exceeded.
 	MaxSplits int
 
-	// AtaCreationSponsored makes the fee payer fund CreateIdempotent for
-	// recipients marked ataCreationRequired (about 0.002 SOL of rent each).
-	// Advertised as ataCreationSponsored in /supported. Rent is not bounded
-	// over time: an owner can close its ATA, reclaim the rent, and repeat on every charge.
-	// Operators must enforce out-of-band limits per owner/mint or Resource Server
-	// before enabling this. Splits do not automatically reimburse sponsored rent.
-	// Default false.
+	// AtaCreationSponsored funds CreateIdempotent for marked recipients and is
+	// advertised as ataCreationSponsored. Default false; reclaimed rent can be repeated.
 	AtaCreationSponsored bool
 }
 
@@ -476,10 +469,8 @@ func isLayoutRecoverable(err error) bool {
 	}
 }
 
-// assertSmartWalletAllowlist checks every top-level program against the
-// wallet-program allowlist. With splits, the ATA program is exempt too
-// (§2.2.2); every one of its instructions is then validated as a §5.4
-// CreateIdempotent by the fee payer isolation check.
+// assertSmartWalletAllowlist checks every top-level program against the wallet
+// allowlist. With splits, validated ATA-program instructions are exempt (§2.2.2, §5.4).
 func (f *ExactSvmScheme) assertSmartWalletAllowlist(tx *solana.Transaction, allowAtaProgram bool) error {
 	allowed := defaultSmartWalletAllowedPrograms
 	if len(f.config.SmartWalletAllowedPrograms) > 0 {
@@ -892,7 +883,7 @@ func snapshotLegBalances(ctx context.Context, caps svm.SmartWalletRPCCapabilitie
 }
 
 // postSettlementLegsVerified confirms every leg of a split charge landed
-// on-chain (§3.4).
+// onchain (§3.4).
 func (f *ExactSvmScheme) postSettlementLegsVerified(
 	ctx context.Context,
 	caps svm.SmartWalletRPCCapabilities,
@@ -973,7 +964,7 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 			if svm.UsesSplitTerms(requirements) {
 				legs, legsErr := svm.ParsePaymentLegs(requirements)
 				verified = legsErr == nil &&
-					f.postSettlementLegsVerified(ctx, caps, signature, networkStr, requirements, legs, topLevelTransfersOf(tx), nil)
+					f.postSettlementLegsVerified(ctx, caps, signature, networkStr, requirements, legs, extractTopLevelTransfers(tx), nil)
 			} else {
 				verified = verifyPostSettlement(ctx, caps, signature, networkStr, requirements, publicKeysToStrings(f.signer.GetAddresses(ctx, networkStr)), nil, nil)
 			}
@@ -1122,7 +1113,7 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 		return nil, errors.New(ErrMintMismatch)
 	}
 
-	expectedDestATA, err := findATA(payToPubkey, mintPubkey, progID)
+	expectedDestATA, err := svm.DeriveATA(payToPubkey, mintPubkey, progID)
 	if err != nil {
 		return nil, errors.New(ErrRecipientMismatch)
 	}
@@ -1149,15 +1140,4 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 		destination: destATA,
 		authority:   accounts[3].PublicKey,
 	}, nil
-}
-
-// topLevelTransfersOf returns the top-level TransferChecked instructions of
-// a decoded transaction. A transaction using Address Lookup Tables that are
-// not resolved locally yields only the transfers whose accounts resolve, so
-// callers fall back to the confirmed CPI trace for the rest.
-func topLevelTransfersOf(tx *solana.Transaction) []transferCheckedInfo {
-	if tx == nil {
-		return nil
-	}
-	return extractTopLevelTransfers(tx)
 }
