@@ -2171,6 +2171,68 @@ func TestAfterSettleHook_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T)
 	}
 }
 
+func TestAfterSettleHook_RefundPendingWithdrawalWithoutBalanceKeepsCacheStale(t *testing.T) {
+	cases := []struct {
+		name                string
+		withdrawRequestedAt int
+	}{
+		{"refund below the withdrawal keeps it pending", 77},
+		{"refund covering the withdrawal clears it", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+			sess := sampleSession(id, "100")
+			sess.ChannelConfig = testConfig()
+			sess.Balance = "1000"
+			sess.RefundNonce = 1
+			sess.WithdrawRequestedAt = 77
+			sess.OnchainSyncedAt = time.Now().UnixMilli()
+			seedSession(t, s, id, sess)
+			reserveDepositPending(t, s, id, "p-refund")
+			stub := &stubPayload{data: map[string]interface{}{
+				"type":          "refund",
+				"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+				"voucher": map[string]interface{}{
+					"channelId":          id,
+					"maxClaimableAmount": "100",
+					"signature":          "0xsig",
+				},
+				"amount":      "100",
+				"refundNonce": "1",
+				"claims":      []interface{}{},
+			}}
+			s.MergeRequestContext(stub, BatchSettlementRequestContext{
+				ChannelId:            id,
+				PendingId:            "p-refund",
+				ReservationCommitted: reservationFlag(true),
+			})
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+				Result: &x402.SettleResponse{
+					Success: true,
+					Extra: map[string]interface{}{
+						"channelState": map[string]interface{}{
+							"channelId":           id,
+							"totalClaimed":        "100",
+							"withdrawRequestedAt": tc.withdrawRequestedAt,
+							"refundNonce":         "2",
+						},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != "1000" || got.WithdrawRequestedAt != tc.withdrawRequestedAt || got.OnchainSyncedAt != 0 {
+				t.Fatalf("session = %+v, want balance 1000, withdrawRequestedAt %d, onchainSyncedAt 0", got, tc.withdrawRequestedAt)
+			}
+		})
+	}
+}
+
 func TestAfterSettleHook_DepositOmittedFieldsClearOnchainSyncedAt(t *testing.T) {
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
 	cases := []struct {

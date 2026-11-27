@@ -340,6 +340,19 @@ var BatchSettlementDepositedEventABI = []byte(`[
 	}
 ]`)
 
+// BatchSettlementChannelClosedEventABI is ChannelClosed(bytes32 indexed channelId, ChannelConfig config).
+var BatchSettlementChannelClosedEventABI = []byte(`[
+	{
+		"type": "event",
+		"name": "ChannelClosed",
+		"inputs": [
+			{"name": "channelId", "type": "bytes32", "indexed": true},
+			{"name": "config", "type": "tuple", "indexed": false, "components": ` + channelConfigComponentsJSON + `}
+		],
+		"anonymous": false
+	}
+]`)
+
 // BatchSettlementRefundedEventABI for decoding Refunded(channelId, sender, amount).
 var BatchSettlementRefundedEventABI = []byte(`[
 	{

@@ -1832,6 +1832,7 @@ func TestFinishRefundAfterReceipt_UsesTheChannelsLastClaimed(t *testing.T) {
 	preState := &onchainChannelState{
 		ChannelState:   batchsettlement.ChannelState{Balance: big.NewInt(1000), TotalClaimed: big.NewInt(100), RefundNonce: big.NewInt(0)},
 		withdrawAmount: big.NewInt(0),
+		readAt:         time.Now().UnixMilli(),
 	}
 	receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: []*goethtypes.Log{
 		claimedReceiptLog(t, channelId, big.NewInt(300)),
@@ -1886,6 +1887,7 @@ func TestFinishRefundAfterReceipt_StalePreReadOmitsBalance(t *testing.T) {
 	preState := &onchainChannelState{
 		ChannelState:   batchsettlement.ChannelState{Balance: big.NewInt(100), TotalClaimed: big.NewInt(40), RefundNonce: big.NewInt(2)},
 		withdrawAmount: big.NewInt(0),
+		readAt:         time.Now().UnixMilli(),
 	}
 	receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: []*goethtypes.Log{
 		refundedReceiptLog(t, channelId, big.NewInt(150)),
@@ -1901,6 +1903,151 @@ func TestFinishRefundAfterReceipt_StalePreReadOmitsBalance(t *testing.T) {
 		t.Fatalf("balance = %v, want omitted", cs["balance"])
 	}
 	if cs["totalClaimed"] != "40" || cs["refundNonce"] != "3" {
+		t.Fatalf("channelState = %+v", cs)
+	}
+}
+
+func TestFinishRefundAfterReceipt_BalanceDerivation(t *testing.T) {
+	cfg := validConfig()
+	cfg.WithdrawDelay = 900
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{ChannelConfig: cfg}
+	ago := func(d time.Duration) int64 { return time.Now().Add(-d).UnixMilli() }
+	pre := func(withdrawRequestedAt int, withdrawAmount int64, readAt int64) *onchainChannelState {
+		return &onchainChannelState{
+			ChannelState: batchsettlement.ChannelState{
+				Balance:             big.NewInt(1000),
+				TotalClaimed:        big.NewInt(40),
+				WithdrawRequestedAt: withdrawRequestedAt,
+				RefundNonce:         big.NewInt(2),
+			},
+			withdrawAmount: big.NewInt(withdrawAmount),
+			readAt:         readAt,
+		}
+	}
+	cases := []struct {
+		name                    string
+		preState                *onchainChannelState
+		logs                    []*goethtypes.Log
+		wantBalance             string
+		wantTotalClaimed        string
+		wantWithdrawRequestedAt int
+	}{
+		{
+			name:                    "pending withdrawal above the refund omits the balance and keeps the withdrawal",
+			preState:                pre(77, 500, ago(time.Second)),
+			logs:                    []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(300))},
+			wantTotalClaimed:        "40",
+			wantWithdrawRequestedAt: 77,
+		},
+		{
+			name:             "pending withdrawal covered by the refund omits the balance and clears the withdrawal",
+			preState:         pre(77, 500, ago(time.Second)),
+			logs:             []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(500))},
+			wantTotalClaimed: "40",
+		},
+		{
+			name:             "read older than half the withdraw delay omits the balance",
+			preState:         pre(0, 0, ago(451*time.Second)),
+			logs:             []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(300))},
+			wantTotalClaimed: "40",
+		},
+		{
+			name:             "read within half the withdraw delay derives the balance",
+			preState:         pre(0, 0, ago(449*time.Second)),
+			logs:             []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(300))},
+			wantBalance:      "700",
+			wantTotalClaimed: "40",
+		},
+		{
+			name:     "ChannelClosed reports the closed channel despite a pending withdrawal",
+			preState: pre(77, 500, ago(time.Second)),
+			logs: []*goethtypes.Log{
+				refundedReceiptLog(t, channelId, big.NewInt(300)),
+				channelClosedReceiptLog(t, cfg, channelId),
+			},
+			wantBalance:      "0",
+			wantTotalClaimed: "0",
+		},
+		{
+			name:     "ChannelClosed reports the closed channel after a stale read",
+			preState: pre(0, 0, ago(time.Hour)),
+			logs: []*goethtypes.Log{
+				refundedReceiptLog(t, channelId, big.NewInt(300)),
+				channelClosedReceiptLog(t, cfg, channelId),
+			},
+			wantBalance:      "0",
+			wantTotalClaimed: "0",
+		},
+		{
+			name:     "a same-receipt Deposited stays exact over ChannelClosed",
+			preState: pre(77, 500, ago(time.Second)),
+			logs: []*goethtypes.Log{
+				channelClosedReceiptLog(t, cfg, channelId),
+				depositedReceiptLog(t, channelId, big.NewInt(400), big.NewInt(500)),
+				refundedReceiptLog(t, channelId, big.NewInt(150)),
+			},
+			wantBalance:             "350",
+			wantTotalClaimed:        "40",
+			wantWithdrawRequestedAt: 77,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			receipt := &evm.TransactionReceipt{Status: evm.TxStatusSuccess, Logs: tc.logs}
+			resp := finishRefundAfterReceipt(payload, channelId, tc.preState, big.NewInt(2), "0xtx", testNetwork, receipt)
+			if !resp.Success {
+				t.Fatalf("got %+v", resp)
+			}
+			cs := resp.Extra["channelState"].(map[string]interface{})
+			balance, hasBalance := cs["balance"]
+			if tc.wantBalance == "" && hasBalance {
+				t.Fatalf("balance = %v, want omitted", balance)
+			}
+			if tc.wantBalance != "" && balance != tc.wantBalance {
+				t.Fatalf("balance = %v, want %s", balance, tc.wantBalance)
+			}
+			if cs["totalClaimed"] != tc.wantTotalClaimed || cs["withdrawRequestedAt"] != tc.wantWithdrawRequestedAt || cs["refundNonce"] != "3" {
+				t.Fatalf("channelState = %+v", cs)
+			}
+		})
+	}
+}
+
+func TestExecuteRefund_PendingWithdrawalOmitsBalance(t *testing.T) {
+	cfg := validConfig()
+	channelId, err := batchsettlement.ComputeChannelId(cfg, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := &fakeFacilitatorSigner{
+		addresses: []string{"0xfacilitator"},
+		readContract: func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == evm.FunctionTryAggregate {
+				return multicallChannelStateResult(t, big.NewInt(10000), big.NewInt(0), 77, big.NewInt(5)), nil
+			}
+			return nil, nil
+		},
+		writeContract: func(string, ...interface{}) (string, error) { return "0x" + strings.Repeat("cd", 32), nil },
+		waitForReceipt: func(got string) (*evm.TransactionReceipt, error) {
+			return &evm.TransactionReceipt{Status: evm.TxStatusSuccess, TxHash: got,
+				Logs: []*goethtypes.Log{refundedReceiptLog(t, channelId, big.NewInt(1000))}}, nil
+		},
+	}
+	payload := &batchsettlement.BatchSettlementEnrichedRefundPayload{Type: "refund", ChannelConfig: cfg, Amount: "1000"}
+
+	resp, err := ExecuteRefund(context.Background(), signer, payload, testNetwork, nil)
+	if err != nil || !resp.Success {
+		t.Fatalf("resp=%+v err=%v", resp, err)
+	}
+	cs := resp.Extra["channelState"].(map[string]interface{})
+	if _, ok := cs["balance"]; ok {
+		t.Fatalf("balance = %v, want omitted", cs["balance"])
+	}
+	if cs["refundNonce"] != "6" {
 		t.Fatalf("channelState = %+v", cs)
 	}
 }

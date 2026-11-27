@@ -271,7 +271,7 @@ f.Register(
 
 The optional `authorizerSigner` is a **dedicated, unrotated** `receiverAuthorizer` advertised in `/supported.kinds[].extra.receiverAuthorizer`. Do not add it to the regular `evmSigner` gas pool. Servers may delegate to it (see above) or supply their own.
 
-`WaitForTransactionReceipt` on `evmSigner` (and on `AuthorizerSubmitter`) must return the receipt `Logs`: deposit and refund settle responses build `extra.channelState` from the receipt's `Deposited`, `Claimed` and `Refunded` events. A confirmed receipt with nil `Logs` fails with `invalid_batch_settlement_evm_receipt_logs_unavailable`, and the response carries the transaction hash. The transaction may still have deposited or refunded, so reconcile it from that hash; deposited funds stay in the channel and are refundable or withdrawable as usual.
+`WaitForTransactionReceipt` on `evmSigner` (and on `AuthorizerSubmitter`) must return the receipt `Logs`: deposit and refund settle responses build `extra.channelState` from the receipt's `Deposited`, `Claimed`, `Refunded` and `ChannelClosed` events. A confirmed receipt with nil `Logs` fails with `invalid_batch_settlement_evm_receipt_logs_unavailable`, and the response carries the transaction hash. The transaction may still have deposited or refunded, so reconcile it from that hash; deposited funds stay in the channel and are refundable or withdrawable as usual.
 
 `SubmitMode` selects how facilitator-owned `claim` / `refund` transactions are submitted (`relay` by default):
 

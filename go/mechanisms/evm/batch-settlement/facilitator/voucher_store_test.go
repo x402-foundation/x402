@@ -2603,6 +2603,63 @@ func TestSettleManaged_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T) {
 	}
 }
 
+func withPendingWithdrawalRead(t *testing.T, h *hotRefund, balance int64) {
+	t.Helper()
+	read := h.signer.readContract
+	h.signer.readContract = func(functionName string, args ...interface{}) (interface{}, error) {
+		if functionName == evm.FunctionTryAggregate {
+			return multicallChannelStateResult(t, big.NewInt(balance), big.NewInt(0), 77, big.NewInt(0)), nil
+		}
+		return read(functionName, args...)
+	}
+}
+
+func TestSettleManaged_RefundWithPendingWithdrawalOmitsBalance(t *testing.T) {
+	fields := unclaimedFields()
+	fields.OnchainSyncedAt = 12_345
+	h := newHotRefund(t, fields, workerMarker(), nil)
+	withPendingWithdrawalRead(t, h, 10_000)
+
+	resp, err := h.settle("5000")
+	if err != nil || resp == nil || !resp.Success {
+		t.Fatalf("refund %+v %v", resp, err)
+	}
+	state, _ := resp.Extra["channelState"].(map[string]interface{})
+	if balance, ok := state["balance"]; ok {
+		t.Fatalf("channelState balance = %q, want omitted", balance)
+	}
+	got := h.row()
+	if got.Balance != "10000" || got.OnchainSyncedAt != 0 || got.RefundNonce != 1 {
+		t.Fatalf("stored balance=%q onchainSyncedAt=%d refundNonce=%d", got.Balance, got.OnchainSyncedAt, got.RefundNonce)
+	}
+}
+
+func TestSettleManaged_RefundClosingTheChannelDeletesRowDespitePendingWithdrawal(t *testing.T) {
+	h := newHotRefund(t, &channelFields{ChargedCumulativeAmount: "0", SignedMaxClaimable: "0", Balance: "10000"}, nil, nil)
+	withPendingWithdrawalRead(t, h, 10_000)
+	wait := h.signer.waitForReceipt
+	h.signer.waitForReceipt = func(txHash string) (*evm.TransactionReceipt, error) {
+		receipt, err := wait(txHash)
+		if err != nil {
+			return nil, err
+		}
+		receipt.Logs = append(receipt.Logs, channelClosedReceiptLog(t, h.cfg, h.channelID))
+		return receipt, nil
+	}
+
+	resp, err := h.settle("6000")
+	if err != nil || resp == nil || !resp.Success {
+		t.Fatalf("refund %+v %v", resp, err)
+	}
+	state, _ := resp.Extra["channelState"].(map[string]interface{})
+	if state["balance"] != "0" || state["totalClaimed"] != "0" || state["withdrawRequestedAt"] != 0 {
+		t.Fatalf("channelState = %+v, want a closed channel", state)
+	}
+	if got, _ := h.inner.Get(context.Background(), h.channelID); got != nil {
+		t.Fatalf("expected deleted row, got %+v", got)
+	}
+}
+
 func TestSettleManagedRefund_KeepsHigherRefundNonce(t *testing.T) {
 	fields := unclaimedFields()
 	fields.RefundNonce = 5

@@ -21,15 +21,17 @@ var zeroAddress = "0x0000000000000000000000000000000000000000"
 var channelStateRereadDelays = []time.Duration{150 * time.Millisecond, 400 * time.Millisecond, time.Second}
 
 var (
-	depositedEvent abi.Event
-	claimedEvent   abi.Event
-	refundedEvent  abi.Event
+	depositedEvent     abi.Event
+	claimedEvent       abi.Event
+	refundedEvent      abi.Event
+	channelClosedEvent abi.Event
 )
 
 func init() {
 	depositedEvent = mustParseEvent(batchsettlement.BatchSettlementDepositedEventABI, "Deposited")
 	claimedEvent = mustParseEvent(batchsettlement.BatchSettlementClaimedEventABI, "Claimed")
 	refundedEvent = mustParseEvent(batchsettlement.BatchSettlementRefundedEventABI, "Refunded")
+	channelClosedEvent = mustParseEvent(batchsettlement.BatchSettlementChannelClosedEventABI, "ChannelClosed")
 }
 
 func mustParseEvent(abiJSON []byte, name string) abi.Event {
@@ -102,6 +104,12 @@ func refundedLogs(receipt *evm.TransactionReceipt, channelId string) []refundedL
 		out = append(out, refundedLog{amount: fields[0]})
 	}
 	return out
+}
+
+// channelClosedEmitted reports whether this receipt closed the channel. The contract emits
+// ChannelClosed only when balance and totalClaimed are both 0.
+func channelClosedEmitted(receipt *evm.TransactionReceipt, channelId string) bool {
+	return len(channelEventFields(receipt, channelClosedEvent, channelId)) > 0
 }
 
 // eventRefundBalance is the post-refund balance when this receipt deposited into the channel.
@@ -210,6 +218,8 @@ func ReadChannelState(
 type onchainChannelState struct {
 	batchsettlement.ChannelState
 	withdrawAmount *big.Int
+	// readAt is the Unix ms time captured before the read, so it never postdates the sampled state.
+	readAt int64
 }
 
 func readOnchainChannelState(
@@ -219,6 +229,7 @@ func readOnchainChannelState(
 ) (*onchainChannelState, error) {
 	channelIdBytes := common.HexToHash(channelId)
 
+	readAt := time.Now().UnixMilli()
 	results, err := evm.Multicall(ctx, signer, []evm.MulticallCall{
 		{
 			Address:      batchsettlement.BatchSettlementAddress,
@@ -254,6 +265,7 @@ func readOnchainChannelState(
 			RefundNonce:  big.NewInt(0),
 		},
 		withdrawAmount: big.NewInt(0),
+		readAt:         readAt,
 	}
 
 	// Parse channels result: [balance (uint128), totalClaimed (uint128)]

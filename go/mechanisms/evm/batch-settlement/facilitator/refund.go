@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 
@@ -402,6 +403,12 @@ func finishRefundAfterReceipt(
 	state := deriveRefundState(preState, refunded, claimedTotal, consumedNonce)
 	if bal, ok := eventRefundBalance(receipt, channelId); ok {
 		state.Balance = bal
+	} else if channelClosedEmitted(receipt, channelId) {
+		state.Balance = big.NewInt(0)
+		state.TotalClaimed = big.NewInt(0)
+		state.WithdrawRequestedAt = 0
+	} else if balanceMayBeOverstated(preState, payload.ChannelConfig.WithdrawDelay) {
+		state.Balance = nil
 	}
 	return &x402.SettleResponse{
 		Success:     true,
@@ -442,12 +449,25 @@ func refundedAmount(
 	}
 }
 
+// balanceMayBeOverstated reports whether finalizeWithdraw could have run between the pre-read and
+// the refund, which lowers the balance without a Refunded event. That holds while a withdrawal is
+// pending. A withdrawal initiated after the read cannot finalize before withdrawDelay, so a read
+// younger than half of it is safe; the margin covers a refund stalled before inclusion.
+func balanceMayBeOverstated(preState *onchainChannelState, withdrawDelaySeconds int) bool {
+	if preState.WithdrawRequestedAt != 0 {
+		return true
+	}
+	elapsedMs := time.Now().UnixMilli() - preState.readAt
+	return elapsedMs >= int64(withdrawDelaySeconds)*1000/2
+}
+
 // deriveRefundState derives the post-refund channel state from the receipt events and the
 // pre-transaction state, following the contract's _executeRefund.
 //
-// Refunded carries no post-refund balance. A same-receipt Deposited.newBalance replaces the
-// result via eventRefundBalance. Otherwise balance is the pre-read minus the refund, and a
-// negative result is omitted: clamping it to 0 deletes a channel a deposit already funded.
+// Refunded carries no post-refund balance. A same-receipt Deposited.newBalance or ChannelClosed
+// replaces the result, and balanceMayBeOverstated omits it. Otherwise balance is the pre-read
+// minus the refund, and a negative result is omitted: clamping it to 0 deletes a channel a
+// deposit already funded.
 // withdrawRequestedAt misses a withdrawal initiated in that window, and without a bundled
 // claim totalClaimed is a lower bound.
 func deriveRefundState(

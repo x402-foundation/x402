@@ -358,6 +358,20 @@ func refundedReceiptLog(t *testing.T, channelId string, amount *big.Int) *goetht
 	}
 }
 
+// channelClosedReceiptLog builds a ChannelClosed log emitted by x402BatchSettlement.
+func channelClosedReceiptLog(t *testing.T, cfg batchsettlement.ChannelConfig, channelId string) *goethtypes.Log {
+	t.Helper()
+	data, err := channelClosedEvent.Inputs.NonIndexed().Pack(ToContractChannelConfig(cfg))
+	if err != nil {
+		t.Fatalf("pack ChannelClosed data: %v", err)
+	}
+	return &goethtypes.Log{
+		Address: common.HexToAddress(batchsettlement.BatchSettlementAddress),
+		Topics:  []common.Hash{channelClosedEvent.ID, common.HexToHash(channelId)},
+		Data:    data,
+	}
+}
+
 func depositedReceiptLog(t *testing.T, channelId string, amount, newBalance *big.Int) *goethtypes.Log {
 	t.Helper()
 	data, err := depositedEvent.Inputs.NonIndexed().Pack(amount, newBalance)
