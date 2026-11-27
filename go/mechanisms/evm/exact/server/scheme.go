@@ -220,27 +220,23 @@ func (s *ExactEvmScheme) EnhancePaymentRequirements(
 ) (types.PaymentRequirements, error) {
 	networkStr := string(requirements.Network)
 
-	// Get asset info - if no asset specified, GetAssetInfo will try to use the default
-	var assetInfo *evm.AssetInfo
-	var err error
-	if requirements.Asset != "" {
-		assetInfo, err = evm.GetAssetInfo(networkStr, requirements.Asset)
-		if err != nil {
-			return requirements, err
-		}
-	} else {
-		// Try to get default asset for this network
-		assetInfo, err = evm.GetAssetInfo(networkStr, "")
+	if requirements.Asset == "" {
+		assetInfo, err := evm.GetAssetInfo(networkStr, "")
 		if err != nil {
 			return requirements, fmt.Errorf(ErrNoAssetSpecified+": %w", err)
 		}
 		requirements.Asset = assetInfo.Address
 	}
 
+	// Decimals and EIP-712 domain are only known for default assets; other tokens are left as configured.
+	defaultAsset := evm.FindDefaultAsset(requirements.Asset, networkStr)
+
 	// Ensure amount is in the correct format (smallest unit)
 	if requirements.Amount != "" && strings.Contains(requirements.Amount, ".") {
-		// Convert decimal to smallest unit
-		amount, err := evm.ParseAmount(requirements.Amount, assetInfo.Decimals)
+		if defaultAsset == nil {
+			return requirements, fmt.Errorf("%s: token %s is not a registered asset for network %s; provide amount in atomic units", ErrFailedToParseAmount, requirements.Asset, networkStr)
+		}
+		amount, err := evm.ParseAmount(requirements.Amount, defaultAsset.Decimals)
 		if err != nil {
 			return requirements, fmt.Errorf(ErrFailedToParseAmount+": %w", err)
 		}
@@ -253,13 +249,12 @@ func (s *ExactEvmScheme) EnhancePaymentRequirements(
 	}
 
 	// EIP-3009 tokens always need name/version; permit2 tokens only if they support EIP-2612
-	includeEip712Domain := assetInfo.AssetTransferMethod == "" || assetInfo.SupportsEip2612
-	if includeEip712Domain {
+	if defaultAsset != nil && (defaultAsset.AssetTransferMethod == "" || defaultAsset.SupportsEip2612) {
 		if _, ok := requirements.Extra["name"]; !ok {
-			requirements.Extra["name"] = assetInfo.Name
+			requirements.Extra["name"] = defaultAsset.Name
 		}
 		if _, ok := requirements.Extra["version"]; !ok {
-			requirements.Extra["version"] = assetInfo.Version
+			requirements.Extra["version"] = defaultAsset.Version
 		}
 	}
 
