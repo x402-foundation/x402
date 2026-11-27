@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from x402.schemas.payments import PaymentRequirements
+from x402.schemas.payments import PaymentPayload, PaymentRequired, PaymentRequirements
+from x402.schemas.responses import VerifyRequest
 from x402.schemas.v1 import PaymentRequirementsV1
 
 VALID_PAYMENT_REQUIREMENTS_V2 = {
@@ -77,3 +78,63 @@ class TestV1NetworkStaysLoose:
             }
         )
         assert result.network == "base-sepolia"
+
+
+def _payload(version: object) -> dict[str, object]:
+    return {"x402Version": version, "payload": {}, "accepted": VALID_PAYMENT_REQUIREMENTS_V2}
+
+
+def _required(version: object) -> dict[str, object]:
+    return {"x402Version": version, "accepts": [VALID_PAYMENT_REQUIREMENTS_V2]}
+
+
+class TestV2VersionRejectsNonNumbers:
+    @pytest.mark.parametrize("version", [True, False, "2", 1.5, None])
+    def test_payment_payload_rejects_non_number_x402_version(self, version: object) -> None:
+        with pytest.raises(ValidationError):
+            PaymentPayload.model_validate(_payload(version))
+
+    @pytest.mark.parametrize("version", [True, False, "2", 1.5, None])
+    def test_payment_required_rejects_non_number_x402_version(self, version: object) -> None:
+        with pytest.raises(ValidationError):
+            PaymentRequired.model_validate(_required(version))
+
+
+class TestV2VersionAcceptsWholeNumberFloats:
+    @pytest.mark.parametrize("version", [2, 2.0])
+    def test_payment_payload_accepts_whole_number_float(self, version: object) -> None:
+        # JSON does not distinguish 2 from 2.0, so both are protocol version 2.
+        result = PaymentPayload.model_validate(_payload(version))
+        assert result.x402_version == 2
+
+    @pytest.mark.parametrize("version", [2, 2.0])
+    def test_payment_required_accepts_whole_number_float(self, version: object) -> None:
+        result = PaymentRequired.model_validate(_required(version))
+        assert result.x402_version == 2
+
+
+VALID_PAYMENT_PAYLOAD_V2 = {
+    "x402Version": 2,
+    "payload": {},
+    "accepted": VALID_PAYMENT_REQUIREMENTS_V2,
+}
+
+
+def _verify_request(version: object) -> dict[str, object]:
+    return {
+        "x402Version": version,
+        "paymentPayload": VALID_PAYMENT_PAYLOAD_V2,
+        "paymentRequirements": VALID_PAYMENT_REQUIREMENTS_V2,
+    }
+
+
+class TestVerifyRequestVersion:
+    @pytest.mark.parametrize("version", [True, False, "2", 1.5, None])
+    def test_rejects_non_number_x402_version(self, version: object) -> None:
+        with pytest.raises(ValidationError):
+            VerifyRequest.model_validate(_verify_request(version))
+
+    @pytest.mark.parametrize("version", [2, 2.0])
+    def test_accepts_whole_number_float(self, version: object) -> None:
+        result = VerifyRequest.model_validate(_verify_request(version))
+        assert result.x402_version == 2
