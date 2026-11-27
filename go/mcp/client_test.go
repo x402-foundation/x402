@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +97,25 @@ func TestX402MCPClient_CallTool_FreeTool(t *testing.T) {
 	}
 	if len(result.Content) == 0 {
 		t.Error("Expected content")
+	}
+}
+
+func TestX402MCPClient_CallTool_ForwardsStructuredContentFromFreeTool(t *testing.T) {
+	want := map[string]interface{}{"tempC": 21}
+	mockMCPCaller := &mockMCPCaller{
+		callToolResult: MCPToolResult{
+			Content:           []MCPContentItem{{Type: "text", Text: `{"tempC":21}`}},
+			StructuredContent: want,
+		},
+	}
+
+	x402Client := NewX402MCPClient(mockMCPCaller, x402.Newx402Client(), Options{})
+	result, err := x402Client.CallTool(context.Background(), "weather", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !reflect.DeepEqual(result.StructuredContent, want) {
+		t.Fatalf("StructuredContent = %#v, want %#v", result.StructuredContent, want)
 	}
 }
 
@@ -511,6 +531,67 @@ func TestX402MCPClient_CallTool_AutoPaymentE2E(t *testing.T) {
 	}
 	if mockMCPCaller.callCount != 2 {
 		t.Errorf("Expected 2 calls to CallTool, got %d", mockMCPCaller.callCount)
+	}
+}
+
+func TestX402MCPClient_CallTool_ForwardsStructuredContentFromPaidTool(t *testing.T) {
+	paymentRequired := types.PaymentRequired{
+		X402Version: 2,
+		Accepts: []types.PaymentRequirements{
+			{
+				Scheme:            "exact",
+				Network:           "eip155:84532",
+				Amount:            "1000",
+				Asset:             "USDC",
+				PayTo:             "0xrecipient",
+				MaxTimeoutSeconds: 300,
+			},
+		},
+	}
+	structuredBytes, err := json.Marshal(paymentRequired)
+	if err != nil {
+		t.Fatalf("marshal payment required: %v", err)
+	}
+	var paymentBody map[string]interface{}
+	if err := json.Unmarshal(structuredBytes, &paymentBody); err != nil {
+		t.Fatalf("unmarshal payment required: %v", err)
+	}
+
+	want := map[string]interface{}{"tempC": 21}
+	mockMCPCaller := &mockMCPCaller{
+		callToolResults: []MCPToolResult{
+			{
+				IsError:           true,
+				StructuredContent: paymentBody,
+				Content:           []MCPContentItem{{Type: "text", Text: string(structuredBytes)}},
+			},
+			{
+				Content:           []MCPContentItem{{Type: "text", Text: `{"tempC":21}`}},
+				StructuredContent: want,
+				Meta: map[string]interface{}{
+					MCP_PAYMENT_RESPONSE_META_KEY: map[string]interface{}{
+						"success":     true,
+						"transaction": "0xtx",
+						"network":     "eip155:84532",
+					},
+				},
+			},
+		},
+	}
+
+	paymentClient := x402.Newx402Client()
+	paymentClient.Register("eip155:84532", &mockSchemeNetworkClient{scheme: "exact"})
+	x402Client := NewX402MCPClient(mockMCPCaller, paymentClient, Options{})
+
+	result, err := x402Client.CallTool(context.Background(), "paid_weather", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.PaymentResponse == nil || result.PaymentResponse.Transaction != "0xtx" {
+		t.Fatalf("PaymentResponse = %#v, want transaction 0xtx", result.PaymentResponse)
+	}
+	if !reflect.DeepEqual(result.StructuredContent, want) {
+		t.Fatalf("StructuredContent = %#v, want %#v", result.StructuredContent, want)
 	}
 }
 
@@ -1479,7 +1560,8 @@ func TestX402MCPClient_CallToolWithPayment_RetriesOnceWhenHookSignalsRecovered(t
 		callToolResults: []MCPToolResult{
 			paymentRequiredMCPToolResult(t, pr),
 			{
-				Content: []MCPContentItem{{Type: "text", Text: "ok"}},
+				Content:           []MCPContentItem{{Type: "text", Text: "recovered result"}},
+				StructuredContent: map[string]interface{}{"recovered": true},
 				Meta: map[string]interface{}{
 					MCP_PAYMENT_RESPONSE_META_KEY: map[string]interface{}{
 						"success":     true,
@@ -1500,6 +1582,12 @@ func TestX402MCPClient_CallToolWithPayment_RetriesOnceWhenHookSignalsRecovered(t
 	}
 	if result.IsError {
 		t.Fatal("expected success after recovery retry")
+	}
+	if result.Content[0].Text != "recovered result" {
+		t.Fatalf("content = %q, want recovered result", result.Content[0].Text)
+	}
+	if !reflect.DeepEqual(result.StructuredContent, map[string]interface{}{"recovered": true}) {
+		t.Fatalf("StructuredContent = %#v, want recovered=true", result.StructuredContent)
 	}
 	if mockMCPCaller.callCount != 2 {
 		t.Fatalf("expected 2 paid tool calls, got %d", mockMCPCaller.callCount)
