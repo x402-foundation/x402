@@ -296,6 +296,8 @@ def _is_valid_icon_url(value: Any) -> bool:
         host = idna.encode(decoded, uts46=True).decode("ascii").lower()
     except idna.IDNAError:
         return False
+    # A trailing dot names the same host ("localhost." resolves like "localhost").
+    host = host.removesuffix(".")
     if host == "":
         return False
     if host in _LOOPBACK_HOSTNAMES:
@@ -311,9 +313,12 @@ def _is_valid_icon_url(value: Any) -> bool:
     # reject any colon-bearing host as an IPv6 literal candidate.
     if ":" in host:
         return False
-    if _ALL_DIGITS_RE.match(host):
+    # Resolvers parse a host whose last label is numeric as IPv4, including
+    # short and octal/hex forms such as "127.1", "0177.0.0.1" and "0x7f.1".
+    last_label = host.rsplit(".", 1)[-1]
+    if _ALL_DIGITS_RE.match(last_label):
         return False
-    if _HEX_LITERAL_RE.match(host):
+    if _HEX_LITERAL_RE.match(last_label):
         return False
     return True
 

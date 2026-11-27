@@ -279,7 +279,8 @@ export function isValidIconUrl(value: string | undefined): value is string {
   // use; returns "" on failure.
   const asciiHost = domainToASCII(hostname);
   if (asciiHost === "") return false;
-  hostname = asciiHost.toLowerCase();
+  // A trailing dot names the same host ("localhost." resolves like "localhost").
+  hostname = asciiHost.toLowerCase().replace(/\.$/, "");
   if (hostname === "") return false;
   if (LOOPBACK_HOSTNAMES.has(hostname)) return false;
   if (IPV4_REGEX.test(hostname)) return false;
