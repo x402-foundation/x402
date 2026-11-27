@@ -255,6 +255,58 @@ export function appliedFailure(
 }
 
 /**
+ * Snapshot a batch read at or past a terminal point: live accounts use
+ * `redemptionSnapshot`, absent ones keep a preserved `distributed` snapshot
+ * when available or else become `closedSnapshot`. Returns undefined if any
+ * live account has an unreported status byte.
+ *
+ * @param batch - The batch's channels
+ * @param channels - The decoded channels in the same order, `undefined` where absent
+ * @param preserved - Previously recorded snapshots, if any
+ * @returns The states, or undefined when a live channel has no reportable state
+ */
+export function observedOrClosedStates(
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+  preserved?: readonly BatchRedemptionChannelState[],
+): BatchRedemptionChannelState[] | undefined {
+  const byId = preserved ? new Map(preserved.map(entry => [entry.channelId, entry])) : undefined;
+  const states = batch.map((item, index) => {
+    const live = channels[index];
+    if (live) return redemptionSnapshot(item.channelId, live);
+    const existing = byId?.get(item.channelId);
+    if (existing?.status === "distributed") return existing;
+    return closedSnapshot(item.channelId);
+  });
+  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
+    ? states
+    : undefined;
+}
+
+/**
+ * Refresh `extra.channelStates` on a replayed successful distribute response,
+ * converting absent PDAs to `closed` unless a terminal `distributed` snapshot
+ * was already recorded. Non-success responses are returned unchanged.
+ *
+ * @param response - The previously cached distribute response
+ * @param batch - The batch's channels
+ * @param channels - Current chain reads for the batch, `undefined` where absent
+ * @returns The refreshed response, or `response` unchanged
+ */
+export function refreshDistributionReplay(
+  response: SettleResponse,
+  batch: readonly { channelId: string }[],
+  channels: readonly (Channel | undefined)[],
+): SettleResponse {
+  if (!response.success) return response;
+  const existing = Array.isArray(response.extra?.channelStates)
+    ? (response.extra.channelStates as BatchRedemptionChannelState[])
+    : undefined;
+  const channelStates = observedOrClosedStates(batch, channels, existing);
+  return channelStates ? { ...response, extra: { ...response.extra, channelStates } } : response;
+}
+
+/**
  * Reject a claim, seal, or distribute whose batch contains at least one channel
  * absent onchain past `open_slot + OPEN_SLOT_WINDOW`, attaching `status: "closed"`
  * for absent channels and live snapshots for present channels.
@@ -271,20 +323,11 @@ export function closedFailure(
   channels: readonly (Channel | undefined)[],
   payer = "",
 ): SettleResponse {
-  const states = batch.map((item, index) => {
-    const live = channels[index];
-    return live ? redemptionSnapshot(item.channelId, live) : closedSnapshot(item.channelId);
-  });
-  const complete = states.every(
-    (state): state is BatchRedemptionChannelState => state !== undefined,
-  )
-    ? states
-    : undefined;
   return resyncFailure(
     network,
     BatchError.CHANNEL_STATE,
     "channel closed onchain",
-    complete,
+    observedOrClosedStates(batch, channels),
     payer,
   );
 }
@@ -310,13 +353,7 @@ export async function distributionStates(
     () => undefined,
   );
   if (!channels) return undefined;
-  const states = batch.map((item, index) => {
-    const live = channels[index];
-    return live ? redemptionSnapshot(item.channelId, live) : closedSnapshot(item.channelId);
-  });
-  return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
-    ? states
-    : undefined;
+  return observedOrClosedStates(batch, channels);
 }
 
 /**

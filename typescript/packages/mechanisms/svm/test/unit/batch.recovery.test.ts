@@ -574,11 +574,33 @@ describe("batch-settlement outcome recovery", () => {
     ]);
     expect(api.submitRedemption).not.toHaveBeenCalled();
     expect(facilitatorSigner.sendTransaction).not.toHaveBeenCalled();
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(refreshed);
 
+    // Once the channel PDA is later absent onchain, replay reports it as closed
+    // and persists the refreshed response.
     api.readChannel = vi.fn().mockResolvedValue(undefined);
-    expect(await scheme.settleDistributions(payment(payload), payload, requirements())).toEqual(
-      unread,
+    const closedReplay = await scheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
     );
+    expect(closedReplay).toEqual({
+      ...unread,
+      extra: {
+        ...unread.extra,
+        channelStates: [
+          {
+            balance: "0",
+            channelId,
+            payoutWatermark: "0",
+            status: "closed",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+    });
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(closedReplay);
 
     // An unrecognized status byte omits the field the same way.
     await store.set(key, TX);
@@ -703,6 +725,89 @@ describe("batch-settlement outcome recovery", () => {
     );
     expect(replayAfterRecovery).toEqual(recovered);
     expect(recoveringApi.submitRedemption).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a sealed distribute when the first post-confirmation read errors and replay reads absent", async () => {
+    const payload: BatchSettlePayload = {
+      channels: [{ channelConfig, channelId }],
+      type: "settle",
+    };
+    const key = `batch:distribute:${NETWORK}:${MINT}:${RECEIVER}:${channelId}`;
+    const closedExpectedStates = [
+      {
+        balance: "0",
+        channelId,
+        payoutWatermark: "0",
+        status: "closed",
+        totalClaimed: "0",
+        withdrawRequestedAt: 0,
+      },
+    ];
+
+    // 1. Pending sealed distribute confirms, but the first post-confirmation read
+    // errors so the cached response lacks channelStates. On replay, the absent
+    // PDA is reported as closed and persisted to `${key}:result`.
+    const store = new InMemoryPendingSettlementStore();
+    await store.set(key, TX);
+    const transport = signer();
+    transport.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const scheme = new BatchSvmScheme(transport as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: store,
+    });
+    const api = configure(scheme);
+    api.submitRedemption = vi.fn();
+    api.readChannel = vi.fn().mockRejectedValue(new Error("rpc unavailable"));
+
+    const first = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(first).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(first.extra).toEqual({ channels: [channelId] });
+    expect(await store.get(key)).toBeUndefined();
+
+    api.readChannel = vi.fn().mockResolvedValue(undefined);
+    const replayed = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(replayed).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(replayed.extra?.channelStates).toEqual(closedExpectedStates);
+    expect(JSON.parse((await store.get(`${key}:result`))!)).toEqual(replayed);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    const third = await scheme.settleDistributions(payment(payload), payload, requirements());
+    expect(third).toEqual(replayed);
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+
+    // 2. When onDistributionConfirmed also failed on the first recovery attempt,
+    // retrying finishDistribution refreshes the cached transaction result with
+    // closed channelStates instead of returning the stale state-less cache.
+    const hookStore = new InMemoryPendingSettlementStore();
+    await hookStore.set(key, TX);
+    const onDistributionConfirmed = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ledger unavailable"))
+      .mockResolvedValue(undefined);
+    const hookTransport = signer();
+    hookTransport.getConfirmedTransaction.mockResolvedValue(await payoutEvidence("0", "3000"));
+    const hookScheme = new BatchSvmScheme(hookTransport as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      onDistributionConfirmed,
+      pendingSettlementStore: hookStore,
+    });
+    const hookApi = configure(hookScheme);
+    hookApi.readChannel = vi.fn().mockRejectedValueOnce(new Error("rpc unavailable"));
+
+    const pending = await hookScheme.settleDistributions(payment(payload), payload, requirements());
+    expect(pending).toMatchObject({ errorReason: "settlement_pending", success: false });
+    expect(await hookStore.get(key)).toBe(TX);
+
+    hookApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const recovered = await hookScheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(recovered).toMatchObject({ amount: "3000", success: true, transaction: TX });
+    expect(recovered.extra?.channelStates).toEqual(closedExpectedStates);
+    expect(onDistributionConfirmed).toHaveBeenLastCalledWith(recovered, requirements());
+    expect(JSON.parse((await hookStore.get(`${key}:result`))!)).toEqual(recovered);
   });
 
   it("reports closed and live channelStates together when a recovered distribute closed one channel of a batch", async () => {

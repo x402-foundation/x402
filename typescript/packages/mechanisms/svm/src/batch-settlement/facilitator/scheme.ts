@@ -82,7 +82,6 @@ import {
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
-  completeStates,
   depositResponse,
   distributionStates,
   envelopeFailure,
@@ -90,7 +89,7 @@ import {
   parseOptionalSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
-  redemptionSnapshot,
+  refreshDistributionReplay,
   refundResponse,
   settleFailure,
   settlementPending,
@@ -670,11 +669,14 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     }
     if (instructions.length === 0) {
       if (previous) {
-        const response = JSON.parse(previous) as SettleResponse;
-        const channelStates = completeStates(prepared, channels, redemptionSnapshot);
-        return channelStates
-          ? { ...response, extra: { ...response.extra, channelStates } }
-          : response;
+        const refreshed = refreshDistributionReplay(
+          JSON.parse(previous) as SettleResponse,
+          prepared,
+          channels,
+        );
+        const encoded = JSON.stringify(refreshed);
+        if (encoded !== previous) await this.pendingStore.set(`${key}:result`, encoded);
+        return refreshed;
       }
       // State alone cannot identify a previous payment or its amount.
       return appliedFailure(requirements, "nothing to distribute onchain", prepared, channels);
@@ -777,6 +779,19 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           `batch:transaction:${requirements.network}:${signature}:result`,
           JSON.stringify(response),
         );
+      } else if (response.success && !response.extra?.channelStates) {
+        const cachedSlot = await this.pendingStore.get(`${key}:slot`);
+        if (cachedSlot) this.rememberSlot(requirements.network, BigInt(cachedSlot));
+        const channelStates = await distributionStates(prepared, undefined, channelId =>
+          this.readChannel(requirements.network, channelId),
+        );
+        if (channelStates) {
+          response = { ...response, extra: { ...response.extra, channelStates } };
+          await this.pendingStore.set(
+            `batch:transaction:${requirements.network}:${signature}:result`,
+            JSON.stringify(response),
+          );
+        }
       }
       await this.config.onDistributionConfirmed?.(response, requirements);
       await this.pendingStore.set(`${key}:result`, JSON.stringify(response));

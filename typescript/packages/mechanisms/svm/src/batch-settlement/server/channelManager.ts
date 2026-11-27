@@ -416,7 +416,6 @@ export class BatchChannelManager {
         switch (state.status) {
           case "closed":
             await this.recordObserved(channel.channelId, state);
-            this.reportClosedUnclaimed(channel);
             continue;
           case "distributed":
           case "sealed":
@@ -580,7 +579,6 @@ export class BatchChannelManager {
     switch (observed.status) {
       case "closed":
         await this.recordObserved(channel.channelId, observed);
-        this.reportClosedUnclaimed(channel);
         return true;
       case "distributed":
         await this.recordObserved(channel.channelId, observed);
@@ -894,7 +892,8 @@ export class BatchChannelManager {
 
   /**
    * Raise a channel's watermarks to the observed ones and mark it sealed or
-   * distributed once the chain says it is.
+   * distributed once the chain says it is. Adopting `closed` reports any
+   * unclaimed voucher delta after the update persists.
    *
    * @param channelId - Channel to update
    * @param observed - What was confirmed; an absent field leaves the stored one alone
@@ -903,17 +902,21 @@ export class BatchChannelManager {
     channelId: string,
     observed: Partial<ObservedChannel>,
   ): Promise<void> {
+    let closed: ChannelState | undefined;
     await this.record(channelId, state => {
       const settled = larger(state.settled, observed.settled ?? 0n);
       const payout = larger(state.payoutWatermark, observed.payout ?? 0n);
-      return {
+      const next: ChannelState = {
         ...state,
         onchainSyncedAt: Date.now(),
         payoutWatermark: observed.status === "closed" ? larger(payout, settled) : payout,
         settled,
         status: statusAfter(state.status, observed.status),
       };
+      if (observed.status === "closed") closed = next;
+      return next;
     });
+    if (closed) this.reportClosedUnclaimed(closed);
   }
 
   /**

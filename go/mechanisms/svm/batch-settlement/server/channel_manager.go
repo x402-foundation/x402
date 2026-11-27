@@ -335,7 +335,6 @@ func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelSt
 				if err := m.recordObserved(channel.ChannelID, state); err != nil {
 					return err
 				}
-				m.reportClosedUnclaimed(channel)
 				continue
 			case batchsettlement.ChannelStatusDistributed, batchsettlement.ChannelStatusSealed:
 				if err := m.recordObserved(channel.ChannelID, state); err != nil {
@@ -466,7 +465,6 @@ func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelSta
 		if err := m.recordObserved(channel.ChannelID, observed); err != nil {
 			return false, err
 		}
-		m.reportClosedUnclaimed(channel)
 		return true, nil
 	case batchsettlement.ChannelStatusDistributed:
 		return true, m.recordObserved(channel.ChannelID, observed)
@@ -641,14 +639,18 @@ func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID stri
 
 // recordObserved raises a channel's watermarks to the observed ones (a zero value
 // leaves its field alone) and marks it sealed or distributed once the chain says it is.
+// Adopting ChannelStatusClosed reports any unclaimed voucher delta after the update persists.
 func (m *BatchChannelManager) recordObserved(channelID string, observed observedChannel) error {
-	return m.record(channelID, func(state ChannelState) ChannelState {
+	var closed *ChannelState
+	if err := m.record(channelID, func(state ChannelState) ChannelState {
 		state.Settled = max(state.Settled, observed.settled)
 		state.PayoutWatermark = max(state.PayoutWatermark, observed.payout)
 		switch {
 		case observed.status == batchsettlement.ChannelStatusClosed:
 			state.Status = ChannelStatusDistributed
 			state.PayoutWatermark = max(state.PayoutWatermark, state.Settled)
+			copied := state
+			closed = &copied
 		case observed.status == batchsettlement.ChannelStatusDistributed:
 			state.Status = ChannelStatusDistributed
 		case observed.status == batchsettlement.ChannelStatusSealed && state.Status != ChannelStatusDistributed:
@@ -656,7 +658,13 @@ func (m *BatchChannelManager) recordObserved(channelID string, observed observed
 		}
 		state.OnchainSyncedAt = time.Now().UnixMilli()
 		return state
-	})
+	}); err != nil {
+		return err
+	}
+	if closed != nil {
+		m.reportClosedUnclaimed(*closed)
+	}
+	return nil
 }
 
 func (m *BatchChannelManager) hasSettledReader() bool {

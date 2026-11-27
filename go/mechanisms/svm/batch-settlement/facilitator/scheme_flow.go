@@ -917,7 +917,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	}
 	if len(instructions) == 0 {
 		if previous != nil {
-			if states := completeValidStates(prepared, channels, redemptionSnapshot); states != nil {
+			if states := replayDistributionStates(prepared, channels, previous); states != nil {
 				return withChannelStates(previous, states), nil
 			}
 			return previous, nil
@@ -986,16 +986,36 @@ func completeStates(prepared []PreparedDistribution, channels []*generated.Chann
 	return states
 }
 
-// completeValidStates is nil unless every channel was read and has a reportable status.
-func completeValidStates(prepared []PreparedDistribution, channels []*generated.Channel, snapshot func(string, *generated.Channel) batchsettlement.BatchRedemptionChannelState) []batchsettlement.BatchRedemptionChannelState {
-	states := completeStates(prepared, channels, snapshot)
-	if states == nil {
+// replayDistributionStates builds channelStates for a replayed successful distribute:
+// live channels use redemptionSnapshot, absent channels preserve a terminal distributed
+// snapshot from previous when present, and otherwise report closed. Returns nil for a
+// non-success response or if any live channel has an unrecognized onchain status.
+func replayDistributionStates(prepared []PreparedDistribution, channels []*generated.Channel, previous *x402.SettleResponse) []batchsettlement.BatchRedemptionChannelState {
+	if !previous.Success {
 		return nil
 	}
-	for _, state := range states {
-		if state.Status == "" {
-			return nil
+	var byID map[string]batchsettlement.BatchRedemptionChannelState
+	if existing, ok := previous.Extra[batchsettlement.ExtraChannelStates].([]batchsettlement.BatchRedemptionChannelState); ok {
+		byID = make(map[string]batchsettlement.BatchRedemptionChannelState, len(existing))
+		for _, entry := range existing {
+			byID[entry.ChannelID] = entry
 		}
+	}
+	states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+	for i, item := range prepared {
+		if channels[i] != nil {
+			state := redemptionSnapshot(item.ChannelID, channels[i])
+			if state.Status == "" {
+				return nil
+			}
+			states[i] = state
+			continue
+		}
+		if existing, ok := byID[item.ChannelID]; ok && existing.Status == batchsettlement.ChannelStatusDistributed {
+			states[i] = existing
+			continue
+		}
+		states[i] = closedSnapshot(item.ChannelID)
 	}
 	return states
 }

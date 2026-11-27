@@ -993,7 +993,28 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.Equal(t, int32(1), recorded.Load())
 		require.Zero(t, submits.Load())
 
-		// When the account is absent, the stored result's own states are preserved.
+		// When a stored result has no channelStates and the account is absent,
+		// replay reports it as closed.
+		require.NoError(t, storePayoutResult(context.Background(), store, key, storedWithoutStates))
+		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		closedReplay, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.True(t, closedReplay.Success)
+		require.Equal(t, tx, closedReplay.Transaction)
+		require.Equal(t, "1500", closedReplay.Amount)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID:       channelID,
+			Status:          batchsettlement.ChannelStatusClosed,
+			Balance:         "0",
+			TotalClaimed:    "0",
+			PayoutWatermark: "0",
+		}}, closedReplay.Extra[batchsettlement.ExtraChannelStates])
+		require.Equal(t, int32(2), recorded.Load())
+		require.Zero(t, submits.Load())
+
+		// When the account is absent, a stored result's terminal distributed states are preserved.
 		storedWithStates := &x402.SettleResponse{
 			Success:     true,
 			Network:     x402.Network(network),
