@@ -19,6 +19,7 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 
 | Name | Description |
 | ---- | ----------- | 
+| [AgentPay x402 Facilitator](https://x402-agent-pay.com/facilitator) | x402 facilitator for exact USDC payments on Base (eip155:8453) and Solana mainnet, x402 v1 and v2; free pre-payment checks for spend authority, all-in cost and whether an endpoint is payable, plus a public list of every refusal reason and its fix; 0.5% fee per netted payout batch, nothing per settlement ([capabilities](https://x402-agent-pay.com/facilitator/supported)) |
 | [AlgoVoi](https://pay.algovoi.co.uk) | Chain-agnostic x402 facilitator across 12 mainnet chains incl. Algorand, Base, Solana, Stellar, Hedera, Voi and Tempo; hosted or self-hosted |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
