@@ -15,6 +15,7 @@ import (
 
 	x402 "github.com/x402-foundation/x402/go/v2"
 	x402http "github.com/x402-foundation/x402/go/v2/http"
+	exactcasper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/client"
 	authcaptureclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/client"
 	batchedclient "github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement/client"
 	exactevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/client"
@@ -25,6 +26,7 @@ import (
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/client"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/client"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/client"
+	casperSigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 	evmsigners "github.com/x402-foundation/x402/go/v2/signers/evm"
 	svmsigners "github.com/x402-foundation/x402/go/v2/signers/svm"
 )
@@ -72,14 +74,41 @@ type PaymentClientContext struct {
 	BatchPhase       string
 }
 
+// PaymentClientOptions narrows what BuildPaymentClientWithOptions registers,
+// for family-specific e2e clients.
+type PaymentClientOptions struct {
+	// SvmOnly skips every non-SVM family even when its credentials are set.
+	SvmOnly bool
+	// SvmTransactionVersions narrows the Solana transaction message versions
+	// the SVM schemes build. Nil keeps the SDK default ([0, 1]); []int{0}
+	// keeps the client on version 0 even when the facilitator advertises 1.
+	SvmTransactionVersions []int
+}
+
 // BuildPaymentClient builds the shared x402 payment client + batched scheme
 // from env vars, registering each Go-supported network whose credentials are set.
 // Exits the process via OutputError on misconfiguration.
 func BuildPaymentClient() *PaymentClientContext {
+	return BuildPaymentClientWithOptions(PaymentClientOptions{})
+}
+
+// BuildPaymentClientWithOptions is BuildPaymentClient with family and SVM
+// transaction-version narrowing.
+func BuildPaymentClientWithOptions(opts PaymentClientOptions) *PaymentClientContext {
 	evmPrivateKey := os.Getenv("CLIENT_EVM_PRIVATE_KEY")
+	if opts.SvmOnly {
+		evmPrivateKey = ""
+	}
 	svmPrivateKey := os.Getenv("CLIENT_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY or CLIENT_SVM_PRIVATE_KEY is required")
+	if opts.SvmOnly && svmPrivateKey == "" {
+		log.Fatal("CLIENT_SVM_PRIVATE_KEY is required")
+	}
+	casperPrivateKey := os.Getenv("CLIENT_CASPER_PRIVATE_KEY")
+	if opts.SvmOnly {
+		casperPrivateKey = ""
+	}
+	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
+		log.Fatal("At least one of CLIENT_EVM_PRIVATE_KEY, CLIENT_SVM_PRIVATE_KEY, or CLIENT_CASPER_PRIVATE_KEY is required")
 	}
 
 	x402Client := x402.Newx402Client().DisableSpendControls()
@@ -149,13 +178,16 @@ func BuildPaymentClient() *PaymentClientContext {
 			return nil
 		}
 
-		var svmCfg *svmconfig.ClientConfig
 		svmRpcURL := os.Getenv("SVM_RPC_URL")
-		if svmRpcURL != "" {
-			svmCfg = &svmconfig.ClientConfig{RPCURL: svmRpcURL}
+		svmCfg := &svmconfig.ClientConfig{
+			RPCURL:              svmRpcURL,
+			TransactionVersions: opts.SvmTransactionVersions,
 		}
 
-		batchCfg := &batchsvmclient.BatchSvmClientConfig{RPCURL: svmRpcURL}
+		batchCfg := &batchsvmclient.BatchSvmClientConfig{
+			RPCURL:              svmRpcURL,
+			TransactionVersions: opts.SvmTransactionVersions,
+		}
 		if saltHex := batchSettlementChannelSalt(); saltHex != "" {
 			if salt, err := svmChannelSaltU64(saltHex); err != nil {
 				OutputError(fmt.Sprintf("Invalid batch-settlement channel salt: %v", err))
@@ -194,6 +226,18 @@ func BuildPaymentClient() *PaymentClientContext {
 		batchPhase = strings.TrimSpace(os.Getenv("EVM_BATCH_SETTLEMENT_PHASE"))
 	}
 
+	if casperPrivateKey != "" {
+		casperAlgo := os.Getenv("CLIENT_CASPER_PRIVATE_KEY_ALGORITHM")
+		casperSigner, err := casperSigners.NewClientSignerFromSecret(casperPrivateKey, casperAlgo)
+		if err != nil {
+			OutputError(fmt.Sprintf("Failed to create Casper signer: %v", err))
+			return nil
+		}
+
+		casperPattern := x402.Network(networkCaip2Pattern("casper"))
+		x402Client.Register(casperPattern, exactcasper.NewExactCasperScheme(casperSigner))
+	}
+
 	return &PaymentClientContext{
 		Client:           x402Client,
 		BatchedEvmScheme: batchedEvmScheme,
@@ -205,6 +249,12 @@ func BuildPaymentClient() *PaymentClientContext {
 // CreateClient builds the shared x402 client used by go-http e2e, wrapping
 // BuildPaymentClient's payment client in a payment-capable *http.Client.
 func CreateClient() *ClientContext {
+	return CreateClientWithOptions(PaymentClientOptions{})
+}
+
+// CreateClientWithOptions is CreateClient with family and SVM
+// transaction-version narrowing.
+func CreateClientWithOptions(opts PaymentClientOptions) *ClientContext {
 	serverURL := os.Getenv("RESOURCE_SERVER_URL")
 	if serverURL == "" {
 		log.Fatal("RESOURCE_SERVER_URL is required")
@@ -215,7 +265,7 @@ func CreateClient() *ClientContext {
 		endpointPath = "/protected"
 	}
 
-	pc := BuildPaymentClient()
+	pc := BuildPaymentClientWithOptions(opts)
 	if pc == nil {
 		return nil
 	}
@@ -385,7 +435,7 @@ func decodePaymentRequiredError(header string) string {
 	var required struct {
 		Error   string `json:"error"`
 		Accepts []struct {
-			Scheme string `json:"scheme"`
+			Scheme string                 `json:"scheme"`
 			Extra  map[string]interface{} `json:"extra"`
 		} `json:"accepts"`
 	}

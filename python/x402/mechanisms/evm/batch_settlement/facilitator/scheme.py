@@ -67,11 +67,13 @@ class BatchSettlementEvmFacilitator:
 
         Args:
             signer: Facilitator EVM signer(s) used for tx submission and onchain reads.
-            authorizer_signer: Optional dedicated key that provides EIP-712 signatures for
-                `claimWithSignature` / `refundWithSignature`. When provided, the facilitator
-                advertises its address as `receiverAuthorizer` in `/supported` and signs
-                missing authorizer signatures using this key. Omit it so no `receiverAuthorizer`
-                is advertised and servers supply their own signatures.
+            authorizer_signer: Optional dedicated key that signs missing
+                `claimWithSignature` authorizations. When provided, the facilitator
+                advertises its address as `receiverAuthorizer` in `/supported` and
+                signs a missing claim signature with this key. A refund without
+                `refundAuthorizerSignature` is rejected. Omit it so no
+                `receiverAuthorizer` is advertised and servers supply their own
+                claim signatures.
             config: Optional configuration (e.g. ERC-6492 factory allowlist).
             pending_store: Optional store letting a retried deposit settle reconcile against
                 an already-broadcast transaction instead of re-verifying and re-broadcasting

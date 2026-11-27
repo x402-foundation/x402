@@ -89,6 +89,35 @@ func TestVerifyAcceptsAWellFormedOpen(t *testing.T) {
 	assert.Zero(t, stub.simulations(), "verify does not simulate")
 }
 
+// Phase 3 step 4: the read-only verify refuses an open whose channel already
+// exists, as the deposit settle does.
+func TestVerifyRejectsAChannelThatAlreadyExists(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	stub := newStubRPC(t)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, stub, nil)
+	stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+	_, err := scheme.Verify(context.Background(), fixture.payload, fixture.requirements, nil)
+	assert.Equal(t, ErrChannelAlreadyOpen, verifyErrorReason(t, err))
+	assert.Empty(t, signer.sentTransactions(), "verify is read-only and never broadcasts")
+}
+
+// The scheme types openSlot as a JSON number; the decimal string clients emit
+// and the number both verify.
+func TestVerifyAcceptsANumericOpenSlot(t *testing.T) {
+	signer := newMockSigner(t, 1)
+	fixture := newPaymentFixture(t, signer)
+	scheme := newScheme(signer, newStubRPC(t), nil)
+	slot, err := strconv.ParseUint(fixture.payload.Payload["openSlot"].(string), 10, 64)
+	require.NoError(t, err)
+
+	payload := fixture.withPayload(map[string]interface{}{"openSlot": float64(slot)})
+	response, err := scheme.Verify(context.Background(), payload, fixture.requirements, nil)
+	require.NoError(t, err)
+	assert.True(t, response.IsValid)
+}
+
 func TestVerifyRejections(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -721,6 +750,67 @@ func TestClaimSettleDistributesTheMeteredAmount(t *testing.T) {
 		paymentchannels.Ed25519ProgramID, paymentchannels.ProgramID, paymentchannels.ProgramID,
 	}, programs, "the voucher precompile must immediately precede settle_and_seal")
 	assert.Equal(t, solana.MessageVersionV1, sent[0].Message.GetVersion())
+}
+
+func intPtr(v int) *int { return &v }
+
+func TestResolveFacilitatorTransactionVersion(t *testing.T) {
+	assert.Equal(t, DefaultFacilitatorTransactionVersion, resolveFacilitatorTransactionVersion(nil))
+	assert.Equal(t, 0, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion0)))
+	assert.Equal(t, 1, resolveFacilitatorTransactionVersion(intPtr(paymentchannels.FacilitatorTransactionVersion1)))
+}
+
+func TestInvalidFacilitatorTransactionVersionPanicsAtConstruction(t *testing.T) {
+	for _, version := range []int{-1, 2, 3} {
+		assert.Panics(t, func() {
+			NewUptoSvmScheme(newMockSigner(t, 1), &Config{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+		assert.Panics(t, func() {
+			NewRentCleanupManager(RentCleanupConfig{FacilitatorTransactionVersion: intPtr(version)})
+		}, "version %d", version)
+	}
+}
+
+func TestClaimSettleHonoursTheConfiguredFacilitatorTransactionVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     *int
+		wantVersion solana.MessageVersion
+		wantBudget  bool
+	}{
+		{"unset defaults to v1", nil, solana.MessageVersionV1, false},
+		{"explicit v1", intPtr(paymentchannels.FacilitatorTransactionVersion1), solana.MessageVersionV1, false},
+		{"explicit v0", intPtr(paymentchannels.FacilitatorTransactionVersion0), solana.MessageVersionV0, true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			signer := newMockSigner(t, 1)
+			stub := newStubRPC(t)
+			fixture := newPaymentFixture(t, signer)
+			scheme := newScheme(signer, stub, &Config{FacilitatorTransactionVersion: test.version})
+			stub.setAccount(fixture.channelID.String(), fixture.openChannel().encode(t))
+
+			response, err := scheme.Settle(
+				context.Background(), fixture.claimPayload(t, 1858), fixture.claimRequirements(1858), nil,
+			)
+			require.NoError(t, err)
+			require.True(t, response.Success)
+
+			sent := signer.sentTransactions()
+			require.Len(t, sent, 1)
+			assert.Equal(t, test.wantVersion, sent[0].Message.GetVersion())
+
+			hasBudget := false
+			for _, program := range instructionPrograms(t, sent[0]) {
+				if program.Equals(solana.ComputeBudget) {
+					hasBudget = true
+				}
+			}
+			assert.Equal(t, test.wantBudget, hasBudget,
+				"v0 carries ComputeBudget instructions; v1 carries the budget inline")
+		})
+	}
 }
 
 func TestClaimSettleSealsAZeroChargeWithoutAPrecompile(t *testing.T) {

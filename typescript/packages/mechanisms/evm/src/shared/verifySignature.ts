@@ -103,6 +103,7 @@ export async function classifyErc6492Payer(
   const hasDeploymentInfo = !!(
     erc6492Data.address &&
     erc6492Data.data &&
+    erc6492Data.data !== "0x" &&
     !isAddressEqual(erc6492Data.address, ZERO_ADDRESS)
   );
   const innerSignature = hasDeploymentInfo ? erc6492Data.signature : signature;

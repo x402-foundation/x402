@@ -9,9 +9,15 @@ from ....schemas import AssetAmount, Network, PaymentRequirements, Price, Suppor
 from ....schemas.helpers import convert_to_token_amount, parse_money
 from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset, get_default_asset
+from .splits import (
+    assert_within_capabilities,
+    get_split_capabilities,
+    parse_payment_legs,
+    uses_split_terms,
+)
 
 if TYPE_CHECKING:
-    from solana.rpc.api import Client as SolanaClient
+    from ..rpc import SvmRpcClient
 
 # Type alias for money parser (sync)
 MoneyParser = Callable[[str | int | float, str], AssetAmount | None]
@@ -42,15 +48,11 @@ class ExactSvmScheme:
             rpc_url: Optional RPC URL used to add blockhash construction hints.
         """
         self._money_parsers: list[MoneyParser] = []
-        self._rpc_client: SolanaClient | None = None
+        self._rpc_client: SvmRpcClient | None = None
         if rpc_url:
-            try:
-                from solana.rpc.api import Client as SolanaClient
-            except ImportError as e:
-                raise ImportError(
-                    "SVM mechanism requires solana packages. Install with: pip install x402[svm]"
-                ) from e
-            self._rpc_client = SolanaClient(rpc_url)
+            from ..rpc import SvmRpcClient
+
+            self._rpc_client = SvmRpcClient(rpc_url)
 
     def register_money_parser(self, parser: MoneyParser) -> ExactSvmScheme:
         """Register custom money parser in the parser chain.
@@ -135,6 +137,10 @@ class ExactSvmScheme:
 
         Returns:
             Enhanced payment requirements with feePayer in extra.
+
+        Raises:
+            SplitsError: If ``extra.splits`` / ``extra.ataCreationRequired`` are
+                invalid or exceed what the facilitator advertises (§5.5).
         """
         # Mark unused parameters to satisfy linter
         _ = extension_keys
@@ -150,6 +156,14 @@ class ExactSvmScheme:
         extra = supported_kind.extra or {}
         if "feePayer" in extra:
             requirements.extra["feePayer"] = extra["feePayer"]
+
+        # A server MUST NOT issue splits the selected facilitator does not
+        # advertise (§5.5), so a misconfigured route fails here rather than as a
+        # verify rejection after the client has signed.
+        if uses_split_terms(requirements):
+            assert_within_capabilities(
+                parse_payment_legs(requirements), get_split_capabilities(extra)
+            )
 
         # Copy the transaction message versions the facilitator advertises so
         # the client builds one of them (absent means version 0).

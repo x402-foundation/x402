@@ -52,6 +52,7 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	},
 	"eip155:42161": {
 		{Asset: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
+		{Asset: "0xD74f5255D557944cf7Dd0E45FF521520002D5748", Name: "Sperax USD", Version: "1", Decimals: 18, Symbol: "USDs", AssetTransferMethod: AssetTransferMethodPermit2},
 	},
 	"eip155:421614": {
 		{Asset: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
@@ -115,6 +116,39 @@ var DefaultAssets = map[string][]DefaultAssetInfo{
 	"eip155:4801": {
 		{Asset: "0x66145f38cBAC35Ca6F1Dfb4914dF98F1614aeA88", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
 	},
+	"eip155:10": {
+		{Asset: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", Name: "USD Coin", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:130": {
+		{Asset: "0x078D782b760474a361dDA0AF3839290b0EF57AD6", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:146": {
+		{Asset: "0x29219dd400f2Bf60E5a23d13Be72B486D4038894", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:999": {
+		{Asset: "0xb88339CB7199b77E23DB6E890353E22632Ba630f", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:57073": {
+		{Asset: "0x2D270e6886d130D724215A266106e6832161EAEd", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:59144": {
+		{Asset: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:81224": {
+		{Asset: "0xd996633a415985DBd7D6D12f4A4343E31f5037cf", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:98866": {
+		{Asset: "0x222365EF19F7947e5484218551B56bb3965Aa7aF", Name: "USDC", Version: "2", Decimals: 6, Symbol: "USDC"},
+	},
+	"eip155:4663": {
+		{Asset: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", Name: "Global Dollar", Version: "1", Decimals: 6, Symbol: "USDG"},
+	},
+	"eip155:43111": {
+		{Asset: "0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA", Name: "Bridged USDC (Stargate)", Version: "2", Decimals: 6, Symbol: "USDC.e"},
+	},
+	"eip155:743111": {
+		{Asset: "0xD47971C7F5B1067d25cd45d30b2c9eb60de96443", Name: "USDC.e", Version: "1", Decimals: 6, Symbol: "USDC.e", AssetTransferMethod: AssetTransferMethodPermit2},
+	},
 }
 
 // legacyNetworkChainIDs maps v1 network names to chain IDs (mirrors v1.NetworkChainIDs).
@@ -143,6 +177,8 @@ var legacyNetworkChainIDs = map[string]int64{
 	"stable-testnet":     2201,
 	"celo":               42220,
 	"flare":              14,
+	"hemi":               43111,
+	"hemi-testnet":       743111,
 }
 
 func resolveNetworkKey(network string) string {

@@ -191,6 +191,8 @@ Across all top-level instructions and the full CPI trace, **exactly one** transf
 - MUST reject if zero matching transfers are found.
 - MUST reject if more than one matching transfer is found (ambiguous / potential double-payment).
 
+Path 2 verifies this using the CPI trace. Path 1 enforces the top-level transfer shape statically; when an operator configures extension tuples (§3.1.1), ensuring their CPI effects preserve this invariant is delegated to that operator's vetting, not checked by Path 1 simulation.
+
 A matching transfer MAY exceed `PaymentRequirements.amount` (overpayment is tolerated to accommodate smart wallets with internal fee rounding); it MUST NOT be less.
 
 When `extra.splits` is present, this rule applies **per payment leg**: exactly one matching transfer per leg, matched to a distinct instruction (§5.3). Only the primary leg tolerates overpayment; split legs MUST match their declared amount exactly.
@@ -386,38 +388,41 @@ When `enableSmartWalletVerification` is enabled, the signer MUST implement the s
 
 ### 3.1 Path 1 — Static Layout Verification (standard wallets)
 
-The fast path for standard wallets has a version-specific layout.
+The fast path for standard wallets. Rather than matching instructions by absolute position, the verifier classifies every top-level instruction by **identity** — program ID plus instruction discriminator — into one of six roles: `computeLimit`, `computePrice`, `transfer`, `memo`, `guard`, or `unknown`.
 
-For a single-payee charge (no `extra.splits` and no ATA creation), a legacy or version-0 transaction MUST contain 3 to 7 instructions in this
-order:
-
-1. Compute Budget: Set Compute Unit Limit
-2. Compute Budget: Set Compute Unit Price
-3. SPL Token or Token-2022 `TransferChecked`
-4. (Optional) Lighthouse or Memo program instruction
-5. (Optional) Lighthouse or Memo program instruction
-6. (Optional) Lighthouse or Memo program instruction
-7. (Optional) Memo program instruction
-
-For a single-payee charge, a version-1 transaction MUST contain 1 to 5 instructions in this order:
-
-1. SPL Token or Token-2022 `TransferChecked`
-2. (Optional) Lighthouse or Memo program instruction
-3. (Optional) Lighthouse or Memo program instruction
-4. (Optional) Lighthouse or Memo program instruction
-5. (Optional) Memo program instruction
-
-- Allowed optional programs: Lighthouse (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`) and SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`).
-- Phantom wallet injects up to 3 Lighthouse instructions; Solflare injects 2. These are wallet-injected user protection mechanisms and MUST be allowed. For legacy and version-0 transactions, the cap of 7 instructions keeps these wallets on the fast path without needing Path 2. A version-1 transaction has no Compute Budget instructions, so its cap is 5 and that cap still applies.
+- **Protocol instructions** — for legacy and version-0 transactions, Compute Budget `SetComputeUnitLimit`, Compute Budget `SetComputeUnitPrice`, SPL Token/Token-2022 `TransferChecked`, and an optional SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) — MUST appear in that fixed **relative** order (interspersed guard instructions do not break the ordering). Version-1 transactions omit the Compute Budget instructions and use the message-header budget (§1.5). Encountering a `SetComputeUnitLimit`, `SetComputeUnitPrice`, or `TransferChecked` out of order, or more than once, MUST be rejected (`invalid_exact_svm_payload_transaction_instructions_order`), except for the additional payment legs and ATA creations defined in §5.7. Memo instructions after the transfer MAY repeat; their count is constrained only when `extra.memo` is present. A `Memo` before the first `TransferChecked` MUST be rejected (`invalid_exact_svm_payload_transaction_instructions_order`). A transaction without a `TransferChecked` is rejected (`invalid_exact_svm_payload_no_transfer_instruction`).
+- **Guard instructions** — only Lighthouse (`L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95`) assertion variants with a first data byte in `2..=17` — MAY appear anywhere in the instruction list: before, after, or interspersed among the protocol instructions, with no upper bound on their count. Every guard MUST pass fee payer isolation (§2.1.1) before it is skipped. Lighthouse is not an assertion-only program: `MemoryWrite` (`0`) and `MemoryClose` (`1`) can mutate state. Those variants, empty data, and unknown variants MUST be rejected as non-recoverable failures (`invalid_exact_svm_payload_invalid_lighthouse_instruction`), including inside configured instruction tuples; they MUST NOT fall through to Path 2. The assertion discriminator range follows [Lighthouse's instruction enum](https://github.com/Jac0xb/lighthouse/blob/4c579479c98635e419b1b167f08be02a71604a71/programs/lighthouse/src/instruction.rs).
+- **Any other program**, anywhere in the sequence, MUST be rejected (`invalid_exact_svm_payload_unknown_instruction`). This is what still makes an unrecognized wrapper (e.g. a smart wallet CPI) fail Path 1 and fall through to Path 2 when enabled (§3.3).
 - The Memo instruction ensures transaction uniqueness across concurrent payments with identical parameters. Clients MUST include a Memo instruction containing either the value of `extra.memo` (when present) or a random nonce (at least 16 bytes, hex-encoded for UTF-8 compliance).
-- If `extra.memo` is present, the facilitator MUST verify that exactly one Memo instruction exists and that its data matches `extra.memo` encoded as UTF-8.
+- If `extra.memo` is present, the facilitator MUST verify that exactly one Memo instruction exists (`invalid_exact_svm_payload_memo_count` otherwise) and that its data matches `extra.memo` encoded as UTF-8.
 - Fee payer isolation, destination ATA derivation, and exact amount match are
   enforced on both layouts. The legacy/version-0 Compute Budget price and the
   version-1 total priority fee MUST each be no greater than
   `maxPriorityFeeMicroLamports` (default 5 lamports/CU) on this path, using the
   normalization in §1.5 for version 1.
 
-When `extra.splits` is present or any recipient is marked `ataCreationRequired`, the single-payee caps do not apply as written. They generalize to `3 + N + K` to `7 + N + K` instructions for a legacy or version-0 transaction, and to `1 + N + K` to `5 + N + K` for a version-1 transaction, where `N` is the number of splits and `K` the number of `CreateIdempotent` instructions (at most one per marked recipient), in the layout defined in §5.7. Split charges from standard wallets are expected to verify on Path 1: a charge whose instruction count is within these bounds MUST NOT be rejected, or sent to Path 2, because of its count.
+When `extra.splits` is present or any recipient is marked `ataCreationRequired`, the verifier applies the payment-leg and `CreateIdempotent` layout defined in §5.7, with guard instructions permitted anywhere. Split charges from standard wallets are expected to verify on Path 1 and MUST NOT be rejected, or sent to Path 2, solely because of their instruction count.
+
+This identity-based design replaces an earlier positional layout check (3-to-7 instructions in TypeScript and Go, 3-to-6 in Python). [x402#828](https://github.com/x402-foundation/x402/issues/828) reports Lighthouse injection and simulation failures; [x402#2097](https://github.com/x402-foundation/x402/issues/2097) reports Phantom producing seven instructions against a six-instruction cap. Identity classification handles assertion guards before the compute-budget/transfer sequence as well as removing these count limits. The relative-order requirement on ComputeBudget-before-TransferChecked is an x402 verification convention adopted for parser simplicity, not a Solana runtime requirement.
+
+Error spellings in this section are the TypeScript/Python spellings. Go retains its existing `invalid_exact_solana_` prefix instead of `invalid_exact_svm_`. Exported legacy positional-error constants remain available, but Path 1 no longer emits the instruction-length or unknown-fourth/fifth/sixth/seventh-instruction reasons.
+
+#### 3.1.1 Preflight/Postflight Instruction-Tuple Allowlist (Extension Point)
+
+Sponsors MAY configure an allowlist of **instruction tuples** — ordered sequences of instruction identities (program ID + discriminator) — that are permitted to appear as a contiguous block immediately **before** (`preflightInstructionAllowlist`) or **after** (`postflightInstructionAllowlist`) the required protocol instructions described above. This exists to let a sponsor accept a fixed, pre-vetted extension to the instruction sequence — for example, atomically channeling funds from an out-of-band payment mechanism into the same transaction as the merchant transfer — without weakening the closed instruction set Path 1 otherwise enforces.
+
+- Both allowlists default to **empty**, which is a strict no-op: with no tuples configured, Path 1 behaves exactly as described in §3.1, with no leading or trailing instructions tolerated beyond the existing guard-instruction allowance.
+- A leading/trailing block is matched against each configured tuple in turn, and both a leading and a trailing block MAY match in the same transaction; a match consumes the corresponding instructions (in order) from the front/back of the sequence before the §3.1 identity-based scan runs on what remains. **Guard instructions MAY appear interspersed within a matched block**, consistent with their unconstrained placement elsewhere in the sequence (§3.1).
+- An instruction sequence at the front/back that does **not** fully match any configured tuple is not given special treatment — it falls through to the ordinary §3.1 scan and is rejected as `invalid_exact_svm_payload_unknown_instruction` exactly as it would be without this extension.
+- Because a configured tuple is sponsor-supplied and not part of the fixed, pre-audited protocol/guard instruction set, a matched block MUST be fee-payer-isolation-checked (§2.1.1 style: the fee payer MUST NOT appear in any of the block's instruction accounts or as a program ID) before being accepted; failure is rejected as `invalid_exact_svm_preflight_postflight_fee_payer_not_isolated`.
+- A tuple MUST be non-empty and every identity MUST carry a non-empty discriminator. An empty tuple or an empty discriminator never matches (fail closed), so a whole program cannot be allowlisted by accident.
+- The isolation check covers every instruction in the matched block, including any interspersed guard instructions.
+- Matched blocks MUST NOT contain a top-level SPL Token/Token-2022 `TransferChecked`; a configured tuple MUST NOT hide an additional top-level transfer from the identity scan. This is a non-recoverable policy failure (`invalid_exact_svm_preflight_postflight_transfer_not_allowed`).
+- Configured programs are operator-trusted for their full CPI execution. Path 1 does not inspect their inner instructions or re-apply the §1.4 transfer-count check inside those CPIs. Operators MUST vet their effects, including preventing additional matching payments and sponsor spending; otherwise they MUST leave the allowlists empty. This explicit trust boundary does not waive the fee payer isolation checks above.
+- Tuple matching is first-match in configuration order; operators SHOULD list longer overlapping tuples before shorter prefixes.
+- This specification does not define discovery of configured tuples through `/supported` or `PaymentRequired`. Clients MUST NOT assume custom instructions are accepted; operators and clients must coordinate out of band until a discovery extension is specified.
+- The same allowlist-aware layout resolution is used to re-derive which path (Path 1 or Path 2) a pending settlement originally used, so a transaction that verified through an allowlisted block is reconciled as a Path 1 settlement.
+- This is a Path 1-only extension point. It has no effect on Path 2 (§3.2), and the reference implementation does not ship with any concrete tuple configured — operators opt in explicitly.
 
 ### 3.2 Path 2 — Simulation-Based Smart Wallet Verification
 
@@ -432,9 +437,9 @@ Smart wallet programs wrap the transfer inside their own instruction (e.g. Squad
 
 ### 3.3 Path Selection (Path 1 → Path 2)
 
-Path 2 runs **only** when Path 1 rejects for a *recoverable layout reason* — i.e. the verifier could not structurally understand the transaction (wrong instruction count, unknown or extra instructions, missing positional transfer). These reasons are tracked in an explicit recoverable-reason set.
+Path 2 runs **only** when Path 1 rejects for a *recoverable layout reason* — i.e. the verifier could not structurally classify the transaction (an unrecognized program, a protocol instruction found out of order, a missing transfer, or a malformed compute-budget instruction). These reasons are tracked in an explicit recoverable-reason set.
 
-Semantic failures — amount mismatch, mint mismatch, recipient mismatch, memo count/mismatch, self-spend, or a failed Path 1 simulation — return their real reason and MUST NOT fall through to Path 2. This prevents a legitimate semantic rejection from being masked behind a misleading `smart_wallet_*` error code. (A transaction that fails Path 1 simulation would fail Path 2 simulation too, so there is nothing to recover.)
+Semantic failures — amount mismatch, mint mismatch, recipient mismatch, memo count/mismatch, self-spend, invalid Lighthouse variants, guard fee payer isolation, a top-level `TransferChecked` inside a matched extension tuple, or a failed Path 1 simulation — return their real reason and MUST NOT fall through to Path 2. This prevents a legitimate semantic rejection from being masked behind a misleading `smart_wallet_*` error code. (A transaction that fails Path 1 simulation would fail Path 2 simulation too, so there is nothing to recover.)
 
 The `verify` and `settle` entry points share a single internal `_verify` returning the result plus which path verified (`static` vs `smartWallet`), so `settle` applies the correct post-settlement policy without re-deriving the path.
 
@@ -503,7 +508,7 @@ In the example the client pays `1050000` base units in total: `50000` to the spl
 | `splits` | array | OPTIONAL | 1–8 entries. Absent or empty ⇒ single-payee `exact`. |
 | `splits[].payTo` | string | REQUIRED | Base58-encoded recipient public key. |
 | `splits[].amount` | string | REQUIRED | Decimal string in base units of `asset`. An **absolute** amount, not a percentage or basis points. MUST be a positive integer no greater than `2^64 − 1` (the SPL Token `u64` range), with no sign, decimal point, exponent, or leading zeros. |
-| `splits[].memo` | string | OPTIONAL | Human-readable label for this leg (e.g. `"platform fee"`, `"referral"`), ≤ 566 bytes. Part of the payment terms: the client MUST show it with the leg's `payTo` address and `amount` when obtaining consent (§5.6), and, because it is unauthenticated server-supplied text, MUST NOT show it in place of the address. It is bound like every other requirements field: the client echoes the requirements it consented to in `PaymentPayload.accepted`, and verification runs against them. It is **not** emitted as an on-chain Memo instruction. Mirrors `splits[].memo` in the MPP Solana charge draft for wire parity. |
+| `splits[].memo` | string | OPTIONAL | Human-readable label for this leg (e.g. `"platform fee"`, `"referral"`), ≤ 566 bytes. Applications displaying the label MUST show it with the leg's `payTo` address and `amount`, never instead of the address (§5.6). It is bound like every other requirements field through `PaymentPayload.accepted`; the label does not establish recipient identity. It is **not** emitted as an on-chain Memo instruction. Mirrors `splits[].memo` in the MPP Solana charge draft for wire parity. |
 | `splits[].ataCreationRequired` | boolean | OPTIONAL | Default `false`. Marks this recipient's ATA as possibly needing creation in the payment transaction, funded by the `feePayer`. MUST only be set when the Sponsor advertises `ataCreationSponsored` (§5.4, §5.5). Meaningful only for SPL / Token-2022 assets. |
 
 The primary `payTo` carries the equivalent top-level flag `extra.ataCreationRequired` (default `false`), governed by the same rules (§5.4). The single on-chain Memo remains governed by `extra.memo` (§3.1); per-split memos never reach the chain.
@@ -545,6 +550,8 @@ This is a deliberate, bounded exception to Fee Payer Isolation (§2.1.1) and Fee
 
 Per transaction, rent exposure is opt-in per Sponsor (advertised), opt-in per recipient (marked), and never charged for an ATA that already exists, since `CreateIdempotent` is then a no-op. It is **not** bounded over time. An owner can close its ATA, reclaiming the rent to an address it chooses, and the next charge funds creation again. A Resource Server that controls its recipients can therefore cycle create and close to extract ≈0.002 SOL per charge, and can rotate `payTo` addresses to the same effect. A Sponsor that advertises `ataCreationSponsored` SHOULD bound this, for example by tracking sponsored creations per owner and mint and refusing or pricing repeats, by rate-limiting sponsored creations per Resource Server (§2.2), or by recovering the cost through a split to itself.
 
+Splits do not automatically reimburse rent. This section defines no sponsorship-fee negotiation or dynamic rent quote; a Sponsor SHOULD apply its own out-of-band controls before advertising sponsored creation.
+
 ### 5.5 Capability Advertisement and Sponsor Acceptance with Splits (MUST)
 
 Split support is not an unadvertised local policy. A Sponsor announces it in the `extra` object of the matching `kinds[]` entry of its `/supported` response, alongside `feePayer`:
@@ -581,28 +588,30 @@ A Sponsor that signs a split transaction as `feePayer` MUST, in addition to the 
 
 Within what it advertises, a Sponsor retains the policy flexibility of §2.3 (for example a lower per-request limit on sponsored ATA creations).
 
-### 5.6 Client-Side Verification (MUST)
+Malformed split schemas or field values without a more specific error code MUST be rejected with `invalid_exact_svm_splits_invalid`. Transfer legs that use different authorities MUST be rejected with `invalid_exact_svm_payload_split_authority_mismatch`. These codes are shared across SDKs; the `split_*` codes above retain their specified names.
 
-Before signing, the client MUST verify that `extra.splits` — when present — contains only the recipients and amounts it expects. A malicious Resource Server could otherwise inject or alter splits to divert a portion of the payment. Specifically, the client MUST:
+### 5.6 Client Validation and Recipient Policy
 
-- Confirm each split's `payTo`, `amount`, and `memo` (when present) against the terms it agreed to. When asking a user for consent, show the `memo` as the label for that leg alongside its `payTo` address and `amount`, never instead of the address.
-- Independently compute the primary remainder (`amount − Σ splits[].amount`) and confirm it is the amount reaching the merchant.
-- Reject requirements whose split recipients or amounts it did not agree to, and reject any `ataCreationRequired: true` it is unwilling to fund.
+Clients MUST validate the split schema and amount semantics (§5.1–§5.2) before signing. Splits are carve-outs from the quoted top-level `amount`, not additional charges (§5.2). The existing primary-leg overpayment tolerance is unchanged (§5.3). The Sponsor funds transaction fees and authorized ATA creation (§5.4).
+
+Clients SHOULD accept valid split requirements without a separate split-specific approval step, as they do for the primary `payTo`. Applications MAY apply recipient, amount, or label policies to any payment, including split payments, through their existing before-payment hooks. Such a policy MUST be able to reject a payment before transaction construction and signing.
+
+When displaying a split's `memo`, applications MUST show it alongside that leg's address and amount, never in place of the address. Labels are unauthenticated server-supplied text and do not establish recipient identity.
 
 ### 5.7 Static Layout with Splits (MUST)
 
-Path 1 (§3.1) generalizes for splits and for ATA creation. With `N` splits and `K` `CreateIdempotent` instructions (`0 ≤ K ≤` the number of recipients marked `ataCreationRequired: true`), a legacy or version-0 transaction MUST contain `3 + N + K` to `7 + N + K` instructions in this order:
+Path 1 (§3.1) generalizes for splits and for ATA creation. With `N` splits and `K` `CreateIdempotent` instructions (`0 ≤ K ≤` the number of recipients marked `ataCreationRequired: true`), a legacy or version-0 transaction MUST contain the following protocol instructions in this relative order. Assertion guards satisfying §3.1 MAY appear anywhere, with no count cap:
 
 1. Compute Budget: Set Compute Unit Limit
 2. Compute Budget: Set Compute Unit Price
 3. `K` `AssociatedTokenProgram: CreateIdempotent` instructions, at most one per marked recipient (primary or split), each omitted when that ATA already exists (§5.4)
 4. One `TransferChecked` for the primary payment (the remainder)
 5. `N` `TransferChecked` instructions, one per split, in the order of `extra.splits`
-6. Up to four optional instructions: the same wallet-injected Lighthouse / SPL Memo instructions permitted in §3.1
+6. Optional SPL Memo instructions, governed by §3.1
 
-A version-1 transaction carries its compute budget in the message header (§1.5), so it omits steps 1 and 2 and MUST contain `1 + N + K` to `5 + N + K` instructions in the same order from step 3. When `K > 0`, the transaction also invokes the Associated Token Account program, whose program data counts against `loadedAccountsDataSizeLimit`, so the client MUST size that limit to include it.
+A version-1 transaction carries its compute budget in the message header (§1.5), so it omits steps 1 and 2 and MUST contain the protocol instructions in the same relative order from step 3, with assertion guards permitted anywhere. When `K > 0`, the transaction also invokes the Associated Token Account program, whose program data counts against `loadedAccountsDataSizeLimit`, so the client MUST size that limit to include it.
 
-The optional tail keeps the four slots of §3.1, so Phantom and Solflare injections stay on the fast path no matter how many legs the charge has. A verifier matches the transfers positionally: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
+Guard placement and count do not change the payment-leg order: the first `TransferChecked` after the `K` creates is the primary leg, and the next `N` are `extra.splits[0]` through `extra.splits[N - 1]`. A transaction that departs from this protocol layout is a recoverable layout failure (§3.3) and MAY still verify on Path 2; non-recoverable guard or extension policy failures remain non-recoverable. Reference clients cap their estimated compute unit limit at the reference default Sponsor ceiling of 400,000 CU. A charge that cannot execute within that budget needs fewer splits or ATA creations; simulation MUST reject it rather than silently increasing Sponsor exposure. The compute unit limit naturally grows with `N` and `K`, and remains subject to §2.2.1 (and, on version 1, the `TransactionConfig` rules of §1.5).
 
 The exactly-one-Memo rule for `extra.memo` (§3.1) is unchanged: a single on-chain Memo governs the whole charge, not one per leg. Smart-wallet (Path 2, §3.2) charges verify the same `N + 1`-leg outcome across the CPI trace, and post-settlement verification (§3.4) confirms every leg landed on-chain, not simulation alone.
 
@@ -615,7 +624,7 @@ These extend the invariants of §4 when `extra.splits` is present.
 | I8 | **No fund diversion** | Every `asset` transfer lands on an ATA derived from `payTo` or a declared split `payTo`; unexpected transfers rejected (§5.3, §5.5). |
 | I9 | **Authorized, per-transaction-bounded rent** | Fee payer funds ATA creation only when it advertises `ataCreationSponsored`, only for recipients explicitly marked `ataCreationRequired`, never for an existing ATA, and only in the account positions of §2.1.1; creation for owners outside the declared recipient set forbidden. Repeat creation after an owner closes its ATA is bounded by Sponsor policy (§5.4, §5.5). |
 | I10 | **Exact carve-outs** | Each split leg matches its declared amount exactly; only the primary leg tolerates overpayment (§5.3). |
-| I11 | **Consented distribution** | Client verifies split recipients, amounts, and memos (when present) before signing, showing each memo alongside its address (§5.6). |
+| I11 | **Policy visibility** | All split terms are available to application recipient policies before transaction construction and signing (§5.6). |
 | I12 | **Advertised capability** | Split count and ATA sponsorship are bounded by what the Sponsor advertises in `/supported`; absent advertisement means no support, and requirements exceeding it are rejected (§5.5). |
 
 ---

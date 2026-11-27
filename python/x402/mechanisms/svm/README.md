@@ -90,10 +90,18 @@ facilitator.register(
 | `FacilitatorSvmSigner` | Protocol for facilitator signers |
 | `KeypairSigner` | Client signer using Solana keypair |
 | `FacilitatorKeypairSigner` | Facilitator signer with RPC client |
+| `TransactionOnchainFailureError` | Confirmed or finalized execution failure |
 | `DEFAULT_ASSETS` | USD-pegged default asset table (CAIP-2 → asset list) |
 | `get_default_asset` / `find_default_asset` | Forward and reverse default-asset lookups |
 | `NETWORK_CONFIGS` / `get_network_config` | Per-network transport endpoints (`rpc_url`, `ws_url`) |
 | `V1_NETWORKS` | List of V1 network names |
+
+Custom facilitator signers must raise `TransactionOnchainFailureError` from
+`confirm_transaction` only for execution errors at `confirmed` or `finalized`.
+V2 returns `transaction_failed` with the original signature and releases the
+pending and duplicate entries. Other confirmation exceptions, including timeouts
+and RPC errors, retain `settlement_pending` for reconciliation. Continue polling
+for `processed` results, even when they contain an execution error.
 
 ## Supported Networks
 
@@ -140,3 +148,8 @@ The cache rejects concurrent `/settle` calls that carry the same transaction pay
 
 For full details on the race condition and mitigation strategy, see the [Exact SVM Scheme Specification](../../../../specs/schemes/exact/scheme_exact_svm.md#duplicate-settlement-mitigation-recommended).
 
+## Multi-payee splits
+
+Valid SVM exact requirements with `extra.splits` are accepted by default. The quoted total is distributed among the primary `payTo` and the declared split recipients; splits do not add to that total. The facilitator pays transaction fees and any authorized ATA rent.
+
+Applications that screen recipients can inspect all split terms in the core client's `on_before_payment_creation` hook and abort before construction or signing, just as for `payTo`. Recipient policy is optional; schema, amount, transfer-matching, and sponsorship validation remain mandatory.

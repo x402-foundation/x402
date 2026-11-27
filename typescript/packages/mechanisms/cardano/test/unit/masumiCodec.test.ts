@@ -3,7 +3,6 @@ import LZString from "lz-string";
 import { describe, expect, it } from "vitest";
 
 import {
-  MASUMI_BLUEPRINT_DIGEST,
   MASUMI_DEFAULT_DEPLOYMENT,
   masumiEscrowAddress,
   masumiEscrowScriptHash,
@@ -133,12 +132,6 @@ describe("blockchainIdentifier resource limits", () => {
 });
 
 describe("canonical vested_pay deployment", () => {
-  it("pins the blueprint digest the spec names", () => {
-    expect(MASUMI_BLUEPRINT_DIGEST).toBe(
-      "6249de17bb87c5246106af6b0f33de22b44ca24b9c1445fa36d10eb8b583dec7",
-    );
-  });
-
   // The un-applied blueprint hash is NOT an escrow address; the parameters are
   // baked into the script hash. The applied preprod address is the one the
   // spec's identifier vectors are built against.

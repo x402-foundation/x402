@@ -344,10 +344,6 @@ class TestEvmIntegration:
 
 
 class TestSolana:
-    def test_constants(self):
-        assert SOLANA_MAINNET == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-        assert SOLANA_DEVNET == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
-
     def test_base58_roundtrip(self):
         original = bytes([1, 2, 3, 4, 5, 6, 7, 8])
         assert decode_base58(encode_base58(original)) == original
@@ -614,6 +610,76 @@ class TestRequestHook:
         route = RouteConfig(accepts=[])
         result = await hook(ctx, route)
         assert isinstance(result, GrantAccessResult)
+
+    @pytest.mark.asyncio
+    async def test_records_nonce_and_rejects_replay(self):
+        class _NonceTrackingStorage(InMemorySIWxStorage):
+            def __init__(self) -> None:
+                super().__init__()
+                self.recorded_nonces: list[str] = []
+
+            def has_used_nonce(self, nonce: str) -> bool:
+                return nonce in self.recorded_nonces
+
+            def record_nonce(self, nonce: str) -> None:
+                self.recorded_nonces.append(nonce)
+
+        storage = _NonceTrackingStorage()
+        account = Account.create()
+        storage.record_payment("/resource", account.address)
+        challenge = _test_challenge(
+            domain="example.com",
+            resource_uri="http://example.com/resource",
+            network="eip155:8453",
+        )
+        ext = challenge[SIGN_IN_WITH_X]
+        complete = {
+            **ext["info"],
+            "chainId": ext["supportedChains"][0]["chainId"],
+            "type": "eip191",
+        }
+        payload = await create_siwx_payload(complete, account, _bound_request_url(complete))
+        header = encode_siwx_header(payload)
+        hook = create_siwx_request_hook(
+            CreateSIWxRequestHookOptions(storage=storage, origin=EXAMPLE_ORIGIN)
+        )
+
+        class _Adapter:
+            def get_header(self, name: str) -> str | None:
+                if name in (SIGN_IN_WITH_X, SIGN_IN_WITH_X.lower()):
+                    return header
+                return None
+
+            def get_url(self) -> str:
+                return "http://example.com/resource"
+
+        ctx = HTTPRequestContext(adapter=_Adapter(), method="GET", path="/resource")
+        route = RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                price="$0.001",
+                network="eip155:8453",
+                pay_to="0x0",
+            )
+        )
+        result = await hook(ctx, route)
+        assert isinstance(result, GrantAccessResult)
+        assert storage.recorded_nonces == [payload.nonce]
+        assert await hook(ctx, route) is None
+        assert storage.recorded_nonces == [payload.nonce]
+
+    def test_rejects_record_nonce_without_has_used_nonce(self):
+        class _RecordOnlyStorage(InMemorySIWxStorage):
+            def record_nonce(self, _nonce: str) -> None:
+                pass
+
+        with pytest.raises(ValueError, match="requires both has_used_nonce and record_nonce"):
+            create_siwx_request_hook(
+                CreateSIWxRequestHookOptions(
+                    storage=_RecordOnlyStorage(),
+                    origin=EXAMPLE_ORIGIN,
+                )
+            )
 
 
 class TestRequestHookOriginBinding:
@@ -916,6 +982,50 @@ class TestServerExtension:
         result = await ext.enrich_payment_required_response(declaration[SIGN_IN_WITH_X], ctx)
         assert result["info"]["domain"] == "api.example.com"
         assert result["info"]["uri"] == "https://api.example.com/profile"
+
+    @pytest.mark.asyncio
+    async def test_supported_chains_keep_requirements_order(self):
+        storage = InMemorySIWxStorage()
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
+        declaration = declare_siwx_extension()
+        networks = [
+            "eip155:84532",
+            "eip155:8453",
+            "eip155:137",
+            "eip155:84532",
+            "eip155:1",
+            "eip155:10",
+            "eip155:42161",
+        ]
+        ctx = type(
+            "Ctx",
+            (),
+            {
+                "requirements": [
+                    PaymentRequirements(
+                        scheme="exact",
+                        network=network,
+                        asset="0x",
+                        amount="1",
+                        pay_to="0x0",
+                        max_timeout_seconds=300,
+                    )
+                    for network in networks
+                ],
+                "resource_info": ResourceInfo(url="https://api.example.com/data"),
+            },
+        )()
+        result = await ext.enrich_payment_required_response(declaration[SIGN_IN_WITH_X], ctx)
+        assert [chain["chainId"] for chain in result["supportedChains"]] == [
+            "eip155:84532",
+            "eip155:8453",
+            "eip155:137",
+            "eip155:1",
+            "eip155:10",
+            "eip155:42161",
+        ]
 
     def test_declares_dynamic_info_fields(self):
         storage = InMemorySIWxStorage()

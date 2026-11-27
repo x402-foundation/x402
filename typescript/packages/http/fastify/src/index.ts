@@ -9,7 +9,7 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-  attachBackgroundInitHandler,
+  prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
@@ -37,6 +37,8 @@ export function setSettlementOverrides(reply: FastifyReply, overrides: Settlemen
   reply.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
 }
 
+type ReplyHeaderSnapshot = ReturnType<FastifyReply["getHeaders"]>;
+
 interface X402PaymentContext {
   cancellationDispatcher: PaymentCancellationDispatcher;
   beforeHandlerSettlement?: CompletedSettlement;
@@ -44,6 +46,7 @@ interface X402PaymentContext {
   paymentRequirements: PaymentRequirements;
   declaredExtensions?: Record<string, unknown>;
   requestContext: HTTPRequestContext;
+  preHandlerHeaders: ReplyHeaderSnapshot;
 }
 
 interface BufferedWriteHead {
@@ -231,6 +234,23 @@ function sendInternalError(reply: FastifyReply, error: unknown): void {
 }
 
 /**
+ * Reset response headers to a snapshot, dropping headers the route handler set.
+ *
+ * @param reply - The Fastify reply to reset
+ * @param headers - Headers captured before the route handler ran
+ */
+function resetHeaders(reply: FastifyReply, headers: ReplyHeaderSnapshot): void {
+  for (const name of Object.keys(reply.getHeaders())) {
+    reply.removeHeader(name);
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (value !== undefined) {
+      reply.header(name, value);
+    }
+  }
+}
+
+/**
  * Decode percent-escapes in a request path.
  *
  * @param path - Request path
@@ -290,41 +310,14 @@ export function paymentMiddlewareFromHTTPServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): void {
-  if (paywall) {
-    httpServer.registerPaywallProvider(paywall);
-  }
-
   app.decorateRequest("x402Context", undefined);
   app.decorateRequest("x402RawGuard", undefined);
 
-  let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
-  // rejections; the original promise is still awaited on the first protected
-  // request. Fatal capability / route mismatches exit the process so a
-  // misconfigured server does not stay up until that request.
-  attachBackgroundInitHandler(initPromise);
-  let isInitialized = false;
-
-  /**
-   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
-   */
-  async function initializeHttpServer(): Promise<void> {
-    if (!syncFacilitatorOnStart || isInitialized) {
-      return;
-    }
-
-    if (!initPromise) {
-      initPromise = httpServer.initialize();
-    }
-
-    try {
-      await initPromise;
-      isInitialized = true;
-    } catch (error) {
-      initPromise = null;
-      throw error;
-    }
-  }
+  const { init: initializeHttpServer } = prepareHttpServer(
+    httpServer,
+    paywall,
+    syncFacilitatorOnStart,
+  );
 
   let bazaarPromise: Promise<void> | null = null;
   if (checkIfBazaarNeeded(httpServer.routes)) {
@@ -369,7 +362,7 @@ export function paymentMiddlewareFromHTTPServer(
       return;
     }
 
-    if (syncFacilitatorOnStart && !isInitialized) {
+    if (syncFacilitatorOnStart) {
       try {
         await initializeHttpServer();
       } catch (error) {
@@ -413,6 +406,12 @@ export function paymentMiddlewareFromHTTPServer(
       }
 
       case "payment-verified": {
+        const preHandlerHeaders = { ...reply.getHeaders() };
+        for (const [name, value] of Object.entries(preHandlerHeaders)) {
+          if (Array.isArray(value)) {
+            preHandlerHeaders[name] = value.slice();
+          }
+        }
         request.x402Context = {
           cancellationDispatcher: result.cancellationDispatcher,
           beforeHandlerSettlement: result.beforeHandlerSettlement,
@@ -420,6 +419,7 @@ export function paymentMiddlewareFromHTTPServer(
           paymentRequirements: result.paymentRequirements,
           declaredExtensions: result.declaredExtensions,
           requestContext: context,
+          preHandlerHeaders,
         };
         request.x402RawGuard = guardReplyRaw(reply);
         return;
@@ -509,6 +509,7 @@ export function paymentMiddlewareFromHTTPServer(
       );
 
       if (!settleResult.success) {
+        resetHeaders(reply, x402Context.preHandlerHeaders);
         const { response } = settleResult;
         reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
         for (const [key, value] of Object.entries(response.headers)) {
@@ -536,6 +537,7 @@ export function paymentMiddlewareFromHTTPServer(
       reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
       return effectivePayload;
     } catch (error) {
+      resetHeaders(reply, x402Context.preHandlerHeaders);
       if (error instanceof FacilitatorResponseError) {
         reply.removeHeader(SETTLEMENT_OVERRIDES_HEADER);
         reply.status(502);

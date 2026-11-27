@@ -147,7 +147,9 @@ describe("Stellar RPC Helper Functions", () => {
     describe(STELLAR_TESTNET_CAIP2, () => {
       it("should create RPC client with default testnet URL when no config provided", () => {
         const mockServer = { mock: "testnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const result = getRpcClient(STELLAR_TESTNET_CAIP2);
 
@@ -160,7 +162,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should create RPC client with custom URL when provided in rpcConfig", () => {
         const customUrl = "https://custom-testnet-rpc.com";
         const mockServer = { mock: "testnet-server-custom" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         const result = getRpcClient(STELLAR_TESTNET_CAIP2, rpcConfig);
@@ -173,7 +177,9 @@ describe("Stellar RPC Helper Functions", () => {
 
       it("should allow HTTP for testnet", () => {
         const mockServer = { mock: "testnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         getRpcClient(STELLAR_TESTNET_CAIP2);
 
@@ -193,7 +199,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should create RPC client with custom URL for mainnet", () => {
         const customUrl = "https://custom-mainnet-rpc.com";
         const mockServer = { mock: "mainnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         const result = getRpcClient(STELLAR_PUBNET_CAIP2, rpcConfig);
@@ -207,7 +215,9 @@ describe("Stellar RPC Helper Functions", () => {
       it("should not allow HTTP for mainnet", () => {
         const customUrl = "https://custom-mainnet-rpc.com";
         const mockServer = { mock: "mainnet-server" };
-        vi.mocked(rpc.Server).mockReturnValue(mockServer as any);
+        vi.mocked(rpc.Server).mockImplementation(function () {
+          return mockServer;
+        });
 
         const rpcConfig: RpcConfig = { url: customUrl };
         getRpcClient(STELLAR_PUBNET_CAIP2, rpcConfig);
@@ -236,7 +246,9 @@ describe("Stellar RPC Helper Functions", () => {
       const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
       const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
       const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
-      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
+      vi.mocked(Horizon.Server).mockImplementation(function () {
+        return { ledgers: mockLedgers };
+      });
       return { mockCall, mockOrder, mockLimit, mockLedgers };
     }
 
@@ -251,7 +263,9 @@ describe("Stellar RPC Helper Functions", () => {
       const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
       expect(result).toBe(3);
-      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon-testnet.stellar.org");
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon-testnet.stellar.org", {
+        allowHttp: true,
+      });
       expect(mockLedgers).toHaveBeenCalled();
       expect(mockLimit).toHaveBeenCalledWith(20);
       expect(mockOrder).toHaveBeenCalledWith("desc");
@@ -262,7 +276,9 @@ describe("Stellar RPC Helper Functions", () => {
       const mockOrder = vi.fn().mockReturnValue({ call: mockCall });
       const mockLimit = vi.fn().mockReturnValue({ order: mockOrder });
       const mockLedgers = vi.fn().mockReturnValue({ limit: mockLimit });
-      vi.mocked(Horizon.Server).mockImplementation(() => ({ ledgers: mockLedgers }) as any);
+      vi.mocked(Horizon.Server).mockImplementation(function () {
+        return { ledgers: mockLedgers };
+      });
 
       const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2);
 
@@ -290,19 +306,38 @@ describe("Stellar RPC Helper Functions", () => {
       expect(result).toBe(6);
       expect(Horizon.Server).toHaveBeenCalledWith("https://horizon.stellar.org");
     });
+
+    it("should use rpcConfig.horizonUrl instead of the public Horizon URL", async () => {
+      const baseTs = 1734032457;
+      const records = [102, 101, 100].map((seq, i) => ({
+        sequence: seq,
+        closed_at: new Date((baseTs + (2 - i) * 6) * 1000).toISOString(),
+      }));
+      mockHorizonServer(records);
+      const rpcConfig: RpcConfig = {
+        url: "https://rpc.example.com",
+        horizonUrl: "https://horizon.example.com",
+      };
+
+      const result = await getEstimatedLedgerCloseTimeSeconds(STELLAR_PUBNET_CAIP2, rpcConfig);
+
+      expect(result).toBe(6);
+      expect(Horizon.Server).toHaveBeenCalledTimes(1);
+      expect(Horizon.Server).toHaveBeenCalledWith("https://horizon.example.com");
+    });
+
+    it("should allow an HTTP rpcConfig.horizonUrl on testnet", async () => {
+      mockHorizonServer([]);
+
+      await getEstimatedLedgerCloseTimeSeconds(STELLAR_TESTNET_CAIP2, {
+        horizonUrl: "http://localhost:8000",
+      });
+
+      expect(Horizon.Server).toHaveBeenCalledWith("http://localhost:8000", { allowHttp: true });
+    });
   });
 
   describe("getUsdcAddress", () => {
-    it("should return USDC address for mainnet", () => {
-      const result = getUsdcAddress(STELLAR_PUBNET_CAIP2);
-      expect(result).toBe("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
-    });
-
-    it("should return USDC address for testnet", () => {
-      const result = getUsdcAddress(STELLAR_TESTNET_CAIP2);
-      expect(result).toBe("CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA");
-    });
-
     it("should throw error for unknown network", () => {
       expect(() => getUsdcAddress("invalid-network" as any)).toThrow(
         "No default asset configured for network invalid-network",

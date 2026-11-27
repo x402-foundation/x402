@@ -3,7 +3,10 @@ import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
-import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/server";
+import {
+  BatchSettlementEvmScheme,
+  type BatchSettlementChannelManager,
+} from "@x402/evm/batch-settlement/server";
 import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
 import {
   paymentMiddlewareFromHTTPServer,
@@ -34,6 +37,11 @@ const svmReceiverAuthorizerPrivateKey = process.env.SVM_RECEIVER_AUTHORIZER_PRIV
 const svmOperatorPrivateKey = process.env.SVM_OPERATOR_PRIVATE_KEY?.trim();
 const storageDir = process.env.STORAGE_DIR;
 const withdrawDelay = Number(process.env.DEFERRED_WITHDRAW_DELAY_SECONDS ?? "86400");
+const voucherStoreMode =
+  process.env.VOUCHER_STORE_MODE?.trim().toLowerCase() === "facilitator"
+    ? ("facilitator" as const)
+    : ("self" as const);
+const refundAuthorizerPrivateKey = process.env.EVM_REFUND_AUTHORIZER_PRIVATE_KEY?.trim();
 
 if ((!evmAddress || !/^0x[0-9a-fA-F]{40}$/.test(evmAddress)) && !svmAddress) {
   console.error("Missing required EVM_ADDRESS or SVM_ADDRESS environment variable");
@@ -50,6 +58,17 @@ const receiverAuthorizerSigner = receiverAuthorizerPrivateKey
   ? privateKeyToAccount(receiverAuthorizerPrivateKey)
   : undefined;
 
+const refundAuthorizerSigner = refundAuthorizerPrivateKey
+  ? privateKeyToAccount(refundAuthorizerPrivateKey as `0x${string}`)
+  : undefined;
+
+if (voucherStoreMode === "facilitator" && receiverAuthorizerSigner) {
+  console.error(
+    "VOUCHER_STORE_MODE=facilitator cannot be combined with EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY",
+  );
+  process.exit(1);
+}
+
 const facilitatorClient = new HTTPFacilitatorClient({ url: facilitatorUrl });
 const app = express();
 
@@ -61,39 +80,48 @@ const maxPrice = "$0.01";
  */
 async function main() {
   let resourceServer = new x402ResourceServer(facilitatorClient);
-  let channelManager: ReturnType<BatchSettlementEvmScheme["createChannelManager"]> | undefined;
+  let channelManager: BatchSettlementChannelManager | undefined;
   let svmChannelManager: BatchChannelManager | undefined;
 
   if (evmAddress) {
-    const batchedEvmScheme = new BatchSettlementEvmScheme(evmAddress, {
-      ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
-      withdrawDelay,
-      enforceMinDeposit: false,
-      ...(storageDir ? { storage: new FileChannelStorage({ directory: storageDir }) } : {}),
-    });
+    const batchedEvmScheme = new BatchSettlementEvmScheme(
+      evmAddress,
+      voucherStoreMode === "facilitator"
+        ? {
+            voucherStoreMode: "facilitator",
+            ...(refundAuthorizerSigner ? { refundAuthorizerSigner } : {}),
+            enforceMinDeposit: false,
+            ...(storageDir ? { storage: new FileChannelStorage({ directory: storageDir }) } : {}),
+          }
+        : {
+            ...(receiverAuthorizerSigner ? { receiverAuthorizerSigner } : {}),
+            withdrawDelay,
+            enforceMinDeposit: false,
+            ...(storageDir ? { storage: new FileChannelStorage({ directory: storageDir }) } : {}),
+          },
+    );
     resourceServer = resourceServer.register(EVM_NETWORK, batchedEvmScheme);
 
-    channelManager = batchedEvmScheme.createChannelManager(facilitatorClient, EVM_NETWORK);
-    channelManager.start({
-      claimIntervalSecs: 60,
-      settleIntervalSecs: 120,
-      refundIntervalSecs: 180,
-      maxClaimsPerBatch: 100,
-      selectRefundChannels: (channels, context) =>
-        channels.filter(channel => {
-          if (BigInt(channel.balance) === 0n) return false;
-          if (channel.pendingRequest && channel.pendingRequest.expiresAt > context.now) {
-            return false;
-          }
-          return context.now - channel.lastRequestTimestamp >= 180_000; // Refund channels after 3 minutes of inactivity
-        }),
-      onClaim: (r: { vouchers: number; transaction: string }) =>
-        console.log(`[EVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
-      onSettle: (r: { transaction: string }) =>
-        console.log(`[EVM] Settled to ${evmAddress} (tx: ${r.transaction})`),
-      onRefund: r => console.log(`[EVM] Refunded channel ${r.channel} (tx: ${r.transaction})`),
-      onError: (e: unknown) => console.error("[EVM] Settlement error:", e),
-    });
+    if (voucherStoreMode === "self") {
+      channelManager = batchedEvmScheme.createChannelManager(facilitatorClient, EVM_NETWORK);
+      channelManager.start({
+        claimIntervalSecs: 60,
+        settleIntervalSecs: 120,
+        refundIntervalSecs: 180,
+        maxClaimsPerBatch: 100,
+        selectRefundChannels: (channels, context) =>
+          channels.filter(channel => {
+            if (BigInt(channel.balance) === 0n) return false;
+            return context.now - channel.lastRequestTimestamp >= 180_000; // Refund channels after 3 minutes of inactivity
+          }),
+        onClaim: (r: { vouchers: number; transaction: string }) =>
+          console.log(`[EVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+        onSettle: (r: { transaction: string }) =>
+          console.log(`[EVM] Settled to ${evmAddress} (tx: ${r.transaction})`),
+        onRefund: r => console.log(`[EVM] Refunded channel ${r.channel} (tx: ${r.transaction})`),
+        onError: (e: unknown) => console.error("[EVM] Settlement error:", e),
+      });
+    }
   }
 
   const svmOperatorSigner = svmOperatorPrivateKey
@@ -122,55 +150,19 @@ async function main() {
     });
     resourceServer = resourceServer.register(SVM_NETWORK, batchedSvmScheme);
 
-    // The redemption worker claims accumulated vouchers and distributes what
-    // they settle. It redeems against the same terms the 402 advertises, so
-    // build them the way the resource server does: route requirements plus
-    // the facilitator's /supported kind (which carries feePayer and the idle
-    // window maxIdleSecs the server must claim inside).
-    const supported = await facilitatorClient.getSupported();
-    const svmKind = supported.kinds.find(
-      kind => kind.scheme === "batch-settlement" && kind.network === SVM_NETWORK,
-    );
-    if (svmKind) {
-      const svmRequirements = await batchedSvmScheme.enhancePaymentRequirements(
-        {
-          scheme: "batch-settlement",
-          network: SVM_NETWORK,
-          // $0.01 in USDC atomic units: the worker only reads network, asset,
-          // payTo and extra.feePayer from these terms.
-          amount: "10000",
-          asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-          payTo: svmAddress,
-          maxTimeoutSeconds: 300,
-          extra: {},
-        },
-        svmKind,
-        [],
-      );
-      svmChannelManager = batchedSvmScheme.createChannelManager(
-        facilitatorClient,
-        svmRequirements,
-        {
-          onClaim: (r: { vouchers: number; transaction: string }) =>
-            console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
-          onSettle: (r: { transaction: string }) =>
-            console.log(`[SVM] Settled to ${svmAddress} (tx: ${r.transaction})`),
-          onSeal: (r: { channel: string; transaction: string }) =>
-            console.log(`[SVM] Sealed channel ${r.channel} (tx: ${r.transaction})`),
-          onError: (e: unknown) => console.error("[SVM] Settlement error:", e),
-        },
-      );
-      const svmRedemptionIntervalSecs = 60;
-      // Well inside the facilitator's idle window (default seven days).
-      svmChannelManager.start(svmRedemptionIntervalSecs);
-      console.log(
-        `[SVM] Redeeming every ${svmRedemptionIntervalSecs}s; facilitator idle window: ${String(svmKind.extra?.maxIdleSecs ?? "none")}s`,
-      );
-    } else {
-      console.warn(
-        "[SVM] facilitator does not advertise batch-settlement; no redemption worker started",
-      );
-    }
+    svmChannelManager = batchedSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
+      onClaim: (r: { vouchers: number; transaction: string }) =>
+        console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
+      onSettle: (r: { transaction: string }) =>
+        console.log(`[SVM] Settled to ${svmAddress} (tx: ${r.transaction})`),
+      onSeal: (r: { channel: string; transaction: string }) =>
+        console.log(`[SVM] Sealed channel ${r.channel} (tx: ${r.transaction})`),
+      onError: (e: unknown) => console.error("[SVM] Settlement error:", e),
+    });
+    const svmRedemptionIntervalSecs = 60;
+    // Well inside the facilitator's idle window (default seven days).
+    svmChannelManager.start(svmRedemptionIntervalSecs);
+    console.log(`[SVM] Redeeming every ${svmRedemptionIntervalSecs}s`);
   }
 
   if (channelManager || svmChannelManager) {
@@ -260,7 +252,16 @@ async function main() {
     console.log("Batch-settlement server listening at http://localhost:4021");
     console.log(`  GET /weather (${enabledNetworks})`);
     if (evmAddress) {
-      if (receiverAuthorizerSigner) {
+      if (voucherStoreMode === "facilitator") {
+        console.log("  EVM voucher custody: facilitator-managed (pass-through verify/settle)");
+        if (refundAuthorizerSigner) {
+          console.log(`  EVM refund authorizer: local signer ${refundAuthorizerSigner.address}`);
+        } else {
+          console.log(
+            "  EVM refund authorizer: facilitator delegatedRefund (402 omits refundAuthorizer)",
+          );
+        }
+      } else if (receiverAuthorizerSigner) {
         console.log(`  EVM receiver authorizer: local signer ${receiverAuthorizerSigner.address}`);
       } else {
         console.log("  EVM receiver authorizer: facilitator");

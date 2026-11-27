@@ -991,7 +991,7 @@ describe("batch server lifecycle boundaries", () => {
           return { network: SOLANA_DEVNET_CAIP2, success: true, transaction: "seal-signature" };
         },
       },
-      requirements(),
+      SOLANA_DEVNET_CAIP2,
       {
         readPayoutWatermark: async () => 1_000n,
       },
@@ -1049,7 +1049,7 @@ describe("batch server lifecycle boundaries", () => {
         paymentPayload: payment,
         requirements: requirements(),
       }),
-    ).resolves.toMatchObject({ abort: true, reason: BatchError.CUMULATIVE_AMOUNT_MISMATCH });
+    ).resolves.toMatchObject({ abort: true, reason: BatchError.CLOSE_STATE });
   });
 
   it("refuses a first deposit whose open binds a different receiver authorizer", async () => {

@@ -276,18 +276,21 @@ func TestBatchSettlementSVM(t *testing.T) {
 	t.Run("advertises one managed fee payer without a paymentFlow override", func(t *testing.T) {
 		facilitator := newFacilitator(t, context.Background(), feePayer, nil)
 		extra := facilitator.GetExtra(svm.SolanaDevnetCAIP2)
+		advertised := append([]int(nil), svm.AdvertisedTransactionVersions...)
 		require.Equal(t, map[string]any{
-			batchsettlement.ExtraFeePayer:    feePayer.Address().String(),
-			batchsettlement.ExtraMaxIdleSecs: paymentchannels.DefaultMaxIdleSecs,
-			svm.ExtraTransactionVersions:     []int{0},
+			batchsettlement.ExtraFeePayer:          feePayer.Address().String(),
+			batchsettlement.ExtraMaxIdleSecs:       paymentchannels.DefaultMaxIdleSecs,
+			batchsettlement.ExtraMaxClaimChannels:  batchsettlement.V1MaxClaimChannels,
+			batchsettlement.ExtraMaxSettleChannels: batchsettlement.V1MaxSettleChannels,
+			svm.ExtraTransactionVersions:           advertised,
 		}, extra)
 		require.Equal(t, []string{feePayer.Address().String()}, facilitator.GetSigners(svm.SolanaDevnetCAIP2))
 
 		// The advertised list is a copy, so a caller mutating it cannot change
 		// what the next /supported response advertises.
 		extra[svm.ExtraTransactionVersions].([]int)[0] = 1
-		require.Equal(t, []int{0}, facilitator.GetExtra(svm.SolanaDevnetCAIP2)[svm.ExtraTransactionVersions])
-		require.Equal(t, []int{0}, svm.AdvertisedTransactionVersions)
+		require.Equal(t, advertised, facilitator.GetExtra(svm.SolanaDevnetCAIP2)[svm.ExtraTransactionVersions])
+		require.Equal(t, advertised, svm.AdvertisedTransactionVersions)
 	})
 
 	t.Run("advertises the configured idle window and omits a disabled one", func(t *testing.T) {
@@ -297,8 +300,10 @@ func TestBatchSettlementSVM(t *testing.T) {
 		disabledIdle := int64(0)
 		disabled := newFacilitator(t, context.Background(), feePayer, &disabledIdle)
 		require.Equal(t, map[string]any{
-			batchsettlement.ExtraFeePayer: feePayer.Address().String(),
-			svm.ExtraTransactionVersions:  []int{0},
+			batchsettlement.ExtraFeePayer:          feePayer.Address().String(),
+			batchsettlement.ExtraMaxClaimChannels:  batchsettlement.V1MaxClaimChannels,
+			batchsettlement.ExtraMaxSettleChannels: batchsettlement.V1MaxSettleChannels,
+			svm.ExtraTransactionVersions:           []int{0, 1},
 		}, disabled.GetExtra(svm.SolanaDevnetCAIP2))
 		require.Panics(t, func() {
 			negative := int64(-1)
@@ -505,6 +510,9 @@ func (s stubFacilitatorSigner) GetLatestBlockhash(context.Context, string) (sola
 }
 func (s stubFacilitatorSigner) GetSlot(context.Context, string, rpc.CommitmentType) (uint64, error) {
 	return 0, nil
+}
+func (s stubFacilitatorSigner) GetConfirmedTransaction(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+	return nil, nil
 }
 
 func newFacilitator(t *testing.T, ctx context.Context, feePayer *batchclient.PrivateKeySigner, idle *int64) *batchfacilitator.BatchSvmScheme {

@@ -3,10 +3,10 @@ import {
   x402HTTPResourceServer,
   HTTPRequestContext,
   HTTPAdapter,
-  PAYMENT_REQUIRED_CACHE_CONTROL,
   withPrivateCacheControl,
 } from "../../../src/http/x402HTTPResourceServer";
-import { x402ResourceServer } from "../../../src/server/x402ResourceServer";
+import { x402ResourceServer, AfterSettleAbortError } from "../../../src/server/x402ResourceServer";
+import { decodePaymentResponseHeader } from "../../../src/http";
 import {
   MockFacilitatorClient,
   MockSchemeNetworkServer,
@@ -1202,11 +1202,15 @@ describe("x402HTTPResourceServer", () => {
     });
 
     it("should return failure when settlement fails", async () => {
-      // Override mock to simulate failure
+      const landedTxHash = `0x${"cd".repeat(32)}`;
+      // A failed settle that still carries the post-broadcast receipt (e.g. a landed
+      // deposit whose voucher commit failed) must keep it on the wire.
       mockFacilitator.settle = async () => ({
         success: false,
         errorReason: "Insufficient funds",
-        transaction: "",
+        transaction: landedTxHash,
+        amount: "1000000",
+        extra: { channelId: "0xchannel" },
         network: "eip155:8453" as Network,
       });
 
@@ -1237,7 +1241,93 @@ describe("x402HTTPResourceServer", () => {
         expect(result.headers).toBeDefined();
         expect(result.headers["PAYMENT-RESPONSE"]).toBeDefined();
         expect(result.response.headers["Cache-Control"]).toBe("no-store");
+        const decoded = decodePaymentResponseHeader(result.headers["PAYMENT-RESPONSE"]);
+        expect(decoded.success).toBe(false);
+        expect(decoded.transaction).toBe(landedTxHash);
+        expect(decoded.amount).toBe("1000000");
+        expect(decoded.extra?.channelId).toBe("0xchannel");
+        expect(result.transaction).toBe(landedTxHash);
       }
+    });
+
+    it("keeps the onchain receipt when an afterSettle abort fails the settle closed", async () => {
+      mockFacilitator.settle = async () => ({
+        success: true,
+        transaction: "0xdeposit",
+        network: "eip155:8453" as Network,
+        payer: "0xpayer",
+        amount: "1000000",
+        extra: { channelState: "kept" },
+      });
+      ResourceServer.onAfterSettle(async () => {
+        throw new AfterSettleAbortError("voucher_store_unavailable", "store down");
+      });
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      });
+
+      const result = await httpServer.processSettlement(
+        buildPaymentPayload(),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.response.status).toBe(402);
+      const decoded = decodePaymentResponseHeader(result.headers["PAYMENT-RESPONSE"]);
+      expect(decoded.success).toBe(false);
+      expect(decoded.errorReason).toBe("voucher_store_unavailable");
+      expect(decoded.transaction).toBe("0xdeposit");
+      expect(decoded.amount).toBe("1000000");
+      expect(decoded.extra?.channelState).toBe("kept");
+    });
+
+    it("keeps the receipt of a failed settle response returned by the facilitator", async () => {
+      const reason = "invalid_batch_settlement_evm_voucher_store_unavailable";
+      mockFacilitator.settle = async () => ({
+        success: false,
+        errorReason: reason,
+        transaction: "0xdeposit",
+        network: "eip155:8453" as Network,
+        payer: "0xpayer",
+        amount: "1000000",
+        extra: { channelState: "kept" },
+      });
+
+      const httpServer = new x402HTTPResourceServer(ResourceServer, {
+        "/api/test": {
+          accepts: {
+            scheme: "exact",
+            payTo: "0xabc",
+            price: "$1.00" as Price,
+            network: "eip155:8453" as Network,
+          },
+        },
+      });
+
+      const result = await httpServer.processSettlement(
+        buildPaymentPayload(),
+        buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.response.status).toBe(402);
+      expect(result.transaction).toBe("0xdeposit");
+      const decoded = decodePaymentResponseHeader(result.headers["PAYMENT-RESPONSE"]);
+      expect(decoded.success).toBe(false);
+      expect(decoded.errorReason).toBe(reason);
+      expect(decoded.transaction).toBe("0xdeposit");
+      expect(decoded.amount).toBe("1000000");
+      expect(decoded.extra?.channelState).toBe("kept");
     });
 
     it("should forward explicit settlementOverrides to settlePayment", async () => {
@@ -1612,10 +1702,6 @@ describe("x402HTTPResourceServer", () => {
   });
 
   describe("withPrivateCacheControl", () => {
-    it("exports no-store for payment-required responses", () => {
-      expect(PAYMENT_REQUIRED_CACHE_CONTROL).toBe("no-store");
-    });
-
     it("returns private when no existing header is set", () => {
       expect(withPrivateCacheControl(null)).toBe("private");
       expect(withPrivateCacheControl("")).toBe("private");

@@ -170,14 +170,18 @@ r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
 Configure with custom authentication:
 
 ```go
+type facilitatorAuth struct{}
+
+func (facilitatorAuth) GetAuthHeaders(ctx context.Context) (x402http.AuthHeaders, error) {
+	return x402http.AuthHeaders{
+		Verify: map[string]string{"Authorization": "Bearer verify-token"},
+		Settle: map[string]string{"Authorization": "Bearer settle-token"},
+	}, nil
+}
+
 facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-	URL: "https://your-facilitator.com",
-	CreateAuthHeaders: func() (*x402http.FacilitatorAuthHeaders, error) {
-		return &x402http.FacilitatorAuthHeaders{
-			Verify: map[string]string{"Authorization": "Bearer verify-token"},
-			Settle: map[string]string{"Authorization": "Bearer settle-token"},
-		}, nil
-	},
+	URL:          "https://your-facilitator.com",
+	AuthProvider: facilitatorAuth{},
 })
 ```
 
@@ -228,6 +232,25 @@ r.Use(ginmw.PaymentMiddlewareFromConfig(routes,
 	}),
 ))
 ```
+
+### Declining a Paid Request
+
+Settlement is decided by the response status, not by `c.Abort()`. To decline a
+paid request and withhold settlement, respond with a status of `400` or higher:
+
+```go
+func authMiddleware(c *gin.Context) {
+	if !validToken(c) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+	c.Next()
+}
+```
+
+Any response below `400` settles, including one that aborts after writing a
+successful response, because the resource has been delivered either way. This
+matches the Echo, net/http and TypeScript adapters.
 
 ## Complete Example
 
@@ -316,12 +339,12 @@ r.Use(ginmw.X402Payment(ginmw.Config{
 }))
 ```
 
-### SimplePaymentMiddleware
+### SimpleX402Payment
 
 Apply payment requirements to all routes:
 
 ```go
-r.Use(ginmw.SimplePaymentMiddleware(
+r.Use(ginmw.SimpleX402Payment(
 	"0xYourAddress",
 	"$0.10",
 	"eip155:84532",

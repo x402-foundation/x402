@@ -1,7 +1,3 @@
-import {
-  getSetComputeUnitLimitInstruction,
-  setTransactionMessageComputeUnitPrice,
-} from "@solana-program/compute-budget";
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import {
   findAssociatedTokenPda,
@@ -14,7 +10,6 @@ import {
   getBase64EncodedWireTransaction,
   partiallySignTransactionMessageWithSigners,
   pipe,
-  prependTransactionMessageInstruction,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
   type Address,
@@ -34,6 +29,7 @@ import {
 } from "../../../constants";
 import type { ClientSvmConfig, ClientSvmSigner } from "../../../signer";
 import type { ExactSvmPayloadV1 } from "../../../types";
+import { applyTransactionV1Config, computeBudgetInstructions } from "../../../transactionV1";
 import { createRpcClient, resolveTransactionVersion } from "../../../utils";
 import { getCachedMintMetadata, type MintMetadataCache } from "../../../mint-cache";
 import { findDefaultAsset } from "../../../defaultAssets";
@@ -72,7 +68,10 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
     Pick<PaymentPayload, "x402Version" | "payload"> & { scheme: string; network: Network }
   > {
     const selectedV1 = paymentRequirements as unknown as PaymentRequirementsV1;
-    const transactionVersion = resolveTransactionVersion(paymentRequirements.extra);
+    const transactionVersion = resolveTransactionVersion(
+      paymentRequirements.extra,
+      this.config?.transactionVersions,
+    );
     const rpc = createRpcClient(selectedV1.network, this.config?.rpcUrl);
 
     const mintMetadata = await getCachedMintMetadata(
@@ -143,16 +142,21 @@ export class ExactSvmSchemeV1 implements SchemeNetworkClient {
       data: memoData,
     };
 
+    // Version 0 carries the budget as a ComputeBudget instruction prefix;
+    // version 1 carries it in the message config and has no such prefix.
+    const budget = {
+      computeUnitLimit: DEFAULT_COMPUTE_UNIT_LIMIT,
+      computeUnitPriceMicroLamports: DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+    };
     const tx = pipe(
       createTransactionMessage({ version: transactionVersion }),
-      tx => setTransactionMessageComputeUnitPrice(DEFAULT_COMPUTE_UNIT_PRICE_MICROLAMPORTS, tx),
+      tx => applyTransactionV1Config(transactionVersion, budget, tx),
       tx => setTransactionMessageFeePayer(feePayer, tx),
       tx =>
-        prependTransactionMessageInstruction(
-          getSetComputeUnitLimitInstruction({ units: DEFAULT_COMPUTE_UNIT_LIMIT }),
+        appendTransactionMessageInstructions(
+          [...computeBudgetInstructions(transactionVersion, budget), transferIx, memoIx],
           tx,
         ),
-      tx => appendTransactionMessageInstructions([transferIx, memoIx], tx),
       tx => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, tx),
     );
 

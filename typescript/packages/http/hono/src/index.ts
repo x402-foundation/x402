@@ -8,7 +8,7 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-  attachBackgroundInitHandler,
+  prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
@@ -129,41 +129,11 @@ export function paymentMiddlewareFromHTTPServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ): MiddlewareHandler {
-  // Register custom paywall provider if provided
-  if (paywall) {
-    httpServer.registerPaywallProvider(paywall);
-  }
-
-  // Store initialization promise (not the result)
-  // httpServer.initialize() fetches facilitator support and validates routes
-  let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
-  // rejections; the original promise is still awaited on the first protected
-  // request. Fatal capability / route mismatches exit the process so a
-  // misconfigured server does not stay up until that request.
-  attachBackgroundInitHandler(initPromise);
-  let isInitialized = false;
-
-  /**
-   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
-   */
-  async function initializeHttpServer(): Promise<void> {
-    if (!syncFacilitatorOnStart || isInitialized) {
-      return;
-    }
-
-    if (!initPromise) {
-      initPromise = httpServer.initialize();
-    }
-
-    try {
-      await initPromise;
-      isInitialized = true;
-    } catch (error) {
-      initPromise = null;
-      throw error;
-    }
-  }
+  const { init: initializeHttpServer } = prepareHttpServer(
+    httpServer,
+    paywall,
+    syncFacilitatorOnStart,
+  );
 
   let bazaarPromise: Promise<void> | null = null;
   if (checkIfBazaarNeeded(httpServer.routes)) {
@@ -202,7 +172,7 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     // Only initialize when processing a protected route
-    if (syncFacilitatorOnStart && !isInitialized) {
+    if (syncFacilitatorOnStart) {
       try {
         await initializeHttpServer();
       } catch (error) {
@@ -342,7 +312,10 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
-            res = new Response(responseBody, { status: res.status, headers: res.headers });
+            res = new Response(res.body === null ? null : responseBody, {
+              status: res.status,
+              headers: res.headers,
+            });
             res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {

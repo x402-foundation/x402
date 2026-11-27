@@ -11,10 +11,13 @@ import { FAUCET_URLS, resolveFaucetUrl } from "./faucetUrls";
 import { isTestnetNetwork, SOLANA_NETWORK_REFS } from "./paywallUtils";
 import type { PaymentRequired, PaymentRequirements } from "./types";
 
+const baseUsdc = DEFAULT_ASSETS["eip155:8453"]![0]!;
+const mezoUsd = DEFAULT_ASSETS["eip155:31611"]![0]!;
+
 const evmRequirement: PaymentRequirements = {
   scheme: "exact",
   network: "eip155:8453",
-  asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  asset: baseUsdc.asset,
   amount: "100000",
   payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
   maxTimeoutSeconds: 60,
@@ -72,7 +75,7 @@ describe("Network Handlers", () => {
       const req: PaymentRequirements = {
         scheme: "exact",
         network: "eip155:31611",
-        asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+        asset: mezoUsd.asset,
         amount: "1000000000000000",
         payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
         maxTimeoutSeconds: 60,
@@ -115,7 +118,7 @@ describe("Network Handlers", () => {
       const req: PaymentRequirements = {
         scheme: "exact",
         network: "eip155:8453",
-        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        asset: baseUsdc.asset,
         amount: "1000000",
         payTo: "0x209693Bc6afc0C5328bA36FaF04C514EF312287C",
         maxTimeoutSeconds: 60,
@@ -130,24 +133,18 @@ describe("Network Handlers", () => {
   });
 
   describe("getDefaultTokenDecimals", () => {
-    it("reads non-default decimals from the @x402/evm registry", () => {
-      // Mezo Testnet mUSD is 18-decimal in DEFAULT_ASSETS
+    it("reads registry decimals for a non-USDC default asset", () => {
       const req: PaymentRequirements = {
         ...evmRequirement,
         network: "eip155:31611",
-        asset: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+        asset: mezoUsd.asset,
       };
-      expect(getDefaultTokenDecimals(req)).toBe(18);
+      expect(getDefaultTokenDecimals(req)).toBe(mezoUsd.decimals);
     });
 
-    it("reads the registry value (not the fallback) for a known 6-decimal chain", () => {
-      // Base mainnet USDC is in the registry at 6 decimals. Asserting
-      // alongside DEFAULT_ASSETS catches the case where the registry is
-      // empty: the function would still return 6 via fallback, but the second
-      // assertion would fail.
+    it("reads the registry value for a known chain", () => {
       const req: PaymentRequirements = { ...evmRequirement, network: "eip155:8453" };
-      expect(getDefaultTokenDecimals(req)).toBe(6);
-      expect(DEFAULT_ASSETS["eip155:8453"]?.[0]?.decimals).toBe(6);
+      expect(getDefaultTokenDecimals(req)).toBe(baseUsdc.decimals);
     });
 
     it("falls back to 6 (USDC default) for networks not in the registry", () => {

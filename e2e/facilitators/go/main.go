@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -29,11 +30,13 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gin-gonic/gin"
+	"github.com/make-software/casper-go-sdk/v2/types/keypair"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/extensions/bazaar"
 	"github.com/x402-foundation/x402/go/v2/extensions/eip2612gassponsor"
 	"github.com/x402-foundation/x402/go/v2/extensions/erc20approvalgassponsor"
 	exttypes "github.com/x402-foundation/x402/go/v2/extensions/types"
+	exactcasper "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/facilitator"
 	evmmech "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	authcapturefacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/evm/auth-capture/facilitator"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm/batch-settlement"
@@ -43,10 +46,11 @@ import (
 	exactevmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/v1/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svmmech "github.com/x402-foundation/x402/go/v2/mechanisms/svm"
+	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
 	svmv1 "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/v1/facilitator"
-	batchsvmfac "github.com/x402-foundation/x402/go/v2/mechanisms/svm/batch-settlement/facilitator"
 	uptosvm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/upto/facilitator"
+	caspersigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 	x402types "github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -820,6 +824,14 @@ func (s *realFacilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx 
 	return svmmech.ConfirmedTransactionInnerInstructions(ctx, rpcClient, signature)
 }
 
+func (s *realFacilitatorSvmSigner) GetConfirmedTransaction(ctx context.Context, signature solana.Signature, network string) (*svmmech.FacilitatorConfirmedTransaction, error) {
+	rpcClient, err := s.getRPC(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	return svmmech.ConfirmedTransactionEvidence(ctx, rpcClient, signature)
+}
+
 func (s *realFacilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, network string) (uint64, bool, error) {
 	rpcClient, err := s.getRPC(ctx, network)
 	if err != nil {
@@ -939,6 +951,22 @@ func getSvmRpcUrl(network string) string {
 	}
 }
 
+func getCasperRpcUrl(network string) string {
+	// Check for custom RPC URL first
+	if url := os.Getenv("CASPER_RPC_URL"); url != "" {
+		return url
+	}
+	// Default RPC URLs based on network — matches e2e/config/mechanisms_casper.json.
+	switch network {
+	case "casper:casper":
+		return "https://node.mainnet.casper.network/rpc"
+	case "casper:casper-test":
+		return "https://node.testnet.casper.network/rpc"
+	default:
+		return "https://node.testnet.casper.network/rpc"
+	}
+}
+
 // Map v2 CAIP-2 network to v1 network name
 func getV1EvmNetwork(network string) string {
 	switch network {
@@ -992,11 +1020,13 @@ func main() {
 	// Network configuration — harness-injected `${ID}_NETWORK` or catalog testnet
 	evmNetwork := resolveNetworkCaip2("evm")
 	svmNetwork := resolveNetworkCaip2("svm")
+	casperNetwork := resolveNetworkCaip2("casper")
 
 	evmPrivateKey := os.Getenv("FACILITATOR_EVM_PRIVATE_KEY")
 	svmPrivateKey := os.Getenv("FACILITATOR_SVM_PRIVATE_KEY")
-	if evmPrivateKey == "" && svmPrivateKey == "" {
-		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY or FACILITATOR_SVM_PRIVATE_KEY is required")
+	casperPrivateKey := os.Getenv("FACILITATOR_CASPER_PRIVATE_KEY")
+	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
+		log.Fatal("❌ At least one of FACILITATOR_EVM_PRIVATE_KEY, FACILITATOR_SVM_PRIVATE_KEY, or FACILITATOR_CASPER_PRIVATE_KEY is required")
 	}
 
 	facilitator := x402.Newx402Facilitator()
@@ -1104,8 +1134,8 @@ func main() {
 		facilitator.Register(
 			[]x402.Network{x402.Network(evmNetwork)},
 			authcapturefacilitator.NewAuthCaptureEvmScheme(evmSigner, authcapturefacilitator.AuthCaptureEvmSchemeConfig{
-				CaptureAuthorizer: addresses[0],
-				AuthorizerSigner:  authCaptureAuthorizer,
+				CaptureAuthorizer:    addresses[0],
+				AuthorizerSigner:     authCaptureAuthorizer,
 				DelegatedAuthStorage: authCaptureDelegatedStorage,
 				ResolveCallerIdentity: func(ctx context.Context, _ authcapturefacilitator.DelegatedSettleContext) (string, error) {
 					return "x402-e2e", nil
@@ -1141,7 +1171,7 @@ func main() {
 
 		facilitator.Register(
 			[]x402.Network{x402.Network(svmNetwork)},
-			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true}),
+			svm.NewExactSvmScheme(svmSigner, &svm.Config{EnableSmartWalletVerification: true, MaxSplits: 8, AtaCreationSponsored: true}),
 		)
 		facilitator.Register(
 			[]x402.Network{x402.Network(svmNetwork)},
@@ -1159,6 +1189,42 @@ func main() {
 		facilitator.RegisterV1(
 			[]x402.Network{x402.Network(getV1SvmNetwork(svmNetwork))},
 			svmv1.NewExactSvmSchemeV1(svmSigner),
+		)
+	}
+
+	if casperPrivateKey != "" {
+		log.Printf("🌐 Casper Network: %s", casperNetwork)
+		casperRpcUrl := getCasperRpcUrl(casperNetwork)
+		log.Printf("🌐 Casper RPC URL: %s", casperRpcUrl)
+
+		casperAlgo := os.Getenv("FACILITATOR_CASPER_PRIVATE_KEY_ALGORITHM")
+		casperKey, err := caspersigners.NewPrivateKeyFromSecret(casperPrivateKey, casperAlgo)
+		if err != nil {
+			log.Fatalf("Failed to parse Casper private key: %v", err)
+		}
+
+		casperSpeculativeRpcURL := os.Getenv("CASPER_SPECULATIVE_RPC_URL")
+		var speculativeRpcURLs map[string]string
+		if casperSpeculativeRpcURL != "" {
+			log.Printf("🌐 Casper Speculative Exec RPC URL: %s", casperSpeculativeRpcURL)
+			speculativeRpcURLs = map[string]string{casperNetwork: casperSpeculativeRpcURL}
+		}
+
+		var casperSigner *caspersigners.FacilitatorSigner
+		casperSigner = caspersigners.NewFacilitatorSigner(
+			caspersigners.FacilitatorSignerConfig{
+				Keys:               map[string]keypair.PrivateKey{casperNetwork: *casperKey},
+				RpcURLs:            map[string]string{casperNetwork: casperRpcUrl},
+				SpeculativeRpcURLs: speculativeRpcURLs,
+			},
+		)
+
+		casperAddresses := casperSigner.GetAddresses(context.Background(), casperNetwork)
+		log.Printf("Casper Facilitator account: %s", casperAddresses[0])
+
+		facilitator.Register(
+			[]x402.Network{x402.Network(casperNetwork)},
+			exactcasper.NewExactCasperScheme(casperSigner, nil),
 		)
 	}
 
@@ -1358,9 +1424,17 @@ func main() {
 		)
 		if err != nil {
 			log.Printf("Verify error: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -1481,6 +1555,7 @@ func main() {
 			"status":              "ok",
 			"evmNetwork":          evmNetwork,
 			"svmNetwork":          svmNetwork,
+			"casperNetwork":       casperNetwork,
 			"facilitator":         "go",
 			"version":             "2.0.0",
 			"extensions":          []string{exttypes.BAZAAR.Key()},
@@ -1519,6 +1594,10 @@ func main() {
 	if svmPrivateKey != "" {
 		svmLabel = svmNetwork
 	}
+	casperLabel := "(not configured)"
+	if casperPrivateKey != "" {
+		casperLabel = casperNetwork
+	}
 	evmLabel := "(not configured)"
 	if evmPrivateKey != "" {
 		evmLabel = evmNetwork
@@ -1530,6 +1609,7 @@ func main() {
 ║  Server:     http://localhost:%s                      ║
 ║  EVM Network:    %s                       ║
 ║  SVM Network:    %s                       ║
+║  Casper Network: %s                      ║
 ║  Address:    %s     ║
 ║  Extensions: bazaar                                    ║
 ║                                                        ║
@@ -1541,7 +1621,7 @@ func main() {
 ║  • GET  /health              (health check)           ║
 ║  • POST /close               (shutdown server)        ║
 ╚════════════════════════════════════════════════════════╝
-`, port, evmLabel, svmLabel, evmAddr)
+`, port, evmLabel, svmLabel, casperLabel, evmAddr)
 
 	// Log that facilitator is ready (needed for e2e test discovery)
 	log.Println("Facilitator listening")

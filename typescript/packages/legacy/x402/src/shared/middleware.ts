@@ -110,11 +110,16 @@ export function findMatchingRoute(
     .replace(/\/+/g, "/") // collapse slashes
     .replace(/(.+?)\/+$/, "$1"); // trim trailing slashes
 
+  // Routers match on the raw path, so an encoded "/" or "\" stays inside its
+  // segment. Match on that view too, so it can't skip a parameterised route.
+  const rawPath = pathWithoutQuery.replace(/\/+/g, "/").replace(/(.+?)\/+$/, "$1");
+
   const upperMethod = method.toUpperCase();
   const findMatchingRoutes = (candidateMethod: string): RoutePattern[] =>
     routePatterns.filter(
       ({ pattern, verb }) =>
-        pattern.test(normalizedPath) && (verb === "*" || candidateMethod === verb),
+        (pattern.test(normalizedPath) || pattern.test(rawPath)) &&
+        (verb === "*" || candidateMethod === verb),
     );
 
   // HTTP routers commonly dispatch HEAD through GET. Preserve an explicit
@@ -180,7 +185,7 @@ export function processPriceToAtomicAmount(
     const parsedAmount = moneySchema.safeParse(price);
     if (!parsedAmount.success) {
       return {
-        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error}`,
+        error: `Invalid price (price: ${price}). Must be in the form "$3.10", 0.10, "0.001", ${parsedAmount.error.issues.map(issue => issue.message).join("; ")}`,
       };
     }
     const parsedUsdAmount = parsedAmount.data;

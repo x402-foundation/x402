@@ -103,6 +103,14 @@ type RentCleanupReclaimResult struct {
 	Transaction string
 }
 
+// RentCleanupCloseCandidate is a channel about to be closed or distributed.
+type RentCleanupCloseCandidate struct {
+	ChannelID string
+	Payer     string
+	PayTo     string
+	Action    RentCleanupCloseAction
+}
+
 // RentCleanupOptions bound one cleanup pass and receive its results.
 type RentCleanupOptions struct {
 	AbandonGraceSecs int64
@@ -111,9 +119,12 @@ type RentCleanupOptions struct {
 	MaxTxsPerRun     int
 	MaxTxsPerSigner  int
 	MaxClosesPerRun  int
-	OnClose          func(RentCleanupCloseResult)
-	OnReclaim        func(RentCleanupReclaimResult)
-	OnError          func(err error, channelID string)
+	// BeforeCloseOrDistribute runs before each close or distribute within MaxClosesPerRun;
+	// an error skips the channel and reports to OnError. Reclaim never calls it.
+	BeforeCloseOrDistribute func(ctx context.Context, candidate RentCleanupCloseCandidate) error
+	OnClose                 func(RentCleanupCloseResult)
+	OnReclaim               func(RentCleanupReclaimResult)
+	OnError                 func(err error, channelID string)
 }
 
 func (o RentCleanupOptions) withDefaults(configuredIdle *int64, useTransactionV1 bool) (RentCleanupOptions, int64) {
@@ -188,13 +199,16 @@ func (c RentCleanupStartConfig) discoveryOptions() RentDiscoveryOptions {
 
 // PaymentChannelRentCleanupConfig configures a rent cleanup manager for one network.
 type PaymentChannelRentCleanupConfig struct {
-	Signer                            svm.FacilitatorSvmSigner
-	Storage                           PaymentChannelStorage
-	Network                           string
+	Signer  svm.FacilitatorSvmSigner
+	Storage PaymentChannelStorage
+	Network string
+	// TreasuryOwner overrides the program's treasury owner for close/distribute
+	// cleanup; the zero key uses TreasuryOwner(Network).
+	TreasuryOwner                     solana.PublicKey
 	ComputeUnitPriceMicroLamports     *uint64
 	SettleComputeUnitLimit            *uint32
 	SettleLoadedAccountsDataSizeLimit *uint32
-	UseTransactionV1                  bool
+	FacilitatorTransactionVersion     int
 	MaxIdleSecs                       *int64
 	AbandonPolicy                     OpenAbandonPolicy
 	// SealClosingChannels nil defaults to true. upto sets it false.
@@ -208,10 +222,11 @@ type PaymentChannelRentCleanupManager struct {
 	signer                            PaymentChannelFacilitatorSigner
 	storage                           PaymentChannelStorage
 	network                           string
+	treasuryOwner                     solana.PublicKey
 	computeUnitPriceMicroLamports     *uint64
 	settleComputeUnitLimit            *uint32
 	settleLoadedAccountsDataSizeLimit *uint32
-	useTransactionV1                  bool
+	facilitatorTransactionVersion     int
 	maxIdleSecs                       *int64
 	abandonPolicy                     OpenAbandonPolicy
 	sealClosingChannels               bool
@@ -252,10 +267,11 @@ func NewPaymentChannelRentCleanupManager(config PaymentChannelRentCleanupConfig)
 		signer:                            AssertPaymentChannelFacilitatorSigner(config.Signer, label),
 		storage:                           config.Storage,
 		network:                           config.Network,
+		treasuryOwner:                     config.TreasuryOwner,
 		computeUnitPriceMicroLamports:     config.ComputeUnitPriceMicroLamports,
 		settleComputeUnitLimit:            config.SettleComputeUnitLimit,
 		settleLoadedAccountsDataSizeLimit: config.SettleLoadedAccountsDataSizeLimit,
-		useTransactionV1:                  config.UseTransactionV1,
+		facilitatorTransactionVersion:     config.FacilitatorTransactionVersion,
 		maxIdleSecs:                       config.MaxIdleSecs,
 		abandonPolicy:                     policy,
 		sealClosingChannels:               seal,
@@ -342,7 +358,7 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 	m.passMu.Lock()
 	defer m.passMu.Unlock()
 
-	opts, maxIdleSecs := opts.withDefaults(m.maxIdleSecs, m.useTransactionV1)
+	opts, maxIdleSecs := opts.withDefaults(m.maxIdleSecs, m.facilitatorTransactionVersion == FacilitatorTransactionVersion1)
 	records, err := m.storage.List(ctx, m.network)
 	if err != nil {
 		return fmt.Errorf("failed to list stored channels: %w", err)
@@ -396,12 +412,24 @@ func (m *PaymentChannelRentCleanupManager) Cleanup(ctx context.Context, opts Ren
 			if status == generated.ChannelStatus_Closing && now < channel.ClosureStartedAt+int64(channel.GracePeriod) {
 				continue
 			}
+			// Out of close budget: do not call the hook. Keep scanning for reclaim candidates.
 			if closesUsed >= opts.MaxClosesPerRun {
 				continue
 			}
 			if record.PayTo == "" {
 				opts.reportError(fmt.Errorf("channel %s has no stored payTo; cannot rebuild its distribution", record.ChannelID), record.ChannelID)
 				continue
+			}
+			if opts.BeforeCloseOrDistribute != nil {
+				if err := opts.BeforeCloseOrDistribute(ctx, RentCleanupCloseCandidate{
+					ChannelID: record.ChannelID,
+					Payer:     channel.Payer.String(),
+					PayTo:     record.PayTo,
+					Action:    closeAction(status),
+				}); err != nil {
+					opts.reportError(err, record.ChannelID)
+					continue
+				}
 			}
 			signature, err := m.submitCloseOrDistribute(ctx, record, channel, channelID)
 			if err != nil {
@@ -597,14 +625,15 @@ func (m *PaymentChannelRentCleanupManager) submitCloseOrDistribute(
 		return "", fmt.Errorf("channel %s has an invalid stored tokenProgram: %w", record.ChannelID, err)
 	}
 	distribute, err := BuildDistributeInstruction(DistributeInstructionArgs{
-		Channel:      channelID,
-		Payer:        channel.Payer,
-		Payee:        channel.Payee,
-		RentPayer:    channel.RentPayer,
-		Mint:         channel.Mint,
-		TokenProgram: tokenProgram,
-		Splits:       []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
-		Network:      m.network,
+		Channel:       channelID,
+		Payer:         channel.Payer,
+		Payee:         channel.Payee,
+		RentPayer:     channel.RentPayer,
+		Mint:          channel.Mint,
+		TokenProgram:  tokenProgram,
+		Splits:        []Split{{Recipient: record.PayTo, BPS: BasisPointsDenominator}},
+		Network:       m.network,
+		TreasuryOwner: m.treasuryOwner,
 	})
 	if err != nil {
 		return "", err
@@ -627,7 +656,7 @@ func (m *PaymentChannelRentCleanupManager) submitCloseOrDistribute(
 		ComputeUnitLimit:              m.settleComputeUnitLimit,
 		LoadedAccountsDataSizeLimit:   m.settleLoadedAccountsDataSizeLimit,
 		ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
-		UseTransactionV1:              m.useTransactionV1,
+		FacilitatorTransactionVersion: m.facilitatorTransactionVersion,
 	})
 }
 
@@ -676,7 +705,7 @@ func (m *PaymentChannelRentCleanupManager) submitReclaimGroup(
 		}
 		return
 	}
-	if !m.useTransactionV1 {
+	if m.facilitatorTransactionVersion != FacilitatorTransactionVersion1 {
 		for start := 0; start < len(group); start += opts.MaxReclaimsPerTx {
 			if atomic.AddInt64(budget, -1) < 0 {
 				atomic.AddInt64(budget, 1)
@@ -748,7 +777,7 @@ func (m *PaymentChannelRentCleanupManager) submitReclaimGroup(
 				ComputeUnitLimit:              &reclaimLimit,
 				LoadedAccountsDataSizeLimit:   &loadedLimit,
 				ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
-				UseTransactionV1:              true,
+				FacilitatorTransactionVersion: FacilitatorTransactionVersion1,
 			}) {
 				break
 			}
@@ -775,7 +804,7 @@ func (m *PaymentChannelRentCleanupManager) submitReclaimGroup(
 			ComputeUnitLimit:              &reclaimLimit,
 			LoadedAccountsDataSizeLimit:   &loadedLimit,
 			ComputeUnitPriceMicroLamports: m.computeUnitPriceMicroLamports,
-			UseTransactionV1:              m.useTransactionV1,
+			FacilitatorTransactionVersion: m.facilitatorTransactionVersion,
 		})
 		if err != nil {
 			for _, channelID := range channelIDs {

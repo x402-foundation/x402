@@ -26,16 +26,84 @@ type Config struct {
 	SmartWalletMaxPriorityFeeMicroLamports *uint64
 	SmartWalletAllowedPrograms             []string
 	MaxPriorityFeeMicroLamports            *uint64
-	MaxComputeUnits                        *uint32
-	MaxRequiredSignatures                  *uint8
+	// MaxComputeUnits caps the compute unit limit on the static path, for a
+	// version-0 SetComputeUnitLimit and a version-1 header computeUnitLimit
+	// alike. Nil uses DefaultMaxComputeUnits (400,000, the reference default
+	// of scheme_exact_svm.md §2.2.1); while nil, a smart-wallet transaction
+	// above it is judged by Path 2 against SmartWalletMaxComputeUnits instead.
+	// Setting it makes it a hard ceiling for both paths.
+	MaxComputeUnits *uint32
+	// MaxRequiredSignatures caps the required signatures. A payment needs
+	// exactly two (client and fee payer) and MUST NOT require another signer
+	// (§2.1.4). Nil uses DefaultMaxRequiredSignatures (2). It is checked before
+	// path dispatch, so it also bounds smart-wallet transactions: a threshold
+	// multisig whose members co-sign the payment transaction needs it raised.
+	MaxRequiredSignatures *uint8
+	// TransactionVersions is the set of message versions this facilitator
+	// accepts and advertises as extra.transactionVersions. Any other version
+	// is rejected with unsupported_transaction_version before any instruction
+	// is inspected; legacy is accepted exactly when 0 is. Nil means [0, 1].
+	TransactionVersions []int
+	// PreflightInstructionAllowlist lists instruction tuples that may appear
+	// as a contiguous block (guard/Lighthouse instructions aside)
+	// immediately BEFORE the required protocol instructions on Path 1.
+	// Extension point for prefixing the payment with out-of-band setup
+	// (e.g. atomically channeling funds into the transfer). A matched block
+	// is fee-payer-isolation-checked like Path 2 instructions.
+	//
+	// Default: nil (no preflight instructions are accepted; current behavior)
+	PreflightInstructionAllowlist []InstructionTuple
+
+	// PostflightInstructionAllowlist lists instruction tuples that may
+	// appear as a contiguous block (guard/Lighthouse instructions aside)
+	// immediately AFTER the required protocol instructions on Path 1. See
+	// PreflightInstructionAllowlist.
+	//
+	// Default: nil (no postflight instructions are accepted; current behavior)
+	PostflightInstructionAllowlist []InstructionTuple
+
+	// MaxSplits is the maximum number of extra.splits entries accepted
+	// (scheme_exact_svm.md §5), 0-8. Advertised as maxSplits in /supported;
+	// requirements with more splits are rejected with split_count_exceeded.
+	// Default 0: splits are neither accepted nor advertised.
+	MaxSplits int
+
+	// AtaCreationSponsored makes the fee payer fund CreateIdempotent for
+	// recipients marked ataCreationRequired (about 0.002 SOL of rent each).
+	// Advertised as ataCreationSponsored in /supported. Rent is not bounded
+	// over time: an owner can close its ATA, reclaim the rent, and repeat on every charge.
+	// Operators must enforce out-of-band limits per owner/mint or Resource Server
+	// before enabling this. Splits do not automatically reimburse sponsored rent.
+	// Default false.
+	AtaCreationSponsored bool
+}
+
+// DefaultMaxComputeUnits is the static-path compute unit ceiling when
+// Config.MaxComputeUnits is unset (scheme_exact_svm.md §2.2.1 reference default).
+const DefaultMaxComputeUnits uint32 = svm.DefaultMaxComputeUnits
+
+// DefaultMaxRequiredSignatures is the required-signature ceiling when
+// Config.MaxRequiredSignatures is unset: the client and the fee payer.
+const DefaultMaxRequiredSignatures uint8 = 2
+
+// accountInfoReader is the optional signer cap used to explain a failed simulation.
+// Exact-only signers omit it, so a missing method keeps the original failure.
+type accountInfoReader interface {
+	GetAccountInfo(
+		ctx context.Context,
+		account solana.PublicKey,
+		network string,
+		opts *rpc.GetAccountInfoOpts,
+	) (*rpc.GetAccountInfoResult, error)
 }
 
 // ExactSvmScheme implements the SchemeNetworkFacilitator interface for SVM (Solana) exact payments (V2)
 type ExactSvmScheme struct {
-	signer          svm.FacilitatorSvmSigner
-	settlementCache *svm.SettlementCache
-	pendingStore    x402.PendingSettlementStore
-	config          Config
+	signer              svm.FacilitatorSvmSigner
+	settlementCache     *svm.SettlementCache
+	pendingStore        x402.PendingSettlementStore
+	config              Config
+	transactionVersions []int
 }
 
 type verifyResult struct {
@@ -43,6 +111,12 @@ type verifyResult struct {
 	tx              *solana.Transaction
 	smartWallet     bool
 	matchedTransfer *transferCheckedInfo
+	// legs is set when the requirements use splits (§5).
+	legs []svm.PaymentLeg
+	// legTransfers is, with splits on Path 2, the transfer matched to each leg.
+	legTransfers []transferCheckedInfo
+	// topLevelTransfers is, with splits on Path 2, the top-level transfers.
+	topLevelTransfers []transferCheckedInfo
 }
 
 // NewExactSvmScheme creates a new ExactSvmScheme.
@@ -65,6 +139,13 @@ func NewExactSvmScheme(signer svm.FacilitatorSvmSigner, config ...*Config) *Exac
 	if cfg.SmartWalletMaxComputeUnits != nil {
 		assertPositive("smartWalletMaxComputeUnits", int64(*cfg.SmartWalletMaxComputeUnits))
 	}
+	if cfg.MaxSplits < 0 || cfg.MaxSplits > svm.MaxSplits {
+		panic(fmt.Sprintf("exact svm facilitator: maxSplits must be between 0 and %d, received %d", svm.MaxSplits, cfg.MaxSplits))
+	}
+	transactionVersions, err := svm.NormalizeAcceptedTransactionVersions(cfg.TransactionVersions)
+	if err != nil {
+		panic("exact svm facilitator: " + err.Error())
+	}
 
 	cache := cfg.SettlementCache
 	if cache == nil {
@@ -78,11 +159,30 @@ func NewExactSvmScheme(signer svm.FacilitatorSvmSigner, config ...*Config) *Exac
 	}
 
 	return &ExactSvmScheme{
-		signer:          signer,
-		settlementCache: cache,
-		pendingStore:    x402.NewInMemoryPendingSettlementStore(),
-		config:          cfg,
+		signer:              signer,
+		settlementCache:     cache,
+		pendingStore:        x402.NewInMemoryPendingSettlementStore(),
+		config:              cfg,
+		transactionVersions: transactionVersions,
 	}
+}
+
+// maxComputeUnits is the configured static-path compute unit ceiling, or
+// DefaultMaxComputeUnits.
+func (f *ExactSvmScheme) maxComputeUnits() uint32 {
+	if f.config.MaxComputeUnits != nil {
+		return *f.config.MaxComputeUnits
+	}
+	return DefaultMaxComputeUnits
+}
+
+// maxRequiredSignatures is the configured required-signature ceiling, or
+// DefaultMaxRequiredSignatures.
+func (f *ExactSvmScheme) maxRequiredSignatures() uint8 {
+	if f.config.MaxRequiredSignatures != nil {
+		return *f.config.MaxRequiredSignatures
+	}
+	return DefaultMaxRequiredSignatures
 }
 
 func assertPositive(name string, value int64) {
@@ -121,12 +221,19 @@ func (f *ExactSvmScheme) GetExtra(network x402.Network) map[string]interface{} {
 
 	extra := map[string]interface{}{
 		"feePayer":                   addresses[randomIndex].String(),
-		svm.ExtraTransactionVersions: append([]int(nil), svm.AdvertisedTransactionVersions...),
+		svm.ExtraTransactionVersions: append([]int(nil), f.transactionVersions...),
 	}
 	if f.config.EnableSmartWalletVerification {
 		extra["features"] = map[string]interface{}{
 			"smartWalletSupported": true,
 		}
+	}
+	// Split capabilities fail closed: absent keys mean no support (§5.5).
+	if f.config.MaxSplits > 0 {
+		extra["maxSplits"] = f.config.MaxSplits
+	}
+	if f.config.AtaCreationSponsored {
+		extra["ataCreationSponsored"] = true
 	}
 	return extra
 }
@@ -205,6 +312,28 @@ func (f *ExactSvmScheme) verify(
 		return nil, x402.NewVerifyError(ErrFeePayerNotManaged, "", fmt.Sprintf("feePayer not managed: %s", feePayerStr))
 	}
 
+	feePayer, err := solana.PublicKeyFromBase58(feePayerStr)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidFeePayer, "", err.Error())
+	}
+
+	// Splits (§5): validate the terms and check them against what this
+	// facilitator advertises before looking at the transaction.
+	var legs []svm.PaymentLeg
+	if svm.UsesSplitTerms(requirements) {
+		parsed, err := svm.ParsePaymentLegs(requirements)
+		if err == nil {
+			err = svm.AssertWithinCapabilities(parsed, svm.SplitCapabilities{
+				MaxSplits:            f.config.MaxSplits,
+				AtaCreationSponsored: f.config.AtaCreationSponsored,
+			})
+		}
+		if err != nil {
+			return nil, splitVerifyError(err, "")
+		}
+		legs = parsed
+	}
+
 	// Parse payload
 	solanaPayload, err := svm.PayloadFromMap(payload.Payload)
 	if err != nil {
@@ -212,6 +341,11 @@ func (f *ExactSvmScheme) verify(
 	}
 
 	// Step 2: Parse and Validate Transaction Structure
+	// Read the version from the raw bytes first so a newer wire format is
+	// reported as unsupported however the installed decoder handles it.
+	if wireVersion, ok := svm.PeekWireTransactionVersion(solanaPayload.Transaction); ok && !svm.IsAcceptedWireTransactionVersionIn(wireVersion, f.transactionVersions) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", wireVersion))
+	}
 	tx, err := svm.DecodeTransaction(solanaPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewVerifyError(ErrTransactionCouldNotBeDecoded, "", err.Error())
@@ -219,11 +353,17 @@ func (f *ExactSvmScheme) verify(
 
 	// Message version gate, before any signature or instruction check: every
 	// check below reads its sponsorship policy from version-specific structure.
-	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
-		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", int(tx.Message.GetVersion())-1))
+	if !svm.IsAcceptedTransactionVersionIn(tx.Message.GetVersion(), f.transactionVersions) {
+		return nil, x402.NewVerifyError(ErrUnsupportedTransactionVersion, "", fmt.Sprintf("unsupported transaction message version %d", svm.WireTransactionVersion(tx.Message.GetVersion())))
 	}
 
-	if f.config.MaxRequiredSignatures != nil && tx.Message.Header.NumRequiredSignatures > *f.config.MaxRequiredSignatures {
+	// Size limit of the message version (§1.5): 1232 bytes for legacy and
+	// version 0, 4096 for version 1. The decoder accepts larger payloads.
+	if size, limit, exceeded := svm.TransactionSizeExceeded(solanaPayload.Transaction, tx.Message.GetVersion()); exceeded {
+		return nil, x402.NewVerifyError(ErrTransactionSizeExceeded, "", fmt.Sprintf("transaction is %d bytes, above the %d-byte limit", size, limit))
+	}
+
+	if tx.Message.Header.NumRequiredSignatures > f.maxRequiredSignatures() {
 		return nil, x402.NewVerifyError(ErrExcessiveSigners, "", ErrExcessiveSigners)
 	}
 
@@ -235,22 +375,42 @@ func (f *ExactSvmScheme) verify(
 		return nil, x402.NewVerifyError(err.Error(), "", err.Error())
 	}
 
-	staticErr := f.verifyStaticPath(ctx, tx, requirements, signerAddressStrs)
-	if staticErr == nil {
-		payer, _ := svm.GetTokenPayerFromTransaction(tx)
-		return &verifyResult{
-			response: &x402.VerifyResponse{IsValid: true, Payer: payer},
-			tx:       tx,
-		}, nil
+	var staticErr error
+	if legs != nil {
+		payer, err := f.verifyStaticSplitPath(ctx, tx, requirements, signerAddressStrs, legs)
+		if err == nil {
+			return &verifyResult{
+				response: &x402.VerifyResponse{IsValid: true, Payer: payer},
+				tx:       tx,
+				legs:     legs,
+			}, nil
+		}
+		staticErr = err
+	} else {
+		staticErr = f.verifyStaticPath(ctx, tx, requirements, feePayer, signerAddressStrs)
+		if staticErr == nil {
+			payer, _ := svm.GetTokenPayerFromTransaction(tx)
+			return &verifyResult{
+				response: &x402.VerifyResponse{IsValid: true, Payer: payer},
+				tx:       tx,
+			}, nil
+		}
 	}
 
-	if f.config.EnableSmartWalletVerification && isLayoutRecoverable(staticErr) {
-		if err := f.assertSmartWalletAllowlist(tx); err != nil {
+	// Under the default static compute-unit cap (MaxComputeUnits nil), a smart
+	// wallet's compute units are the business of SmartWalletMaxComputeUnits: a
+	// cap failure falls through to Path 2 too, but only for a transaction that
+	// invokes allowlisted wallet programs; otherwise the static reason stands.
+	defaultCapExceeded := f.config.MaxComputeUnits == nil && invalidReasonFromError(staticErr) == ErrComputeLimitInstructionTooHigh
+	if f.config.EnableSmartWalletVerification && (defaultCapExceeded || isLayoutRecoverable(staticErr) || (legs != nil && invalidReasonFromError(staticErr) == ErrTransactionInstructionsLength)) {
+		if err := f.assertSmartWalletAllowlist(tx, legs != nil); err != nil {
+			if defaultCapExceeded {
+				return nil, staticErr
+			}
 			return nil, err
 		}
-		feePayer, err := solana.PublicKeyFromBase58(feePayerStr)
-		if err != nil {
-			return nil, x402.NewVerifyError(ErrInvalidFeePayer, "", err.Error())
+		if defaultCapExceeded && !invokesWalletProgram(tx) {
+			return nil, staticErr
 		}
 		caps := f.signer.(svm.SmartWalletRPCCapabilities)
 		maxCU := defaultSmartWalletMaxComputeUnits
@@ -262,35 +422,52 @@ func (f *ExactSvmScheme) verify(
 			maxPriorityFee = *f.config.SmartWalletMaxPriorityFeeMicroLamports
 		}
 		matched, err := verifySmartWalletTransaction(
-			ctx, tx, requirements, caps, feePayer, signerAddressStrs, maxCU, maxPriorityFee,
+			ctx, tx, requirements, caps, feePayer, signerAddressStrs, maxCU, maxPriorityFee, legs,
 		)
 		if err != nil {
 			return nil, err
 		}
 		return &verifyResult{
-			response:        &x402.VerifyResponse{IsValid: true, Payer: matched.authority.String()},
-			tx:              tx,
-			smartWallet:     true,
-			matchedTransfer: matched,
+			response:          &x402.VerifyResponse{IsValid: true, Payer: matched.payer},
+			tx:                tx,
+			smartWallet:       true,
+			matchedTransfer:   matched.matched,
+			legs:              legs,
+			legTransfers:      matched.legTransfers,
+			topLevelTransfers: matched.topLevel,
 		}, nil
 	}
 
 	return nil, staticErr
 }
 
-func isLayoutRecoverable(err error) bool {
+// invalidReasonFromError is the invalid reason an error carries.
+func invalidReasonFromError(err error) string {
 	var ve *x402.VerifyError
-	reason := err.Error()
 	if errors.As(err, &ve) {
-		reason = ve.InvalidReason
+		return ve.InvalidReason
 	}
-	switch reason {
-	case ErrTransactionInstructionsLength,
-		ErrNoTransferInstruction,
-		ErrUnknownFourthInstruction,
-		ErrUnknownFifthInstruction,
-		ErrUnknownSixthInstruction,
-		ErrUnknownOptionalInstruction,
+	return err.Error()
+}
+
+// invokesWalletProgram reports whether a top-level instruction invokes a
+// program other than ComputeBudget and Memo.
+func invokesWalletProgram(tx *solana.Transaction) bool {
+	memoPubkey := solana.MustPublicKeyFromBase58(svm.MemoProgramAddress)
+	for _, ix := range tx.Message.Instructions {
+		programID, err := tx.Message.Program(ix.ProgramIDIndex)
+		if err == nil && !programID.Equals(solana.ComputeBudget) && !programID.Equals(memoPubkey) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLayoutRecoverable(err error) bool {
+	switch invalidReasonFromError(err) {
+	case ErrNoTransferInstruction,
+		ErrUnknownInstruction,
+		ErrProtocolInstructionOrder,
 		ErrComputeLimitInstruction,
 		ErrComputePriceInstruction:
 		return true
@@ -299,7 +476,11 @@ func isLayoutRecoverable(err error) bool {
 	}
 }
 
-func (f *ExactSvmScheme) assertSmartWalletAllowlist(tx *solana.Transaction) error {
+// assertSmartWalletAllowlist checks every top-level program against the
+// wallet-program allowlist. With splits, the ATA program is exempt too
+// (§2.2.2); every one of its instructions is then validated as a §5.4
+// CreateIdempotent by the fee payer isolation check.
+func (f *ExactSvmScheme) assertSmartWalletAllowlist(tx *solana.Transaction, allowAtaProgram bool) error {
 	allowed := defaultSmartWalletAllowedPrograms
 	if len(f.config.SmartWalletAllowedPrograms) > 0 {
 		allowed = f.config.SmartWalletAllowedPrograms
@@ -315,6 +496,9 @@ func (f *ExactSvmScheme) assertSmartWalletAllowlist(tx *solana.Transaction) erro
 			return x402.NewVerifyError(ErrSmartWalletProgramNotAllowed, "", err.Error())
 		}
 		if programID.Equals(solana.ComputeBudget) || programID.Equals(memoPubkey) {
+			continue
+		}
+		if allowAtaProgram && programID.Equals(solana.SPLAssociatedTokenAccountProgramID) {
 			continue
 		}
 		if _, ok := allowedSet[programID.String()]; !ok {
@@ -356,28 +540,50 @@ func (f *ExactSvmScheme) verifyStaticPath(
 	ctx context.Context,
 	tx *solana.Transaction,
 	requirements types.PaymentRequirements,
+	feePayer solana.PublicKey,
 	signerAddressStrs []string,
 ) error {
-	// Allow 3-7 instructions:
-	// - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
-	// - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
-	// - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
-	// - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
-	// - 7 instructions: + a third wallet-injected Lighthouse (Phantom, see #2097)
+	// Protocol instructions (ComputeLimit, ComputePrice, TransferChecked, and
+	// optional Memo) are identified by program ID + instruction discriminator
+	// and MUST appear in that fixed relative order. Guard instructions
+	// (currently only permitted Lighthouse assertion variants — Phantom/Solflare's
+	// wallet-protection assertions) may appear anywhere. A configured preflight/postflight
+	// allowlist block is stripped (and fee-payer-isolation-checked) first.
 	// See: https://github.com/x402-foundation/x402/issues/828
 	//  and: https://github.com/x402-foundation/x402/issues/2097
-	numInstructions := len(tx.Message.Instructions)
-	if numInstructions < 3 || numInstructions > 7 {
-		return x402.NewVerifyError(ErrTransactionInstructionsLength, "", fmt.Sprintf("transaction instructions length mismatch: %d < 3 or %d > 7", numInstructions, numInstructions))
-	}
-
-	// Step 3: Verify Compute Budget Instructions
-	if err := f.verifyComputeLimitInstruction(tx, tx.Message.Instructions[0]); err != nil {
+	partitioned, err := f.resolveProtocolLayout(tx, feePayer)
+	if err != nil {
+		// Preserve the static budget ceiling for wrappers that need Path 2,
+		// without masking non-recoverable guard or extension policy failures.
+		if isLayoutRecoverable(err) {
+			if tx.Message.GetVersion() == solana.MessageVersionV1 {
+				if budgetErr := f.verifyTransactionV1Config(tx); budgetErr != nil {
+					return x402.NewVerifyError(budgetErr.Error(), "", budgetErr.Error())
+				}
+			} else {
+				for _, inst := range tx.Message.Instructions {
+					if classifyProtocolInstruction(tx, inst) == kindComputeLimit {
+						if budgetErr := f.verifyComputeLimitInstruction(inst); budgetErr != nil {
+							return x402.NewVerifyError(budgetErr.Error(), "", budgetErr.Error())
+						}
+					}
+				}
+			}
+		}
 		return x402.NewVerifyError(err.Error(), "", err.Error())
 	}
-
-	if err := f.verifyComputePriceInstruction(tx, tx.Message.Instructions[1]); err != nil {
-		return x402.NewVerifyError(err.Error(), "", err.Error())
+	// Step 3: Verify the version-specific compute budget.
+	if staticTransferIndex(tx) == 0 {
+		if err := f.verifyTransactionV1Config(tx); err != nil {
+			return x402.NewVerifyError(err.Error(), "", err.Error())
+		}
+	} else {
+		if err := f.verifyComputeLimitInstruction(partitioned.computeLimitIx); err != nil {
+			return x402.NewVerifyError(err.Error(), "", err.Error())
+		}
+		if err := f.verifyComputePriceInstruction(partitioned.computePriceIx); err != nil {
+			return x402.NewVerifyError(err.Error(), "", err.Error())
+		}
 	}
 
 	// Extract payer from transaction
@@ -400,65 +606,19 @@ func (f *ExactSvmScheme) verifyStaticPath(
 	}
 
 	// Step 4: Verify Transfer Instruction
-	transfer, err := f.verifyTransferInstruction(tx, tx.Message.Instructions[2], reqStruct, signerAddressStrs)
+	transfer, err := f.verifyTransferInstruction(tx, partitioned.transferIx, reqStruct, signerAddressStrs)
 	if err != nil {
 		return x402.NewVerifyError(err.Error(), payer, err.Error())
 	}
 
-	// Step 5: Verify optional instructions (if present)
-	// Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-	if numInstructions >= 4 {
-		lighthousePubkey := solana.MustPublicKeyFromBase58(svm.LighthouseProgramAddress)
-		memoPubkey := solana.MustPublicKeyFromBase58(svm.MemoProgramAddress)
-		optionalInstructions := tx.Message.Instructions[3:]
-		invalidReasons := []string{
-			ErrUnknownFourthInstruction,
-			ErrUnknownFifthInstruction,
-			ErrUnknownSixthInstruction,
-			ErrUnknownSeventhInstruction,
+	// Step 5: Verify memo content matches extra.memo when present (exactly
+	// one Memo instruction is required in that case).
+	if expectedMemo, ok := requirements.Extra["memo"].(string); ok && expectedMemo != "" {
+		if partitioned.memoCount != 1 {
+			return x402.NewVerifyError(ErrMemoCount, payer, "expected exactly one memo instruction when extra.memo is present")
 		}
-
-		for i, instruction := range optionalInstructions {
-			progID, progErr := tx.Message.Program(instruction.ProgramIDIndex)
-			if progErr != nil {
-				reason := ErrUnknownOptionalInstruction
-				if i < len(invalidReasons) {
-					reason = invalidReasons[i]
-				}
-				return x402.NewVerifyError(reason, payer, progErr.Error())
-			}
-			if progID.Equals(lighthousePubkey) || progID.Equals(memoPubkey) {
-				continue
-			}
-
-			reason := ErrUnknownOptionalInstruction
-			if i < len(invalidReasons) {
-				reason = invalidReasons[i]
-			}
-
-			return x402.NewVerifyError(reason, payer, fmt.Sprintf("unknown optional instruction: %s", progID.String()))
-		}
-
-		// Step 5b: Verify memo content matches extra.memo when present
-		if expectedMemo, ok := requirements.Extra["memo"].(string); ok && expectedMemo != "" {
-			var memoCount int
-			var actualMemoData []byte
-			for _, instruction := range optionalInstructions {
-				progID, progErr := tx.Message.Program(instruction.ProgramIDIndex)
-				if progErr != nil {
-					continue
-				}
-				if progID.Equals(memoPubkey) {
-					memoCount++
-					actualMemoData = instruction.Data
-				}
-			}
-			if memoCount != 1 {
-				return x402.NewVerifyError(ErrMemoCount, payer, "expected exactly one memo instruction when extra.memo is present")
-			}
-			if string(actualMemoData) != expectedMemo {
-				return x402.NewVerifyError(ErrMemoMismatch, payer, "memo data does not match extra.memo")
-			}
+		if string(partitioned.memoIx.Data) != expectedMemo {
+			return x402.NewVerifyError(ErrMemoMismatch, payer, "memo data does not match extra.memo")
 		}
 	}
 
@@ -467,9 +627,7 @@ func (f *ExactSvmScheme) verifyStaticPath(
 	// Signatures are verified locally; the fee-payer slot is unsigned until settle.
 	if err := f.signer.SimulateTransaction(ctx, tx, string(requirements.Network), nil); err != nil {
 		failure := x402.NewVerifyError(ErrTransactionSimulationFailed, payer, err.Error())
-		reader, ok := f.signer.(interface {
-			GetAccountInfo(context.Context, solana.PublicKey, string, *rpc.GetAccountInfoOpts) (*rpc.GetAccountInfoResult, error)
-		})
+		reader, ok := f.signer.(accountInfoReader)
 		if !ok {
 			return failure
 		}
@@ -509,12 +667,15 @@ func (f *ExactSvmScheme) Settle(
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
 	}
+	if wireVersion, ok := svm.PeekWireTransactionVersion(solanaPayload.Transaction); ok && !svm.IsAcceptedWireTransactionVersionIn(wireVersion, f.transactionVersions) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", wireVersion))
+	}
 	tx, err := svm.DecodeTransaction(solanaPayload.Transaction)
 	if err != nil {
 		return nil, x402.NewSettleError(ErrInvalidPayloadTransaction, "", network, "", err.Error())
 	}
-	if !svm.IsAcceptedTransactionVersion(tx.Message.GetVersion()) {
-		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", int(tx.Message.GetVersion())-1))
+	if !svm.IsAcceptedTransactionVersionIn(tx.Message.GetVersion(), f.transactionVersions) {
+		return nil, x402.NewSettleError(ErrUnsupportedTransactionVersion, "", network, "", fmt.Sprintf("unsupported transaction message version %d", svm.WireTransactionVersion(tx.Message.GetVersion())))
 	}
 	// Keyed on message hash (immune to mutable fee-payer sig at slot 0); shared
 	// by the duplicate-settlement check and the PendingSettlementStore below.
@@ -540,8 +701,30 @@ func (f *ExactSvmScheme) Settle(
 			// Best-effort payer for the response; a decode failure here doesn't
 			// block reconciliation (the payload already broadcast successfully).
 			payer, _ := svm.GetTokenPayerFromTransaction(tx)
-			isSmartWallet := f.config.EnableSmartWalletVerification && !hasStaticTransferLayout(tx)
-			return f.reconcilePendingSettlement(ctx, txKey, sigStr, payer, network, string(requirements.Network), isSmartWallet, requirements)
+			isSmartWallet := false
+			if f.config.EnableSmartWalletVerification {
+				feePayerStr, _ := requirements.Extra["feePayer"].(string)
+				feePayer, err := solana.PublicKeyFromBase58(feePayerStr)
+				// Reconciliation must not depend on retry-time requirements parsing.
+				// The broadcast transaction already records its actual fee payer.
+				isSmartWallet = true
+				if err != nil && len(tx.Message.AccountKeys) > 0 {
+					feePayer = tx.Message.AccountKeys[0]
+					err = nil
+				}
+				if err == nil && f.resolveLookups(ctx, tx, string(requirements.Network)) == nil {
+					if svm.UsesSplitTerms(requirements) {
+						legs, parseErr := svm.ParsePaymentLegs(requirements)
+						if parseErr == nil {
+							_, layoutErr := f.verifyStaticSplitLayout(tx, requirements, []string{feePayer.String()}, legs)
+							isSmartWallet = layoutErr != nil
+						}
+					} else {
+						isSmartWallet = !f.hasStaticTransferLayout(tx, feePayer)
+					}
+				}
+			}
+			return f.reconcilePendingSettlement(ctx, txKey, sigStr, payer, network, string(requirements.Network), isSmartWallet, requirements, tx)
 		}
 	}
 
@@ -589,6 +772,7 @@ func (f *ExactSvmScheme) Settle(
 		signErr       error
 		preBalance    uint64
 		hasPreBalance bool
+		legBalances   []legBalance
 	)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -597,7 +781,16 @@ func (f *ExactSvmScheme) Settle(
 		// Sign with the feePayer's signer
 		signErr = f.signer.SignTransaction(ctx, tx, expectedFeePayer, string(requirements.Network))
 	}()
-	if result.smartWallet && result.matchedTransfer != nil {
+	if result.smartWallet && result.legTransfers != nil {
+		// With splits, snapshot every leg's ATA for the balance-delta fallback.
+		if caps, ok := f.signer.(svm.SmartWalletRPCCapabilities); ok {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				legBalances = snapshotLegBalances(ctx, caps, result.legTransfers, string(requirements.Network))
+			}()
+		}
+	} else if result.smartWallet && result.matchedTransfer != nil {
 		if caps, ok := f.signer.(svm.SmartWalletRPCCapabilities); ok {
 			wg.Add(1)
 			dest := result.matchedTransfer.destination
@@ -638,7 +831,15 @@ func (f *ExactSvmScheme) Settle(
 
 	if result.smartWallet {
 		caps, ok := f.signer.(svm.SmartWalletRPCCapabilities)
-		if !ok || !f.postSettlementVerified(ctx, caps, signature, string(requirements.Network), requirements, result, preBalance, hasPreBalance) {
+		verified := false
+		if ok {
+			if result.legs != nil {
+				verified = f.postSettlementLegsVerified(ctx, caps, signature, string(requirements.Network), requirements, result.legs, result.topLevelTransfers, legBalances)
+			} else {
+				verified = f.postSettlementVerified(ctx, caps, signature, string(requirements.Network), requirements, result, preBalance, hasPreBalance)
+			}
+		}
+		if !verified {
 			return nil, x402.NewSettleError(ErrPostSettlementTransferNotConfirmed, result.response.Payer, network, signature.String(), ErrPostSettlementTransferNotConfirmed)
 		}
 	}
@@ -673,20 +874,64 @@ func (f *ExactSvmScheme) postSettlementVerified(
 	return verifyPostSettlement(ctx, caps, signature, network, requirements, publicKeysToStrings(f.signer.GetAddresses(ctx, network)), balanceBefore, knownATA)
 }
 
-func hasStaticTransferLayout(tx *solana.Transaction) bool {
-	n := len(tx.Message.Instructions)
-	if n < 3 || n > 7 {
-		return false
+// snapshotLegBalances reads each matched leg ATA's balance before broadcast,
+// in leg order. A confirmed missing account has a zero balance; an unreadable account has a nil balance.
+func snapshotLegBalances(ctx context.Context, caps svm.SmartWalletRPCCapabilities, transfers []transferCheckedInfo, network string) []legBalance {
+	balances := make([]legBalance, len(transfers))
+	for i, t := range transfers {
+		balances[i] = legBalance{ata: t.destination}
+		if b, exists, err := caps.GetTokenAccountBalance(ctx, t.destination, network); err == nil {
+			before := uint64(0)
+			if exists {
+				before = b
+			}
+			balances[i].before = &before
+		}
 	}
-	transfer := tx.Message.Instructions[2]
-	programID, err := tx.Message.Program(transfer.ProgramIDIndex)
+	return balances
+}
+
+// postSettlementLegsVerified confirms every leg of a split charge landed
+// on-chain (§3.4).
+func (f *ExactSvmScheme) postSettlementLegsVerified(
+	ctx context.Context,
+	caps svm.SmartWalletRPCCapabilities,
+	signature solana.Signature,
+	network string,
+	requirements types.PaymentRequirements,
+	legs []svm.PaymentLeg,
+	topLevel []transferCheckedInfo,
+	balances []legBalance,
+) bool {
+	asset, err := solana.PublicKeyFromBase58(requirements.Asset)
 	if err != nil {
 		return false
 	}
-	if !isTokenProgram(programID) {
+	destinations, err := deriveLegDestinations(legs, asset)
+	if err != nil {
 		return false
 	}
-	return len(transfer.Data) >= 10 && transfer.Data[0] == ixTokenTransferChecked
+	verified, _ := verifyPostSettlementLegs(ctx, caps, signature, network, destinations, asset,
+		publicKeysToStrings(f.signer.GetAddresses(ctx, network)), topLevel, balances)
+	return verified
+}
+
+// staticTransferIndex is the Path 1 position of the TransferChecked: after the
+// two ComputeBudget instructions on legacy and version 0, first on version 1.
+func staticTransferIndex(tx *solana.Transaction) int {
+	if tx.Message.GetVersion() == solana.MessageVersionV1 {
+		return 0
+	}
+	return 2
+}
+
+// hasStaticTransferLayout is a cheap, local structural check for whether a
+// transaction matches Path 1's static layout, including any configured
+// preflight/postflight allowlist blocks. Used to re-derive which verification
+// path a pending settlement originally used, without re-simulating.
+func (f *ExactSvmScheme) hasStaticTransferLayout(tx *solana.Transaction, feePayer solana.PublicKey) bool {
+	_, err := f.resolveProtocolLayout(tx, feePayer)
+	return err == nil
 }
 
 // reconcilePendingSettlement handles a PendingSettlementStore cache hit: a
@@ -704,6 +949,7 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 	networkStr string,
 	isSmartWallet bool,
 	requirements types.PaymentRequirements,
+	tx *solana.Transaction,
 ) (*x402.SettleResponse, error) {
 	signature, err := solana.SignatureFromBase58(sigStr)
 	if err != nil {
@@ -720,7 +966,19 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 
 	if isSmartWallet {
 		caps, ok := f.signer.(svm.SmartWalletRPCCapabilities)
-		if !ok || !verifyPostSettlement(ctx, caps, signature, networkStr, requirements, publicKeysToStrings(f.signer.GetAddresses(ctx, networkStr)), nil, nil) {
+		verified := false
+		if ok {
+			// No pre-broadcast balance snapshot is available here, so only the
+			// innerInstructions method applies; the balance-delta fallback is skipped.
+			if svm.UsesSplitTerms(requirements) {
+				legs, legsErr := svm.ParsePaymentLegs(requirements)
+				verified = legsErr == nil &&
+					f.postSettlementLegsVerified(ctx, caps, signature, networkStr, requirements, legs, topLevelTransfersOf(tx), nil)
+			} else {
+				verified = verifyPostSettlement(ctx, caps, signature, networkStr, requirements, publicKeysToStrings(f.signer.GetAddresses(ctx, networkStr)), nil, nil)
+			}
+		}
+		if !verified {
 			return nil, x402.NewSettleError(ErrPostSettlementTransferNotConfirmed, payer, network, sigStr, ErrPostSettlementTransferNotConfirmed)
 		}
 	}
@@ -733,35 +991,57 @@ func (f *ExactSvmScheme) reconcilePendingSettlement(
 	}, nil
 }
 
-// verifyComputeLimitInstruction verifies the compute unit limit instruction
-func (f *ExactSvmScheme) verifyComputeLimitInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID, err := tx.Message.Program(inst.ProgramIDIndex)
-	if err != nil || !progID.Equals(solana.ComputeBudget) {
-		return errors.New(ErrComputeLimitInstruction)
+// verifyTransactionV1Config applies the Path 1 compute caps to a version-1
+// message config (SIMD-0385), which replaces the ComputeBudget instructions.
+func (f *ExactSvmScheme) verifyTransactionV1Config(tx *solana.Transaction) error {
+	maxComputeUnits := f.maxComputeUnits()
+	maxPrice := uint64(svm.MaxComputeUnitPriceMicrolamports)
+	if f.config.MaxPriorityFeeMicroLamports != nil {
+		maxPrice = *f.config.MaxPriorityFeeMicroLamports
 	}
+	return staticV1ConfigError(svm.ValidateTransactionV1Config(&tx.Message, maxComputeUnits, maxPrice))
+}
 
-	// Check discriminator (should be 2 for SetComputeUnitLimit)
-	if len(inst.Data) < 5 || inst.Data[0] != ixSetComputeUnitLimit {
+// staticV1ConfigError maps a version-1 config violation to the Path 1 reason
+// codes the same rule carries on legacy and version 0.
+func staticV1ConfigError(violation svm.TransactionV1ConfigViolation) error {
+	switch violation {
+	case svm.TransactionV1ConfigOK:
+		return nil
+	case svm.TransactionV1ComputeBudgetInstruction:
+		return errors.New(ErrTransactionV1ComputeBudgetIx)
+	case svm.TransactionV1HeapSize:
+		return errors.New(ErrTransactionV1HeapSize)
+	case svm.TransactionV1ComputeUnitLimitMissing:
+		return errors.New(ErrComputeLimitInstruction)
+	case svm.TransactionV1ComputeUnitLimitTooHigh:
+		return errors.New(ErrComputeLimitInstructionTooHigh)
+	case svm.TransactionV1LoadedAccountsDataSizeLimitMissing:
+		return errors.New(ErrLoadedAccountsDataSizeLimitMissing)
+	default:
+		return errors.New(ErrComputePriceInstructionTooHigh)
+	}
+}
+
+// verifyComputeLimitInstruction verifies the payload of the compute unit limit
+// instruction (its role was already established by classification).
+func (f *ExactSvmScheme) verifyComputeLimitInstruction(inst solana.CompiledInstruction) error {
+	if len(inst.Data) < 5 {
 		return errors.New(ErrComputeLimitInstruction)
 	}
 
 	units := binary.LittleEndian.Uint32(inst.Data[1:5])
-	if f.config.MaxComputeUnits != nil && units > *f.config.MaxComputeUnits {
+	if units > f.maxComputeUnits() {
 		return errors.New(ErrComputeLimitInstructionTooHigh)
 	}
 
 	return nil
 }
 
-// verifyComputePriceInstruction verifies the compute unit price instruction
-func (f *ExactSvmScheme) verifyComputePriceInstruction(tx *solana.Transaction, inst solana.CompiledInstruction) error {
-	progID, err := tx.Message.Program(inst.ProgramIDIndex)
-	if err != nil || !progID.Equals(solana.ComputeBudget) {
-		return errors.New(ErrComputePriceInstruction)
-	}
-
-	// Check discriminator (should be 3 for SetComputeUnitPrice)
-	if len(inst.Data) < 9 || inst.Data[0] != ixSetComputeUnitPrice {
+// verifyComputePriceInstruction verifies the payload of the compute unit price
+// instruction (its role was already established by classification).
+func (f *ExactSvmScheme) verifyComputePriceInstruction(inst solana.CompiledInstruction) error {
+	if len(inst.Data) < 9 {
 		return errors.New(ErrComputePriceInstruction)
 	}
 
@@ -869,4 +1149,15 @@ func (f *ExactSvmScheme) verifyTransferInstruction(
 		destination: destATA,
 		authority:   accounts[3].PublicKey,
 	}, nil
+}
+
+// topLevelTransfersOf returns the top-level TransferChecked instructions of
+// a decoded transaction. A transaction using Address Lookup Tables that are
+// not resolved locally yields only the transfers whose accounts resolve, so
+// callers fall back to the confirmed CPI trace for the rest.
+func topLevelTransfersOf(tx *solana.Transaction) []transferCheckedInfo {
+	if tx == nil {
+		return nil
+	}
+	return extractTopLevelTransfers(tx)
 }

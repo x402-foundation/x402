@@ -43,11 +43,13 @@ import {
 import { getStablecoinTokenProgram, validateSvmAddress } from "../../utils";
 import {
   CLIENT_VOUCHER_EXPIRES_AT,
+  DYNAMIC_EXTRA_FIELDS,
   FULL_SPLIT_BPS,
   MAX_WITHDRAW_DELAY,
   MIN_WITHDRAW_DELAY,
 } from "../constants";
-import { BatchError } from "../errors";
+import { ErrUnsupportedTransactionVersion } from "../../exact/facilitator/errors";
+import { BatchError, rethrowSetupTransactionError } from "../errors";
 import { verifyBatchAuthorization } from "../authorization";
 import { signCloseAuthorization } from "../closeAuthorization";
 import { encodeReceiverBindingMemo } from "../receiverBinding";
@@ -61,7 +63,11 @@ import type {
 } from "../types";
 import { BATCH_SETTLEMENT_SCHEME, isBatchPayload, proofOf } from "../types";
 import { type BatchOperationStore, MemoryBatchOperationStore } from "./operationStore";
-import { BatchChannelManager, type BatchChannelManagerConfig } from "./channelManager";
+import {
+  BatchChannelManager,
+  type BatchChannelManagerConfig,
+  type RedemptionCapacity,
+} from "./channelManager";
 import { MemoryChannelStore } from "./storage";
 import {
   CHANNEL_BUSY,
@@ -106,7 +112,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
   readonly paymentFlows = {
     channel: { default: "authorization", supported: ["authorization"] },
   } as const satisfies Record<string, PaymentFlowConfig>;
-  readonly dynamicExtraFields = ["recentBlockhash", "recentSlot"];
+  readonly dynamicExtraFields = [...DYNAMIC_EXTRA_FIELDS];
   readonly schemeHooks: SchemeServerHooks;
 
   private readonly store: ChannelStore;
@@ -116,6 +122,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
     DeepReadonly<PaymentPayload>,
     Record<string, unknown>
   >();
+  private readonly redemptionCapacity = new Map<Network, RedemptionCapacity>();
   private moneyParsers: MoneyParser[] = [];
   private reservationSequence = 0;
 
@@ -161,7 +168,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       let voucher: BatchVoucher;
       if (raw.voucher) {
         if (BigInt(raw.voucher.maxClaimableAmount) !== cumulative) {
-          throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+          throw new Error(BatchError.CLOSE_STATE);
         }
         voucher = raw.voucher;
       } else if (!serverMode) {
@@ -330,6 +337,10 @@ export class BatchSvmScheme implements SchemeNetworkServer {
         `a base58 Solana address is required`
       );
     }
+    this.redemptionCapacity.set(network, {
+      maxClaimChannels: positiveInteger(supportedKind.extra?.maxClaimChannels),
+      maxSettleChannels: positiveInteger(supportedKind.extra?.maxSettleChannels),
+    });
     if (this.config.receiverAuthorizer) return;
 
     const advertised = supportedKind.extra?.receiverAuthorizer;
@@ -435,36 +446,30 @@ export class BatchSvmScheme implements SchemeNetworkServer {
    * accumulated vouchers and distributes what they settle, through the same
    * facilitator the server verifies with.
    *
-   * `requirements` are the terms channels were opened against — network,
-   * asset, `payTo` and `extra.feePayer` — normally the output of
-   * {@link enhancePaymentRequirements} for the route's requirements and the
-   * facilitator's `/supported` kind.
+   * Redemption terms come from each stored channel, and batch capacity from
+   * the facilitator's `/supported` kind recorded at server initialization
+   * (four channels per batch before then).
    *
    * @param facilitator - Facilitator client that submits redemption payloads
-   * @param requirements - Enhanced requirements the channels were opened against
+   * @param network - Network whose channels the worker redeems
    * @param options - Worker tuning: batch size, watermark reader, error hook
    * @returns A worker the caller starts, or drives with `redeem()`
    */
   createChannelManager(
     facilitator: Pick<FacilitatorClient, "settle">,
-    requirements: PaymentRequirements,
+    network: Network,
     options: Omit<
       BatchChannelManagerConfig,
-      "store" | "settle" | "requirements" | "receiverAuthorizer"
+      "store" | "settle" | "network" | "capacity" | "receiverAuthorizer"
     > = {},
   ): BatchChannelManager {
-    if (typeof requirements.extra?.feePayer !== "string") {
-      throw new Error(
-        "createChannelManager requires requirements.extra.feePayer; pass the requirements " +
-          "returned by enhancePaymentRequirements for the facilitator's /supported kind",
-      );
-    }
     return new BatchChannelManager({
       ...options,
       ...(this.config.receiverAuthorizer
         ? { receiverAuthorizer: this.config.receiverAuthorizer }
         : {}),
-      requirements,
+      capacity: () => this.redemptionCapacity.get(network),
+      network,
       settle: (payload, accepted) =>
         facilitator.settle(payload as unknown as PaymentPayload, accepted),
       store: this.store,
@@ -532,6 +537,16 @@ export class BatchSvmScheme implements SchemeNetworkServer {
       if (state) {
         this.assertStoredConfig(state, raw.channelConfig, ctx.requirements);
       }
+      // Once the payer has started a forced close, `settle` is unavailable, so
+      // a further paid request is refused (spec 4.5: a voucher or
+      // authorization against a Closing channel fails with channel_closing).
+      if (
+        (raw.type === "voucher" || raw.type === "authorization") &&
+        state !== undefined &&
+        (state.status === "closing" || state.closeRequestedAt !== undefined)
+      ) {
+        throw new Error(BatchError.CHANNEL_CLOSING);
+      }
       if (raw.type === "deposit" && !state) {
         const extra = ctx.requirements.extra!;
         const receiverAuthorizer = extra.receiverAuthorizer;
@@ -554,11 +569,7 @@ export class BatchSvmScheme implements SchemeNetworkServer {
             withdrawDelay: raw.channelConfig.withdrawDelay,
           });
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          const reason = detail.includes("receiver binding")
-            ? BatchError.RECEIVER_AUTHORIZER_MISMATCH
-            : BatchError.SETUP_TRANSACTION;
-          throw new Error(`${reason}: ${detail}`);
+          rethrowSetupTransactionError(error);
         }
       }
 
@@ -636,8 +647,12 @@ export class BatchSvmScheme implements SchemeNetworkServer {
           });
         } else {
           if (!raw.voucher) throw new Error(BatchError.VOUCHER_SIGNATURE);
+          // A cooperative close settles at the accepted cumulative; a voucher
+          // at any other watermark cannot close the channel (spec 7: close_state).
           if (BigInt(raw.voucher.maxClaimableAmount) !== state.chargedCumulativeAmount) {
-            throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
+            throw new Error(
+              `${BatchError.CLOSE_STATE}: refund voucher ${raw.voucher.maxClaimableAmount} is not the accepted cumulative ${state.chargedCumulativeAmount}`,
+            );
           }
           this.requestContexts.set(ctx.paymentPayload, { channelId });
         }
@@ -1726,6 +1741,16 @@ function parsePositiveAmount(value: string, field: string): bigint {
 }
 
 /**
+ * Read an advertised batch capacity, ignoring anything but a positive safe integer.
+ *
+ * @param value - The `/supported` extra field
+ * @returns The capacity, or undefined when none was advertised
+ */
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
  * Map thrown errors to batch-settlement machine reasons for hook responses.
  *
  * @param error - Caught error from hook logic
@@ -1734,5 +1759,6 @@ function parsePositiveAmount(value: string, field: string): bigint {
 function classifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes(CHANNEL_BUSY)) return CHANNEL_BUSY;
+  if (message.startsWith(ErrUnsupportedTransactionVersion)) return ErrUnsupportedTransactionVersion;
   return Object.values(BatchError).find(value => message.includes(value)) ?? "transaction_failed";
 }

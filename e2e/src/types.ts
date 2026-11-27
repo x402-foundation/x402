@@ -3,7 +3,13 @@ import type { NetworkSet, ProtocolFamily } from './networks/networks';
 export type { ProtocolFamily } from './networks/networks';
 export type Transport = 'http' | 'mcp';
 export type PaymentScheme = 'exact' | 'upto' | 'batch-settlement' | 'auth-capture';
-export type AssetTransferMethod = 'eip3009' | 'permit2' | 'sequence' | 'ticketSequence';
+export type AssetTransferMethod =
+  | 'eip3009'
+  | 'permit2'
+  | 'sequence'
+  | 'ticketSequence'
+  | 'cryptoTransfer'
+  | 'transferExecutor';
 /** Payment ordering on the accept. Omitted on an endpoint means `authorization`. */
 export type PaymentFlow = 'authorization' | 'upfront' | 'escrow';
 
@@ -21,6 +27,9 @@ export function endpointAssetTransferMethod(endpoint: TestEndpoint): AssetTransf
   }
   if (family === 'xrpl') {
     return 'sequence';
+  }
+  if (family === 'hedera') {
+    return 'cryptoTransfer';
   }
   return undefined;
 }
@@ -219,6 +228,8 @@ export interface TestEndpoint {
   sdks?: string[];
   /** Catalog SDKs that implement only the client role. */
   clientSdks?: string[];
+  /** Catalog SDKs that implement the facilitator role for this route. */
+  facilitatorSdks?: string[];
   /** For MCP tools: the tool name used in tools/call. Defaults to path if not specified. */
   toolName?: string;
   /** For MCP tools: expected MCP wire transport for discovery metadata. */

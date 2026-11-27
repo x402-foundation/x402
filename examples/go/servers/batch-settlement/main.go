@@ -208,66 +208,24 @@ func main() {
 		svmScheme := batchsvmserver.NewBatchSvmScheme(svmCfg)
 		schemes = append(schemes, nethttpmw.SchemeConfig{Network: svmNetwork, Server: svmScheme})
 
-		initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		supported, err := facilitator.GetSupported(initCtx)
-		if err != nil {
-			fmt.Printf("Failed to fetch facilitator /supported: %v\n", err)
-			os.Exit(1)
-		}
-		var svmKind *types.SupportedKind
-		for i := range supported.Kinds {
-			kind := supported.Kinds[i]
-			if kind.Scheme == svmbatch.Scheme && kind.Network == string(svmNetwork) {
-				svmKind = &supported.Kinds[i]
-				break
-			}
-		}
-		if svmKind != nil {
-			baseRequirements := types.PaymentRequirements{
-				Scheme:            svmbatch.Scheme,
-				Network:           string(svmNetwork),
-				Amount:            "10000",
-				Asset:             svm.USDCDevnetAddress,
-				PayTo:             svmAddress,
-				MaxTimeoutSeconds: 300,
-				Extra:             map[string]interface{}{},
-			}
-			svmRequirements, err := svmScheme.EnhancePaymentRequirements(initCtx, baseRequirements, *svmKind, nil)
-			if err != nil {
-				fmt.Printf("Failed to enhance SVM payment requirements: %v\n", err)
-				os.Exit(1)
-			}
-			svmRPCURL := strings.TrimSpace(os.Getenv("SVM_RPC_URL"))
-			svmManager, err = svmScheme.CreateChannelManager(facilitator, svmRequirements, batchsvmserver.BatchChannelManagerConfig{
-				RPCURL: svmRPCURL,
-				OnClaim: func(r batchsvmserver.ClaimResult) {
-					fmt.Printf("[SVM] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
-				},
-				OnSettle: func(r batchsvmserver.SettleResult) {
-					fmt.Printf("[SVM] Settled to %s (tx: %s)\n", svmAddress, r.Transaction)
-				},
-				OnSeal: func(r batchsvmserver.SealResult) {
-					fmt.Printf("[SVM] Sealed channel %s (tx: %s)\n", r.Channel, r.Transaction)
-				},
-				OnError: func(err error) {
-					fmt.Printf("[SVM] Settlement error: %v\n", err)
-				},
-			})
-			if err != nil {
-				fmt.Printf("Failed to create SVM channel manager: %v\n", err)
-				os.Exit(1)
-			}
-			const svmRedemptionIntervalSecs = 60
-			svmManager.Start(svmRedemptionIntervalSecs)
-			maxIdle := svmKind.Extra[svmbatch.ExtraMaxIdleSecs]
-			fmt.Printf(
-				"[SVM] Redeeming every %ds; facilitator idle window: %vs\n",
-				svmRedemptionIntervalSecs, formatAny(maxIdle),
-			)
-		} else {
-			fmt.Println("[SVM] facilitator does not advertise batch-settlement; no redemption worker started")
-		}
+		svmManager = svmScheme.CreateChannelManager(facilitator, svmNetwork, batchsvmserver.BatchChannelManagerConfig{
+			RPCURL: strings.TrimSpace(os.Getenv("SVM_RPC_URL")),
+			OnClaim: func(r batchsvmserver.ClaimResult) {
+				fmt.Printf("[SVM] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
+			},
+			OnSettle: func(r batchsvmserver.SettleResult) {
+				fmt.Printf("[SVM] Settled to %s (tx: %s)\n", svmAddress, r.Transaction)
+			},
+			OnSeal: func(r batchsvmserver.SealResult) {
+				fmt.Printf("[SVM] Sealed channel %s (tx: %s)\n", r.Channel, r.Transaction)
+			},
+			OnError: func(err error) {
+				fmt.Printf("[SVM] Settlement error: %v\n", err)
+			},
+		})
+		const svmRedemptionIntervalSecs = 60
+		svmManager.Start(svmRedemptionIntervalSecs)
+		fmt.Printf("[SVM] Redeeming every %ds\n", svmRedemptionIntervalSecs)
 
 		accepts = append(accepts, x402http.PaymentOption{
 			Scheme:  svmbatch.Scheme,
@@ -427,11 +385,4 @@ func decodePaymentSignatureHeader(r *http.Request) (*types.PaymentPayload, error
 		return nil, fmt.Errorf("only v2 payment signatures are supported")
 	}
 	return types.ToPaymentPayload(jsonBytes)
-}
-
-func formatAny(v interface{}) string {
-	if v == nil {
-		return "none"
-	}
-	return fmt.Sprint(v)
 }

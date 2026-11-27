@@ -31,6 +31,17 @@ func VerifySignatureStrict(
 	if err != nil {
 		return false, fmt.Errorf("VerifySignatureStrict: GetCode failed: %w", err)
 	}
+	return VerifySignatureStrictWithCode(ctx, signer, address, hash, signature, code)
+}
+
+// VerifySignatureStrictWithCode routes verification using the caller's bytecode lookup.
+func VerifySignatureStrictWithCode(
+	ctx context.Context,
+	signer FacilitatorEvmSigner,
+	address string,
+	hash [32]byte,
+	signature, code []byte,
+) (bool, error) {
 	if len(code) == 0 {
 		// EOA path: pure ecrecover. A malformed or unrecoverable signature is simply
 		// invalid (false), not a system error — discard the verification error.

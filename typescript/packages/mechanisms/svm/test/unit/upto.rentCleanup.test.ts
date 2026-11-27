@@ -4,7 +4,7 @@ import type { Network } from "@x402/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SOLANA_DEVNET_CAIP2, TOKEN_PROGRAM_ADDRESS } from "../../src/constants";
-import { USDC_DEVNET_ADDRESS } from "../../src/defaultAssets";
+import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAssets";
 import {
   buildReclaimInstruction,
   ChannelStatus,
@@ -19,9 +19,11 @@ import {
 } from "../../src/payment-channels/storage";
 import {
   DEFAULT_MAX_RECLAIMS_PER_TX_V1,
+  MAX_SAFE_RECLAIMS_PER_TX,
   UptoSvmRentCleanupManager,
 } from "../../src/upto/facilitator/rentCleanupManager";
 import { UptoSvmScheme } from "../../src/upto/facilitator/scheme";
+import { peekWireTransactionVersion } from "../../src/utils";
 
 const NETWORK = SOLANA_DEVNET_CAIP2 as Network;
 
@@ -422,6 +424,74 @@ describe("UptoSvmRentCleanupManager — cleanup", () => {
     expect(submitSettleMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["unset defaults to v1", undefined, 1],
+    ["explicit v0", 0, 0],
+  ] as const)(
+    "builds the configured facilitator transaction version: %s",
+    async (_name, facilitatorTransactionVersion, wantVersion) => {
+      const actual = await vi.importActual<typeof import("../../src/payment-channels/facilitator")>(
+        "../../src/payment-channels/facilitator",
+      );
+      submitSettleMock.mockImplementation(actual.submitChannelTransactionWithSigner);
+      const sendTransaction = vi.fn().mockResolvedValue(USDC_MAINNET_ADDRESS);
+      const signer = {
+        ...toFacilitatorSvmSigner(feePayer),
+        getLatestBlockhash: async () => ({
+          blockhash: USDC_MAINNET_ADDRESS,
+          lastValidBlockHeight: 1n,
+        }),
+        simulateTransaction: vi.fn().mockResolvedValue(undefined),
+        sendTransaction,
+        confirmTransaction: vi.fn().mockResolvedValue(undefined),
+      };
+      // Built via the scheme to cover config.facilitatorTransactionVersion propagation.
+      manager = new UptoSvmScheme(signer, {
+        channelStorage: storage,
+        facilitatorTransactionVersion,
+      }).createRentCleanupManager(NETWORK);
+      await seed();
+      fetchMaybeChannelMock.mockResolvedValue(
+        channelAccount({ status: ChannelStatus.Distributed }),
+      );
+      getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
+
+      const onError = vi.fn();
+      await manager.cleanup({ maxTxsPerSigner: 1, onError });
+
+      expect(onError).not.toHaveBeenCalled();
+      expect(sendTransaction).toHaveBeenCalledOnce();
+      expect(peekWireTransactionVersion(sendTransaction.mock.calls[0]![0])).toBe(wantVersion);
+    },
+  );
+
+  it("caps v0 reclaim batches at the safe limit", async () => {
+    manager = new UptoSvmRentCleanupManager({
+      facilitatorTransactionVersion: 0,
+      network: NETWORK,
+      signer: toFacilitatorSvmSigner(feePayer),
+      storage,
+    });
+    for (let i = 0; i < MAX_SAFE_RECLAIMS_PER_TX + 4; i++) {
+      await seed();
+    }
+    fetchMaybeChannelMock.mockResolvedValue(channelAccount({ status: ChannelStatus.Distributed }));
+    getSlotMock.mockResolvedValue(CURRENT_SLOT_READY);
+
+    const onError = vi.fn();
+    await manager.cleanup({ maxReclaimsPerTx: DEFAULT_MAX_RECLAIMS_PER_TX_V1, onError });
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(
+      submitSettleMock,
+      "a v0 batch never exceeds MAX_SAFE_RECLAIMS_PER_TX",
+    ).toHaveBeenCalledTimes(2);
+    for (const call of submitSettleMock.mock.calls) {
+      expect(call[3].length).toBeLessThanOrEqual(MAX_SAFE_RECLAIMS_PER_TX);
+      expect(call[4].facilitatorTransactionVersion ?? 0).toBe(0);
+    }
+  });
+
   // A misconfigured non-positive maxReclaimsPerTx must fall back to the
   // default instead of spinning the batching loop forever (`i += 0`).
   it.each([undefined, 0, -1, NaN, Infinity])(
@@ -487,6 +557,129 @@ describe("UptoSvmRentCleanupManager — cleanup", () => {
       expect.objectContaining({ message: expect.stringContaining("missing payTo") }),
       expect.objectContaining({ channelId: expect.any(String) }),
     );
+  });
+
+  it.each([
+    {
+      name: "abandon-close of an expired Open channel",
+      status: ChannelStatus.Open,
+      action: "abandon_close",
+    },
+    { name: "distribute of a Sealed channel", status: ChannelStatus.Sealed, action: "distribute" },
+  ])(
+    "passes the channel parties to beforeCloseOrDistribute before signing: $name",
+    async ({ status, action }) => {
+      const nowSecs = Math.floor(Date.now() / 1_000);
+      const record = await seed({ expiresAt: nowSecs - 3_600 });
+      fetchMaybeChannelMock
+        .mockResolvedValueOnce(channelAccount({ status }))
+        .mockResolvedValueOnce({ exists: false });
+
+      const beforeCloseOrDistribute = vi.fn(() => {
+        expect(submitSettleMock).not.toHaveBeenCalled();
+      });
+      const onClose = vi.fn();
+      await manager.cleanup({ beforeCloseOrDistribute, onClose });
+
+      expect(beforeCloseOrDistribute).toHaveBeenCalledTimes(1);
+      expect(beforeCloseOrDistribute).toHaveBeenCalledWith({
+        channelId: record.channelId,
+        payer: payer.address,
+        payTo: payTo.address,
+        action,
+      });
+      expect(onClose).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: record.channelId, action }),
+      );
+    },
+  );
+
+  it("skips a channel beforeCloseOrDistribute rejects, reports it, and keeps the close slot", async () => {
+    const first = await seed();
+    const second = await seed();
+    const [rejected, allowed] = [first, second].sort((a, b) =>
+      a.channelId < b.channelId ? -1 : 1,
+    );
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        channelId === allowed.channelId && submitSettleMock.mock.calls.length > 0
+          ? { exists: false }
+          : channelAccount({ status: ChannelStatus.Sealed }),
+      ),
+    );
+    const blocked = new Error("blocked");
+
+    const onClose = vi.fn();
+    const onError = vi.fn();
+    await manager.cleanup({
+      maxClosesPerRun: 1,
+      beforeCloseOrDistribute: candidate => {
+        if (candidate.channelId === rejected.channelId) throw blocked;
+      },
+      onClose,
+      onError,
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.calls[0]![0].channelId).toBe(allowed.channelId);
+    expect(submitSettleMock).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(blocked, { channelId: rejected.channelId });
+    expect(await storage.get(NETWORK, rejected.channelId)).toBeDefined();
+  });
+
+  it("does not call beforeCloseOrDistribute for reclaim or deferred channels", async () => {
+    const nowSecs = Math.floor(Date.now() / 1_000);
+    const deferred = await seed({ expiresAt: nowSecs + 3_600 });
+    const distributed = await seed();
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        channelAccount({
+          status: channelId === deferred.channelId ? ChannelStatus.Open : ChannelStatus.Distributed,
+        }),
+      ),
+    );
+
+    const beforeCloseOrDistribute = vi.fn(() => {
+      throw new Error("must not be screened");
+    });
+    const onReclaim = vi.fn();
+    const onError = vi.fn();
+    await manager.cleanup({ beforeCloseOrDistribute, onReclaim, onError });
+
+    expect(beforeCloseOrDistribute).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onReclaim).toHaveBeenCalledTimes(1);
+    expect(onReclaim.mock.calls[0]![0].channelIds).toEqual([distributed.channelId]);
+  });
+
+  // The hook may call an external service, so a channel that cannot close this
+  // pass must not be screened; reclaim batches run after the scan.
+  it("does not call beforeCloseOrDistribute once the close budget is spent", async () => {
+    const nowSecs = Math.floor(Date.now() / 1_000);
+    const closable = [
+      await seed({ expiresAt: nowSecs - 3_600 }),
+      await seed({ expiresAt: nowSecs - 3_600 }),
+      await seed({ expiresAt: nowSecs - 3_600 }),
+    ];
+    const distributed = await seed();
+    fetchMaybeChannelMock.mockImplementation((_rpc: unknown, channelId: string) =>
+      Promise.resolve(
+        closable.some(record => record.channelId === channelId)
+          ? channelAccount({ status: ChannelStatus.Sealed })
+          : channelAccount({ status: ChannelStatus.Distributed }),
+      ),
+    );
+
+    const beforeCloseOrDistribute = vi.fn();
+    const onClose = vi.fn();
+    const onReclaim = vi.fn();
+    await manager.cleanup({ maxClosesPerRun: 1, beforeCloseOrDistribute, onClose, onReclaim });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(beforeCloseOrDistribute).toHaveBeenCalledTimes(1);
+    expect(onReclaim).toHaveBeenCalledTimes(1);
+    expect(onReclaim.mock.calls[0]![0].channelIds).toEqual([distributed.channelId]);
   });
 
   // The close cap must not end the record scan: reclaims are budgeted separately,

@@ -26,6 +26,8 @@ def detect_version(data: bytes | dict[str, Any]) -> int:
         parsed = json.loads(data)
     else:
         parsed = data
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment data must be a JSON object")
 
     version = parsed.get("x402Version")
     if version is None:
@@ -57,6 +59,8 @@ def get_scheme_and_network(
         parsed = json.loads(payload)
     else:
         parsed = payload
+    if not isinstance(parsed, dict):
+        raise ValueError("Payment payload must be a JSON object")
 
     if version == 1:
         # V1: scheme/network at top level
@@ -65,6 +69,8 @@ def get_scheme_and_network(
     else:
         # V2: scheme/network in accepted field
         accepted = parsed.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         scheme = accepted.get("scheme")
         network = accepted.get("network")
 
@@ -90,11 +96,18 @@ def match_payload_to_requirements(
 
     Returns:
         True if payload matches requirements.
+
+    Raises:
+        ValueError: If payload, requirements or accepted is not a JSON object.
     """
     if isinstance(payload, bytes):
         payload = json.loads(payload)
     if isinstance(requirements, bytes):
         requirements = json.loads(requirements)
+    if not isinstance(payload, dict):
+        raise ValueError("Payment payload must be a JSON object")
+    if not isinstance(requirements, dict):
+        raise ValueError("Payment requirements must be a JSON object")
 
     if version == 1:
         # V1: Compare scheme and network
@@ -104,6 +117,8 @@ def match_payload_to_requirements(
     else:
         # V2: Compare scheme, network, amount, asset, payTo
         accepted = payload.get("accepted", {})
+        if not isinstance(accepted, dict):
+            raise ValueError("Payment payload accepted must be a JSON object")
         return (
             accepted.get("scheme") == requirements.get("scheme")
             and accepted.get("network") == requirements.get("network")
@@ -277,6 +292,38 @@ def find_schemes_by_network(
     for pattern, scheme_map in schemes.items():
         if matches_network_pattern(network, pattern):
             return scheme_map
+
+    return None
+
+
+def find_by_network_and_scheme(
+    schemes: dict[Network, dict[str, T]],
+    scheme: str,
+    network: Network,
+) -> T | None:
+    """Find one scheme registered for a network, falling back to network patterns.
+
+    An exact-network registration wins for the same scheme. A scheme that is
+    registered only under a pattern (for example ``eip155:*``) still resolves
+    when a different scheme has an exact-network registration.
+
+    Args:
+        schemes: Map of network -> (scheme -> implementation).
+        scheme: Scheme identifier to resolve.
+        network: Specific network (e.g., "eip155:8453").
+
+    Returns:
+        The registered implementation, or None if not found.
+    """
+    exact = schemes.get(network)
+    if exact is not None and scheme in exact:
+        return exact[scheme]
+
+    for pattern, scheme_map in schemes.items():
+        if matches_network_pattern(network, pattern):
+            found = scheme_map.get(scheme)
+            if found is not None:
+                return found
 
     return None
 

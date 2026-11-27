@@ -79,6 +79,11 @@ type BatchSettlementEvmSchemeOptions struct {
 	PayerAuthorizer string
 	// VoucherSigner is an optional separate key for signing vouchers.
 	VoucherSigner evm.ClientEvmSigner
+	// RPCURL is used by the gas-sponsoring extensions for onchain reads and
+	// approval transaction fields when the signer cannot provide them.
+	RPCURL string
+	// RPCByChainID overrides RPCURL per chain ID.
+	RPCByChainID map[int64]evm.RPCChainConfig
 }
 
 // BatchSettlementEvmScheme implements SchemeNetworkClient for batched EVM payments.
@@ -105,6 +110,8 @@ func NewBatchSettlementEvmScheme(signer evm.ClientEvmSigner, config *BatchSettle
 		cfg.DepositStrategy = config.DepositStrategy
 		cfg.PayerAuthorizer = config.PayerAuthorizer
 		cfg.VoucherSigner = config.VoucherSigner
+		cfg.RPCURL = config.RPCURL
+		cfg.RPCByChainID = config.RPCByChainID
 	}
 
 	storage := cfg.Storage
@@ -825,24 +832,24 @@ func (c *BatchSettlementEvmScheme) recoverFromSignature(
 		expectedAddr = c.config.PayerAuthorizer
 	}
 
-	// Use the facilitator-style verification if the signer supports it
-	verifiable, isVerifiable := readSigner.(evm.FacilitatorEvmSigner)
-	if isVerifiable {
-		valid, verifyErr := verifiable.VerifyTypedData(
-			ctx,
-			expectedAddr,
-			domain,
-			batchsettlement.VoucherTypes,
-			"Voucher",
-			map[string]interface{}{
-				"channelId":          channelIdRawBytes,
-				"maxClaimableAmount": signed,
-			},
-			sigBytes,
-		)
-		if verifyErr != nil || !valid {
-			return false, nil //nolint:nilerr // signature mismatch = not recoverable
-		}
+	// Client signers do not implement verification. Recover here, and only store a
+	// signature x402BatchSettlement's ECDSA recovery accepts.
+	if !batchsettlement.IsContractRecoverableSignature(sigBytes) {
+		return false, nil
+	}
+	valid, verifyErr := evm.VerifyEOATypedData(
+		expectedAddr,
+		domain,
+		batchsettlement.VoucherTypes,
+		"Voucher",
+		map[string]interface{}{
+			"channelId":          channelIdRawBytes,
+			"maxClaimableAmount": signed,
+		},
+		sigBytes,
+	)
+	if verifyErr != nil || !valid {
+		return false, nil //nolint:nilerr // signature mismatch = not recoverable
 	}
 
 	session := &BatchSettlementClientContext{

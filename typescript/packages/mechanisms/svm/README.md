@@ -79,15 +79,15 @@ After distribution, `BatchChannelManager` reads the confirmed channel payout wat
 
 Custom signers should return the execution slot from `confirmTransaction`, honor `minContextSlot`, and implement `getConfirmedTransaction` with confirmed token-balance metadata. The default adapter supports these capabilities. Missing payout metadata leaves the original transaction pending.
 
-When a sealed channel's receiver is also the refund recipient or protocol treasury, aggregate token balances can combine earnings with other credits. That payout is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and the sweep queue is released so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
+When a channel's receiver is also its payer or the protocol treasury, aggregate token balances can combine earnings with other credits. A sweep, seal or cooperative refund of that channel is answered with `invalid_batch_settlement_svm_payout_attribution_ambiguous` and the transaction signature instead of the combined amount, and a sweep releases its queue so later sweeps of those channels are not blocked. The transaction has completed onchain: reconcile it by signature, and never repeat it as a replacement payment. The `onDistributionConfirmed` callback is not invoked for it because no amount can be attributed.
 
 ### V1 Package (`@x402/svm/v1`)
 
 **V1 Protocol Support** - Legacy x402 protocol with simple network names
 
 **Exports:**
-- `ExactSvmClientV1` - V1 client implementation
-- `ExactSvmFacilitatorV1` - V1 facilitator implementation
+- `ExactSvmSchemeV1` - V1 client implementation
+- `ExactSvmSchemeV1` (from `@x402/svm/exact/v1/facilitator`) - V1 facilitator implementation
 - `NETWORKS` - Array of all supported V1 network names
 
 **Supported V1 Networks:**
@@ -168,8 +168,8 @@ import { ExactSvmSchemeV1 } from "@x402/svm/v1";
 const client = new x402Client()
   .register("solana:*", new ExactSvmScheme(signer)) // fixed-price
   .register("solana:*", new UptoSvmScheme(signer))  // usage-based
-  .registerSchemeV1("solana-devnet", new ExactSvmSchemeV1(signer))
-  .registerSchemeV1("solana", new ExactSvmSchemeV1(signer));
+  .registerV1("solana-devnet", new ExactSvmSchemeV1(signer))
+  .registerV1("solana", new ExactSvmSchemeV1(signer));
 ```
 
 ### 3. Using Config (Flexible)
@@ -219,6 +219,21 @@ Supports SPL Token and Token-2022 program tokens:
 - Partial signing (client signs, facilitator completes and submits)
 
 **Upto** uses the payment-channels program (`open` → escrow deposit, then `settle_and_seal` + `distribute` with a server voucher for the actual amount). Details in [Upto SVM Scheme](./src/upto/README.md).
+
+## Multi-Payee Splits (Exact)
+
+An `exact` payment can pay the merchant and up to eight other recipients in one transaction, as specified in [scheme_exact_svm.md §5](../../../../specs/schemes/exact/scheme_exact_svm.md). The server declares each split as an absolute carve-out in the route's `extra`; `payTo` receives the remainder.
+
+```typescript
+extra: {
+  splits: [{ payTo: platformAddress, amount: "50000", memo: "platform fee" }],
+}
+```
+
+- **Facilitator**: splits are off by default. Pass `maxSplits` (0–8) to accept them and `ataCreationSponsored: true` to fund `CreateIdempotent` for recipients marked `ataCreationRequired`; both are advertised in `/supported`. Each sponsored creation spends about 0.002 SOL of facilitator funds. A recipient can close its ATA, reclaim the rent, and trigger sponsorship again on the next charge. Enabling this option therefore permits repeated rent extraction unless the operator enforces out-of-band limits per owner and mint. Splits do not automatically charge for sponsorship; fee negotiation is not implemented.
+- **Server**: `enhancePaymentRequirements` throws when a route asks for more splits, or ATA sponsorship, than the selected facilitator advertises.
+- **Client**: valid split requirements are accepted by default. The quoted total is distributed among `payTo` and the split recipients; the facilitator pays transaction fees and authorized ATA rent. Applications that screen recipients can inspect `selectedRequirements.extra.splits` in `x402Client.onBeforePaymentCreation` and return `{ abort: true, reason }` before construction or signing, just as for `payTo`.
+- **Transaction versions**: splits work on version 0 and version 1. The client checks the built transaction against its version's size limit (1232 bytes for version 0, 4096 for version 1), so a charge with many splits and ATA creations may only fit as version 1.
 
 ## Duplicate Settlement Protection
 

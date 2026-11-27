@@ -21,6 +21,7 @@ import type {
 } from "@x402/core/types";
 
 import { verifyRequestCloseTransaction } from "../../payment-channels/close";
+import { ErrUnsupportedTransactionVersion } from "../../exact/facilitator/errors";
 import type { Channel } from "../../payment-channels/generated/accounts/channel";
 import {
   buildSettleAndSealInstructions,
@@ -45,7 +46,11 @@ import {
   type BatchSvmFacilitatorConfig,
   type ChannelBinding,
 } from "./bindingSource";
-import { distributionsForStore, type BatchPendingSettlementStore } from "./recovery";
+import {
+  distributionsForStore,
+  PayoutAttributionAmbiguousError,
+  type BatchPendingSettlementStore,
+} from "./recovery";
 import {
   CHANNEL_BUSY,
   refundResponse,
@@ -53,7 +58,7 @@ import {
   settleFailure,
   settlementPending,
 } from "./responses";
-import type { BatchDelegatedSettleContext, BatchTerms } from "./types";
+import type { BatchDelegatedSettleContext, BatchTerms, DurableBroadcastResult } from "./types";
 
 /** Terms `seal` needs: everything {@link BatchTerms} carries except who signs vouchers. */
 export type SealTerms = Omit<BatchTerms, "voucherSigner">;
@@ -65,6 +70,8 @@ export type CloseIntent = "seal" | "refund";
 export interface RefundLimits {
   maxComputeUnits?: number | undefined;
   maxPriorityFeeMicroLamports?: number | undefined;
+  /** Accepted `request_close` message versions; unset accepts `[0, 1]`. */
+  transactionVersions?: readonly number[] | undefined;
 }
 
 /** A validated refund; `requestClose` is set only on the sponsored fallback path. */
@@ -72,6 +79,12 @@ export interface PreparedRefund {
   channelId: string;
   terms: SealTerms;
   requestClose?: string | undefined;
+}
+
+/** What a confirmed seal or cooperative refund paid the receiver and returned to the payer. */
+export interface CloseAttribution {
+  paidToReceiver: bigint;
+  refundedToPayer: bigint;
 }
 
 /** Scheme internals the seal path borrows, so it can live outside the scheme file. */
@@ -115,6 +128,20 @@ export interface SealDependencies {
   ): Promise<
     { ok: true; replayed: boolean; signature: string } | { ok: false; response: SettleResponse }
   >;
+  /** Await the confirmation of a close broadcast already recorded under `key`. */
+  reconcileBroadcast(
+    key: string,
+    signature: string,
+    network: Network,
+    payer: string,
+  ): Promise<DurableBroadcastResult>;
+  /** Read what the confirmed close transaction paid the receiver and returned to the payer. */
+  attributeClose(
+    signature: string,
+    requirements: PaymentRequirements,
+    terms: SealTerms,
+    payer: string,
+  ): Promise<CloseAttribution>;
   completeOrPending(
     key: string,
     signature: string,
@@ -214,6 +241,21 @@ export function assertNotClosing(channel: Channel, channelId: string): void {
 }
 
 /**
+ * Reject a refund on a channel past `Closing` (sealed or distributed) with the
+ * close code: such a channel cannot be closed again (spec 4.5, 7).
+ *
+ * @param channel - Decoded channel account
+ * @param channelId - Channel PDA, for the message
+ */
+export function assertRefundable(channel: Channel, channelId: string): void {
+  if (channel.status !== ChannelStatus.Open && channel.status !== ChannelStatus.Closing) {
+    throw new Error(
+      `${BatchError.CLOSE_STATE}: a refund needs an Open or Closing channel; ${channelId} has status ${channel.status}`,
+    );
+  }
+}
+
+/**
  * Apply the server's latest voucher with `settle_and_seal` and pay out with a
  * sealed `distribute`, in one transaction: to a `Closing` channel before the
  * payer's grace period ends (`seal`), or to an `Open` one (`refund`).
@@ -264,8 +306,27 @@ export async function settleSeal(
     return completeSealDistribution(deps, key, response, requirements, intent);
   }
 
-  const channel = await deps.fetchChannel(network, channelId);
   const requiredStatus = intent === "seal" ? ChannelStatus.Closing : ChannelStatus.Open;
+  const run: CloseRun = {
+    channelId,
+    cumulative,
+    intent,
+    key,
+    network,
+    payer,
+    requirements,
+    terms,
+  };
+  // A close broadcast by an earlier attempt may have landed: the channel no
+  // longer shows what it paid, so its amounts are read from the transaction.
+  const recorded = await deps.pendingStore.get(key);
+  if (recorded) {
+    const recovered = await deps.reconcileBroadcast(key, recorded, network, payer);
+    if (!recovered.ok) return recovered.response;
+    return finishClose(deps, run, recovered.signature);
+  }
+
+  const channel = await deps.fetchChannel(network, channelId);
   if (channel.status !== requiredStatus) {
     throw new Error(
       `${BatchError.CLOSE_STATE}: ${intent} applies only to a ${ChannelStatus[requiredStatus]} channel; observed status ${channel.status}`,
@@ -309,31 +370,72 @@ export async function settleSeal(
   const submitted = await deps.submitRedemption(terms.feePayer, network, instructions, key, payer);
   if (!submitted.ok) return submitted.response;
 
-  // The sealed distribute may deallocate the PDA outright; a read still in
-  // the pre-close status means the confirmed state is not visible yet.
-  const observed = await deps.readChannel(network, channelId);
-  if (observed && observed.status === requiredStatus) {
-    return settlementPending(
+  return finishClose(deps, run, submitted.signature);
+}
+
+/** A close of one channel, as the steps after its broadcast need it. */
+interface CloseRun {
+  channelId: string;
+  cumulative: bigint;
+  intent: CloseIntent;
+  key: string;
+  network: Network;
+  payer: string;
+  requirements: PaymentRequirements;
+  terms: SealTerms;
+}
+
+/**
+ * Report a close that confirmed onchain. A sweep or top-up may have changed the
+ * channel since it was read, so the payout, refund and closed deposit come from
+ * the confirmed transaction, never from that read.
+ *
+ * @param deps - Scheme internals
+ * @param run - The close being finished
+ * @param signature - Confirmed close transaction signature
+ * @returns The settle response
+ */
+async function finishClose(
+  deps: SealDependencies,
+  run: CloseRun,
+  signature: string,
+): Promise<SettleResponse> {
+  const { channelId, cumulative, intent, key, network, payer, requirements } = run;
+  let attribution: CloseAttribution;
+  try {
+    attribution = await deps.attributeClose(signature, requirements, run.terms, payer);
+  } catch (error) {
+    // A payout that cannot be read yet stays pending under its key for a retry.
+    if (!(error instanceof PayoutAttributionAmbiguousError)) {
+      return settlementPending(network, payer, signature, String(error));
+    }
+    // Nothing can attribute this close, so the record is not kept for a retry.
+    const incomplete = await deps.completeOrPending(key, signature, network, payer);
+    if (incomplete) return incomplete;
+    return {
+      errorMessage: error.message,
+      errorReason: BatchError.PAYOUT_ATTRIBUTION_AMBIGUOUS,
       network,
       payer,
-      submitted.signature,
-      `${intent} confirmed but the sealed state is not visible yet`,
-    );
+      success: false,
+      transaction: signature,
+    };
   }
-  const incomplete = await deps.completeOrPending(key, submitted.signature, network, payer);
+
+  const incomplete = await deps.completeOrPending(key, signature, network, payer);
   if (incomplete) return incomplete;
 
   const sealed = sealResponse({
     channelId,
-    deposit: channel.deposit,
+    deposit: cumulative + attribution.refundedToPayer,
     finalSettled: cumulative,
     network,
-    paidToReceiver: cumulative - channel.settlement.payoutWatermark,
+    paidToReceiver: attribution.paidToReceiver,
     payer,
-    transaction: submitted.signature,
+    transaction: signature,
   });
   const response =
-    intent === "refund" ? { ...sealed, amount: (channel.deposit - cumulative).toString() } : sealed;
+    intent === "refund" ? { ...sealed, amount: attribution.refundedToPayer.toString() } : sealed;
   // Persist the confirmed response first so a callback failure can retry the
   // same payout without reading a channel the seal may have deallocated.
   await deps.pendingStore.set(`${key}:result`, JSON.stringify(response));
@@ -381,7 +483,7 @@ export async function prepareRefund(
   const channel = await deps.readChannel(requirements.network, channelId);
   if (channel && (cumulative < channel.settlement.settled || cumulative > channel.deposit)) {
     throw new Error(
-      `${BatchError.CUMULATIVE_AMOUNT_MISMATCH}: refund voucher must lie within settled and deposit`,
+      `${BatchError.CLOSE_STATE}: refund voucher must lie within settled and deposit`,
     );
   }
 
@@ -398,6 +500,7 @@ export async function prepareRefund(
   }
   try {
     await verifyRequestCloseTransaction(payload.transaction, {
+      acceptedTransactionVersions: limits.transactionVersions,
       channelId,
       feePayer: terms.feePayer,
       maxComputeUnits: limits.maxComputeUnits,
@@ -407,6 +510,8 @@ export async function prepareRefund(
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // A version outside the accepted set keeps its own reason (§1.5).
+    if (detail.startsWith(ErrUnsupportedTransactionVersion)) throw new Error(detail);
     throw new Error(`${BatchError.REFUND_TRANSACTION}: ${detail}`);
   }
   return { channelId, requestClose: payload.transaction, terms };
@@ -431,6 +536,7 @@ export async function validateRefund(
 ): Promise<{ channel: Channel; channelId: string; terms: SealTerms }> {
   const { channelId, terms } = await prepareRefund(deps, payload, requirements, limits, context);
   const channel = await deps.fetchChannel(requirements.network, channelId);
+  assertRefundable(channel, channelId);
   deps.assertClaimChannel(channel, payload.channelConfig, terms, requirements, [
     ChannelStatus.Open,
     ChannelStatus.Closing,

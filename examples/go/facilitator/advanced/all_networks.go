@@ -3,15 +3,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/make-software/casper-go-sdk/v2/types/keypair"
 	x402 "github.com/x402-foundation/x402/go/v2"
+	casperFacilitator "github.com/x402-foundation/x402/go/v2/mechanisms/casper/exact/facilitator"
 	evm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/exact/facilitator"
 	uptoevm "github.com/x402-foundation/x402/go/v2/mechanisms/evm/upto/facilitator"
 	svm "github.com/x402-foundation/x402/go/v2/mechanisms/svm/exact/facilitator"
+	casperSigners "github.com/x402-foundation/x402/go/v2/signers/casper"
 )
 
 /**
@@ -28,14 +33,16 @@ const (
 	defaultPort = "4022"
 )
 
-func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
+func runAllNetworksExample(evmPrivateKey, svmPrivateKey, casperPrivateKey string) error {
 	// Network configuration
 	evmNetwork := x402.Network("eip155:84532")                            // Base Sepolia
 	svmNetwork := x402.Network("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1") // Solana Devnet
+	casperNetwork := x402.Network("casper:casper-test")                   // Casper Testnet
 
 	// Initialize signers based on available keys
 	var evmSigner *facilitatorEvmSigner
 	var svmSigner *facilitatorSvmSigner
+	var casperSigner *casperSigners.FacilitatorSigner
 	var err error
 
 	if evmPrivateKey != "" {
@@ -50,6 +57,22 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create SVM signer: %w", err)
 		}
+	}
+
+	if casperPrivateKey != "" {
+		casperAlgo := os.Getenv("CASPER_PRIVATE_KEY_ALGORITHM")
+		privKey, err := casperSigners.NewPrivateKeyFromSecret(casperPrivateKey, casperAlgo)
+		if err != nil {
+			return fmt.Errorf("failed to create Casper private key: %w", err)
+		}
+		casperSpeculativeRpcURL := os.Getenv("CASPER_SPECULATIVE_RPC_URL")
+		casperSigner = casperSigners.NewFacilitatorSigner(
+			casperSigners.FacilitatorSignerConfig{
+				Keys:               map[string]keypair.PrivateKey{string(casperNetwork): *privKey},
+				RpcURLs:            map[string]string{string(casperNetwork): DefaultCasperRPC},
+				SpeculativeRpcURLs: map[string]string{string(casperNetwork): casperSpeculativeRpcURL},
+			},
+		)
 	}
 
 	// Create facilitator
@@ -69,6 +92,11 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	// Register SVM scheme if signer is available (only explicitly specified networks)
 	if svmSigner != nil {
 		facilitator.Register([]x402.Network{svmNetwork}, svm.NewExactSvmScheme(svmSigner))
+	}
+
+	// Register Casper scheme if signer is available (only explicitly specified networks)
+	if casperSigner != nil {
+		facilitator.Register([]x402.Network{casperNetwork}, casperFacilitator.NewExactCasperScheme(casperSigner, &casperFacilitator.ExactCasperSchemeConfig{}))
 	}
 
 	// Add lifecycle hooks
@@ -115,6 +143,16 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 
 		result, err := facilitator.Verify(ctx, reqBody.PaymentPayload, reqBody.PaymentRequirements)
 		if err != nil {
+			var verifyErr *x402.VerifyError
+			if errors.As(err, &verifyErr) {
+				c.JSON(http.StatusOK, x402.VerifyResponse{
+					IsValid:        false,
+					InvalidReason:  verifyErr.InvalidReason,
+					InvalidMessage: verifyErr.InvalidMessage,
+					Payer:          verifyErr.Payer,
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -153,6 +191,9 @@ func runAllNetworksExample(evmPrivateKey, svmPrivateKey string) error {
 	}
 	if svmSigner != nil {
 		fmt.Printf("   SVM: %s on %s\n", svmSigner.GetAddresses(context.Background(), string(svmNetwork))[0], svmNetwork)
+	}
+	if casperSigner != nil {
+		fmt.Printf("   Casper: %s on %s\n", casperSigner.GetAddresses(context.Background(), string(casperNetwork))[0], casperNetwork)
 	}
 	fmt.Println()
 

@@ -286,40 +286,57 @@ const ErrUnsupportedTransactionVersion = "unsupported_transaction_version"
 
 // ExtraTransactionVersions is the PaymentRequirements.Extra key (copied by the
 // server from the facilitator's /supported extra) that lists the transaction
-// message versions the facilitator accepts, in the Wallet Standard
-// supportedTransactionVersions vocabulary ("legacy", 0, 1).
+// message versions the facilitator accepts, as the integers 0 and/or 1 (never
+// Wallet Standard's "legacy").
 const ExtraTransactionVersions = "transactionVersions"
 
 // AdvertisedTransactionVersions is the value facilitators publish as
-// extra.transactionVersions in /supported. Only version 0 is advertised:
-// legacy messages are still accepted for backward compatibility (see
-// IsAcceptedTransactionVersion) but are deprecated and never offered to
-// clients, and version 1 (SIMD-0385) is not modelled by this SDK yet.
-var AdvertisedTransactionVersions = []int{0}
+// extra.transactionVersions in /supported: version 0 and version 1
+// (SIMD-0385). Legacy messages are still accepted for backward compatibility
+// (see IsAcceptedTransactionVersion) but are deprecated and never offered to
+// clients.
+var AdvertisedTransactionVersions = []int{0, 1}
 
 // ClientSupportedTransactionVersions lists message versions this client can
 // construct. Negotiation selects the highest value shared with the
-// facilitator's advertised set.
-var ClientSupportedTransactionVersions = []int{0}
+// facilitator's advertised set. A client whose signer cannot sign version 1
+// narrows this per scheme with ClientConfig.TransactionVersions.
+var ClientSupportedTransactionVersions = []int{0, 1}
 
 // IsAcceptedTransactionVersion reports whether a decoded message version is one
-// the SVM verifiers know how to police. This is an allowlist of legacy and v0,
-// not a comparison against a maximum: every acceptance check derives its
+// the SVM verifiers know how to police. This is an allowlist of legacy, v0 and
+// v1, not a comparison against a maximum: every acceptance check derives its
 // sponsorship policy from version-specific structure (compute budget arrives as
 // ComputeBudget instructions on legacy and v0, but as an inline message config
 // on transaction v1), so an unmodelled version must be rejected before any
 // instruction-scanning check can pass vacuously.
 func IsAcceptedTransactionVersion(version solana.MessageVersion) bool {
-	return version == solana.MessageVersionLegacy || version == solana.MessageVersionV0
+	return version == solana.MessageVersionLegacy ||
+		version == solana.MessageVersionV0 ||
+		version == solana.MessageVersionV1
 }
 
 // ResolveTransactionVersion picks the message version a client must build from
 // requirements.Extra["transactionVersions"]. It selects the highest version
-// shared by the facilitator advertisement and this client's supported-version
-// set. An absent field means the facilitator predates advertisement and
-// accepts v0.
+// shared by the facilitator advertisement and ClientSupportedTransactionVersions.
+// An absent field means the facilitator predates advertisement and accepts v0.
 func ResolveTransactionVersion(extra map[string]interface{}) (solana.MessageVersion, error) {
-	selected, err := selectTransactionVersion(extra)
+	return ResolveTransactionVersionFor(extra, nil)
+}
+
+// ResolveTransactionVersionFor is ResolveTransactionVersion with the client's
+// supported set narrowed to supported (for a signer that cannot sign every
+// version). A nil or empty supported set means ClientSupportedTransactionVersions.
+func ResolveTransactionVersionFor(extra map[string]interface{}, supported []int) (solana.MessageVersion, error) {
+	if len(supported) == 0 {
+		supported = ClientSupportedTransactionVersions
+	}
+	for _, version := range supported {
+		if version != 0 && version != 1 {
+			return 0, fmt.Errorf("%s: client transactionVersions entries must be 0 or 1, got %d", ErrUnsupportedTransactionVersion, version)
+		}
+	}
+	selected, err := selectTransactionVersion(extra, supported)
 	if err != nil {
 		return 0, err
 	}
@@ -327,21 +344,30 @@ func ResolveTransactionVersion(extra map[string]interface{}) (solana.MessageVers
 }
 
 // messageVersionForWire maps a wire version number to solana-go's
-// MessageVersion. The two do not line up (MessageVersionLegacy is 0 and
-// MessageVersionV0 is 1), and SetVersion panics on a value solana-go does not
-// model, so every buildable version is mapped explicitly.
+// MessageVersion. The two do not line up (MessageVersionLegacy is 0,
+// MessageVersionV0 is 1 and MessageVersionV1 is 2), and SetVersion panics on a
+// value solana-go does not model, so every buildable version is mapped
+// explicitly.
 func messageVersionForWire(version int) (solana.MessageVersion, error) {
 	switch version {
 	case 0:
 		return solana.MessageVersionV0, nil
+	case 1:
+		return solana.MessageVersionV1, nil
 	default:
 		return 0, fmt.Errorf("%s: this client cannot build transaction version %d", ErrUnsupportedTransactionVersion, version)
 	}
 }
 
+// WireTransactionVersion maps solana-go's MessageVersion back to the wire
+// version number used in errors and logs (-1 for legacy).
+func WireTransactionVersion(version solana.MessageVersion) int {
+	return int(version) - 1
+}
+
 // selectTransactionVersion returns the highest wire version shared by the
-// advertisement in extra and ClientSupportedTransactionVersions.
-func selectTransactionVersion(extra map[string]interface{}) (int, error) {
+// advertisement in extra and the client's supported set.
+func selectTransactionVersion(extra map[string]interface{}, supported []int) (int, error) {
 	raw := interface{}([]int{0})
 	if extra != nil {
 		if value, ok := extra[ExtraTransactionVersions]; ok {
@@ -377,10 +403,10 @@ func selectTransactionVersion(extra map[string]interface{}) (int, error) {
 		advertised = append(advertised, version)
 	}
 	selected := -1
-	for _, supported := range ClientSupportedTransactionVersions {
+	for _, version := range supported {
 		for _, offered := range advertised {
-			if supported == offered && supported > selected {
-				selected = supported
+			if version == offered && version > selected {
+				selected = version
 			}
 		}
 	}

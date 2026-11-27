@@ -1,1 +1,0 @@
-Fixed mixed-namespace `register()` and `register_v1()` so each CAIP-2 namespace keeps its own wildcard. A namespace with one network now stays an exact match, same as the TypeScript facilitator, instead of becoming `namespace:*`.

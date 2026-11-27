@@ -1,3 +1,0 @@
-kind: added
-body: Add the auth-capture EVM scheme server and facilitator (delegated and custom operators, escrow and authorization flows, sync and deferred capture, partial capture, refunds, lifecycle manager and storage, merchant-configurable route extras, minute-bucketed dynamic deadlines), typed escrow revert mapping, and Go examples alongside the existing client.
-time: 2026-09-29T12:00:00Z

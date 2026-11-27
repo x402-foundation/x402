@@ -92,7 +92,10 @@ export class UptoSvmScheme implements SchemeNetworkClient {
       payer: this.signer,
       recipients: channelConfig.splits,
       tokenProgram,
-      transactionVersion: resolveTransactionVersion(paymentRequirements.extra),
+      transactionVersion: resolveTransactionVersion(
+        paymentRequirements.extra,
+        this.config?.transactionVersions,
+      ),
     });
 
     const now = Math.floor(Date.now() / 1000);

@@ -275,6 +275,8 @@ For tool results, the client checks `result.structuredContent` first, then falls
 | `onPaymentRequested` | `function` | `() => true` | Hook for human-in-the-loop approval when payment is requested |
 | `maxRequestTimeoutSeconds` | `number` | `600` | Cap on derived MCP waits from accept `maxTimeoutSeconds` |
 
+The server sets `amount`, `asset`, `network` and `payTo`. With these defaults the client pays any request that passes the payment client's spend controls (default assets only, `$1` per payment unless `spendControls` is set on `createx402MCPClient`). Schemes that resync after a corrective 402 (e.g. batch-settlement) sign once more for the new terms; `onPaymentRequested` runs again first. To pin terms, compare them in `onPaymentRequested` and return `false` on a mismatch.
+
 ### MCPToolPaymentConfig
 
 | Option | Type | Required | Description |

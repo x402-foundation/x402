@@ -18,15 +18,15 @@ from ...signer import FacilitatorEvmSigner
 from ...types import TransactionReceipt
 from ...utils import truncate_error_message
 from ..abi import BATCH_SETTLEMENT_ABI
-from ..authorizer_signer import sign_claim_batch, sign_refund
+from ..authorizer_signer import sign_claim_batch
 from ..constants import (
     BATCH_SETTLEMENT_ADDRESS,
     CHANNEL_STATE_POLL_INTERVAL_S,
     CHANNEL_STATE_POLL_S,
 )
 from ..errors import (
-    ERR_AUTHORIZER_ADDRESS_MISMATCH,
     ERR_AUTHORIZER_NOT_CONFIGURED,
+    ERR_REFUND_AUTHORIZER_SIGNATURE,
     ERR_REFUND_NO_BALANCE,
     ERR_REFUND_SIMULATION_FAILED,
     ERR_REFUND_TRANSACTION_FAILED,
@@ -151,6 +151,14 @@ def execute_refund_with_signature(
     network = str(requirements.network)
     assert payload.channel_config is not None
 
+    if not payload.refund_authorizer_signature:
+        return SettleResponse(
+            success=False,
+            error_reason=ERR_REFUND_AUTHORIZER_SIGNATURE,
+            transaction="",
+            network=network,
+        )
+
     try:
         channel_id = compute_channel_id(payload.channel_config, network)
         pre_state = read_channel_state(signer, channel_id)
@@ -166,35 +174,7 @@ def execute_refund_with_signature(
                 network=network,
             )
 
-        refund_sig_hex = payload.refund_authorizer_signature
-        if refund_sig_hex is None:
-            if authorizer_signer is None:
-                return SettleResponse(
-                    success=False,
-                    error_reason=ERR_AUTHORIZER_NOT_CONFIGURED,
-                    transaction="",
-                    network=network,
-                )
-
-            if to_checksum_address(
-                payload.channel_config.receiver_authorizer
-            ) != to_checksum_address(authorizer_signer.address):
-                return SettleResponse(
-                    success=False,
-                    error_reason=ERR_AUTHORIZER_ADDRESS_MISMATCH,
-                    transaction="",
-                    network=network,
-                )
-
-            refund_sig_hex = sign_refund(
-                authorizer_signer,
-                channel_id,
-                payload.amount,
-                payload.refund_nonce,
-                network,
-            )
-
-        refund_sig_bytes = bytes.fromhex(refund_sig_hex.removeprefix("0x"))
+        refund_sig_bytes = bytes.fromhex(payload.refund_authorizer_signature.removeprefix("0x"))
 
         contract_channel = to_contract_channel_config(payload.channel_config)
         refund_args = [

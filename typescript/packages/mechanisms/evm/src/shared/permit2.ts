@@ -568,7 +568,9 @@ export function splitEip2612Signature(signature: string): {
 
   const r = `0x${sig.slice(0, 64)}` as `0x${string}`;
   const s = `0x${sig.slice(64, 128)}` as `0x${string}`;
-  const v = parseInt(sig.slice(128, 130), 16);
+  const recoveryByte = parseInt(sig.slice(128, 130), 16);
+  // ecrecover-based permit() implementations only accept 27/28; normalize a raw y-parity (0/1).
+  const v = recoveryByte < 27 ? recoveryByte + 27 : recoveryByte;
 
   return { v, r, s };
 }

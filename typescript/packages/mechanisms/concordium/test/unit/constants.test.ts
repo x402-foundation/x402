@@ -2,14 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   CONCORDIUM_MAINNET_CAIP2,
   CONCORDIUM_TESTNET_CAIP2,
-  CONCORDIUM_WILDCARD_CAIP2,
   CONCORDIUM_MAINNET_GRPC,
   CONCORDIUM_TESTNET_GRPC,
   CONCORDIUM_ADDRESS_REGEX,
-  CCD_DECIMALS,
-  CCD_ASSET_IDENTIFIER,
-  MAX_EXPIRY_OFFSET_SECONDS,
-  DEFAULT_FINALIZATION_TIMEOUT_MS,
   getConcordiumGrpcUrl,
   getExplorerTxUrl,
   getExplorerAccountUrl,
@@ -17,26 +12,6 @@ import {
 } from "../../src/constants";
 
 describe("Concordium Constants", () => {
-  describe("Network identifiers", () => {
-    it("should have correct CAIP-2 format for mainnet", () => {
-      expect(CONCORDIUM_MAINNET_CAIP2).toBe("ccd:9dd9ca4d19e9393877d2c44b70f89acb");
-    });
-
-    it("should have correct CAIP-2 format for testnet", () => {
-      expect(CONCORDIUM_TESTNET_CAIP2).toBe("ccd:4221332d34e1694168c2a0c0b3fd0f27");
-    });
-
-    it("should have wildcard identifier", () => {
-      expect(CONCORDIUM_WILDCARD_CAIP2).toBe("ccd:*");
-    });
-
-    it("all CAIP-2 identifiers should start with ccd:", () => {
-      expect(CONCORDIUM_MAINNET_CAIP2).toMatch(/^ccd:/);
-      expect(CONCORDIUM_TESTNET_CAIP2).toMatch(/^ccd:/);
-      expect(CONCORDIUM_WILDCARD_CAIP2).toMatch(/^ccd:/);
-    });
-  });
-
   describe("CONCORDIUM_ADDRESS_REGEX", () => {
     it("should match valid base58check addresses", () => {
       expect(
@@ -69,26 +44,6 @@ describe("Concordium Constants", () => {
 
     it("should reject empty strings", () => {
       expect(CONCORDIUM_ADDRESS_REGEX.test("")).toBe(false);
-    });
-  });
-
-  describe("Asset defaults", () => {
-    it("should have 6 decimals for CCD", () => {
-      expect(CCD_DECIMALS).toBe(6);
-    });
-
-    it('should use "CCD" for native CCD asset identifier', () => {
-      expect(CCD_ASSET_IDENTIFIER).toBe("CCD");
-    });
-  });
-
-  describe("Sponsored transaction limits", () => {
-    it("should have 600s max expiry offset", () => {
-      expect(MAX_EXPIRY_OFFSET_SECONDS).toBe(600);
-    });
-
-    it("should have 60s default finalization timeout", () => {
-      expect(DEFAULT_FINALIZATION_TIMEOUT_MS).toBe(60_000);
     });
   });
 

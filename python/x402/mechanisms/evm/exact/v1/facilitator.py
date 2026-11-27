@@ -12,6 +12,7 @@ from ...constants import (
     ERR_FACTORY_NOT_ALLOWED,
     ERR_FAILED_TO_GET_NETWORK_CONFIG,
     ERR_FAILED_TO_VERIFY_SIGNATURE,
+    ERR_INVALID_PAYLOAD,
     ERR_INVALID_SIGNATURE,
     ERR_INVALID_SIGNATURE_S,
     ERR_MISSING_EIP712_DOMAIN,
@@ -29,7 +30,12 @@ from ...constants import (
 )
 from ...erc6492 import has_deployment_info, parse_erc6492_signature
 from ...signer import FacilitatorEvmSigner
-from ...types import ERC6492SignatureData, ExactEIP3009Payload
+from ...types import (
+    ERC6492SignatureData,
+    ExactEIP3009Payload,
+    get_payload_payer,
+    validate_eip3009_payload,
+)
 from ...utils import bytes_to_hex, hex_to_bytes, normalize_address
 from ...v1.utils import get_evm_chain_id
 from ..eip3009_utils import (
@@ -121,6 +127,14 @@ class ExactEvmSchemeV1:
         requirements: PaymentRequirementsV1,
         context=None,
     ) -> VerifyResponse:
+        payload_error = validate_eip3009_payload(payload.payload)
+        if payload_error:
+            return VerifyResponse(
+                is_valid=False,
+                invalid_reason=ERR_INVALID_PAYLOAD,
+                invalid_message=payload_error,
+                payer=get_payload_payer(payload.payload),
+            )
         return self._verify(payload, requirements, simulate=True)
 
     def _verify(
@@ -316,6 +330,17 @@ class ExactEvmSchemeV1:
         Returns:
             SettleResponse with success, transaction, and payer.
         """
+        payload_error = validate_eip3009_payload(payload.payload)
+        if payload_error:
+            return SettleResponse(
+                success=False,
+                error_reason=ERR_INVALID_PAYLOAD,
+                error_message=payload_error,
+                network=requirements.network,
+                payer=get_payload_payer(payload.payload),
+                transaction="",
+            )
+
         # First verify
         verify_result = self._verify(
             payload,

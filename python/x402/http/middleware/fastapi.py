@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 try:
     from fastapi import Request, Response
     from fastapi.responses import HTMLResponse, JSONResponse
+    from starlette.datastructures import MutableHeaders
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.types import ASGIApp
 except ImportError as e:
@@ -383,6 +384,10 @@ def payment_middleware(
 
             # Don't settle on error responses
             if response.status_code >= 400:
+                # Overrides only apply when a settlement runs; never send the
+                # internal header to the client.
+                if SETTLEMENT_OVERRIDES_HEADER in response.headers:
+                    del response.headers[SETTLEMENT_OVERRIDES_HEADER]
                 cancel_settlement = None
                 if dispatcher is not None:
                     cancel_settlement = await dispatcher.cancel(
@@ -458,16 +463,15 @@ def payment_middleware(
                     )
 
                 # Add settlement headers
-                headers = dict(response.headers)
-                headers.update(settle_result.headers)
+                # Copy raw headers so repeated ones (e.g. Set-Cookie) survive.
+                headers = MutableHeaders(raw=list(response.raw_headers))
+                for key, value in settle_result.headers.items():
+                    headers[key] = value
                 headers["Cache-Control"] = with_private_cache_control(headers.get("Cache-Control"))
 
-                return Response(
-                    content=body,
-                    status_code=response.status_code,
-                    headers=headers,
-                    media_type=response.media_type,
-                )
+                paid_response = Response(content=body, status_code=response.status_code)
+                paid_response.raw_headers = headers.raw
+                return paid_response
 
             except FacilitatorResponseError as error:
                 return _facilitator_error_response(error)

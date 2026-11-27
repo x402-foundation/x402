@@ -19,10 +19,13 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 
 | Name | Description |
 | ---- | ----------- | 
+| [AlgoVoi](https://pay.algovoi.co.uk) | Chain-agnostic x402 facilitator across 12 mainnet chains incl. Algorand, Base, Solana, Stellar, Hedera, Voi and Tempo; hosted or self-hosted |
 | [Built on Stellar](https://developers.stellar.org/docs/build/apps/x402/built-on-stellar) | Free, public x402 facilitator for Stellar |
 | [CDP Facilitator](https://docs.cdp.coinbase.com/x402/docs/quickstart-sellers) | Coinbase-hosted facilitator with KYT/OFAC checks on every transaction |
-| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`), accepting USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL and wCOP via Permit2 |
+| [Celo Facilitator](https://x402.celo.org) | Gasless x402 facilitator for Celo Mainnet (API: `https://api.x402.celo.org`) and Celo Sepolia (API: `https://api.x402.sepolia.celo.org`). Mainnet accepts USDC, USD₮ and USA₮ via EIP-3009 and wARS, wBRL, wMXN, wCOP, wPEN, wCLP and cNGN via Permit2 (gas-sponsored approval for every Permit2 asset except cNGN, which needs a one-time approval from the payer). Sepolia accepts USDC. |
+| [Circle Facilitator Service](https://developers.circle.com/facilitator-service) | Circle-hosted facilitator for USDC on Arc, Base and Polygon PoS; screens buyer and seller and pays settlement gas; Circle Console API key required |
 | [Corbits](https://corbits.dev) | Production-grade multi-network, multi-token facilitator supporting EVM and Solana |
+| [CSPR.cloud x402 Facilitator](https://docs.cspr.cloud/x402-facilitator-api/reference) | x402 facilitator for Casper Mainnet and Testnet, supporting exact payments with CEP-18 tokens via EIP-712 signatures; get an API key on [https://console.cspr.build](https://console.cspr.build) |
 | [Dexter](https://dexter.cash/facilitator) | Free public x402 facilitator across Solana and EVM chains with no fees and no account required |
 | [Fireblocks Facilitator](https://developers.fireblocks.com/docs/x402-facilitator-overview) | Open-source and hosted facilitator with Fireblocks vault settlement; private keys never leave Fireblocks |
 | [FTP Canton Facilitator](https://www.ftptech.xyz/x402) | Production x402 facilitator for Canton Network mainnet, supporting Canton Coin and CIP-56 tokens |
@@ -32,9 +35,11 @@ If you are evaluating a mainnet EVM route, decide on your production facilitator
 | [NEAR x402 Facilitator](https://x402.mikedotexe.com/) | Independent open-source facilitator for exact Circle USDC payments on NEAR and Base, with sponsored gas and durable settlement recovery |
 | [PayAI Facilitator](https://facilitator.payai.network) | Production-grade multi-network facilitator supporting all tokens. No API keys required |
 | [Polygon Facilitator](https://docs.polygon.technology/payment-services/agentic-payments/x402/intro/) | Production-grade x402 facilitator for Polygon Mainnet and Amoy testnet |
+| [Radius Facilitator](https://facilitator.radiustech.xyz) | x402 facilitator for SBC on Radius and USDC on Base, supporting `exact` and `upto` via EIP-3009 and Permit2; no API key required |
 | [Solvador](https://solvador.com) | Multi-network facilitator with broad mainnet coverage across EVM plus Solana and NEAR, supporting multiple schemes and extensions |
 | [Sui Facilitator (UIG Studios)](https://github.com/DrVelvetFog/sui-x402-facilitator) | Non-custodial, zero-fee x402 facilitator for Sui mainnet and testnet with USDC support |
 | [T54 XRPL Facilitator](https://xrpl-x402.t54.ai) | Production-grade x402 facilitator for the XRP Ledger, covering mainnet and testnet with XRP and RLUSD support |
+| [Tempo x402 Facilitator](https://tempo.com/developers/docs/guide/machine-payments/x402-facilitator) | Accepts `exact` USDC payments on Base (EIP-3009 or Permit2) and pays sellers out in OUSD on Tempo mainnet; Tempo Console API key required |
 | [X Pay](https://x-pay.llc/) | x402 v2 facilitator for exact USDC payments on Base mainnet via EIP-3009; merchant API key required for verification and settlement ([capabilities](https://facilitator-xpay.llc/supported)) |
 | [TRDEFI Arc Facilitator](https://trdefi-arc-facilitator.netlify.app) | Free, public x402 facilitator for Arc (eip155:5042), settling exact USDC via EIP-3009. Source: https://github.com/TRDEFI/arc-x402-facilitator |
 

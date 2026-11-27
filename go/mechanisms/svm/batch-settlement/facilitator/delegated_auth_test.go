@@ -25,9 +25,12 @@ const (
 	delegatedSig          = svm.USDCDevnetAddress
 )
 
-// tokenOwnerSigner returns mint/ATA accounts owned by the SPL token program.
+// tokenOwnerSigner returns mint/ATA accounts owned by the SPL token program:
+// a healthy, funded token account for the devnet-USDC settlement ATAs of
+// payer, the USDC-mainnet-address receiver and the devnet treasury.
 type tokenOwnerSigner struct {
 	*scriptedSigner
+	payer solana.PublicKey
 }
 
 func newTokenOwnerSigner(keys ...solana.PrivateKey) *tokenOwnerSigner {
@@ -44,9 +47,18 @@ func (s *tokenOwnerSigner) GetAccountInfo(
 	opts *rpc.GetAccountInfoOpts,
 ) (*rpc.GetAccountInfoResult, error) {
 	_, _ = s.scriptedSigner.GetAccountInfo(ctx, account, network, opts)
-	return &rpc.GetAccountInfoResult{
-		Value: &rpc.Account{Owner: solana.MustPublicKeyFromBase58(svm.TokenProgramAddress)},
-	}, nil
+	tokenProgram := solana.MustPublicKeyFromBase58(svm.TokenProgramAddress)
+	if ata := healthyTokenAccount(
+		account,
+		solana.MustPublicKeyFromBase58(svm.USDCDevnetAddress),
+		tokenProgram,
+		s.payer,
+		solana.MustPublicKeyFromBase58(svm.USDCMainnetAddress),
+		paymentchannels.ResolveTreasuryOwner(solana.PublicKey{}, network),
+	); ata != nil {
+		return &rpc.GetAccountInfoResult{Value: ata}, nil
+	}
+	return &rpc.GetAccountInfoResult{Value: &rpc.Account{Owner: tokenProgram}}, nil
 }
 
 // SignTransaction co-signs only the fee payer so open simulation can leave the payer slot empty.
@@ -151,6 +163,7 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 	delegatedScheme := func(identity string, delegate bool) *delegatedFixture {
 		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
 		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
 		cfg := &Config{ChannelStorage: storage}
 		if delegate {
 			cfg.DelegatedReceiverAuth = &DelegatedReceiverAuth{
@@ -185,6 +198,9 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 		fixture.scheme.hooks.sealDependencies = func() SealDependencies {
 			deps := fixture.scheme.defaultSealDependencies()
 			deps.NowSeconds = func() int64 { return delegatedNow }
+			deps.AttributeClose = func(context.Context, string, types.PaymentRequirements, BatchTerms, string) (CloseAttribution, error) {
+				return CloseAttribution{PaidToReceiver: 1_000}, nil
+			}
 			return deps
 		}
 	}
@@ -249,6 +265,104 @@ func TestBatchSettlementDelegatedReceiverAuthorization(t *testing.T) {
 		bound, err := fixture.storage.Get(ctx, network, opened.ChannelID)
 		require.NoError(t, err)
 		require.Nil(t, bound)
+	})
+
+	t.Run("answers a retried delegated open only for the caller that opened the channel", func(t *testing.T) {
+		opened := buildOpen(t, 127)
+		req := requirements(server.PublicKey().String())
+		live := channelOf(opened.Payload.ChannelConfig, generated.ChannelStatus_Open, 0)
+		storage := paymentchannels.NewInMemoryPaymentChannelStorage()
+		pendingStore := x402.NewInMemoryPendingSettlementStore()
+		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
+		schemeFor := func(identity string) *BatchSvmScheme {
+			scheme := NewBatchSvmScheme(ctx, signer, &Config{
+				ChannelStorage:         storage,
+				PendingSettlementStore: pendingStore,
+				DelegatedReceiverAuth: &DelegatedReceiverAuth{
+					ReceiverAuthorizer: server.PublicKey().String(),
+					ResolveCallerIdentity: func(context.Context, DelegatedSettleContext) (string, error) {
+						return identity, nil
+					},
+				},
+			})
+			scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			return scheme
+		}
+
+		signer.confirmErr = errors.New("Transaction confirmation timeout")
+		first := schemeFor(delegatedCaller)
+		first.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+		_, err := first.Settle(ctx, types.PaymentPayload{X402Version: 2, Accepted: req, Payload: asMap(t, opened.Payload)}, req, nil)
+		var pending *x402.SettleError
+		require.ErrorAs(t, err, &pending)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+
+		signer.confirmErr = nil
+		pendingKey := depositKey(network, opened.ChannelID)
+		for _, identity := range []string{"someone-else", ""} {
+			response := settle(t, schemeFor(identity), opened.Payload, req)
+			require.False(t, response.Success)
+			require.Equal(t, batchsettlement.ErrDelegatedUnauthenticated, response.ErrorReason)
+			_, recorded, getErr := pendingStore.Get(ctx, pendingKey)
+			require.NoError(t, getErr)
+			require.True(t, recorded, "a rejected caller must not consume the pending signature")
+		}
+
+		response := settle(t, schemeFor(delegatedCaller), opened.Payload, req)
+		require.True(t, response.Success, "%+v", response)
+		require.Equal(t, pending.Transaction, response.Transaction)
+	})
+
+	t.Run("fails a retried delegated open closed when the channel row is lost or has no caller identity", func(t *testing.T) {
+		opened := buildOpen(t, 128)
+		req := requirements(server.PublicKey().String())
+		live := channelOf(opened.Payload.ChannelConfig, generated.ChannelStatus_Open, 0)
+		pendingStore := x402.NewInMemoryPendingSettlementStore()
+		signer := newTokenOwnerSigner(feeKey)
+		signer.payer = payer.Address()
+		schemeOver := func(storage paymentchannels.PaymentChannelStorage) *BatchSvmScheme {
+			scheme := NewBatchSvmScheme(ctx, signer, &Config{
+				ChannelStorage:         storage,
+				PendingSettlementStore: pendingStore,
+				DelegatedReceiverAuth: &DelegatedReceiverAuth{
+					ReceiverAuthorizer: server.PublicKey().String(),
+					ResolveCallerIdentity: func(context.Context, DelegatedSettleContext) (string, error) {
+						return delegatedCaller, nil
+					},
+				},
+			})
+			scheme.hooks.fetchChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return live, nil }
+			return scheme
+		}
+
+		signer.confirmErr = errors.New("Transaction confirmation timeout")
+		first := schemeOver(paymentchannels.NewInMemoryPaymentChannelStorage())
+		first.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) { return nil, nil }
+		_, err := first.Settle(ctx, types.PaymentPayload{X402Version: 2, Accepted: req, Payload: asMap(t, opened.Payload)}, req, nil)
+		var pending *x402.SettleError
+		require.ErrorAs(t, err, &pending)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+		signer.confirmErr = nil
+
+		withoutIdentity := paymentchannels.NewInMemoryPaymentChannelStorage()
+		_, err = withoutIdentity.RecordOpen(ctx, paymentchannels.PaymentChannelRecord{
+			ChannelID: opened.ChannelID, Network: network, ReceiverAuthorizer: server.PublicKey().String(), LastActivityAt: time.Now(),
+		})
+		require.NoError(t, err)
+		for name, storage := range map[string]paymentchannels.PaymentChannelStorage{
+			"lost row":                      paymentchannels.NewInMemoryPaymentChannelStorage(),
+			"row without a caller identity": withoutIdentity,
+		} {
+			response := settle(t, schemeOver(storage), opened.Payload, req)
+			require.False(t, response.Success, name)
+			require.Equal(t, batchsettlement.ErrDelegatedUnauthenticated, response.ErrorReason, name)
+			_, recorded, getErr := pendingStore.Get(ctx, depositKey(network, opened.ChannelID))
+			require.NoError(t, getErr)
+			require.True(t, recorded, "%s: the pending signature must stay unconsumed", name)
+		}
 	})
 
 	t.Run("seals and refunds a matching caller without closeAuthorization", func(t *testing.T) {

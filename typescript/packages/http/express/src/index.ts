@@ -8,13 +8,14 @@ import {
   FacilitatorClient,
   FacilitatorResponseError,
   getFacilitatorResponseError,
-  attachBackgroundInitHandler,
+  prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import type { OutgoingHttpHeaders } from "node:http";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
 
@@ -88,6 +89,23 @@ function sendPaymentErrorBody(
 }
 
 /**
+ * Reset response headers to a snapshot, dropping headers the route handler set.
+ *
+ * @param res - The Express response to reset
+ * @param headers - Headers captured before the route handler ran
+ */
+function resetHeaders(res: Response, headers: OutgoingHttpHeaders): void {
+  for (const name of Object.keys(res.getHeaders())) {
+    res.removeHeader(name);
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (value !== undefined) {
+      res.setHeader(name, value);
+    }
+  }
+}
+
+/**
  * Decode percent-escapes in a request path.
  *
  * @param path - Request path
@@ -131,41 +149,11 @@ export function paymentMiddlewareFromHTTPServer(
   paywall?: PaywallProvider,
   syncFacilitatorOnStart: boolean = true,
 ) {
-  // Register custom paywall provider if provided
-  if (paywall) {
-    httpServer.registerPaywallProvider(paywall);
-  }
-
-  // Store initialization promise (not the result)
-  // httpServer.initialize() fetches facilitator support and validates routes
-  let initPromise: Promise<void> | null = syncFacilitatorOnStart ? httpServer.initialize() : null;
-  // Retryable failures (e.g. a facilitator timeout) must not become unhandled
-  // rejections; the original promise is still awaited on the first protected
-  // request. Fatal capability / route mismatches exit the process so a
-  // misconfigured server does not stay up until that request.
-  attachBackgroundInitHandler(initPromise);
-  let isInitialized = false;
-
-  /**
-   * Ensures facilitator initialization succeeds once, while allowing retries after failures.
-   */
-  async function initializeHttpServer(): Promise<void> {
-    if (!syncFacilitatorOnStart || isInitialized) {
-      return;
-    }
-
-    if (!initPromise) {
-      initPromise = httpServer.initialize();
-    }
-
-    try {
-      await initPromise;
-      isInitialized = true;
-    } catch (error) {
-      initPromise = null;
-      throw error;
-    }
-  }
+  const { init: initializeHttpServer } = prepareHttpServer(
+    httpServer,
+    paywall,
+    syncFacilitatorOnStart,
+  );
 
   let bazaarPromise: Promise<void> | null = null;
   if (checkIfBazaarNeeded(httpServer.routes)) {
@@ -204,7 +192,7 @@ export function paymentMiddlewareFromHTTPServer(
     }
 
     // Only initialize when processing a protected route
-    if (syncFacilitatorOnStart && !isInitialized) {
+    if (syncFacilitatorOnStart) {
       try {
         await initializeHttpServer();
       } catch (error) {
@@ -294,6 +282,8 @@ export function paymentMiddlewareFromHTTPServer(
         res.writeHead = function (...args: Parameters<typeof originalWriteHead>) {
           if (!settled) {
             bufferedCalls.push(["writeHead", args]);
+            // writeHead() sets the status; mirror it so the >= 400 check sees it.
+            res.statusCode = args[0];
             return res;
           }
           return originalWriteHead(...args);
@@ -324,6 +314,8 @@ export function paymentMiddlewareFromHTTPServer(
           }
           return originalFlushHeaders();
         };
+
+        const preHandlerHeaders = { ...res.getHeaders() };
 
         // Proceed to the next middleware or route handler
         try {
@@ -415,6 +407,7 @@ export function paymentMiddlewareFromHTTPServer(
           // If settlement fails, return an error and do not send the buffered response
           if (!settleResult.success) {
             bufferedCalls = [];
+            resetHeaders(res, preHandlerHeaders);
             const { response } = settleResult;
             Object.entries(response.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
@@ -437,14 +430,13 @@ export function paymentMiddlewareFromHTTPServer(
             ),
           );
         } catch (error) {
+          bufferedCalls = [];
+          resetHeaders(res, preHandlerHeaders);
           if (error instanceof FacilitatorResponseError) {
-            bufferedCalls = [];
             sendFacilitatorError(res, error);
             return;
           }
           console.error(error);
-          // If settlement fails, don't send the buffered response
-          bufferedCalls = [];
           res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {

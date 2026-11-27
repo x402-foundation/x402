@@ -18,6 +18,18 @@ def extract_evm_chain_id(chain_id: str) -> int:
     return int(match.group(1))
 
 
+def canonical_evm_address(address: str) -> str:
+    """Return the EIP-55 checksum of a hex address, or the input unchanged.
+
+    EIP-4361 hashes that casing, so any other form is a different EIP-191 digest.
+    """
+    from eth_utils import is_hex_address, to_checksum_address
+
+    if isinstance(address, str) and is_hex_address(address):
+        return to_checksum_address(address)
+    return address
+
+
 def format_siwe_message(info: Any, address: str) -> str:
     """Format SIWE message following EIP-4361."""
     try:
@@ -38,7 +50,7 @@ def format_siwe_message(info: Any, address: str) -> str:
 
     siwe_message = SiweMessage(
         domain=_get("domain"),
-        address=address,
+        address=canonical_evm_address(address),
         statement=_get("statement"),
         uri=_get("uri"),
         version=_get("version"),

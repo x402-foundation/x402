@@ -22,20 +22,48 @@ var CloseDomain = []byte("x402:batch-settlement:svm:close:v1")
 
 // Extra field names carried on batch-settlement payment requirements.
 const (
-	ExtraPaymentFlow        = "paymentFlow"
-	ExtraMinDeposit         = "minDeposit"
-	ExtraFeePayer           = "feePayer"
-	ExtraReceiverAuthorizer = "receiverAuthorizer"
-	ExtraWithdrawDelay      = "withdrawDelay"
-	ExtraTokenProgram       = "tokenProgram"
-	ExtraMemo               = "memo"
-	ExtraRecentBlockhash    = "recentBlockhash"
-	ExtraRecentSlot         = "recentSlot"
-	ExtraChannelState       = "channelState"
-	ExtraVoucherState       = "voucherState"
-	ExtraVoucherSigner      = "voucherSigner"
-	ExtraOperator           = "operator"
-	ExtraMaxIdleSecs        = "maxIdleSecs"
+	ExtraPaymentFlow          = "paymentFlow"
+	ExtraMinDeposit           = "minDeposit"
+	ExtraFeePayer             = "feePayer"
+	ExtraReceiverAuthorizer   = "receiverAuthorizer"
+	ExtraWithdrawDelay        = "withdrawDelay"
+	ExtraTokenProgram         = "tokenProgram"
+	ExtraMemo                 = "memo"
+	ExtraRecentBlockhash      = "recentBlockhash"
+	ExtraLastValidBlockHeight = "lastValidBlockHeight"
+	ExtraRecentSlot           = "recentSlot"
+	ExtraChannelState         = "channelState"
+	ExtraVoucherState         = "voucherState"
+	ExtraVoucherSigner        = "voucherSigner"
+	ExtraOperator             = "operator"
+	ExtraMaxIdleSecs          = "maxIdleSecs"
+	ExtraMaxClaimChannels     = "maxClaimChannels"
+	ExtraMaxSettleChannels    = "maxSettleChannels"
+	ExtraChannelStates        = "channelStates"
+)
+
+// BatchRedemptionChannelState.Status values.
+const (
+	ChannelStatusOpen        = "open"
+	ChannelStatusClosing     = "closing"
+	ChannelStatusSealed      = "sealed"
+	ChannelStatusDistributed = "distributed"
+)
+
+// Redemption batch capacities (scheme_batch_settlement_svm.md, "Facilitator-built
+// transactions and batching capacity"). A facilitator advertises the capacity of
+// the message version it builds redemptions in; absent means DefaultBatchChannels.
+const (
+	// DefaultBatchChannels is the claim and settle capacity of a legacy or
+	// version-0 redemption, and the capacity when a facilitator advertises none.
+	DefaultBatchChannels = 4
+	// V1MaxClaimChannels is how many Ed25519-plus-settle pairs fit one version-1 transaction.
+	V1MaxClaimChannels = 18
+	// V1MaxSettleChannels is how many distribute instructions a facilitator
+	// advertises for one version-1 transaction. Fourteen fit (64 account keys)
+	// when, as in every settle request, the channels share the route's payTo;
+	// thirteen keeps one channel of margin.
+	V1MaxSettleChannels = 13
 )
 
 const (
@@ -55,3 +83,21 @@ const (
 	PayloadTypeSeal          = "seal"
 	AuthorizationTypeProof   = "proof"
 )
+
+// DynamicExtraFields are the PaymentRequirements.extra keys left out of
+// requirements matching: the server matching a payment to its accepts, and the
+// facilitator checking paymentPayload.accepted against the forwarded
+// requirements.
+//
+// recentBlockhash, lastValidBlockHeight and recentSlot are regenerated for
+// every PaymentRequired. maxClaimChannels and maxSettleChannels are the
+// facilitator's redemption capacity, copied from its /supported kind: they
+// size the server's own claim and settle batches, nothing the payer signs
+// reads them, and the facilitator enforces its own capacity, not theirs.
+var DynamicExtraFields = []string{
+	ExtraRecentBlockhash,
+	ExtraLastValidBlockHeight,
+	ExtraRecentSlot,
+	ExtraMaxClaimChannels,
+	ExtraMaxSettleChannels,
+}

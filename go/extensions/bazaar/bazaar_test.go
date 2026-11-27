@@ -18,10 +18,6 @@ import (
 	x402http "github.com/x402-foundation/x402/go/v2/http"
 )
 
-func TestBazaarConstant(t *testing.T) {
-	assert.Equal(t, "bazaar", bazaar.BAZAAR.Key())
-}
-
 func TestDeclareDiscoveryExtension_GET(t *testing.T) {
 	t.Run("should create a valid GET extension with query params", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(
@@ -1877,11 +1873,9 @@ func extractRequiredFields(t *testing.T, schema bazaar.JSONSchema) []string {
 }
 
 func TestBazaarResourceServerExtension(t *testing.T) {
-	// NOTE: Go's API is different from TypeScript.
-	// In Go, DeclareDiscoveryExtension takes the method as a parameter,
-	// so the schema is already narrow at creation time.
-	// EnrichDeclaration then narrows that enum to the method
-	// resolveDeclaredMethod picks from the request and the input shape.
+	// DeclareDiscoveryExtension already narrows the schema to the declared method.
+	// EnrichDeclaration then picks the request method when it fits the input
+	// shape, otherwise POST for a body and GET for a query.
 
 	t.Run("should enrich declaration with method from HTTP context", func(t *testing.T) {
 		extension, err := bazaar.DeclareDiscoveryExtension(

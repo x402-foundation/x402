@@ -10,6 +10,7 @@ import (
 	solana "github.com/gagliardetto/solana-go"
 
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
+	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
 
 const maxSafeInteger int64 = 1<<53 - 1
@@ -18,20 +19,21 @@ var errOutOfRange = errors.New("account index out of range")
 
 // BatchExtra is the wire shape of batch-settlement requirements extra.
 type BatchExtra struct {
-	PaymentFlow        string             `json:"paymentFlow,omitempty"`
-	MinDeposit         string             `json:"minDeposit,omitempty"`
-	FeePayer           string             `json:"feePayer"`
-	ReceiverAuthorizer string             `json:"receiverAuthorizer"`
-	WithdrawDelay      int                `json:"withdrawDelay"`
-	TokenProgram       string             `json:"tokenProgram"`
-	Memo               string             `json:"memo,omitempty"`
-	RecentBlockhash    string             `json:"recentBlockhash,omitempty"`
-	RecentSlot         uint64             `json:"recentSlot,omitempty"`
-	ChannelState       *BatchChannelState `json:"channelState,omitempty"`
-	VoucherState       *BatchVoucherState `json:"voucherState,omitempty"`
-	VoucherSigner      string             `json:"voucherSigner,omitempty"`
-	Operator           string             `json:"operator,omitempty"`
-	MaxIdleSecs        *int               `json:"maxIdleSecs,omitempty"`
+	PaymentFlow          string             `json:"paymentFlow,omitempty"`
+	MinDeposit           string             `json:"minDeposit,omitempty"`
+	FeePayer             string             `json:"feePayer"`
+	ReceiverAuthorizer   string             `json:"receiverAuthorizer"`
+	WithdrawDelay        int                `json:"withdrawDelay"`
+	TokenProgram         string             `json:"tokenProgram"`
+	Memo                 string             `json:"memo,omitempty"`
+	RecentBlockhash      string             `json:"recentBlockhash,omitempty"`
+	LastValidBlockHeight string             `json:"lastValidBlockHeight,omitempty"`
+	RecentSlot           uint64             `json:"recentSlot,omitempty"`
+	ChannelState         *BatchChannelState `json:"channelState,omitempty"`
+	VoucherState         *BatchVoucherState `json:"voucherState,omitempty"`
+	VoucherSigner        string             `json:"voucherSigner,omitempty"`
+	Operator             string             `json:"operator,omitempty"`
+	MaxIdleSecs          *int               `json:"maxIdleSecs,omitempty"`
 }
 
 // BatchVoucherState is the signed cumulative a corrective 402 carries.
@@ -166,6 +168,35 @@ type BatchChannelState struct {
 	TotalClaimed            string `json:"totalClaimed"`
 	WithdrawRequestedAt     int64  `json:"withdrawRequestedAt"`
 	ChargedCumulativeAmount string `json:"chargedCumulativeAmount,omitempty"`
+}
+
+// BatchRedemptionChannelState is the onchain channel snapshot a facilitator
+// attaches to a settle success or to a redemption rejected as already applied,
+// so the server resyncs without reading the chain.
+type BatchRedemptionChannelState struct {
+	ChannelID           string `json:"channelId"`
+	Status              string `json:"status"`
+	Balance             string `json:"balance"`
+	TotalClaimed        string `json:"totalClaimed"`
+	PayoutWatermark     string `json:"payoutWatermark"`
+	WithdrawRequestedAt int64  `json:"withdrawRequestedAt"`
+}
+
+// RedemptionStatus is the BatchRedemptionChannelState.Status of an onchain
+// status, or "" for one this scheme does not know.
+func RedemptionStatus(status generated.ChannelStatus) string {
+	switch status {
+	case generated.ChannelStatus_Open:
+		return ChannelStatusOpen
+	case generated.ChannelStatus_Closing:
+		return ChannelStatusClosing
+	case generated.ChannelStatus_Sealed:
+		return ChannelStatusSealed
+	case generated.ChannelStatus_Distributed:
+		return ChannelStatusDistributed
+	default:
+		return ""
+	}
 }
 
 // ProofOf returns the client voucher or server authorization a payload spends.
@@ -363,7 +394,8 @@ func IsBatchFacilitatorPayload(value any) bool {
 	switch record["type"] {
 	case PayloadTypeClaim:
 		claims, ok := asSlice(record["claims"])
-		if !ok || len(claims) == 0 || len(claims) > 4 {
+		// The protocol maximum; the facilitator checks its own advertised capacity.
+		if !ok || len(claims) == 0 || len(claims) > V1MaxClaimChannels {
 			return false
 		}
 		for _, claim := range claims {
@@ -379,7 +411,7 @@ func IsBatchFacilitatorPayload(value any) bool {
 			(!present(record, "closeAuthorization") || isCloseAuthorization(record["closeAuthorization"]))
 	case PayloadTypeSettle:
 		channels, ok := asSlice(record["channels"])
-		if !ok || len(channels) == 0 {
+		if !ok || len(channels) == 0 || len(channels) > V1MaxSettleChannels {
 			return false
 		}
 		for _, item := range channels {

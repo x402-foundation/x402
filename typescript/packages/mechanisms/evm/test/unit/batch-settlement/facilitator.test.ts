@@ -2121,6 +2121,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       },
       amount: "9000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
     const result = await scheme.settle(
@@ -2166,6 +2167,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       },
       amount: "9000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
     const result = await scheme.settle(
@@ -2198,6 +2200,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       },
       amount: "9000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
     const result = await scheme.settle(
@@ -2233,6 +2236,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
       amount: "9000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
     const result = await scheme.settle(
@@ -2268,6 +2272,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       voucher: { channelId, maxClaimableAmount: "0", signature: "0xdead" },
       amount: "1000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [
         {
           voucher: { channel: config, maxClaimableAmount: "1000" },
@@ -2299,16 +2304,10 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     );
   });
 
-  it("returns AuthorizerAddressMismatch when refund authorizer doesn't match config", async () => {
-    mockedMulticall.mockResolvedValue([
-      { status: "success", result: [10000n, 0n] },
-      { status: "success", result: [0n, 0n] },
-      { status: "success", result: 0n },
-    ]);
-    const scheme = new BatchSettlementEvmScheme(buildSigner(), authorizer);
-    const config = buildChannelConfig({
-      receiverAuthorizer: "0x1111111111111111111111111111111111111111",
-    });
+  it("rejects an unsigned refund instead of signing it with the configured authorizer", async () => {
+    const signer = buildSigner();
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    const config = buildChannelConfig({ receiverAuthorizer: authorizer.address });
     const channelId = computeChannelId(config);
     const rp: BatchSettlementEnrichedRefundPayload = {
       type: "refund",
@@ -2323,7 +2322,8 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       makeRequirements(),
     );
     expect(result.success).toBe(false);
-    expect(result.errorReason).toBe(Errors.ErrAuthorizerAddressMismatch);
+    expect(result.errorReason).toBe(Errors.ErrRefundAuthorizerSignature);
+    expect(signer.writeContract).not.toHaveBeenCalled();
   });
 
   it("returns RefundNoBalance without submitting when a refund would transfer zero tokens", async () => {
@@ -2346,6 +2346,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       },
       amount: "9000",
       refundNonce: "0",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
 
@@ -2390,6 +2391,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       },
       amount: "2000",
       refundNonce: "7",
+      refundAuthorizerSignature: "0xserversig" as `0x${string}`,
       claims: [],
     };
 
@@ -2545,7 +2547,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     );
   });
 
-  it("returns AuthorizerNotConfigured for a refund without a client signature", async () => {
+  it("returns RefundAuthorizerSignature for a refund without a client signature", async () => {
     const signer = buildSigner();
     mockedMulticall.mockResolvedValue([
       { status: "success", result: [10000n, 0n] },
@@ -2570,7 +2572,7 @@ describe("BatchSettlementEvmScheme (Facilitator) — no authorizer configured", 
     );
 
     expect(result.success).toBe(false);
-    expect(result.errorReason).toBe(Errors.ErrAuthorizerNotConfigured);
+    expect(result.errorReason).toBe(Errors.ErrRefundAuthorizerSignature);
     expect(signer.writeContract).not.toHaveBeenCalled();
   });
 

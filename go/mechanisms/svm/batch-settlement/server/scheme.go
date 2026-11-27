@@ -51,6 +51,7 @@ type BatchSvmScheme struct {
 	contexts map[string]*RequestContext
 	extras   map[string]map[string]any
 	sequence uint64
+	capacity map[x402.Network]RedemptionCapacity
 }
 
 // NewBatchSvmScheme creates a server scheme. A nil config uses in-memory stores.
@@ -73,6 +74,7 @@ func NewBatchSvmScheme(config *Config) *BatchSvmScheme {
 		operations: operations,
 		contexts:   map[string]*RequestContext{},
 		extras:     map[string]map[string]any{},
+		capacity:   map[x402.Network]RedemptionCapacity{},
 	}
 }
 
@@ -92,9 +94,10 @@ func (s *BatchSvmScheme) PaymentFlows() map[string]x402.PaymentFlowConfig {
 	}
 }
 
-// DynamicExtraFields returns extra keys regenerated on each PaymentRequired response.
+// DynamicExtraFields returns the extra keys left out of requirements matching
+// (batchsettlement.DynamicExtraFields).
 func (s *BatchSvmScheme) DynamicExtraFields() []string {
-	return []string{batchsettlement.ExtraRecentBlockhash, batchsettlement.ExtraRecentSlot}
+	return append([]string(nil), batchsettlement.DynamicExtraFields...)
 }
 
 // GetAssetDecimals implements AssetDecimalsProvider for dollar settlement overrides.
@@ -174,6 +177,12 @@ func (s *BatchSvmScheme) ValidateFacilitatorSupport(
 			network,
 		)
 	}
+	s.mu.Lock()
+	s.capacity[network] = RedemptionCapacity{
+		MaxClaimChannels:  advertisedCapacity(supportedKind.Extra[batchsettlement.ExtraMaxClaimChannels]),
+		MaxSettleChannels: advertisedCapacity(supportedKind.Extra[batchsettlement.ExtraMaxSettleChannels]),
+	}
+	s.mu.Unlock()
 	if s.config.ReceiverAuthorizer != nil {
 		return nil
 	}
@@ -326,18 +335,21 @@ func (s *BatchSvmScheme) ResolveMinDepositHint(requirements types.PaymentRequire
 }
 
 // CreateChannelManager builds the redemption worker over this scheme's channel store.
+// Redemption terms come from each stored channel, and batch capacity from the
+// facilitator's /supported kind recorded by ValidateFacilitatorSupport (four
+// channels per batch before then).
 func (s *BatchSvmScheme) CreateChannelManager(
 	facilitator x402.FacilitatorClient,
-	requirements types.PaymentRequirements,
+	network x402.Network,
 	options BatchChannelManagerConfig,
-) (*BatchChannelManager, error) {
-	if _, ok := requirements.Extra[batchsettlement.ExtraFeePayer].(string); !ok {
-		return nil, errors.New(
-			"createChannelManager requires requirements.extra.feePayer; pass the requirements returned by enhancePaymentRequirements for the facilitator's /supported kind",
-		)
-	}
+) *BatchChannelManager {
 	options.Store = s.store
-	options.Requirements = requirements
+	options.Network = string(network)
+	options.Capacity = func() RedemptionCapacity {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.capacity[network]
+	}
 	if s.config.ReceiverAuthorizer != nil {
 		options.ReceiverAuthorizer = s.config.ReceiverAuthorizer
 	}
@@ -360,7 +372,7 @@ func (s *BatchSvmScheme) CreateChannelManager(
 		}
 		return facilitator.Settle(ctx, payloadBytes, requirementsBytes)
 	}
-	return NewBatchChannelManager(options), nil
+	return NewBatchChannelManager(options)
 }
 
 // BeforeVerifyHook reserves channel capacity and validates payloads before facilitator verify.
@@ -424,7 +436,7 @@ func (s *BatchSvmScheme) EnrichSettlementPayload(ctx x402.SettleContext) (map[st
 				return ChannelState{}, err
 			}
 			if amount != cumulative {
-				return ChannelState{}, errors.New(batchsettlement.ErrCumulativeAmountMismatch)
+				return ChannelState{}, errors.New(batchsettlement.ErrCloseState)
 			}
 			voucher = *parsed.Voucher
 		case !serverMode:
@@ -573,6 +585,13 @@ func (s *BatchSvmScheme) prepareVerify(ctx x402.VerifyContext, raw map[string]an
 			return err
 		}
 	}
+	// Once the payer has started a forced close, settle is unavailable, so a
+	// further paid request is refused (spec 4.5: a voucher or authorization
+	// against a Closing channel fails with channel_closing).
+	if (parsed.Type == batchsettlement.PayloadTypeVoucher || parsed.Type == batchsettlement.PayloadTypeAuthorization) &&
+		state != nil && (state.Status == ChannelStatusClosing || state.Status == ChannelStatusSealed || state.CloseRequestedAt != 0) {
+		return errors.New(batchsettlement.ErrChannelClosing)
+	}
 	if parsed.Type == batchsettlement.PayloadTypeDeposit && state == nil {
 		if err := s.verifyDepositOpen(parsed, requirements); err != nil {
 			return err
@@ -684,8 +703,11 @@ func (s *BatchSvmScheme) trackRefund(
 	if err != nil {
 		return err
 	}
+	// A cooperative close settles at the accepted cumulative; a voucher at any
+	// other watermark cannot close the channel (spec 7: close_state).
 	if submitted != state.ChargedCumulativeAmount {
-		return errors.New(batchsettlement.ErrCumulativeAmountMismatch)
+		return fmt.Errorf("%s: refund voucher %d is not the accepted cumulative %d",
+			batchsettlement.ErrCloseState, submitted, state.ChargedCumulativeAmount)
 	}
 	s.putContext(ctx.Payload, &RequestContext{ChannelID: channelID})
 	return nil
@@ -1249,11 +1271,7 @@ func (s *BatchSvmScheme) verifyDepositOpen(parsed batchsettlement.ParsedBatchPay
 		expected.Memo = &memo
 	}
 	if _, err := paymentchannels.VerifyOpenTransaction(parsed.Deposit.Transaction, expected); err != nil {
-		reason := batchsettlement.ErrSetupTransaction
-		if strings.Contains(err.Error(), "receiver binding") {
-			reason = batchsettlement.ErrReceiverAuthorizerMismatch
-		}
-		return fmt.Errorf("%s: %s", reason, err.Error())
+		return batchsettlement.SetupTransactionError(err)
 	}
 	return nil
 }
@@ -1610,6 +1628,9 @@ func classifyError(err error) string {
 	message := errString(err)
 	if strings.Contains(message, ChannelBusy) {
 		return ChannelBusy
+	}
+	if strings.HasPrefix(message, svm.ErrUnsupportedTransactionVersion) {
+		return svm.ErrUnsupportedTransactionVersion
 	}
 	for _, reason := range batchsettlement.ErrorReasons() {
 		if strings.Contains(message, reason) {

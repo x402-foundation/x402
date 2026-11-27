@@ -1,1 +1,0 @@
-`x402MCPClientSync` has the payment hooks (`on_payment_required`, `on_before_payment`, `on_after_payment`), `call_tool_with_payment` and `get_tool_payment_requirements` again, and raises `PaymentRequiredError` when auto-payment is off or a payment is denied, matching `x402MCPClient`. The `mcp/tests` suite now runs as part of `pytest`.

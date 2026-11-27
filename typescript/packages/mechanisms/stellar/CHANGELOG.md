@@ -1,5 +1,59 @@
 # @x402/stellar Changelog
 
+## 2.32.0
+
+### Minor Changes
+
+- [4cc2ce4](https://github.com/x402-foundation/x402/commit/4cc2ce4): The Stellar exact client and facilitator accept an optional `rpcConfig.horizonUrl` for the ledger close time estimate. They used to always read the public SDF Horizon (`horizon.stellar.org` on pubnet) even when `rpcConfig.url` pointed at a custom RPC. Without `horizonUrl` the default Horizon URLs are used as before. ([#4288](https://github.com/x402-foundation/x402/pull/4288)) - Thanks [@kzmttkc](https://github.com/kzmttkc) and [@claude](https://github.com/claude)!
+- [e2b5bcb](https://github.com/x402-foundation/x402/commit/e2b5bcb): Upgrade `@stellar/stellar-sdk` from `^16.4.1` to `^17.4.0`. SDK 17 rebuilds the `xdr` namespace on `@stellar/js-xdr` v5: union arms and struct fields are now properties (`.switch()` becomes `.type`), and `toXDR()`/`fromXDR()` become `toXdr()`/`fromXdr()`. The client, facilitator and shared helpers are migrated, and the wire format is unchanged. Callers that pass `xdr` values into exported helpers such as `getAddressCredentials` must build them with SDK 17. SDK 17 also signs CAP-71 V2 (`sorobanCredentialsAddressV2`) auth entries by default. The facilitator already accepts V2 entries, and the network accepts them from Protocol 28. `engines.node` is raised to `>=22.12.0` to match the SDK, whose CommonJS build needs unflagged `require(esm)`. ([#4229](https://github.com/x402-foundation/x402/pull/4229)) - Thanks [@jeesunikim](https://github.com/jeesunikim) and [@claude](https://github.com/claude)!
+- Updated dependencies [4e12019](https://github.com/x402-foundation/x402/commit/4e12019)
+  - @x402/core@2.32.0
+
+## 2.31.0
+
+### Minor Changes
+
+- Updated dependencies [d3eb19d](https://github.com/x402-foundation/x402/commit/d3eb19d)
+- Updated dependencies [cfbfe65](https://github.com/x402-foundation/x402/commit/cfbfe65)
+  - @x402/core@2.31.0
+
+## 2.30.0
+
+### Minor Changes
+
+- Updated dependencies [0f41a8d](https://github.com/x402-foundation/x402/commit/0f41a8d)
+- Updated dependencies [c349511](https://github.com/x402-foundation/x402/commit/c349511)
+- Updated dependencies [7074943](https://github.com/x402-foundation/x402/commit/7074943)
+- Updated dependencies [3c0a740](https://github.com/x402-foundation/x402/commit/3c0a740)
+  - @x402/core@2.30.0
+
+## 2.29.0
+
+### Minor Changes
+
+- [0aee759](https://github.com/x402-foundation/x402/commit/0aee759): Mapped common Stellar simulation failures to exported typed errors with account and asset context. ([#2975](https://github.com/x402-foundation/x402/pull/2975)) - Thanks [@realmehmetali](https://github.com/realmehmetali)!
+- Updated dependencies [636f585](https://github.com/x402-foundation/x402/commit/636f585)
+- Updated dependencies [76f2f28](https://github.com/x402-foundation/x402/commit/76f2f28)
+- Updated dependencies [732c181](https://github.com/x402-foundation/x402/commit/732c181)
+- Updated dependencies [8c2b431](https://github.com/x402-foundation/x402/commit/8c2b431)
+- Updated dependencies [3525075](https://github.com/x402-foundation/x402/commit/3525075)
+- Updated dependencies [e95b066](https://github.com/x402-foundation/x402/commit/e95b066)
+- Updated dependencies [3bd3c1d](https://github.com/x402-foundation/x402/commit/3bd3c1d)
+- Updated dependencies [bc31d3e](https://github.com/x402-foundation/x402/commit/bc31d3e)
+- Updated dependencies [db2c98e](https://github.com/x402-foundation/x402/commit/db2c98e)
+- Updated dependencies [7abd80f](https://github.com/x402-foundation/x402/commit/7abd80f)
+- Updated dependencies [fa5eb06](https://github.com/x402-foundation/x402/commit/fa5eb06)
+- Updated dependencies [3ca54cb](https://github.com/x402-foundation/x402/commit/3ca54cb)
+- Updated dependencies [b609bf5](https://github.com/x402-foundation/x402/commit/b609bf5)
+- Updated dependencies [8065278](https://github.com/x402-foundation/x402/commit/8065278)
+  - @x402/core@2.29.0
+
+### Patch Changes
+
+- [306fd36](https://github.com/x402-foundation/x402/commit/306fd36): Propagate `invalidMessage` from the settle-time re-verification into `SettleResponse.errorMessage`, including the EVM auth-capture collect and lifecycle settle paths, matching the behavior already present in the avm, casper, cardano, hedera, tvm, and xrpl mechanisms. Settle failures previously returned only `errorReason`, so the diagnostic detail (e.g. the underlying Solana simulation error) was dropped even though `/verify` returned it. ([#3119](https://github.com/x402-foundation/x402/pull/3119)) - Thanks [@notorious-d-e-v](https://github.com/notorious-d-e-v)!
+- [62fc03e](https://github.com/x402-foundation/x402/commit/62fc03e): Require `@stellar/stellar-sdk` `^16.4.1`, the `lts-16` release that bumps `axios` from 1.18.0 to 1.20.0 and clears its seven high-severity advisories. No source change: 16.4.1 differs from 16.3.1 by that one dependency, and `.switch()` / `toXDR()` / `fromXDR()` are unchanged on the 16 line. The floor is raised so no install can resolve 16.3.x again. ([#3904](https://github.com/x402-foundation/x402/pull/3904)) - Thanks [@parthod0x](https://github.com/parthod0x)!
+- [332f65d](https://github.com/x402-foundation/x402/commit/332f65d): Fixed `ExactStellarScheme.settle` collapsing every non-`PENDING` `sendTransaction` result into the same constant `errorReason`. The RPC's `status`, `errorResult` code, and `latestLedger` are now surfaced via `errorMessage`/`extra`, and a `TRY_AGAIN_LATER` response is reported with a distinct, retryable `errorReason` (`settle_exact_stellar_transaction_submission_retryable`) instead of being treated as a terminal failure identical to `ERROR`. ([#3293](https://github.com/x402-foundation/x402/pull/3293)) - Thanks [@wakqasahmed](https://github.com/wakqasahmed)!
+
 ## 2.28.0
 
 ### Minor Changes

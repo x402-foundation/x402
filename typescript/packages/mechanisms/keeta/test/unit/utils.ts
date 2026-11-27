@@ -1,11 +1,11 @@
 import { vi } from "vitest";
 import { KEETA_MAINNET_CAIP2, KEETA_TESTNET_CAIP2 } from "../../src/constants";
 
-const { mockUserClientDestroy, mockUserClientFromNetwork } = vi.hoisted(() => {
-  const destroy = vi.fn().mockResolvedValue(undefined);
+const { mockUserClientFromNetwork } = vi.hoisted(() => {
   return {
-    mockUserClientDestroy: destroy,
-    mockUserClientFromNetwork: () => ({ destroy }),
+    mockUserClientFromNetwork: vi.fn(() => ({
+      destroy: vi.fn().mockResolvedValue(undefined),
+    })),
   };
 });
 
@@ -14,15 +14,13 @@ vi.mock("@keetanetwork/keetanet-client", async importOriginal => {
   return {
     ...actual,
     UserClient: Object.assign(actual.UserClient, {
-      fromNetwork: vi.fn(mockUserClientFromNetwork),
+      fromNetwork: mockUserClientFromNetwork,
     }),
   };
 });
 
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 import { KTA_MAINNET_ADDRESS, KTA_TESTNET_ADDRESS } from "../../src/utils";
-
-export { mockUserClientDestroy };
 
 /** Valid token addresses used as USDC stand-ins in unit tests (no RPC). */
 export const USDC_TESTNET_ADDRESS = KTA_MAINNET_ADDRESS;

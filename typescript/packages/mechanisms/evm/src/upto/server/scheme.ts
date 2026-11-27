@@ -100,8 +100,19 @@ export class UptoEvmScheme implements SchemeNetworkServer {
     extensionKeys: string[],
   ): Promise<PaymentRequirements> {
     void extensionKeys;
+    let amount = paymentRequirements.amount;
+    if (amount.includes(".")) {
+      const asset = findDefaultAsset(paymentRequirements.asset, paymentRequirements.network);
+      if (!asset) {
+        throw new Error(
+          `Token ${paymentRequirements.asset} is not a registered asset for network ${paymentRequirements.network}; provide amount in atomic units`,
+        );
+      }
+      amount = convertToTokenAmount(amount, asset.decimals);
+    }
     return Promise.resolve({
       ...paymentRequirements,
+      amount,
       extra: {
         ...paymentRequirements.extra,
         assetTransferMethod: "permit2",

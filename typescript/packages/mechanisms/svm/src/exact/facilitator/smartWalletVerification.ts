@@ -20,15 +20,29 @@ import {
 import type { PaymentRequirements, VerifyResponse } from "@x402/core/types";
 import { MEMO_PROGRAM_ADDRESS } from "../../constants";
 import type { FacilitatorSvmSigner, SvmInnerInstructionsResult } from "../../signer";
+import {
+  checkTransactionV1Budget,
+  readTransactionV1Config,
+  type TransactionV1BudgetViolation,
+} from "../../transactionV1";
 import { decodeTransactionFromPayload, isAcceptedTransactionVersion } from "../../utils";
+import {
+  assertFeePayerIsolatedWithAtaCreation,
+  deriveLegDestinations,
+  matchTransfersToLegs,
+  SplitsError,
+  transferPaysLeg,
+  type LegDestinations,
+  type PaymentLeg,
+} from "../splits";
 import * as Errors from "./errors";
 
 const DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS = 400_000;
 const DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS = 50_000;
 
-const IX_SET_COMPUTE_UNIT_LIMIT = 2;
-const IX_SET_COMPUTE_UNIT_PRICE = 3;
-const IX_TOKEN_TRANSFER_CHECKED = 12;
+export const IX_SET_COMPUTE_UNIT_LIMIT = 2;
+export const IX_SET_COMPUTE_UNIT_PRICE = 3;
+export const IX_TOKEN_TRANSFER_CHECKED = 12;
 
 const TOKEN_PROGRAMS = new Set([
   TOKEN_PROGRAM_ADDRESS.toString(),
@@ -303,10 +317,53 @@ export function validateComputeBudgetLimits(
   const compiled = getCompiledTransactionMessageDecoder().decode(transaction.messageBytes);
   assertAcceptedTransactionVersion(compiled.version);
   const decompiled = decompileTransactionMessage(compiled);
-  validateComputeBudgetLimitsFromInstructions(decompiled.instructions ?? [], {
+  validateComputeBudgetForMessage(compiled, decompiled.instructions ?? [], {
     maxComputeUnits: maxCU,
     maxPriorityFeeMicroLamports: maxPriorityFee,
   });
+}
+
+const SMART_WALLET_V1_BUDGET_REASONS: Record<TransactionV1BudgetViolation, string> = {
+  priority_fee_bits: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  heap_size: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  compute_budget_instruction: Errors.ErrSmartWalletUnsupportedComputeBudget,
+  compute_unit_limit_missing: Errors.ErrSmartWalletMalformedComputeLimit,
+  loaded_accounts_data_size_limit_missing: Errors.ErrSmartWalletMalformedComputeLimit,
+  compute_unit_limit_too_high: Errors.ErrSmartWalletComputeUnitsTooHigh,
+  priority_fee_too_high: Errors.ErrSmartWalletPriorityFeeTooHigh,
+};
+
+/**
+ * Validates a message's compute budget under the smart-wallet caps: the
+ * ComputeBudget instructions of a legacy or version-0 message, or the config
+ * of a version-1 message (which must carry no ComputeBudget instruction).
+ *
+ * @param compiled - The compiled transaction message
+ * @param instructions - Its decompiled top-level instructions
+ * @param limits - Resolved compute budget caps (defaults already applied)
+ * @param limits.maxComputeUnits - Maximum allowed compute units
+ * @param limits.maxPriorityFeeMicroLamports - Maximum allowed price, in microlamports per CU
+ */
+export function validateComputeBudgetForMessage(
+  compiled: unknown,
+  instructions: ReadonlyArray<DecodedInstructionView>,
+  limits: { maxComputeUnits: number; maxPriorityFeeMicroLamports: number },
+): void {
+  if ((compiled as { version: number | string }).version !== 1) {
+    validateComputeBudgetLimitsFromInstructions(instructions, limits);
+    return;
+  }
+  const violation = checkTransactionV1Budget(
+    readTransactionV1Config(compiled),
+    instructions.map(ix => ix.programAddress.toString()),
+    {
+      maxComputeUnits: limits.maxComputeUnits,
+      maxPriceMicroLamports: limits.maxPriorityFeeMicroLamports,
+    },
+  );
+  if (violation) {
+    throw new Error(`${SMART_WALLET_V1_BUDGET_REASONS[violation]}: transaction v1 ${violation}`);
+  }
 }
 
 /**
@@ -445,6 +502,38 @@ export function extractTransfersFromInnerInstructions(
 }
 
 /**
+ * Extracts TransferChecked instructions invoked at the top level.
+ *
+ * @param instructions - Decompiled top-level instructions
+ * @returns Array of top-level TransferChecked instructions
+ */
+export function extractTopLevelTransfers(
+  instructions: ReadonlyArray<DecodedInstructionView>,
+): TransferCheckedInfo[] {
+  const transfers: TransferCheckedInfo[] = [];
+  for (const ix of instructions) {
+    const progId = ix.programAddress.toString();
+    if (!TOKEN_PROGRAMS.has(progId)) continue;
+    const data = ix.data;
+    if (!data || data[0] !== IX_TOKEN_TRANSFER_CHECKED || data.length < 9) continue;
+    const accts = ix.accounts ?? [];
+    if (accts.length < 4) continue;
+    const amount = new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(
+      1,
+      true,
+    );
+    transfers.push({
+      programId: progId,
+      amount,
+      mint: accts[1].address.toString(),
+      destination: accts[2].address.toString(),
+      authority: accts[3].address.toString(),
+    });
+  }
+  return transfers;
+}
+
+/**
  * Operator-configurable options for smart wallet verification.
  * Passed through from the ExactSvmScheme constructor.
  */
@@ -459,6 +548,10 @@ export type SmartWalletOptions = SmartWalletLimits & {
  */
 export type SmartWalletVerifyResult = VerifyResponse & {
   matchedTransfer?: TransferCheckedInfo;
+  /** With splits: the transfer matched to each leg, in leg order. */
+  matchedTransfers?: TransferCheckedInfo[];
+  /** With splits: transfers invoked at the top level (no CPI to re-confirm). */
+  topLevelTransfers?: TransferCheckedInfo[];
 };
 
 /**
@@ -477,6 +570,8 @@ export type SmartWalletVerifyResult = VerifyResponse & {
  * @param signerAddresses - All facilitator signer addresses (for self-spend protection)
  * @param options - Optional operator-configurable limits
  * @param decoded - Pre-decoded transaction (avoids a second decode/decompile)
+ * @param legs - Payment legs when the requirements use splits (§5); each leg
+ *   must be paid by exactly one transfer and no other asset transfer may occur
  * @returns Verification result
  */
 export async function verifySmartWalletTransaction(
@@ -487,6 +582,7 @@ export async function verifySmartWalletTransaction(
   signerAddresses: readonly string[],
   options?: SmartWalletOptions,
   decoded?: DecodedTransactionView,
+  legs?: readonly PaymentLeg[],
 ): Promise<SmartWalletVerifyResult> {
   // Configuration errors must propagate to the operator rather than being
   // reported to the payer as a transaction verification failure.
@@ -496,14 +592,34 @@ export async function verifySmartWalletTransaction(
     decoded?.transaction ?? decodeTransactionFromPayload({ transaction: transactionBase64 });
   const instructions = decoded?.decompiled.instructions;
 
-  // 1. Fee payer must not appear in any instruction's accounts.
+  // 1. Fee payer must not appear in any instruction's accounts. With splits,
+  // the bounded CreateIdempotent exception of §2.1.1 applies.
   try {
-    if (instructions) {
+    if (legs) {
+      const markedOwners = new Set(legs.filter(l => l.ataCreationRequired).map(l => l.owner));
+      await assertFeePayerIsolatedWithAtaCreation(
+        instructions ??
+          decompileTransactionMessage(
+            getCompiledTransactionMessageDecoder().decode(transaction.messageBytes),
+          ).instructions ??
+          [],
+        feePayerAddress,
+        { asset: requirements.asset, markedOwners },
+      );
+    } else if (instructions) {
       assertFeePayerIsolatedFromInstructions(instructions, feePayerAddress);
     } else {
       await assertFeePayerIsolated(transaction, feePayerAddress, signer, requirements.network);
     }
   } catch (error) {
+    if (error instanceof SplitsError) {
+      return {
+        isValid: false,
+        invalidReason: error.reason,
+        invalidMessage: error.message,
+        payer: "",
+      };
+    }
     return {
       isValid: false,
       invalidReason:
@@ -518,7 +634,7 @@ export async function verifySmartWalletTransaction(
       const maxCU = options?.maxComputeUnits ?? DEFAULT_SMART_WALLET_MAX_COMPUTE_UNITS;
       const maxPriorityFee =
         options?.maxPriorityFeeMicroLamports ?? DEFAULT_SMART_WALLET_MAX_PRIORITY_FEE_MICROLAMPORTS;
-      validateComputeBudgetLimitsFromInstructions(instructions, {
+      validateComputeBudgetForMessage(decoded!.compiled, instructions, {
         maxComputeUnits: maxCU,
         maxPriorityFeeMicroLamports: maxPriorityFee,
       });
@@ -592,27 +708,8 @@ export async function verifySmartWalletTransaction(
     }
   }
 
-  const allTransfers: TransferCheckedInfo[] = [];
-
-  for (const ix of decompiledInstructions) {
-    const progId = ix.programAddress.toString();
-    if (!TOKEN_PROGRAMS.has(progId)) continue;
-    const data = ix.data;
-    if (!data || data[0] !== IX_TOKEN_TRANSFER_CHECKED || data.length < 9) continue;
-    const accts = ix.accounts ?? [];
-    if (accts.length < 4) continue;
-    const amount = new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(
-      1,
-      true,
-    );
-    allTransfers.push({
-      programId: progId,
-      amount,
-      mint: accts[1].address.toString(),
-      destination: accts[2].address.toString(),
-      authority: accts[3].address.toString(),
-    });
-  }
+  const topLevelTransfers = extractTopLevelTransfers(decompiledInstructions);
+  const allTransfers: TransferCheckedInfo[] = [...topLevelTransfers];
 
   allTransfers.push(
     ...extractTransfersFromInnerInstructions(simResult.innerInstructions, accountKeys),
@@ -627,6 +724,37 @@ export async function verifySmartWalletTransaction(
         payer: t.authority,
       };
     }
+  }
+
+  // With splits: every asset transfer must pay exactly one leg and every leg
+  // must be paid exactly once (§5.3, §5.5).
+  if (legs) {
+    let matched: TransferCheckedInfo[];
+    try {
+      const destinations = await deriveLegDestinations(legs, requirements.asset);
+      matched = matchTransfersToLegs(allTransfers, destinations, requirements.asset);
+    } catch (error) {
+      if (error instanceof SplitsError) {
+        return {
+          isValid: false,
+          invalidReason: error.reason,
+          invalidMessage: error.message,
+          payer: "",
+        };
+      }
+      return {
+        isValid: false,
+        invalidReason:
+          error instanceof Error ? error.message : Errors.ErrSmartWalletTransferMismatch,
+        payer: "",
+      };
+    }
+    return {
+      isValid: true,
+      payer: matched[0].authority,
+      matchedTransfers: matched,
+      topLevelTransfers,
+    };
   }
 
   // Derive expected destination ATAs for both token programs.
@@ -859,5 +987,95 @@ export async function verifyPostSettlement(
 
   // Neither verification method available or both failed.
   // Return unverified — caller decides policy.
+  return { verified: false, method: "unverified" };
+}
+
+/**
+ * Post-settlement verification for split charges (§3.4 with `N + 1` legs).
+ *
+ * A confirmed transaction executed every top-level instruction, so legs paid
+ * by a top-level transfer need no further check. Every other leg must appear
+ * in the confirmed CPI trace, or, when the trace is unavailable, show the
+ * expected balance delta on its ATA: at least the remainder for the primary
+ * leg, exactly the carve-out for a split.
+ *
+ * @param signer - Facilitator signer
+ * @param signature - Confirmed transaction signature
+ * @param network - CAIP-2 network identifier
+ * @param legs - Payment legs with candidate destination ATAs
+ * @param asset - Token mint
+ * @param signerAddresses - Facilitator signer addresses (never a valid authority)
+ * @param topLevelTransfers - Transfers invoked at the top level of the transaction
+ * @param balances - Per-leg ATA and pre-broadcast balance, in leg order, or null
+ * @returns Whether every leg was verified on-chain
+ */
+export async function verifyPostSettlementLegs(
+  signer: FacilitatorSvmSigner,
+  signature: string,
+  network: string,
+  legs: readonly LegDestinations[],
+  asset: string,
+  signerAddresses: readonly string[],
+  topLevelTransfers: readonly TransferCheckedInfo[],
+  balances: ReadonlyArray<{ ata: string; before: bigint | null }> | null,
+): Promise<{
+  verified: boolean;
+  method: "topLevel" | "innerInstructions" | "balanceDelta" | "unverified";
+}> {
+  const pays = (t: TransferCheckedInfo, leg: LegDestinations) =>
+    t.mint === asset && !signerAddresses.includes(t.authority) && transferPaysLeg(t, leg);
+
+  const pending = legs
+    .map((leg, index) => ({ leg, index }))
+    .filter(({ leg }) => !topLevelTransfers.some(t => pays(t, leg)));
+  if (pending.length === 0) {
+    return { verified: true, method: "topLevel" };
+  }
+
+  if (typeof signer.getConfirmedTransactionInnerInstructions === "function") {
+    let confirmed: SvmInnerInstructionsResult | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        confirmed = await signer.getConfirmedTransactionInnerInstructions(signature, network);
+        if (confirmed?.innerInstructions) break;
+      } catch {
+        // RPC error — retry
+      }
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+      }
+    }
+    if (confirmed?.innerInstructions) {
+      const inner = extractTransfersFromInnerInstructions(confirmed.innerInstructions, []);
+      const verified = pending.every(({ leg }) => inner.some(t => pays(t, leg)));
+      return { verified, method: "innerInstructions" };
+    }
+  }
+
+  if (balances && typeof signer.getTokenAccountBalance === "function") {
+    for (const { leg, index } of pending) {
+      const entry = balances[index];
+      // A null read can mean an RPC failure, even for a sponsored ATA.
+      const before = entry?.before ?? null;
+      if (!entry || before === null) {
+        return { verified: false, method: "unverified" };
+      }
+      let after: bigint | null;
+      try {
+        after = await signer.getTokenAccountBalance(entry.ata, network);
+      } catch {
+        after = null;
+      }
+      if (after === null) {
+        return { verified: false, method: "unverified" };
+      }
+      const delta = after - before;
+      if (leg.isPrimary ? delta < leg.amount : delta !== leg.amount) {
+        return { verified: false, method: "balanceDelta" };
+      }
+    }
+    return { verified: true, method: "balanceDelta" };
+  }
+
   return { verified: false, method: "unverified" };
 }

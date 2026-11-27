@@ -1,9 +1,10 @@
 """Registration helpers for SVM exact payment schemes."""
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeVar
 
 from ....schemas.helpers import matches_network_pattern
-from ..constants import V1_NETWORKS, V1_TO_V2_NETWORK_MAP
+from ..constants import DEFAULT_MAX_COMPUTE_UNITS, V1_NETWORKS, V1_TO_V2_NETWORK_MAP
 
 if TYPE_CHECKING:
     from x402 import (
@@ -117,6 +118,10 @@ def register_exact_svm_facilitator(
     facilitator: FacilitatorT,
     signer: "FacilitatorSvmSigner",
     networks: str | list[str],
+    max_splits: int = 0,
+    ata_creation_sponsored: bool = False,
+    transaction_versions: Sequence[int] | None = None,
+    max_compute_units: int = DEFAULT_MAX_COMPUTE_UNITS,
 ) -> FacilitatorT:
     """Register SVM exact payment schemes to x402Facilitator.
 
@@ -131,6 +136,16 @@ def register_exact_svm_facilitator(
         facilitator: x402Facilitator instance.
         signer: SVM signer for verification/settlement.
         networks: Network(s) to register.
+        max_compute_units: Compute-unit ceiling for V2 verification, default 400,000.
+        max_splits: Maximum ``extra.splits`` entries the V2 scheme accepts (0-8).
+        ata_creation_sponsored: Whether the V2 scheme's fee payer funds ATA
+            creation for recipients marked ``ataCreationRequired``. Owners can
+            close their ATA, reclaim the rent, and repeat on every charge.
+            Requires out-of-band limits per owner/mint or Resource Server;
+            splits do not automatically reimburse sponsored rent.
+        transaction_versions: Transaction message versions to accept and
+            advertise, applied to both the V2 and V1 schemes. Defaults to
+            ``[0, 1]``.
 
     Returns:
         Facilitator for chaining.
@@ -141,14 +156,23 @@ def register_exact_svm_facilitator(
 
     settlement_cache = SettlementCache()
 
-    scheme = ExactSvmFacilitatorScheme(signer, settlement_cache)
+    scheme = ExactSvmFacilitatorScheme(
+        signer,
+        settlement_cache,
+        max_splits=max_splits,
+        ata_creation_sponsored=ata_creation_sponsored,
+        transaction_versions=transaction_versions,
+        max_compute_units=max_compute_units,
+    )
 
     if isinstance(networks, str):
         networks = [networks]
     facilitator.register(networks, scheme)
 
     # Register V1
-    v1_scheme = ExactSvmFacilitatorSchemeV1(signer, settlement_cache)
+    v1_scheme = ExactSvmFacilitatorSchemeV1(
+        signer, settlement_cache, transaction_versions=transaction_versions
+    )
     facilitator.register_v1(V1_NETWORKS, v1_scheme)
 
     return facilitator

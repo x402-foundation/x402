@@ -121,7 +121,6 @@ async function createFacilitator(): Promise<x402Facilitator> {
 
   // Create and configure the facilitator with all networks
   // EIP6492 allowed factory addresses for x402.org testnet facilitator.
-  // Ported from the CDP Facilitator's allowlist to keep trusted factories in parity.
   // To extend support for new factories, add more factory addresses to the array.
   const eip6492AllowedFactories = [
     // Coinbase Smart Wallet (CoinbaseSmartWalletFactory)

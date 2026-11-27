@@ -953,6 +953,9 @@ class x402HTTPServerBase:
         unpaid_response: Any = None,
     ) -> HTTPResponseInstructions:
         """Create HTTP response instructions."""
+        # 412 tells the client to approve Permit2 before retrying.
+        status = 412 if payment_required.error == "permit2_allowance_required" else 402
+
         if is_web_browser:
             html_content = self._generate_paywall_html(
                 payment_required,
@@ -960,7 +963,7 @@ class x402HTTPServerBase:
                 custom_html,
             )
             return HTTPResponseInstructions(
-                status=402,
+                status=status,
                 headers={
                     "Content-Type": "text/html",
                     PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),
@@ -981,7 +984,7 @@ class x402HTTPServerBase:
             body = {"error": payment_required.error}
 
         return HTTPResponseInstructions(
-            status=402,
+            status=status,
             headers={
                 "Content-Type": content_type,
                 PAYMENT_REQUIRED_HEADER: encode_payment_required_header(payment_required),

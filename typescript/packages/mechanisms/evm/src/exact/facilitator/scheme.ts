@@ -8,8 +8,15 @@ import {
 } from "@x402/core/types";
 import { InMemoryPendingSettlementStore, PendingSettlementStore } from "@x402/core/facilitator";
 import { FacilitatorEvmSigner } from "../../signer";
-import { ExactEvmPayloadV2, ExactEIP3009Payload, isPermit2Payload } from "../../types";
+import {
+  ExactEIP3009Payload,
+  ExactPermit2Payload,
+  getExactEvmPayloadPayer,
+  isPermit2Payload,
+  validateExactEvmPayload,
+} from "../../types";
 import { verifyEIP3009, settleEIP3009 } from "./eip3009";
+import * as Errors from "./errors";
 import { verifyPermit2, settlePermit2 } from "./permit2";
 
 export interface ExactEvmSchemeConfig {
@@ -105,19 +112,26 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     context?: FacilitatorContext,
     _?: Record<string, unknown>,
   ): Promise<VerifyResponse> {
-    const rawPayload = payload.payload as ExactEvmPayloadV2;
-    const isPermit2 = isPermit2Payload(rawPayload);
-
-    if (isPermit2) {
-      return verifyPermit2(this.signer, payload, requirements, rawPayload, context);
+    const payloadError = validateExactEvmPayload(payload.payload);
+    if (payloadError) {
+      return {
+        isValid: false,
+        invalidReason: Errors.ErrInvalidPayload,
+        invalidMessage: payloadError,
+        payer: getExactEvmPayloadPayer(payload.payload),
+      };
     }
 
-    const eip3009Payload: ExactEIP3009Payload = rawPayload;
+    const body = payload.payload as ExactEIP3009Payload | ExactPermit2Payload;
+    if (isPermit2Payload(body)) {
+      return verifyPermit2(this.signer, payload, requirements, body, context);
+    }
+
     const { response } = await verifyEIP3009(
       this.signer,
       payload,
       requirements,
-      eip3009Payload,
+      body,
       undefined,
       this.config.eip6492AllowedFactories,
     );
@@ -137,27 +151,36 @@ export class ExactEvmScheme implements SchemeNetworkFacilitator {
     requirements: PaymentRequirements,
     context?: FacilitatorContext,
   ): Promise<SettleResponse> {
-    const rawPayload = payload.payload as ExactEvmPayloadV2;
-    const isPermit2 = isPermit2Payload(rawPayload);
+    const payloadError = validateExactEvmPayload(payload.payload);
+    if (payloadError) {
+      return {
+        success: false,
+        errorReason: Errors.ErrInvalidPayload,
+        errorMessage: payloadError,
+        payer: getExactEvmPayloadPayer(payload.payload),
+        transaction: "",
+        network: requirements.network,
+      };
+    }
 
-    if (isPermit2) {
+    const body = payload.payload as ExactEIP3009Payload | ExactPermit2Payload;
+    if (isPermit2Payload(body)) {
       return settlePermit2(
         this.signer,
         payload,
         requirements,
-        rawPayload,
+        body,
         context,
         { simulateInSettle: this.config.simulateInSettle },
         this.pendingStore,
       );
     }
 
-    const eip3009Payload: ExactEIP3009Payload = rawPayload;
     return settleEIP3009(
       this.signer,
       payload,
       requirements,
-      eip3009Payload,
+      body,
       this.config,
       context,
       this.pendingStore,

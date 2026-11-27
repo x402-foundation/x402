@@ -26,12 +26,15 @@ import type {
 } from "@x402/core/types";
 import type { PaymentPayloadV1, PaymentRequirementsV1 } from "@x402/core/types/v1";
 import {
-  ADVERTISED_TRANSACTION_VERSIONS,
   LIGHTHOUSE_PROGRAM_ADDRESS,
   MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
   MEMO_PROGRAM_ADDRESS,
 } from "../../../constants";
-import { ErrUnsupportedTransactionVersion } from "../../facilitator/errors";
+import {
+  ErrTransactionSizeExceeded,
+  ErrUnsupportedTransactionVersion,
+  TRANSACTION_V1_BUDGET_REASONS,
+} from "../../facilitator/errors";
 import { SettlementCache } from "../../../settlement-cache";
 import type { FacilitatorSvmSigner } from "../../../signer";
 import type { ExactSvmPayloadV1 } from "../../../types";
@@ -39,14 +42,37 @@ import {
   decodeTransactionFromPayload,
   getTokenPayerFromTransaction,
   isAcceptedTransactionVersion,
+  normalizeAcceptedTransactionVersions,
   peekWireTransactionVersion,
   transactionMessageHash,
 } from "../../../utils";
+import {
+  checkTransactionV1Budget,
+  readTransactionV1Config,
+  transactionSizeExceeded,
+} from "../../../transactionV1";
+import { staticTransferIndex } from "../../facilitator/scheme";
 import { verifyRequiredSignatures } from "../../facilitator/signatureVerification";
 
 const compiledMessageDecoder = getCompiledTransactionMessageDecoder();
 
 const IX_TOKEN_TRANSFER_CHECKED = 12;
+
+/**
+ * Configuration options for ExactSvmSchemeV1.
+ */
+export type ExactSvmSchemeV1Options = {
+  /**
+   * Transaction message versions this facilitator accepts, advertised as
+   * `extra.transactionVersions` in `/supported`. A message of any other
+   * version is rejected with `unsupported_transaction_version`; a legacy
+   * message is accepted exactly when version 0 is. Narrow it to `[0]` for a
+   * sponsor whose signer or RPC does not yet handle version 1.
+   *
+   * Default: `[0, 1]`
+   */
+  transactionVersions?: readonly (0 | 1)[];
+};
 
 /**
  * SVM facilitator implementation for the Exact payment scheme (V1).
@@ -56,19 +82,23 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
   readonly caipFamily = "solana:*";
 
   private readonly settlementCache: SettlementCache;
+  private readonly transactionVersions: readonly (0 | 1)[];
 
   /**
    * Creates a new ExactSvmFacilitatorV1 instance.
    *
    * @param signer - The SVM RPC client for facilitator operations
    * @param settlementCache - Optional shared settlement cache (one is created if omitted)
+   * @param options - Optional facilitator configuration
    * @returns ExactSvmFacilitatorV1 instance
    */
   constructor(
     private readonly signer: FacilitatorSvmSigner,
     settlementCache?: SettlementCache,
+    options?: ExactSvmSchemeV1Options,
   ) {
     this.settlementCache = settlementCache ?? new SettlementCache();
+    this.transactionVersions = normalizeAcceptedTransactionVersions(options?.transactionVersions);
   }
 
   /**
@@ -86,7 +116,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
 
     return {
       feePayer: addresses[randomIndex],
-      transactionVersions: [...ADVERTISED_TRANSACTION_VERSIONS],
+      transactionVersions: [...this.transactionVersions],
     };
   }
 
@@ -155,7 +185,10 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     // Read the version from the raw bytes first so a newer wire format is
     // reported as unsupported however the installed decoder handles it.
     const wireVersion = peekWireTransactionVersion(exactSvmPayload.transaction);
-    if (wireVersion !== undefined && !isAcceptedTransactionVersion(wireVersion)) {
+    if (
+      wireVersion !== undefined &&
+      !isAcceptedTransactionVersion(wireVersion, this.transactionVersions)
+    ) {
       return {
         isValid: false,
         invalidReason: ErrUnsupportedTransactionVersion,
@@ -186,12 +219,23 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     }
 
     // Reject any message version this verifier does not model before touching
-    // signatures or instructions (its compute budget checks assume the
-    // ComputeBudget instruction pair of legacy and version 0 messages).
-    if (!isAcceptedTransactionVersion(compiled.version)) {
+    // signatures or instructions (its compute budget checks read the
+    // ComputeBudget instructions of legacy and version 0 messages and the
+    // config of version 1 messages).
+    if (!isAcceptedTransactionVersion(compiled.version, this.transactionVersions)) {
       return {
         isValid: false,
         invalidReason: ErrUnsupportedTransactionVersion,
+        payer: "",
+      };
+    }
+
+    // Size limit of the message version (§1.5): 1232 bytes for legacy and
+    // version 0, 4096 for version 1. The decoder accepts larger payloads.
+    if (transactionSizeExceeded(exactSvmPayload.transaction, compiled.version)) {
+      return {
+        isValid: false,
+        invalidReason: ErrTransactionSizeExceeded,
         payer: "",
       };
     }
@@ -222,14 +266,32 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
       };
     }
     const instructions = decompiled.instructions ?? [];
+    const transferIndex = staticTransferIndex(compiled.version);
 
-    // Allow 3-6 instructions:
-    // - 3 instructions: ComputeLimit + ComputePrice + TransferChecked
-    // - 4 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse or Memo
-    // - 5 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse or Memo
-    // - 6 instructions: ComputeLimit + ComputePrice + TransferChecked + Lighthouse + Lighthouse + Memo
+    if (compiled.version === 1) {
+      const violation = checkTransactionV1Budget(
+        readTransactionV1Config(compiled),
+        (instructions as ReadonlyArray<{ programAddress: Address }>).map(ix =>
+          ix.programAddress.toString(),
+        ),
+        { maxPriceMicroLamports: MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS },
+      );
+      if (violation) {
+        return {
+          isValid: false,
+          invalidReason: TRANSACTION_V1_BUDGET_REASONS[violation],
+          payer: "",
+        };
+      }
+    }
+
+    // Allow the transfer plus up to three optional instructions:
+    // - transfer alone
+    // - + Lighthouse or Memo
+    // - + Lighthouse + Lighthouse or Memo
+    // - + Lighthouse + Lighthouse + Memo
     // See: https://github.com/x402-foundation/x402/issues/828
-    if (instructions.length < 3 || instructions.length > 6) {
+    if (instructions.length < transferIndex + 1 || instructions.length > transferIndex + 4) {
       return {
         isValid: false,
         invalidReason: "invalid_exact_svm_payload_transaction_instructions_length",
@@ -238,16 +300,18 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     }
 
     // Step 3: Verify Compute Budget Instructions
-    try {
-      this.verifyComputeLimitInstruction(instructions[0] as never);
-      this.verifyComputePriceInstruction(instructions[1] as never);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        isValid: false,
-        invalidReason: errorMessage,
-        payer: "",
-      };
+    if (transferIndex === 2) {
+      try {
+        this.verifyComputeLimitInstruction(instructions[0] as never);
+        this.verifyComputePriceInstruction(instructions[1] as never);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          isValid: false,
+          invalidReason: errorMessage,
+          payer: "",
+        };
+      }
     }
 
     const payer = getTokenPayerFromTransaction(transaction);
@@ -260,7 +324,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     }
 
     // Step 4: Verify Transfer Instruction
-    const transferIx = instructions[2];
+    const transferIx = instructions[transferIndex];
     const programAddress = transferIx.programAddress.toString();
 
     if (
@@ -360,7 +424,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
 
     // Step 5: Verify optional instructions (if present)
     // Allowed optional programs: Lighthouse (wallet protection) and Memo (uniqueness)
-    const optionalInstructions = instructions.slice(3);
+    const optionalInstructions = instructions.slice(transferIndex + 1);
     const invalidReasonByIndex = [
       "invalid_exact_svm_payload_unknown_fourth_instruction",
       "invalid_exact_svm_payload_unknown_fifth_instruction",
@@ -460,7 +524,7 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
     if (decodedTx) {
       try {
         const compiled = compiledMessageDecoder.decode(decodedTx.messageBytes);
-        if (!isAcceptedTransactionVersion(compiled.version)) {
+        if (!isAcceptedTransactionVersion(compiled.version, this.transactionVersions)) {
           return {
             success: false,
             network: payloadV1.network,

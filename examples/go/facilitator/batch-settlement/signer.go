@@ -157,6 +157,10 @@ func (s *facilitatorSvmSigner) GetConfirmedTransactionInnerInstructions(ctx cont
 	return svmmech.ConfirmedTransactionInnerInstructions(ctx, s.rpcClient, signature)
 }
 
+func (s *facilitatorSvmSigner) GetConfirmedTransaction(ctx context.Context, signature solana.Signature, _ string) (*svmmech.FacilitatorConfirmedTransaction, error) {
+	return svmmech.ConfirmedTransactionEvidence(ctx, s.rpcClient, signature)
+}
+
 func (s *facilitatorSvmSigner) GetTokenAccountBalance(ctx context.Context, tokenAccount solana.PublicKey, _ string) (uint64, bool, error) {
 	return svmmech.TokenAccountBalance(ctx, s.rpcClient, tokenAccount)
 }

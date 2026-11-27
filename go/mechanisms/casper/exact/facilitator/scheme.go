@@ -1,0 +1,619 @@
+package facilitator
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	eip712 "github.com/casper-ecosystem/casper-eip-712/go"
+	"github.com/make-software/casper-go-sdk/v2/casper"
+	casperrpc "github.com/make-software/casper-go-sdk/v2/rpc"
+	"github.com/make-software/casper-go-sdk/v2/types"
+	"github.com/make-software/casper-go-sdk/v2/types/clvalue"
+	"github.com/make-software/casper-go-sdk/v2/types/clvalue/cltype"
+	"github.com/make-software/casper-go-sdk/v2/types/key"
+	"github.com/make-software/casper-go-sdk/v2/types/keypair"
+
+	casperMechanism "github.com/x402-foundation/x402/go/v2/mechanisms/casper"
+
+	x402 "github.com/x402-foundation/x402/go/v2"
+	x402types "github.com/x402-foundation/x402/go/v2/types"
+)
+
+const defaultPaymentMotes uint64 = 2_500_000_000
+
+var transferWithAuthorizationTypes = eip712.TypeDefinitions{
+	"TransferWithAuthorization": {
+		{Name: "from", Type: "address"},
+		{Name: "to", Type: "address"},
+		{Name: "value", Type: "uint256"},
+		{Name: "validAfter", Type: "uint256"},
+		{Name: "validBefore", Type: "uint256"},
+		{Name: "nonce", Type: "bytes32"},
+	},
+}
+
+type ExactCasperSchemeConfig struct {
+	LimitedPaymentMotes         *uint64
+	LegacyPackagesWithAmountArg []string
+
+	SettlementCache *casperMechanism.SettlementCache
+}
+
+type ExactCasperScheme struct {
+	signer          casperMechanism.FacilitatorCasperSigner
+	config          *ExactCasperSchemeConfig
+	settlementCache *casperMechanism.SettlementCache
+	pendingStore    x402.PendingSettlementStore
+}
+
+func NewExactCasperScheme(signer casperMechanism.FacilitatorCasperSigner, config *ExactCasperSchemeConfig) *ExactCasperScheme {
+	if config == nil {
+		config = &ExactCasperSchemeConfig{}
+	}
+	cache := config.SettlementCache
+	if cache == nil {
+		cache = casperMechanism.NewSettlementCache()
+	}
+
+	return &ExactCasperScheme{
+		signer:          signer,
+		config:          config,
+		settlementCache: cache,
+		pendingStore:    x402.NewInMemoryPendingSettlementStore(),
+	}
+}
+
+func (f *ExactCasperScheme) SetPendingSettlementStore(store x402.PendingSettlementStore) {
+	if store != nil {
+		f.pendingStore = store
+	}
+}
+
+// Scheme returns the scheme identifier
+func (f *ExactCasperScheme) Scheme() string {
+	return casperMechanism.SchemeExact
+}
+
+// CaipFamily returns the CAIP family pattern this facilitator supports
+func (f *ExactCasperScheme) CaipFamily() string {
+	return "casper:*"
+}
+
+// GetExtra returns nil. The CEP-3009 authorization does not name the facilitator.
+func (f *ExactCasperScheme) GetExtra(_ x402.Network) map[string]interface{} {
+	return nil
+}
+
+// GetSigners returns signer addresses used by this facilitator.
+// For Casper, returns all available fee payer addresses for the given network.
+func (f *ExactCasperScheme) GetSigners(network x402.Network) []string {
+	return f.signer.GetAddresses(context.Background(), string(network))
+}
+
+// Verify verifies a V2 payment payload against requirements
+func (f *ExactCasperScheme) Verify(
+	ctx context.Context,
+	payload x402types.PaymentPayload,
+	requirements x402types.PaymentRequirements,
+	_ *x402.FacilitatorContext,
+) (*x402.VerifyResponse, error) {
+	if payload.Accepted.Scheme != casperMechanism.SchemeExact {
+		return nil, x402.NewVerifyError(ErrInvalidScheme, "", fmt.Sprintf("invalid scheme: %s", payload.Accepted.Scheme))
+	}
+
+	if payload.Accepted.Network != requirements.Network {
+		return nil, x402.NewVerifyError(ErrNetworkMismatch, "", fmt.Sprintf("network mismatch: payload=%s requirements=%s", payload.Accepted.Network, requirements.Network))
+	}
+
+	p, err := payloadFromMap(payload.Payload)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrMalformedPayload, "", err.Error())
+	}
+
+	payer := p.Authorization.From
+
+	if p.Authorization.To != requirements.PayTo {
+		return nil, x402.NewVerifyError(ErrPayToMismatch, payer, fmt.Sprintf("authorization.to=%s requirements.payTo=%s", p.Authorization.To, requirements.PayTo))
+	}
+
+	if p.Authorization.Value != requirements.Amount {
+		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, fmt.Sprintf("authorization.value=%s requirements.amount=%s", p.Authorization.Value, requirements.Amount))
+	}
+
+	if !casperMechanism.IsValidAddress(requirements.PayTo) || !casperMechanism.IsValidAddress(p.Authorization.To) {
+		return nil, x402.NewVerifyError(ErrInvalidPayTo, payer, "invalid payTo account-hash")
+	}
+	if !strings.HasPrefix(payer, "00") || !casperMechanism.IsValidAddress(payer) {
+		return nil, x402.NewVerifyError(ErrInvalidPayer, payer, "payer must be a serialized account Key")
+	}
+
+	if !casperMechanism.IsValidAmountFormat(requirements.Amount) || !casperMechanism.IsValidAmountFormat(p.Authorization.Value) {
+		return nil, x402.NewVerifyError(ErrAmountMismatch, payer, "amount must be a positive decimal integer without leading zeros")
+	}
+
+	if !casperMechanism.IsValidContractPackageHash(requirements.Asset) {
+		return nil, x402.NewVerifyError(ErrInvalidAsset, payer, requirements.Asset)
+	}
+
+	// validAfter and validBefore are U64 runtime args, so a value accepted here can be submitted.
+	validAfter, err := strconv.ParseUint(p.Authorization.ValidAfter, 10, 64)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validAfter: must be an unsigned 64-bit integer")
+	}
+	validBefore, err := strconv.ParseUint(p.Authorization.ValidBefore, 10, 64)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidScheme, payer, "invalid validBefore: must be an unsigned 64-bit integer")
+	}
+
+	// CEP-3009 bounds are strict: validAfter < now < validBefore.
+	now := uint64(time.Now().Unix())
+	if validAfter >= now {
+		return nil, x402.NewVerifyError(ErrNotYetValid, payer, fmt.Sprintf("validAfter=%d >= now=%d", validAfter, now))
+	}
+	// Leave eight seconds for settlement, matching Casper's block time.
+	if now+8 >= validBefore {
+		return nil, x402.NewVerifyError(ErrExpired, payer, fmt.Sprintf("validBefore=%d now=%d", validBefore, now))
+	}
+
+	cfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrNetworkMismatch, payer, err.Error())
+	}
+
+	name, ok := requirements.Extra["name"].(string)
+	if !ok || name == "" {
+		return nil, x402.NewVerifyError(ErrMissingTokenName, payer, "")
+	}
+	version, ok := requirements.Extra["version"].(string)
+	if !ok || version == "" {
+		return nil, x402.NewVerifyError(ErrMissingTokenVersion, payer, "")
+	}
+
+	// IsValidContractPackageHash already accepted this 64-character hex hash.
+	contractPackageHash, _ := casperMechanism.DecodeContractPackageHash(requirements.Asset)
+
+	domain := eip712.BuildDomain(name, version, requirements.Network, contractPackageHash)
+
+	// IsValidAddress already accepted this 66-character account hash.
+	fromAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.From)
+	publicKey, err := keypair.NewPublicKey(p.PublicKey)
+	if err != nil || len(p.PublicKey) != publicKey.SerializedLength()*2 {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid public key or key length")
+	}
+	// A public key authorizes its account Key, including the 00 variant tag.
+	// Hash/contract Keys cannot represent the account derived from this key.
+	expectedPayer := "00" + publicKey.AccountHash().ToHex()
+	if !strings.EqualFold(p.Authorization.From, expectedPayer) {
+		return nil, x402.NewVerifyError(ErrPublicKeyMismatch, payer, "authorization.from does not match the public key's account address")
+	}
+	// IsValidAddress already accepted this 66-character account hash.
+	toAddr, _ := eip712.NewAddressFromHex("0x" + p.Authorization.To)
+
+	// IsValidAmountFormat already accepted this decimal integer.
+	value, _ := new(big.Int).SetString(p.Authorization.Value, 10)
+
+	nonceRaw, err := hex.DecodeString(p.Authorization.Nonce)
+	if err != nil || len(nonceRaw) != 32 {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "invalid nonce")
+	}
+	var nonceBytes [32]byte
+	copy(nonceBytes[:], nonceRaw)
+
+	message := map[string]interface{}{
+		"from":        fromAddr,
+		"to":          toAddr,
+		"value":       value,
+		"validAfter":  new(big.Int).SetUint64(validAfter),
+		"validBefore": new(big.Int).SetUint64(validBefore),
+		"nonce":       nonceBytes,
+	}
+
+	digest, err := eip712.HashTypedData(domain, transferWithAuthorizationTypes, "TransferWithAuthorization", message, &eip712.TypedDataOptions{DomainTypes: eip712.CasperDomainTypes})
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrFailedToHash, payer, err.Error())
+	}
+
+	sigBytes, err := hex.DecodeString(p.Signature)
+	if err != nil || len(sigBytes) != 65 {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature must be 65 bytes hex")
+	}
+	if sigBytes[0] != publicKey.Bytes()[0] {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature and public key algorithm tags must match")
+	}
+	var sig65 [65]byte
+	copy(sig65[:], sigBytes)
+	if err := casperMechanism.ValidateSignatureFormat(sig65); err != nil {
+		if errors.Is(err, casperMechanism.ErrNonCanonicalSignature) {
+			return nil, x402.NewVerifyError(ErrNonCanonicalSignature, payer, err.Error())
+		}
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, err.Error())
+	}
+
+	verified, err := f.signer.VerifyEIP712Signature(digest, sig65, p.PublicKey)
+	if err != nil {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, err.Error())
+	}
+	if !verified {
+		return nil, x402.NewVerifyError(ErrInvalidSignature, payer, "signature verification failed")
+	}
+
+	if preflightErr := f.validatePreflight(ctx, p, requirements, cfg); preflightErr != nil {
+		return nil, preflightErr
+	}
+
+	return &x402.VerifyResponse{IsValid: true, Payer: payer}, nil
+}
+
+// validatePreflight uses speculative execution when that RPC URL is set,
+// and otherwise checks token, balance, and nonce state at one block.
+func (f *ExactCasperScheme) validatePreflight(
+	ctx context.Context,
+	p *casperMechanism.ExactCasperPayload,
+	requirements x402types.PaymentRequirements,
+	networkCfg casperMechanism.NetworkConfig,
+) error {
+	speculativeRpcURL := f.signer.GetSpeculativeRpcUrl(requirements.Network)
+	if speculativeRpcURL != "" {
+		return f.validateSpeculativeExecution(ctx, p, requirements, networkCfg, speculativeRpcURL)
+	}
+	return f.validateTargetedPreflight(ctx, p, requirements, networkCfg)
+}
+
+// validateSpeculativeExecution signs an unsigned deploy and runs speculative_exec.
+// The deploy is not broadcast.
+func (f *ExactCasperScheme) validateSpeculativeExecution(
+	ctx context.Context,
+	p *casperMechanism.ExactCasperPayload,
+	requirements x402types.PaymentRequirements,
+	networkCfg casperMechanism.NetworkConfig,
+	speculativeRpcURL string,
+) error {
+	deploy, err := f.buildTransferWithAuthorizationDeploy(ctx, p, requirements, networkCfg)
+	if err != nil {
+		return x402.NewVerifyError(ErrSpeculativeExecutionFailed, p.Authorization.From, err.Error())
+	}
+
+	if err := f.signer.SignDeploy(deploy, requirements.Network); err != nil {
+		return x402.NewVerifyError(ErrSpeculativeExecutionFailed, p.Authorization.From, err.Error())
+	}
+
+	client := casperrpc.NewSpeculativeClient(casper.NewRPCHandler(speculativeRpcURL, http.DefaultClient))
+	result, err := client.SpeculativeExec(ctx, *deploy, nil)
+	if err != nil {
+		return x402.NewVerifyError(ErrSpeculativeExecutionFailed, p.Authorization.From, err.Error())
+	}
+
+	if result.ExecutionResult.ErrorMessage != nil {
+		return x402.NewVerifyError(ErrSpeculativeExecutionFailed, p.Authorization.From,
+			fmt.Sprintf("speculative execution failed: %s", *result.ExecutionResult.ErrorMessage))
+	}
+	if len(result.ExecutionResult.Effects) == 0 {
+		return x402.NewVerifyError(ErrSpeculativeExecutionFailed, p.Authorization.From,
+			"speculative execution returned no effects, so the transfer cannot be confirmed")
+	}
+
+	return nil
+}
+
+func (f *ExactCasperScheme) paymentMotes() uint64 {
+	if f.config.LimitedPaymentMotes != nil {
+		return *f.config.LimitedPaymentMotes
+	}
+
+	return defaultPaymentMotes
+}
+
+func (f *ExactCasperScheme) amountArgumentName(packageHash string) string {
+	for _, legacyPackageHash := range f.config.LegacyPackagesWithAmountArg {
+		if strings.EqualFold(strings.TrimSpace(legacyPackageHash), packageHash) {
+			return "amount"
+		}
+	}
+
+	return "value"
+}
+
+// buildTransferWithAuthorizationArgs builds the runtime args for the
+// transfer_with_authorization contract entry point from an exact Casper payload.
+func (f *ExactCasperScheme) buildTransferWithAuthorizationArgs(p *casperMechanism.ExactCasperPayload, requirements x402types.PaymentRequirements) (types.Args, error) {
+	fromBytes, err := hex.DecodeString(p.Authorization.From)
+	if err != nil {
+		return nil, fmt.Errorf("invalid from address: %w", err)
+	}
+	fromKey, err := key.NewKeyFromBytes(fromBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid from address: %w", err)
+	}
+
+	toBytes, err := hex.DecodeString(p.Authorization.To)
+	if err != nil {
+		return nil, fmt.Errorf("invalid to address: %w", err)
+	}
+	toKey, err := key.NewKeyFromBytes(toBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid to address: %w", err)
+	}
+	amountInt, ok := new(big.Int).SetString(p.Authorization.Value, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid amount")
+	}
+	validAfterInt, err := strconv.ParseUint(p.Authorization.ValidAfter, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid validAfter")
+	}
+	validBeforeInt, err := strconv.ParseUint(p.Authorization.ValidBefore, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid validBefore")
+	}
+	nonceBytes, err := hex.DecodeString(p.Authorization.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("invalid nonce: %w", err)
+	}
+	sigBytes, err := hex.DecodeString(p.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("invalid signature: %w", err)
+	}
+	pubKey, err := keypair.NewPublicKey(p.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid public key: %w", err)
+	}
+
+	args := types.Args{}
+	args.AddArgument("from", clvalue.NewCLKey(fromKey)).
+		AddArgument("to", clvalue.NewCLKey(toKey)).
+		AddArgument(f.amountArgumentName(requirements.Asset), *clvalue.NewCLUInt256(amountInt)).
+		AddArgument("valid_after", *clvalue.NewCLUInt64(validAfterInt)).
+		AddArgument("valid_before", *clvalue.NewCLUInt64(validBeforeInt)).
+		AddArgument("nonce", clListU8WithBytes(nonceBytes)).
+		AddArgument("public_key", clvalue.NewCLPublicKey(pubKey)).
+		AddArgument("signature", clListU8WithBytes(sigBytes))
+
+	return args, nil
+}
+
+// buildTransferWithAuthorizationDeploy builds an unsigned Casper 1.5 deploy
+// for transfer_with_authorization. The caller signs it before speculative_exec.
+func (f *ExactCasperScheme) buildTransferWithAuthorizationDeploy(
+	ctx context.Context,
+	p *casperMechanism.ExactCasperPayload,
+	requirements x402types.PaymentRequirements,
+	networkCfg casperMechanism.NetworkConfig,
+) (*types.Deploy, error) {
+	facilitatorPubKeyHex, err := f.signer.GetPublicKeyHex(ctx, requirements.Network)
+	if err != nil || facilitatorPubKeyHex == "" {
+		return nil, fmt.Errorf("no facilitator public key: %w", err)
+	}
+	facilitatorPubKey, err := keypair.NewPublicKey(facilitatorPubKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid facilitator public key: %w", err)
+	}
+
+	args, err := f.buildTransferWithAuthorizationArgs(p, requirements)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify already accepted this asset as a 64-character hex hash.
+	contractHashRaw, _ := casper.NewHash(requirements.Asset)
+
+	chainName := strings.TrimPrefix(networkCfg.ChainName, "casper:")
+
+	header := types.DefaultDeployHeader()
+	header.Account = facilitatorPubKey
+	header.ChainName = chainName
+	header.GasPrice = 1
+
+	payment := types.StandardPayment(big.NewInt(int64(f.paymentMotes())))
+	session := types.ExecutableDeployItem{
+		StoredVersionedContractByHash: &types.StoredVersionedContractByHash{
+			Hash:       key.ContractHash{Hash: contractHashRaw},
+			EntryPoint: "transfer_with_authorization",
+			Args:       &args,
+		},
+	}
+
+	return types.MakeDeploy(header, payment, session)
+}
+
+func (f *ExactCasperScheme) Settle(
+	ctx context.Context,
+	payload x402types.PaymentPayload,
+	requirements x402types.PaymentRequirements,
+	fctx *x402.FacilitatorContext,
+) (*x402.SettleResponse, error) {
+	network := x402.Network(requirements.Network)
+
+	p, err := payloadFromMap(payload.Payload)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrMalformedPayload, "", network, "", err.Error())
+	}
+
+	pendingKey := strings.ToLower(p.Signature)
+	if txHash, ok, _ := f.pendingStore.Get(ctx, pendingKey); ok {
+		// Remove before reconciling so a concurrent retry misses here and is
+		// rejected by the duplicate settlement check below instead.
+		_ = f.pendingStore.Delete(ctx, pendingKey)
+		return f.awaitSettlement(ctx, pendingKey, txHash, p.Authorization.From, network)
+	}
+
+	settlementKey := strings.ToLower(strings.Join([]string{
+		requirements.Network, requirements.Asset, p.Authorization.From, p.Authorization.Nonce,
+	}, ":"))
+	if f.settlementCache.IsDuplicate(settlementKey) {
+		return nil, x402.NewSettleError(ErrDuplicateSettlement, p.Authorization.From, network, "", "duplicate settlement")
+	}
+
+	releaseLock := true
+	defer func() {
+		if releaseLock {
+			f.settlementCache.Delete(settlementKey)
+		}
+	}()
+
+	verifyResp, err := f.Verify(ctx, payload, requirements, fctx)
+	if err != nil {
+		ve := &x402.VerifyError{}
+		if errors.As(err, &ve) {
+			return nil, x402.NewSettleError(ve.InvalidReason, ve.Payer, network, "", ve.InvalidMessage)
+		}
+		return nil, x402.NewSettleError(ErrVerificationFailed, p.Authorization.From, network, "", err.Error())
+	}
+
+	args, err := f.buildTransferWithAuthorizationArgs(p, requirements)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	// Verify already accepted this asset as a 64-character hex hash.
+	packageHash, _ := casper.NewHash(requirements.Asset)
+	entryPoint := "transfer_with_authorization"
+
+	facilitatorPubKeyHex, err := f.signer.GetPublicKeyHex(ctx, requirements.Network)
+	if err != nil || facilitatorPubKeyHex == "" {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", "no facilitator public key")
+	}
+	facilitatorPubKey, err := keypair.NewPublicKey(facilitatorPubKeyHex)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	networkCfg, err := f.signer.GetNetworkConfig(ctx, requirements.Network)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	chainName := strings.TrimPrefix(networkCfg.ChainName, "casper:")
+
+	v1Payload, err := types.NewTransactionV1Payload(
+		types.InitiatorAddr{
+			PublicKey: &facilitatorPubKey,
+		},
+		types.Timestamp(time.Now().UTC()),
+		900000000000,
+		chainName,
+		types.PricingMode{
+			Limited: &types.LimitedMode{
+				GasPriceTolerance: 1,
+				StandardPayment:   true,
+				PaymentAmount:     f.paymentMotes(),
+			},
+		},
+		types.NewNamedArgs(&args),
+		types.TransactionTarget{
+			Stored: &types.StoredTarget{
+				ID: types.TransactionInvocationTarget{
+					ByPackageHash: &types.ByPackageHashInvocationTarget{
+						Addr:    packageHash,
+						Version: nil,
+					},
+				},
+				Runtime: types.NewVmCasperV1TransactionRuntime(),
+			},
+		},
+		types.TransactionEntryPoint{
+			Custom: &entryPoint,
+		},
+		types.TransactionScheduling{
+			Standard: &struct{}{},
+		},
+	)
+
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	transaction, err := types.MakeTransactionV1(v1Payload)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	if err := f.signer.SignTransaction(transaction, requirements.Network); err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, "", err.Error())
+	}
+
+	_, err = f.signer.PutTransaction(ctx, requirements.Network, *transaction)
+	if err != nil {
+		return nil, x402.NewSettleError(ErrSettleFailed, verifyResp.Payer, network, transaction.Hash.String(), err.Error())
+	}
+	releaseLock = false
+
+	return f.awaitSettlement(ctx, pendingKey, transaction.Hash.String(), verifyResp.Payer, network)
+}
+
+func (f *ExactCasperScheme) awaitSettlement(
+	ctx context.Context,
+	pendingKey string,
+	txHash string,
+	payer string,
+	network x402.Network,
+) (*x402.SettleResponse, error) {
+	if err := f.signer.WaitForTransaction(ctx, string(network), txHash); err != nil {
+		var execErr *casperMechanism.TransactionExecutionError
+		if errors.As(err, &execErr) {
+			_ = f.pendingStore.Delete(ctx, pendingKey)
+			return nil, x402.NewSettleError(ErrSettleFailed, payer, network, txHash, err.Error())
+		}
+		if setErr := f.pendingStore.Set(ctx, pendingKey, txHash); setErr != nil {
+			// Without a record, a retry would re-verify and could broadcast again.
+			return nil, x402.NewSettleError(ErrSettleFailed, payer, network, txHash,
+				fmt.Sprintf("settlement_pending, but failed to persist for retry: %s", setErr.Error()))
+		}
+		return nil, x402.NewSettleError(x402.ErrSettlementPending, payer, network, txHash, err.Error())
+	}
+
+	_ = f.pendingStore.Delete(ctx, pendingKey)
+
+	return &x402.SettleResponse{
+		Success:     true,
+		Transaction: txHash,
+		Network:     network,
+		Payer:       payer,
+	}, nil
+}
+
+func payloadFromMap(data map[string]interface{}) (*casperMechanism.ExactCasperPayload, error) {
+	if data == nil {
+		return nil, fmt.Errorf("payload is nil")
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload data: %w", err)
+	}
+
+	var payload casperMechanism.ExactCasperPayload
+	if err := json.Unmarshal(jsonBytes, &payload); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	if payload.Signature == "" || payload.PublicKey == "" {
+		return nil, fmt.Errorf("missing signature or publicKey field")
+	}
+
+	if payload.Authorization.From == "" ||
+		payload.Authorization.To == "" ||
+		payload.Authorization.Value == "" ||
+		payload.Authorization.ValidAfter == "" ||
+		payload.Authorization.ValidBefore == "" ||
+		payload.Authorization.Nonce == "" {
+		return nil, fmt.Errorf("missing authorization fields")
+	}
+
+	return &payload, nil
+}
+
+func clListU8WithBytes(raw []byte) clvalue.CLValue {
+	list := clvalue.NewCLList(cltype.UInt8)
+	for _, b := range raw {
+		list.List.Append(*clvalue.NewCLUint8(b))
+	}
+	return list
+}
