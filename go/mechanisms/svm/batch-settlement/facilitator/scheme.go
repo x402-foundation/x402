@@ -738,35 +738,39 @@ func (f *BatchSvmScheme) fetchChannel(ctx context.Context, network, channelID st
 	return channel, nil
 }
 
+// closeGateSlot remembers one cluster slot for a batch of close-gate checks.
+type closeGateSlot struct {
+	value uint64
+	known bool
+}
+
 // channelPastCloseGate reports whether network's current slot is past
 // openSlot + OpenSlotWindow, when a channel PDA can have been deallocated
-// (and can no longer be opened). cachedSlot avoids repeated GetSlot calls
+// (and can no longer be opened). cache avoids repeated GetSlot calls
 // across a batch.
-func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network string, openSlot int64, cachedSlot **uint64) bool {
+func (f *BatchSvmScheme) channelPastCloseGate(ctx context.Context, network string, openSlot int64, cache *closeGateSlot) bool {
 	if openSlot <= 0 {
 		return false
 	}
-	var slot uint64
-	if cachedSlot != nil && *cachedSlot != nil {
-		slot = **cachedSlot
-	} else {
+	if cache == nil || !cache.known {
 		current, err := f.signer.GetSlot(ctx, network, paymentchannels.SlotCommitment)
 		if err != nil {
 			return false
 		}
-		slot = current
-		if cachedSlot != nil {
-			*cachedSlot = &slot
+		if cache != nil {
+			cache.value = current
+			cache.known = true
 		}
+		return current > uint64(openSlot)+paymentchannels.OpenSlotWindow
 	}
-	return slot > uint64(openSlot)+paymentchannels.OpenSlotWindow
+	return cache.value > uint64(openSlot)+paymentchannels.OpenSlotWindow
 }
 
 // fetchChannelOrClosed reads channelID. When the account is absent onchain and
 // past openSlot + OpenSlotWindow, it returns (nil, true, nil) without polling
 // so callers can emit a closed-channel resync failure; otherwise it falls back
 // to fetchChannel polling.
-func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, channelID string, openSlot int64, cachedSlot **uint64) (*generated.Channel, bool, error) {
+func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, channelID string, openSlot int64, cache *closeGateSlot) (*generated.Channel, bool, error) {
 	if f.hooks.fetchChannel != nil {
 		channel, err := f.hooks.fetchChannel(ctx, network, channelID)
 		return channel, false, err
@@ -778,7 +782,7 @@ func (f *BatchSvmScheme) fetchChannelOrClosed(ctx context.Context, network, chan
 	if channel != nil {
 		return channel, false, nil
 	}
-	if f.channelPastCloseGate(ctx, network, openSlot, cachedSlot) {
+	if f.channelPastCloseGate(ctx, network, openSlot, cache) {
 		return nil, true, nil
 	}
 	channel, err = f.fetchChannel(ctx, network, channelID)

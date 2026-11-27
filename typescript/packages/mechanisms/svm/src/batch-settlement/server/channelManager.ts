@@ -358,11 +358,7 @@ export class BatchChannelManager {
             continue;
           }
         }
-        await this.record(channel.channelId, state => ({
-          ...state,
-          onchainSyncedAt: Date.now(),
-          settled: state.settled > settled ? state.settled : settled,
-        }));
+        await this.recordObserved(channel.channelId, { settled });
         result.claimed.push(channel.channelId);
         claimedInBatch++;
       }
@@ -383,6 +379,23 @@ export class BatchChannelManager {
   private reportClaimFailure(response: SettleResponse): void {
     this.config.onError?.(
       new Error(`${BATCH_SETTLEMENT_SCHEME} claim failed: ${response.errorReason ?? "unknown"}`),
+    );
+  }
+
+  /**
+   *
+   * @param response
+   */
+  /**
+   * Report a distribute that did not land.
+   *
+   * @param response - The facilitator's rejection
+   */
+  private reportDistributeFailure(response: SettleResponse): void {
+    this.config.onError?.(
+      new Error(
+        `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
+      ),
     );
   }
 
@@ -415,8 +428,6 @@ export class BatchChannelManager {
       if (state) {
         switch (state.status) {
           case "closed":
-            await this.recordObserved(channel.channelId, state);
-            continue;
           case "distributed":
           case "sealed":
             await this.recordObserved(channel.channelId, state);
@@ -537,13 +548,11 @@ export class BatchChannelManager {
       return false;
     }
     const final = channel.signedMaxClaimable;
-    await this.record(channel.channelId, state => ({
-      ...state,
-      onchainSyncedAt: Date.now(),
-      payoutWatermark: state.payoutWatermark > final ? state.payoutWatermark : final,
-      settled: state.settled > final ? state.settled : final,
+    await this.recordObserved(channel.channelId, {
+      payout: final,
+      settled: final,
       status: "distributed",
-    }));
+    });
     this.config.onSeal?.({
       channel: channel.channelId,
       transaction: response.transaction ?? "",
@@ -578,8 +587,6 @@ export class BatchChannelManager {
     if (!observed) return false;
     switch (observed.status) {
       case "closed":
-        await this.recordObserved(channel.channelId, observed);
-        return true;
       case "distributed":
         await this.recordObserved(channel.channelId, observed);
         return true;
@@ -655,11 +662,7 @@ export class BatchChannelManager {
       if (response.errorReason === BatchError.CHANNEL_STATE) {
         return this.resyncDistribute(batch, requirements, response, resynced);
       }
-      this.config.onError?.(
-        new Error(
-          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-        ),
-      );
+      this.reportDistributeFailure(response);
       return [];
     }
     if (response.network !== this.config.network) {
@@ -718,11 +721,7 @@ export class BatchChannelManager {
   ): Promise<string[]> {
     const states = this.adoptChannelStates(response, batch);
     if (!states) {
-      this.config.onError?.(
-        new Error(
-          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-        ),
-      );
+      this.reportDistributeFailure(response);
       return [];
     }
     const remaining: ChannelState[] = [];
@@ -753,11 +752,7 @@ export class BatchChannelManager {
       }
     }
     if (remaining.length === batch.length || (remaining.length > 0 && resynced)) {
-      this.config.onError?.(
-        new Error(
-          `${BATCH_SETTLEMENT_SCHEME} distribute failed: ${response.errorReason ?? "unknown"}`,
-        ),
-      );
+      this.reportDistributeFailure(response);
       return [];
     }
     if (remaining.length > 0) {

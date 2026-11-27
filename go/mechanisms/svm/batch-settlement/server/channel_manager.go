@@ -324,6 +324,10 @@ func (m *BatchChannelManager) reportClaimFailure(response *x402.SettleResponse) 
 	m.report(fmt.Errorf("%s claim failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
 }
 
+func (m *BatchChannelManager) reportDistributeFailure(response *x402.SettleResponse) {
+	m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+}
+
 // resyncClaim's resynced channels are not new claims, so they do not reach OnClaim.
 func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, response *x402.SettleResponse, result *passOutcome, resynced bool) error {
 	states := m.adoptChannelStates(response, batch)
@@ -331,12 +335,7 @@ func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelSt
 	for _, channel := range batch {
 		if state, ok := states[channel.ChannelID]; ok {
 			switch state.status {
-			case batchsettlement.ChannelStatusClosed:
-				if err := m.recordObserved(channel.ChannelID, state); err != nil {
-					return err
-				}
-				continue
-			case batchsettlement.ChannelStatusDistributed, batchsettlement.ChannelStatusSealed:
+			case batchsettlement.ChannelStatusClosed, batchsettlement.ChannelStatusDistributed, batchsettlement.ChannelStatusSealed:
 				if err := m.recordObserved(channel.ChannelID, state); err != nil {
 					return err
 				}
@@ -461,12 +460,7 @@ func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelSta
 		return false, nil
 	}
 	switch observed.status {
-	case batchsettlement.ChannelStatusClosed:
-		if err := m.recordObserved(channel.ChannelID, observed); err != nil {
-			return false, err
-		}
-		return true, nil
-	case batchsettlement.ChannelStatusDistributed:
+	case batchsettlement.ChannelStatusClosed, batchsettlement.ChannelStatusDistributed:
 		return true, m.recordObserved(channel.ChannelID, observed)
 	case batchsettlement.ChannelStatusSealed:
 		return false, m.recordObserved(channel.ChannelID, observed)
@@ -516,7 +510,7 @@ func (m *BatchChannelManager) distributeBatch(ctx context.Context, batch []Chann
 		if response.ErrorReason == batchsettlement.ErrChannelState {
 			return m.resyncDistribute(ctx, batch, requirements, response, resynced)
 		}
-		m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+		m.reportDistributeFailure(response)
 		return nil, nil
 	}
 	if string(response.Network) != m.config.Network {
@@ -541,7 +535,7 @@ func (m *BatchChannelManager) distributeBatch(ctx context.Context, batch []Chann
 func (m *BatchChannelManager) resyncDistribute(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, response *x402.SettleResponse, resynced bool) ([]string, error) {
 	states := m.adoptChannelStates(response, batch)
 	if states == nil {
-		m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+		m.reportDistributeFailure(response)
 		return nil, nil
 	}
 	var remaining []ChannelState
@@ -568,7 +562,7 @@ func (m *BatchChannelManager) resyncDistribute(ctx context.Context, batch []Chan
 		}
 	}
 	if len(remaining) == len(batch) || (len(remaining) > 0 && resynced) {
-		m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+		m.reportDistributeFailure(response)
 		return nil, nil
 	}
 	if len(remaining) > 0 {

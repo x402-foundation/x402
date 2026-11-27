@@ -608,7 +608,7 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 		payer:   payer,
 		beforeSend: func() (*x402.SettleResponse, error) {
 			channels := make([]*generated.Channel, len(prepared))
-			var cachedSlot *uint64
+			var cachedSlot closeGateSlot
 			hasClosed := false
 			for i, item := range prepared {
 				channel, closed, err := f.fetchChannelOrClosed(ctx, requirements.Network, item.ChannelID, item.Claim.ChannelConfig.OpenSlot, &cachedSlot)
@@ -622,18 +622,17 @@ func (f *BatchSvmScheme) settleClaims(ctx context.Context, payload batchsettleme
 				channels[i] = channel
 			}
 			if hasClosed {
-				states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+				ids := make([]string, len(prepared))
 				for i, item := range prepared {
+					ids[i] = item.ChannelID
 					if channels[i] == nil {
-						states[i] = closedSnapshot(item.ChannelID)
 						continue
 					}
 					if err := f.assertClaimChannel(channels[i], item.Claim.ChannelConfig, item.Terms, requirements, allChannelStatuses); err != nil {
 						return nil, err
 					}
-					states[i] = redemptionSnapshot(item.ChannelID, channels[i])
 				}
-				return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", states), nil
+				return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", closedOrLiveStates(ids, channels)), nil
 			}
 			states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
 			applied := false
@@ -808,7 +807,7 @@ func distributionPassKey(key string, prepared []PreparedDistribution, channels [
 // hasClosed so distributeKeyed returns a closed-channel resync failure.
 func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements, recovering bool) ([]*generated.Channel, bool, error) {
 	channels := make([]*generated.Channel, len(prepared))
-	var cachedSlot *uint64
+	var cachedSlot closeGateSlot
 	hasClosed := false
 	for i, item := range prepared {
 		var channel *generated.Channel
@@ -883,15 +882,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 		return nil, err
 	}
 	if hasClosed {
-		states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
-		for i, item := range prepared {
-			if channels[i] == nil {
-				states[i] = closedSnapshot(item.ChannelID)
-			} else {
-				states[i] = redemptionSnapshot(item.ChannelID, channels[i])
-			}
-		}
-		return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", states), nil
+		return ResyncFailure(x402.Network(requirements.Network), batchsettlement.ErrChannelState, "channel closed onchain", closedOrLiveStates(channelIDs(prepared), channels)), nil
 	}
 	passKey := distributionPassKey(key, prepared, channels)
 	if hasPending {
@@ -1047,17 +1038,25 @@ func withChannelStates(response *x402.SettleResponse, states []batchsettlement.B
 // It returns nil on any RPC read error, since the confirmed sweep does not wait on
 // an optional field.
 func (f *BatchSvmScheme) confirmedStates(ctx context.Context, prepared []PreparedDistribution, requirements types.PaymentRequirements) []batchsettlement.BatchRedemptionChannelState {
-	states := make([]batchsettlement.BatchRedemptionChannelState, len(prepared))
+	channels := make([]*generated.Channel, len(prepared))
 	for i, item := range prepared {
 		channel, err := f.readChannel(ctx, requirements.Network, item.ChannelID)
 		if err != nil {
 			return nil
 		}
-		if channel == nil {
-			states[i] = closedSnapshot(item.ChannelID)
+		channels[i] = channel
+	}
+	return closedOrLiveStates(channelIDs(prepared), channels)
+}
+
+func closedOrLiveStates(ids []string, channels []*generated.Channel) []batchsettlement.BatchRedemptionChannelState {
+	states := make([]batchsettlement.BatchRedemptionChannelState, len(ids))
+	for i, channelID := range ids {
+		if channels[i] == nil {
+			states[i] = closedSnapshot(channelID)
 			continue
 		}
-		states[i] = redemptionSnapshot(item.ChannelID, channel)
+		states[i] = redemptionSnapshot(channelID, channels[i])
 	}
 	return states
 }
