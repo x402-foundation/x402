@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -413,6 +415,51 @@ func TestAcquireExclusiveFile_StealsDeadOwner(t *testing.T) {
 	}
 	_ = handle.Close()
 	_ = os.Remove(lockPath)
+}
+
+func TestAcquireExclusiveFile_ConcurrentStaleRecoveryHasOneOwner(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "race.lock")
+	raw, err := json.Marshal(FileLockOwner{Pid: 2147483647, Token: "dead-owner", CreatedAt: time.Now().UnixMilli()})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for round := 0; round < 50; round++ {
+		if err := os.WriteFile(lockPath, raw, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		var holders, maxHolders atomic.Int32
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				handle, err := AcquireExclusiveFile(lockPath, &ExclusiveFileOptions{MaxAttempts: 1000, RetryIntervalMs: 1})
+				if err != nil {
+					t.Errorf("acquire: %v", err)
+					return
+				}
+				n := holders.Add(1)
+				for {
+					m := maxHolders.Load()
+					if n <= m || maxHolders.CompareAndSwap(m, n) {
+						break
+					}
+				}
+				time.Sleep(time.Millisecond)
+				holders.Add(-1)
+				_ = handle.Close()
+				_ = os.Remove(lockPath)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if got := maxHolders.Load(); got > 1 {
+			t.Fatalf("round %d: %d callers held the lock at once", round, got)
+		}
+	}
 }
 
 func TestFileChannelStorage_AcquireIsNotReentrant(t *testing.T) {

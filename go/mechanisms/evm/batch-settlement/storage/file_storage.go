@@ -345,35 +345,60 @@ func AcquireExclusiveFile(lockPath string, opts *ExclusiveFileOptions) (*os.File
 	staleAfter := time.Duration(cfg.StaleMs) * time.Millisecond
 	retryInterval := time.Duration(cfg.RetryIntervalMs) * time.Millisecond
 	for attempt := 0; attempt < cfg.MaxAttempts; attempt++ {
-		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err == nil {
-			// Best effort: the O_EXCL marker already serializes writers even if
-			// the owner payload cannot be persisted; steal decisions fall back
-			// to mtime.
-			if raw, marshalErr := json.Marshal(FileLockOwner{
-				Pid:       os.Getpid(),
-				Token:     newFileLockToken(),
-				CreatedAt: time.Now().UnixMilli(),
-			}); marshalErr == nil {
-				_, _ = f.Write(raw)
-				_ = f.Sync()
-			}
-			return f, nil
+		f, retry, err := tryAcquireExclusiveFile(lockPath, staleAfter)
+		if err != nil || f != nil {
+			return f, err
 		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+		if !retry {
+			time.Sleep(retryInterval)
 		}
-		stale, statErr := isStaleLock(lockPath, staleAfter)
-		if statErr != nil {
-			return nil, statErr
-		}
-		if stale {
-			_ = os.Remove(lockPath)
-			continue
-		}
-		time.Sleep(retryInterval)
 	}
 	return nil, fmt.Errorf("acquire lock %s: contended", lockPath)
+}
+
+// tryAcquireExclusiveFile makes one create attempt. It holds an flock on the
+// lock's directory so that judging a marker stale and unlinking it cannot
+// interleave with another process creating its replacement; otherwise two
+// contenders that both saw the same stale marker could each end up holding
+// the lock. retry reports that a stale marker was removed and the caller
+// should try again without waiting.
+func tryAcquireExclusiveFile(lockPath string, staleAfter time.Duration) (f *os.File, retry bool, err error) {
+	dir, err := os.Open(filepath.Dir(lockPath))
+	if err != nil {
+		return nil, false, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+	}
+	defer dir.Close()
+	if err := syscall.Flock(int(dir.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, false, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+	}
+	defer func() { _ = syscall.Flock(int(dir.Fd()), syscall.LOCK_UN) }()
+
+	f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err == nil {
+		// Best effort: the O_EXCL marker already serializes writers even if
+		// the owner payload cannot be persisted; steal decisions fall back
+		// to mtime.
+		if raw, marshalErr := json.Marshal(FileLockOwner{
+			Pid:       os.Getpid(),
+			Token:     newFileLockToken(),
+			CreatedAt: time.Now().UnixMilli(),
+		}); marshalErr == nil {
+			_, _ = f.Write(raw)
+			_ = f.Sync()
+		}
+		return f, false, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return nil, false, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+	}
+	stale, statErr := isStaleLock(lockPath, staleAfter)
+	if statErr != nil {
+		return nil, false, statErr
+	}
+	if stale {
+		_ = os.Remove(lockPath)
+	}
+	return nil, stale, nil
 }
 
 // isStaleLock reports whether lockPath may be unlinked and retried.

@@ -1,0 +1,3 @@
+kind: fixed
+body: Batch-settlement file storage serializes stale-lock recovery with lock creation, so two callers that find the same stale lock can no longer both acquire it and lose one channel update.
+time: 2026-11-27T00:00:00Z
