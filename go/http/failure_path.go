@@ -30,3 +30,16 @@ func (s *x402HTTPResourceServer) ResolveCancelledSettlement(
 		existingCacheControl,
 	)
 }
+
+// RestoreHeaders resets responseHeaders to snapshot in place, dropping headers
+// a route handler set after the snapshot was taken. Adapters use it when
+// settlement fails so the error response does not carry the paid route's
+// Set-Cookie, Content-Disposition or Content-Type.
+func RestoreHeaders(responseHeaders http.Header, snapshot http.Header) {
+	for key := range responseHeaders {
+		delete(responseHeaders, key)
+	}
+	for key, values := range snapshot {
+		responseHeaders[key] = values
+	}
+}

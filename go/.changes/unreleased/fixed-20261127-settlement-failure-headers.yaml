@@ -1,0 +1,3 @@
+kind: fixed
+body: The net/http, Gin and Echo middleware now drop headers the route handler set when settlement fails, so the 402 no longer carries the paid route's Set-Cookie, Content-Disposition or Content-Type. Headers set before the handler, such as CORS, are kept.
+time: 2026-11-27T08:00:00Z
