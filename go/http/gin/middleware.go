@@ -369,6 +369,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 		body:           &bytes.Buffer{},
 		statusCode:     http.StatusOK,
 	}
+	preHandlerHeaders := c.Writer.Header().Clone()
 	c.Writer = writer
 
 	// Set payment data in context for downstream handlers
@@ -468,6 +469,7 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 
 	// Check settlement success
 	if !settleResult.Success {
+		x402http.RestoreHeaders(c.Writer.Header(), preHandlerHeaders)
 		// Always set PAYMENT-RESPONSE header on settlement failure
 		for key, value := range settleResult.Headers {
 			c.Header(key, value)

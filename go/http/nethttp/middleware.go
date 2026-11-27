@@ -301,6 +301,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 		body:           &bytes.Buffer{},
 		statusCode:     http.StatusOK,
 	}
+	preHandlerHeaders := w.Header().Clone()
 
 	// Set payment data in request context for downstream handlers
 	if result.PaymentPayload != nil {
@@ -390,6 +391,7 @@ func handlePaymentVerified(w http.ResponseWriter, r *http.Request, next http.Han
 	)
 
 	if !settleResult.Success {
+		x402http.RestoreHeaders(w.Header(), preHandlerHeaders)
 		// Always set PAYMENT-RESPONSE header on settlement failure
 		for key, value := range settleResult.Headers {
 			w.Header().Set(key, value)
