@@ -3949,6 +3949,53 @@ describe("BatchSettlementEvmScheme — onAfterSettle", () => {
     expect(verify).toBeUndefined();
   });
 
+  it("re-reads after a refund that omits balance while a withdrawal is pending", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 1234,
+      refundNonce: 2,
+      onchainSyncedAt: Date.now(),
+      lastRequestTimestamp: 0,
+    });
+
+    await server.schemeHooks.onAfterSettle!({
+      paymentPayload: buildRefundPayload(channelId, "1000", config, "2000"),
+      requirements: makeRequirements({ amount: "0" }),
+      result: {
+        success: true,
+        transaction: "0xtx",
+        network: NETWORK,
+        payer: PAYER,
+        extra: {
+          channelState: {
+            channelId,
+            totalClaimed: "0",
+            withdrawRequestedAt: 1234,
+            refundNonce: "3",
+          },
+        },
+      } as SettleResponse,
+    } as never);
+
+    const channel = await storage.get(channelId);
+    expect(channel?.withdrawRequestedAt).toBe(1234);
+    expect(channel?.onchainSyncedAt).toBe(0);
+
+    const verify = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: await buildSignedVoucherPayload(channelId, "2000", config),
+      requirements: makeRequirements({ amount: "1000" }),
+    } as never);
+    expect(verify).toBeUndefined();
+  });
+
   it("keeps the stored channel when a refund response omits channelState", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);

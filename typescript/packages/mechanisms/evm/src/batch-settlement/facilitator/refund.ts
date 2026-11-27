@@ -99,10 +99,35 @@ function eventRefundBalance(logs: readonly Log[], channelId: `0x${string}`): big
 type RefundChannelState = Omit<ChannelState, "balance"> & { balance?: bigint };
 
 /**
+ * Pre-read balance minus the refunded amount, or `undefined` when it cannot be trusted.
+ *
+ * `finalizeWithdraw` lowers the balance without a `Refunded` event or a `refundNonce` change.
+ * It is only callable once a withdrawal is pending and `withdrawDelay` has elapsed, so the
+ * figure is an upper bound on the onchain balance only while no withdrawal was pending at the
+ * pre-read and less than half of `withdrawDelay` has passed since then.
+ *
+ * @param preState - Channel state read before the transaction.
+ * @param refunded - Amount of the receipt `Refunded` event.
+ * @param withdrawDelay - Channel withdraw delay in seconds.
+ * @returns The balance, or `undefined` when a withdrawal may have finalized or the result is negative.
+ */
+function preReadRefundBalance(
+  preState: OnchainChannelState,
+  refunded: bigint,
+  withdrawDelay: number,
+): bigint | undefined {
+  const withdrawMayHaveFinalized =
+    preState.withdrawRequestedAt !== 0 || Date.now() - preState.readAt >= withdrawDelay * 500;
+  const balance = preState.balance - refunded;
+  return withdrawMayHaveFinalized || balance < 0n ? undefined : balance;
+}
+
+/**
  * Builds the post-refund channel state from the pre-read and receipt events.
  *
- * A same-receipt `Deposited.newBalance` wins. Otherwise balance is the pre-read minus
- * `Refunded.amount`, and a negative result is omitted.
+ * A same-receipt `Deposited.newBalance` wins. Next, a same-receipt `ChannelClosed` means the
+ * channel is empty with no pending withdrawal. Otherwise balance comes from the pre-read
+ * minus `Refunded.amount`, and is omitted when that figure cannot be trusted.
  *
  * @param preState - Channel state read before the transaction.
  * @param logs - Receipt logs.
@@ -110,7 +135,8 @@ type RefundChannelState = Omit<ChannelState, "balance"> & { balance?: bigint };
  * @param refunded - Amount of the receipt `Refunded` event.
  * @param claimedTotal - Last `Claimed.newTotalClaimed` in the receipt, if any.
  * @param refundNonce - Nonce the refund consumed.
- * @returns Post-refund channel state. `balance` is absent when it would be negative.
+ * @param withdrawDelay - Channel withdraw delay in seconds.
+ * @returns Post-refund channel state. `balance` is absent when it cannot be derived safely.
  */
 function deriveRefundState(
   preState: OnchainChannelState,
@@ -119,11 +145,17 @@ function deriveRefundState(
   refunded: bigint,
   claimedTotal: bigint | undefined,
   refundNonce: bigint,
+  withdrawDelay: number,
 ): RefundChannelState {
   const eventBalance = eventRefundBalance(logs, channelId);
-  const fromPreRead = preState.balance - refunded;
+  if (
+    eventBalance === undefined &&
+    findChannelEvents(logs, "ChannelClosed", channelId).length > 0
+  ) {
+    return { balance: 0n, totalClaimed: 0n, withdrawRequestedAt: 0, refundNonce: refundNonce + 1n };
+  }
   return {
-    balance: eventBalance ?? (fromPreRead < 0n ? undefined : fromPreRead),
+    balance: eventBalance ?? preReadRefundBalance(preState, refunded, withdrawDelay),
     totalClaimed: claimedTotal ?? preState.totalClaimed,
     withdrawRequestedAt: refunded >= preState.withdrawAmount ? 0 : preState.withdrawRequestedAt,
     refundNonce: refundNonce + 1n,
@@ -351,6 +383,7 @@ export async function executeRefundWithSignature(
           refundedAmount,
           claimed[claimed.length - 1]?.args.newTotalClaimed,
           BigInt(payload.refundNonce),
+          payload.channelConfig.withdrawDelay,
         );
 
         return {

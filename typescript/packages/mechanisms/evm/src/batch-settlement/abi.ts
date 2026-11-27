@@ -195,6 +195,15 @@ export const batchSettlementABI = [
   },
   {
     type: "event",
+    name: "ChannelClosed",
+    inputs: [
+      { name: "channelId", type: "bytes32", indexed: true },
+      { name: "config", type: "tuple", components: channelConfigComponents, indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
     name: "Deposited",
     inputs: [
       { name: "channelId", type: "bytes32", indexed: true },

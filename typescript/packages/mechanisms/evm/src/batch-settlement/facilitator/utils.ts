@@ -153,7 +153,8 @@ export function parseRequirementsAmount(amount: unknown): bigint | undefined {
   return typeof amount === "string" && /^\d+$/.test(amount) ? BigInt(amount) : undefined;
 }
 
-export type OnchainChannelState = ChannelState & { withdrawAmount: bigint };
+/** `readAt` is the Unix time in milliseconds taken immediately before the read. */
+export type OnchainChannelState = ChannelState & { withdrawAmount: bigint; readAt: number };
 
 /**
  * Reads onchain channel state via a 3-call multicall:
@@ -171,6 +172,7 @@ export async function readChannelState(
   channelId: `0x${string}`,
 ): Promise<OnchainChannelState> {
   const target = getAddress(BATCH_SETTLEMENT_ADDRESS);
+  const readAt = Date.now();
   const mcResults = await multicall(signer.readContract.bind(signer), [
     { address: target, abi: batchSettlementABI, functionName: "channels", args: [channelId] },
     {
@@ -197,6 +199,7 @@ export async function readChannelState(
     withdrawRequestedAt: Number(wdInitiatedAt),
     refundNonce,
     withdrawAmount,
+    readAt,
   };
 }
 
@@ -225,11 +228,9 @@ export function toChannelStateExtra(channelId: `0x${string}`, state: ChannelStat
  * @param channelId - The `bytes32` channel id.
  * @returns Decoded events for the channel, in log order.
  */
-export function findChannelEvents<TEventName extends "Deposited" | "Claimed" | "Refunded">(
-  logs: readonly Log[],
-  eventName: TEventName,
-  channelId: `0x${string}`,
-) {
+export function findChannelEvents<
+  TEventName extends "Deposited" | "Claimed" | "Refunded" | "ChannelClosed",
+>(logs: readonly Log[], eventName: TEventName, channelId: `0x${string}`) {
   const contract = getAddress(BATCH_SETTLEMENT_ADDRESS);
   return parseEventLogs({
     abi: batchSettlementABI,

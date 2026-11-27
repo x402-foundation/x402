@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MockedFunction } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -40,7 +40,7 @@ import {
   ERC3009_DEPOSIT_COLLECTOR_ADDRESS,
   PERMIT2_DEPOSIT_COLLECTOR_ADDRESS,
 } from "../../../src/batch-settlement/constants";
-import { batchSettlementABI } from "../../../src/batch-settlement/abi";
+import { batchSettlementABI, channelConfigComponents } from "../../../src/batch-settlement/abi";
 import * as Errors from "../../../src/batch-settlement/errors";
 import { ErrErc20ApprovalFromMismatch } from "../../../src/exact/facilitator/errors";
 import type {
@@ -223,6 +223,52 @@ function buildDepositedLog(overrides: {
     data: encodeAbiParameters(
       [{ type: "uint128" }, { type: "uint128" }],
       [BigInt(overrides.amount ?? "10000"), BigInt(overrides.newBalance)],
+    ),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+}
+
+const channelClosedABI = [
+  {
+    type: "event",
+    name: "ChannelClosed",
+    inputs: [
+      { name: "channelId", type: "bytes32", indexed: true },
+      { name: "config", type: "tuple", components: channelConfigComponents, indexed: false },
+    ],
+    anonymous: false,
+  },
+] as const;
+
+function buildChannelClosedLog(overrides: {
+  channelId: `0x${string}`;
+  config: ChannelConfig;
+  address?: `0x${string}`;
+}): Log {
+  return {
+    address: overrides.address ?? BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: channelClosedABI,
+      eventName: "ChannelClosed",
+      args: { channelId: overrides.channelId },
+    }),
+    data: encodeAbiParameters(
+      [{ type: "tuple", components: channelConfigComponents }],
+      [
+        {
+          ...overrides.config,
+          payer: getAddress(overrides.config.payer),
+          payerAuthorizer: getAddress(overrides.config.payerAuthorizer),
+          receiver: getAddress(overrides.config.receiver),
+          receiverAuthorizer: getAddress(overrides.config.receiverAuthorizer),
+          token: getAddress(overrides.config.token),
+        },
+      ],
     ),
     blockHash: null,
     blockNumber: null,
@@ -2720,14 +2766,42 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
     it.each([
       ["keeps withdrawRequestedAt on a partial withdrawal reduction", 5000n, 1234],
       ["clears withdrawRequestedAt when the refund covers the withdrawal", 2000n, 0],
-      ["reports zero withdrawRequestedAt with no pending withdrawal", 0n, 0],
-    ])("%s, with no read after the receipt", async (_, withdrawAmount, expectedRequestedAt) => {
+    ])(
+      "omits balance for a pending withdrawal: %s, with no read after the receipt",
+      async (_, withdrawAmount, expectedRequestedAt) => {
+        const signer = buildSigner({
+          waitForTransactionReceipt: successReceipt([
+            buildRefundedLog({ channelId, amount: "2000" }),
+          ]),
+        });
+        mockPreState(10000n, 0n, withdrawAmount, 1234n);
+
+        const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+          refundPayload(),
+          makeRequirements(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.amount).toBe("2000");
+        expect(result.extra).toEqual({
+          channelState: {
+            channelId,
+            totalClaimed: "0",
+            withdrawRequestedAt: expectedRequestedAt,
+            refundNonce: "8",
+          },
+        });
+        expect(mockedMulticall).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("reports pre-read balance and zero withdrawRequestedAt with no pending withdrawal", async () => {
       const signer = buildSigner({
         waitForTransactionReceipt: successReceipt([
           buildRefundedLog({ channelId, amount: "2000" }),
         ]),
       });
-      mockPreState(10000n, 0n, withdrawAmount, withdrawAmount > 0n ? 1234n : 0n);
+      mockPreState(10000n, 0n, 0n, 0n);
 
       const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
         refundPayload(),
@@ -2735,17 +2809,159 @@ describe("BatchSettlementEvmScheme (Facilitator) — settle routing", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.amount).toBe("2000");
       expect(result.extra).toEqual({
         channelState: {
           channelId,
           balance: "8000",
           totalClaimed: "0",
-          withdrawRequestedAt: expectedRequestedAt,
+          withdrawRequestedAt: 0,
           refundNonce: "8",
         },
       });
       expect(mockedMulticall).toHaveBeenCalledTimes(1);
+    });
+
+    describe("pre-read age", () => {
+      const readTime = new Date("2026-01-01T00:00:00Z").getTime();
+
+      function receiptAfter(elapsedMs: number, logs: Log[]) {
+        return vi.fn().mockImplementation(async () => {
+          vi.setSystemTime(readTime + elapsedMs);
+          return { status: "success", logs };
+        });
+      }
+
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(readTime);
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("keeps the pre-read balance just under half of withdrawDelay", async () => {
+        const signer = buildSigner({
+          waitForTransactionReceipt: receiptAfter(449_999, [
+            buildRefundedLog({ channelId, amount: "2000" }),
+          ]),
+        });
+        mockPreState(10000n, 0n, 0n, 0n);
+
+        const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+          refundPayload(),
+          makeRequirements(),
+        );
+
+        expect(result.extra).toMatchObject({ channelState: { balance: "8000" } });
+      });
+
+      it("omits balance once half of withdrawDelay has elapsed with no pending withdrawal", async () => {
+        const signer = buildSigner({
+          waitForTransactionReceipt: receiptAfter(450_000, [
+            buildRefundedLog({ channelId, amount: "2000" }),
+          ]),
+        });
+        mockPreState(10000n, 0n, 0n, 0n);
+
+        const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+          refundPayload(),
+          makeRequirements(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.extra).toEqual({
+          channelState: { channelId, totalClaimed: "0", withdrawRequestedAt: 0, refundNonce: "8" },
+        });
+      });
+
+      it("scales the threshold with the channel's withdrawDelay", async () => {
+        const longConfig = buildChannelConfig({
+          receiverAuthorizer: authorizer.address,
+          withdrawDelay: 86_400,
+        });
+        const longId = computeChannelId(longConfig);
+        const signer = buildSigner({
+          waitForTransactionReceipt: receiptAfter(450_000, [
+            buildRefundedLog({ channelId: longId, amount: "2000" }),
+          ]),
+        });
+        mockPreState(10000n, 0n, 0n, 0n);
+
+        const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+          refundPayload({
+            channelConfig: longConfig,
+            voucher: { channelId: longId, maxClaimableAmount: "0", signature: "0xdead" },
+          }),
+          makeRequirements({ extra: { ...makeRequirements().extra, withdrawDelay: 86_400 } }),
+        );
+
+        expect(result.extra).toMatchObject({ channelState: { balance: "8000" } });
+      });
+    });
+
+    it("reports a closed channel when the receipt has ChannelClosed despite a pending withdrawal", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "2000" }),
+          buildChannelClosedLog({ channelId, config }),
+        ]),
+      });
+      mockPreState(10000n, 0n, 5000n, 1234n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.extra).toEqual({
+        channelState: {
+          channelId,
+          balance: "0",
+          totalClaimed: "0",
+          withdrawRequestedAt: 0,
+          refundNonce: "8",
+        },
+      });
+    });
+
+    it("ignores ChannelClosed for another channel or emitter", async () => {
+      const otherId = `0x${"77".repeat(32)}` as `0x${string}`;
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildRefundedLog({ channelId, amount: "2000" }),
+          buildChannelClosedLog({ channelId: otherId, config }),
+          buildChannelClosedLog({ channelId, config, address: RECEIVER }),
+        ]),
+      });
+      mockPreState(10000n, 0n, 5000n, 1234n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.extra).toEqual({
+        channelState: { channelId, totalClaimed: "0", withdrawRequestedAt: 1234, refundNonce: "8" },
+      });
+    });
+
+    it("uses Deposited.newBalance even with a pending withdrawal in the pre-read", async () => {
+      const signer = buildSigner({
+        waitForTransactionReceipt: successReceipt([
+          buildDepositedLog({ channelId, newBalance: "6000", amount: "5000" }),
+          buildRefundedLog({ channelId, amount: "2000" }),
+        ]),
+      });
+      mockPreState(1000n, 0n, 5000n, 1234n);
+
+      const result = await new BatchSettlementEvmScheme(signer, authorizer).settle(
+        refundPayload(),
+        makeRequirements(),
+      );
+
+      expect(result.extra).toMatchObject({ channelState: { balance: "4000" } });
     });
 
     it("uses Deposited.newBalance when a deposit lands ahead of the refund", async () => {
