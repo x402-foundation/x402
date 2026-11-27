@@ -166,6 +166,7 @@ class MCPToolCallResult:
         payment_response: SettleResponse | None = None,
         payment_made: bool = False,
         raw_result: MCPToolResult | None = None,
+        structured_content: dict[str, Any] | None = None,
     ):
         """Initialize tool call result.
 
@@ -176,12 +177,14 @@ class MCPToolCallResult:
             payment_made: Whether a payment payload was submitted, including failed
                 or pending settlement; this alone does not confirm settlement
             raw_result: Original tool result, including failed settlement details
+            structured_content: Structured tool output, when the MCP result has it
         """
         self.content = content
         self.is_error = is_error
         self.payment_response = payment_response
         self.payment_made = payment_made
         self.raw_result = raw_result
+        self.structured_content = structured_content
 
 
 class PaymentResponseError(Exception):

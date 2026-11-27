@@ -182,6 +182,7 @@ class x402MCPClient:
                 content=result.content,
                 is_error=result.is_error,
                 payment_made=False,
+                structured_content=result.structured_content,
             )
 
         payment_payload = await self._create_approved_payment(name, args, payment_required)
@@ -300,6 +301,7 @@ class x402MCPClient:
                 ),
                 payment_made=True,
                 raw_result=result,
+                structured_content=result.structured_content,
             )
             after_context = AfterPaymentContext(
                 tool_name=name,

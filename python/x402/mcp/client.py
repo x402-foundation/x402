@@ -70,6 +70,7 @@ class MCPToolCallResult:
     Attributes:
         content: List of MCP content items from the tool response.
         is_error: Whether the tool returned an error.
+        structured_content: Structured tool output, when the MCP result has it.
         payment_response: Successful settlement response, if available.
         payment_made: Whether a payment payload was submitted, including failed
             or pending settlement; this alone does not confirm settlement.
@@ -78,6 +79,7 @@ class MCPToolCallResult:
 
     content: list[Any] = field(default_factory=list)
     is_error: bool = False
+    structured_content: dict[str, Any] | None = None
     payment_response: SettleResponse | dict | None = None
     payment_made: bool = False
     raw_result: Any = None
@@ -206,7 +208,8 @@ class x402MCPSession:
 
     def _build_result(self, result: Any, payment_made: bool) -> MCPToolCallResult:
         """Convert MCP result to MCPToolCallResult."""
-        payment_response = extract_payment_response_from_result(convert_mcp_result(result))
+        converted = convert_mcp_result(result)
+        payment_response = extract_payment_response_from_result(converted)
         return MCPToolCallResult(
             content=list(result.content) if result.content else [],
             is_error=getattr(result, "isError", False),
@@ -215,6 +218,7 @@ class x402MCPSession:
             else None,
             payment_made=payment_made,
             raw_result=result,
+            structured_content=converted.structured_content,
         )
 
     def _extract_payment_required(self, result: Any) -> Any:
@@ -555,6 +559,7 @@ class x402MCPClientSync:
             else None,
             payment_made=payment_made,
             raw_result=mcp_result,
+            structured_content=mcp_result.structured_content,
         )
 
 
