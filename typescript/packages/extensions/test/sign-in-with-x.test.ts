@@ -2137,6 +2137,33 @@ describe("SIWX Hooks", () => {
       expect(payload.chainId).toBe("eip155:8453");
       expect(payload.address).toBe(account.address);
     });
+
+    it("wrapFetchWithSIWx should return original 402 when no chain matches the signer type", async () => {
+      const account = privateKeyToAccount(generatePrivateKey());
+      const paymentRequired = {
+        x402Version: 2 as const,
+        resource: { url: "https://api.example.com/profile" },
+        accepts: [],
+        extensions: createTestChallenge({
+          domain: "api.example.com",
+          resourceUri: "https://api.example.com/profile",
+          network: SOLANA_MAINNET,
+        }),
+      };
+      const original402 = new Response(JSON.stringify(paymentRequired), {
+        status: 402,
+        headers: { "PAYMENT-REQUIRED": safeBase64Encode(JSON.stringify(paymentRequired)) },
+      });
+      Object.defineProperty(original402, "url", { value: "https://api.example.com/profile" });
+
+      const mockFetch = vi.fn().mockResolvedValue(original402);
+      const fetchWithSIWx = wrapFetchWithSIWx(mockFetch, account);
+
+      const response = await fetchWithSIWx("https://api.example.com/profile");
+
+      expect(response).toBe(original402);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("createSIWxClientHook", () => {

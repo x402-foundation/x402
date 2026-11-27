@@ -69,8 +69,7 @@ export function wrapFetchWithSIWx(fetch: typeof globalThis.fetch, signer: SIWxSi
       throw new Error("SIWX authentication already attempted");
     }
 
-    // Find a chain that matches the signer's signature type. Auth-only routes
-    // (accepts: []) have no payment network, so don't key off accepts.
+    // Find a chain that matches the signer's signature type
     const expectedSignatureType = isSolanaSigner(signer) ? "ed25519" : "eip191";
     const matchingChain = siwxExtension.supportedChains.find(
       chain => chain.type === expectedSignatureType,
