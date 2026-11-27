@@ -3,6 +3,7 @@ package mcp
 import (
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -100,6 +101,9 @@ type MCPToolCallResult struct {
 	IsError         bool
 	PaymentResponse *x402.SettleResponse
 	PaymentMade     bool
+
+	// RawResult is the original MCP result, including nontext content and metadata.
+	RawResult *mcp.CallToolResult
 }
 
 // PaymentWrapperConfig configures payment wrapper behavior
