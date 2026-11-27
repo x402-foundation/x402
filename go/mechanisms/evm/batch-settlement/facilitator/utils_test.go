@@ -2,8 +2,10 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,9 +182,11 @@ func TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes(t *testing.T) {
 	cfg := validConfig()
 	id, _ := batchsettlement.ComputeChannelId(cfg, "eip155:8453")
 	for label, value := range map[string]interface{}{
-		"int":     int(cfg.WithdrawDelay),
-		"int64":   int64(cfg.WithdrawDelay),
-		"float64": float64(cfg.WithdrawDelay),
+		"int":                          int(cfg.WithdrawDelay),
+		"int64":                        int64(cfg.WithdrawDelay),
+		"float64":                      float64(cfg.WithdrawDelay),
+		"json.Number":                  json.Number(strconv.Itoa(int(cfg.WithdrawDelay))),
+		"json.Number integral decimal": json.Number(strconv.Itoa(int(cfg.WithdrawDelay)) + ".0"),
 	} {
 		t.Run(label, func(t *testing.T) {
 			r := reqs(cfg.Receiver, cfg.Token)
@@ -194,6 +198,18 @@ func TestValidateChannelConfig_ExtraWithdrawDelayNumberShapes(t *testing.T) {
 				t.Fatalf("delay=%v (%s): expected ok, got %v", value, label, err)
 			}
 		})
+	}
+
+	// A json.Number that parses but differs from the channel config still mismatches.
+	r := reqs(cfg.Receiver, cfg.Token)
+	r.Extra = map[string]interface{}{
+		"receiverAuthorizer": cfg.ReceiverAuthorizer,
+		"withdrawDelay":      json.Number(strconv.Itoa(int(cfg.WithdrawDelay) + 1)),
+	}
+	err := ValidateChannelConfig(cfg, id, r)
+	var ve *x402.VerifyError
+	if !errors.As(err, &ve) || ve.InvalidReason != ErrWithdrawDelayMismatch {
+		t.Fatalf("json.Number mismatch: expected ErrWithdrawDelayMismatch, got %v", err)
 	}
 }
 

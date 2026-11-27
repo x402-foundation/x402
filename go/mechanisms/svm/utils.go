@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -417,7 +419,7 @@ func selectTransactionVersion(extra map[string]interface{}, supported []int) (in
 }
 
 // transactionVersionEntry reports whether entry is the integer 0 or 1. JSON
-// decoding yields float64, so an integral float64 is accepted.
+// decoding yields float64 or json.Number, so an integral number is accepted.
 func transactionVersionEntry(entry interface{}) (int, bool) {
 	switch v := entry.(type) {
 	case float64:
@@ -431,6 +433,10 @@ func transactionVersionEntry(entry interface{}) (int, bool) {
 	case int64:
 		if v == 0 || v == 1 {
 			return int(v), true
+		}
+	case json.Number:
+		if i, ok := x402.ParseJSONInteger(v); ok && i.IsInt64() && (i.Int64() == 0 || i.Int64() == 1) {
+			return int(i.Int64()), true
 		}
 	}
 	return 0, false
@@ -529,6 +535,12 @@ func parseHintUint64(value any) (uint64, bool) {
 			return 0, false
 		}
 		return parsed, true
+	case json.Number:
+		i, ok := x402.ParseJSONInteger(typed)
+		if !ok || i.Sign() < 0 || !i.IsUint64() {
+			return 0, false
+		}
+		return i.Uint64(), true
 	default:
 		return 0, false
 	}

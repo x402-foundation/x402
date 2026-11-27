@@ -9,6 +9,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
@@ -283,11 +284,15 @@ func integerValue(value interface{}) (int64, bool) {
 	case float64:
 		return floatInteger(v)
 	case json.Number:
-		if n, err := v.Int64(); err == nil {
-			return n, true
+		n, ok := x402.ParseJSONInteger(v)
+		if !ok {
+			return 0, false
 		}
-		if f, err := v.Float64(); err == nil {
-			return floatInteger(f)
+		if n.IsInt64() {
+			return n.Int64(), true
+		}
+		if n.Sign() > 0 {
+			return math.MaxInt64, true
 		}
 	}
 	return 0, false

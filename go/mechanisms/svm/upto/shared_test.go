@@ -1,6 +1,8 @@
 package upto
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 
 	solana "github.com/gagliardetto/solana-go"
@@ -102,6 +104,12 @@ func TestParseWithdrawDelay(t *testing.T) {
 		{name: "int", value: 900, want: 900},
 		{name: "int64", value: int64(900), want: 900},
 		{name: "uint32", value: uint32(900), want: 900},
+		{name: "json.Number", value: json.Number("900"), want: 900},
+		{name: "json.Number integral decimal", value: json.Number("60.0"), want: 60},
+		{name: "json.Number exponent", value: json.Number("6e1"), want: 60},
+		{name: "json.Number above uint32", value: json.Number("4294967296"), wantErr: true},
+		{name: "json.Number zero", value: json.Number("0"), wantErr: true},
+		{name: "json.Number near-integer", value: json.Number("60.0000000000000000001"), wantErr: true},
 		{name: "zero", value: float64(0), wantErr: true},
 		{name: "negative", value: float64(-1), wantErr: true},
 		{name: "fractional", value: 1.5, wantErr: true},
@@ -114,7 +122,7 @@ func TestParseWithdrawDelay(t *testing.T) {
 			got, err := ParseWithdrawDelay(test.value)
 
 			if test.wantErr {
-				require.Error(t, err)
+				require.EqualError(t, err, "withdrawDelay must be an integer greater than zero")
 				return
 			}
 			require.NoError(t, err)
@@ -133,6 +141,11 @@ func TestParseExtraUint64(t *testing.T) {
 		{name: "decimal string", value: "341000000", want: 341_000_000, wantOK: true},
 		{name: "json number", value: float64(341000000), want: 341_000_000, wantOK: true},
 		{name: "uint64", value: uint64(7), want: 7, wantOK: true},
+		{name: "json.Number", value: json.Number("12345"), want: 12345, wantOK: true},
+		{name: "json.Number exact above 2^53", value: json.Number("9007199254740993.0"), want: 9007199254740993, wantOK: true},
+		{name: "json.Number max uint64", value: json.Number("18446744073709551615"), want: math.MaxUint64, wantOK: true},
+		{name: "json.Number above uint64", value: json.Number("1e20")},
+		{name: "json.Number negative", value: json.Number("-1")},
 		{name: "negative", value: -1},
 		{name: "fractional", value: 1.5},
 		{name: "non-numeric string", value: "soon"},

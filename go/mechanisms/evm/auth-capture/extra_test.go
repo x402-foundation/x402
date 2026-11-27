@@ -123,6 +123,7 @@ func TestJSONNumberToUint64(t *testing.T) {
 	valid := map[string]interface{}{
 		"float64": float64(7), "int": 7, "int32": int32(7), "int64": int64(7),
 		"uint16": uint16(7), "uint32": uint32(7), "uint64": uint64(7), "json.Number": json.Number("7"),
+		"integral decimal json.Number": json.Number("7.0"), "exponent json.Number": json.Number("7e0"),
 	}
 	for name, value := range valid {
 		n, ok := JSONNumberToUint64(value)
@@ -130,10 +131,18 @@ func TestJSONNumberToUint64(t *testing.T) {
 		assert.Equal(t, uint64(7), n, name)
 	}
 
+	exact := map[json.Number]uint64{"9007199254740993.0": 9007199254740993, "18446744073709551615": math.MaxUint64}
+	for value, want := range exact {
+		n, ok := JSONNumberToUint64(value)
+		assert.True(t, ok, string(value))
+		assert.Equal(t, want, n, string(value))
+	}
+
 	invalid := map[string]interface{}{
 		"fractional": 1.5, "negative float": float64(-1), "overflow": math.Pow(2, 70),
 		"negative int": -1, "negative int32": int32(-1), "negative int64": int64(-1),
 		"negative json.Number": json.Number("-1"), "fractional json.Number": json.Number("1.5"),
+		"2^64 json.Number": json.Number("18446744073709551616"), "near-integer json.Number": json.Number("60.0000000000000000001"),
 		"string": "7", "nil": nil,
 	}
 	for name, value := range invalid {

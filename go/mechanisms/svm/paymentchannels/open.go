@@ -16,6 +16,7 @@ import (
 	ag_binary "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
@@ -1333,14 +1334,14 @@ func ParseU64(value any, name string) (uint64, error) {
 		}
 		return parsed, nil
 	case json.Number:
-		if !unsignedDecimal.MatchString(typed.String()) {
+		i, ok := x402.ParseJSONInteger(typed)
+		if !ok || i.Sign() < 0 {
 			return 0, fmt.Errorf("%s must be an unsigned integer", name)
 		}
-		parsed, err := strconv.ParseUint(typed.String(), 10, 64)
-		if err != nil {
+		if !i.IsUint64() {
 			return 0, fmt.Errorf("%s must fit in u64", name)
 		}
-		return parsed, nil
+		return i.Uint64(), nil
 	default:
 		return 0, fmt.Errorf("%s must be an unsigned integer", name)
 	}
