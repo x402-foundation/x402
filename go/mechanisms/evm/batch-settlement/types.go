@@ -850,17 +850,19 @@ func VoucherStateRequirementsFromMap(data map[string]interface{}) *BatchSettleme
 }
 
 // ToMap converts a BatchSettlementChannelStateExtra to a map (used for emitting
-// `extra.channelState` on corrective-402 PaymentRequirements).
+// `extra.channelState` on corrective-402 PaymentRequirements). An empty Balance is omitted.
 func (cs *BatchSettlementChannelStateExtra) ToMap() map[string]interface{} {
 	if cs == nil {
 		return nil
 	}
 	result := map[string]interface{}{
 		"channelId":           cs.ChannelId,
-		"balance":             cs.Balance,
 		"totalClaimed":        cs.TotalClaimed,
 		"withdrawRequestedAt": cs.WithdrawRequestedAt,
 		"refundNonce":         cs.RefundNonce,
+	}
+	if cs.Balance != "" {
+		result["balance"] = cs.Balance
 	}
 	if cs.ChargedCumulativeAmount != "" {
 		result["chargedCumulativeAmount"] = cs.ChargedCumulativeAmount

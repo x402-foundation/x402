@@ -392,9 +392,9 @@ func (s *BatchSettlementEvmScheme) evaluateVoucherAgainstCachedState(
 		return nil
 	}
 	// Skip the local fast path when the cached onchain fields for this
-	// channel are stale (or never synced) — the dispatcher will fall back
-	// to the remote facilitator verify.
-	if channel.OnchainSyncedAt == 0 || now-channel.OnchainSyncedAt > s.GetOnchainStateTtlMs() {
+	// channel are stale (or never synced) or a withdrawal is pending — the
+	// dispatcher will fall back to the remote facilitator verify.
+	if channel.OnchainSyncedAt == 0 || now-channel.OnchainSyncedAt > s.GetOnchainStateTtlMs() || channel.WithdrawRequestedAt != 0 {
 		return nil
 	}
 
@@ -1058,6 +1058,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 
 	// --- Deposit: storage update from facilitator channelState ---
 	if batchsettlement.IsDepositPayload(payload) {
+		defer func() { _ = s.ReleasePendingRequest(ctx.Payload) }()
 		dp, parseErr := batchsettlement.DepositPayloadFromMap(payload)
 		if parseErr != nil {
 			log.Printf("[batched] AfterSettle deposit: parse payload failed: %v", parseErr)
@@ -1070,7 +1071,10 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			pendingId = rc.PendingId
 		}
 
-		cs := readChannelStateFromExtra(ctx.Result.Extra)
+		cs, stateErr := parseSettleChannelState(ctx.Result.Extra)
+		if stateErr != nil {
+			return x402.NewAfterSettleAbort(facilitator.ErrInvalidRefundPayload, "")
+		}
 		now := time.Now().UnixMilli()
 		reqAmount := bigOrZero(ctx.Requirements.GetAmount())
 
@@ -1109,9 +1113,12 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			next.Signature = dp.Voucher.Signature
 			stampNetwork(&next, ctx.Requirements.GetNetwork())
 			if cs != nil {
-				applyChannelStateExtra(&next, cs)
+				applySettleChannelState(&next, cs, false)
 			}
-			next.OnchainSyncedAt = now
+			next.OnchainSyncedAt = 0
+			if cs != nil && cs.claimedSet && cs.withdrawSet {
+				next.OnchainSyncedAt = now
+			}
 			next.LastRequestTimestamp = now
 			return &next
 		})
@@ -1120,7 +1127,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		}
 		if updateRes.Status == ChannelUpdated && updateRes.Channel != nil {
 			s.RememberChannelSnapshot(ctx.Payload, updateRes.Channel)
-			_ = s.ReleasePendingRequest(ctx.Payload)
 			return nil
 		}
 		if missingRow {
@@ -1131,6 +1137,7 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 
 	// --- Refund: storage update from facilitator post-refund snapshot ---
 	if batchsettlement.IsEnrichedRefundPayload(payload) {
+		defer func() { _ = s.ReleasePendingRequest(ctx.Payload) }()
 		refundPayload, err := batchsettlement.EnrichedRefundPayloadFromMap(payload)
 		if err != nil {
 			log.Printf("[batched] AfterSettle refund: parse payload failed: %v", err)
@@ -1148,7 +1155,10 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			pendingId = rc.PendingId
 		}
 
-		snapshot := readChannelStateFromExtra(ctx.Result.Extra)
+		snapshot, stateErr := parseSettleChannelState(ctx.Result.Extra)
+		if stateErr != nil {
+			return stateErr
+		}
 		if snapshot == nil {
 			return nil
 		}
@@ -1173,15 +1183,19 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 			if existing == nil {
 				return current
 			}
-			postBalance := bigOrZero(snapshot.Balance)
-			curCharged := bigOrZero(existing.ChargedCumulativeAmount)
-			if postBalance.Cmp(curCharged) <= 0 {
+			// An omitted balance is not an empty channel. Refunded has no post-balance,
+			// and a stale pre-read must not delete escrow a deposit already funded.
+			if snapshot.balanceSet && snapshot.balance.Cmp(bigOrZero(existing.ChargedCumulativeAmount)) <= 0 {
 				return nil
 			}
 			next := *existing
 			stampNetwork(&next, ctx.Requirements.GetNetwork())
-			applyChannelStateExtra(&next, snapshot)
-			next.OnchainSyncedAt = now
+			// A refund applies a present withdrawRequestedAt, including 0. Deposit only raises it.
+			applySettleChannelState(&next, snapshot, true)
+			next.OnchainSyncedAt = 0
+			if snapshot.balanceSet {
+				next.OnchainSyncedAt = now
+			}
 			next.LastRequestTimestamp = now
 			return &next
 		})
@@ -1191,7 +1205,6 @@ func handleAfterSettle(s *BatchSettlementEvmScheme, ctx x402.SettleResultContext
 		if updateRes.Status == ChannelUnchanged {
 			return errors.New(batchsettlement.ErrChannelBusy)
 		}
-		_ = s.ReleasePendingRequest(ctx.Payload)
 		return nil
 	}
 
@@ -1240,61 +1253,114 @@ func handleEnrichSettlementResponse(s *BatchSettlementEvmScheme, ctx x402.Settle
 	return out, nil
 }
 
-func applyChannelStateExtra(next *ChannelSession, cs *batchsettlement.BatchSettlementChannelStateExtra) {
-	if cs.Balance != "" {
-		next.Balance = cs.Balance
-	}
-	if cs.TotalClaimed != "" {
-		next.TotalClaimed = cs.TotalClaimed
-	}
-	if cs.WithdrawRequestedAt != 0 {
-		next.WithdrawRequestedAt = cs.WithdrawRequestedAt
-	}
-	if cs.RefundNonce != "" {
-		if n, ok := new(big.Int).SetString(cs.RefundNonce, 10); ok {
-			next.RefundNonce = int(n.Int64())
-		}
-	}
+// settleChannelNumbers is a settle response channelState. A nil pointer means the object was absent.
+// A set field was present and canonical. Deposit only raises withdrawRequestedAt; a refund applies it.
+type settleChannelNumbers struct {
+	balance      *big.Int
+	balanceSet   bool
+	totalClaimed *big.Int
+	claimedSet   bool
+	withdrawAt   int
+	withdrawSet  bool
+	refundNonce  *big.Int
+	nonceSet     bool
 }
 
-func readChannelStateFromExtra(extra map[string]interface{}) *batchsettlement.BatchSettlementChannelStateExtra {
+// parseSettleChannelState reads channelState. A missing object keeps the stored channel.
+// A present field that is not a canonical non-negative integer is invalid_batch_settlement_evm_refund_payload.
+func parseSettleChannelState(extra map[string]interface{}) (*settleChannelNumbers, error) {
 	if extra == nil {
-		return nil
+		return nil, nil
 	}
 	raw, ok := extra["channelState"].(map[string]interface{})
 	if !ok {
-		return nil
+		if _, present := extra["channelState"]; present {
+			return nil, errors.New(facilitator.ErrInvalidRefundPayload)
+		}
+		return nil, nil
 	}
-	out := &batchsettlement.BatchSettlementChannelStateExtra{}
-	if v, ok := raw["channelId"].(string); ok {
-		out.ChannelId = v
+	out := &settleChannelNumbers{}
+	var err error
+	if out.balance, out.balanceSet, err = canonicalUintField(raw, "balance"); err != nil {
+		return nil, err
 	}
-	if v, ok := raw["balance"].(string); ok {
-		out.Balance = v
-	} else if v, ok := raw["balance"].(float64); ok {
-		out.Balance = fmt.Sprintf("%.0f", v)
+	if out.totalClaimed, out.claimedSet, err = canonicalUintField(raw, "totalClaimed"); err != nil {
+		return nil, err
 	}
-	if v, ok := raw["totalClaimed"].(string); ok {
-		out.TotalClaimed = v
-	} else if v, ok := raw["totalClaimed"].(float64); ok {
-		out.TotalClaimed = fmt.Sprintf("%.0f", v)
+	if out.refundNonce, out.nonceSet, err = canonicalUintField(raw, "refundNonce"); err != nil {
+		return nil, err
 	}
-	if v, ok := raw["withdrawRequestedAt"].(float64); ok {
-		out.WithdrawRequestedAt = int(v)
-	} else if v, ok := raw["withdrawRequestedAt"].(int); ok {
-		out.WithdrawRequestedAt = v
+	if out.nonceSet && !out.refundNonce.IsInt64() {
+		return nil, errors.New(facilitator.ErrInvalidRefundPayload)
 	}
-	if v, ok := raw["refundNonce"].(string); ok {
-		out.RefundNonce = v
-	} else if v, ok := raw["refundNonce"].(float64); ok {
-		out.RefundNonce = fmt.Sprintf("%.0f", v)
+	withdraw, withdrawSet, err := canonicalUintField(raw, "withdrawRequestedAt")
+	if err != nil {
+		return nil, err
 	}
-	if v, ok := raw["chargedCumulativeAmount"].(string); ok {
-		out.ChargedCumulativeAmount = v
-	} else if v, ok := raw["chargedCumulativeAmount"].(float64); ok {
-		out.ChargedCumulativeAmount = fmt.Sprintf("%.0f", v)
+	if withdrawSet {
+		if !withdraw.IsInt64() {
+			return nil, errors.New(facilitator.ErrInvalidRefundPayload)
+		}
+		out.withdrawAt = int(withdraw.Int64())
+		out.withdrawSet = true
 	}
-	return out
+	return out, nil
+}
+
+func canonicalUintField(raw map[string]interface{}, key string) (*big.Int, bool, error) {
+	value, present := raw[key]
+	if !present {
+		return nil, false, nil
+	}
+	parsed, ok := canonicalUint(value)
+	if !ok {
+		return nil, false, errors.New(facilitator.ErrInvalidRefundPayload)
+	}
+	return parsed, true, nil
+}
+
+// canonicalUint accepts a decimal string with no leading zeros, or a non-negative safe integer.
+func canonicalUint(value interface{}) (*big.Int, bool) {
+	switch v := value.(type) {
+	case string:
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok || n.Sign() < 0 || n.String() != v {
+			return nil, false
+		}
+		return n, true
+	case int:
+		if v < 0 {
+			return nil, false
+		}
+		return big.NewInt(int64(v)), true
+	case int64:
+		if v < 0 {
+			return nil, false
+		}
+		return big.NewInt(v), true
+	case float64:
+		if v < 0 || v > maxSafeJSONInteger || v != math.Trunc(v) {
+			return nil, false
+		}
+		return big.NewInt(int64(v)), true
+	default:
+		return nil, false
+	}
+}
+
+func applySettleChannelState(next *ChannelSession, cs *settleChannelNumbers, applyWithdraw bool) {
+	if cs.balanceSet {
+		next.Balance = cs.balance.String()
+	}
+	if cs.claimedSet && cs.totalClaimed.Cmp(bigOrZero(next.TotalClaimed)) > 0 {
+		next.TotalClaimed = cs.totalClaimed.String()
+	}
+	if cs.withdrawSet && (applyWithdraw || cs.withdrawAt > next.WithdrawRequestedAt) {
+		next.WithdrawRequestedAt = cs.withdrawAt
+	}
+	if cs.nonceSet && cs.refundNonce.Cmp(big.NewInt(int64(next.RefundNonce))) > 0 {
+		next.RefundNonce = int(cs.refundNonce.Int64())
+	}
 }
 
 // mapStringField extracts a string field from a map with a default.

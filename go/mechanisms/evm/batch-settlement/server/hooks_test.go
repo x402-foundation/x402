@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -510,6 +512,23 @@ func TestBeforeVerifyHook_FreshCumulativePasses(t *testing.T) {
 // locally approved. With an inflated cached balance (e.g. SettleDeposit
 // double-count), the same voucher would incorrectly pass the local fast path.
 func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
+	s, channelId, res := beforeVerifyOverEscrowVoucher(t, 0)
+	if res == nil || !res.Skip || res.SkipVerifyResult == nil {
+		t.Fatalf("expected local verify skip result, got %+v", res)
+	}
+	if res.SkipVerifyResult.IsValid {
+		t.Fatal("expected local verify to reject over-escrow voucher")
+	}
+	if res.SkipVerifyResult.InvalidReason != facilitator.ErrMaxClaimableExceedsBal {
+		t.Fatalf("InvalidReason = %q, want %q", res.SkipVerifyResult.InvalidReason, facilitator.ErrMaxClaimableExceedsBal)
+	}
+	if lockHeld(t, s, channelId, "") {
+		t.Fatal("invalid local verify must release the admission lock")
+	}
+}
+
+func beforeVerifyOverEscrowVoucher(t *testing.T, withdrawRequestedAt int) (*BatchSettlementEvmScheme, string, *x402.BeforeHookResult) {
+	t.Helper()
 	priv, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -539,6 +558,7 @@ func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
 	sess.ChannelConfig = cfg
 	sess.Balance = "100"
 	sess.TotalClaimed = "0"
+	sess.WithdrawRequestedAt = withdrawRequestedAt
 	sess.OnchainSyncedAt = time.Now().UnixMilli()
 	seedSession(t, s, channelId, sess)
 
@@ -569,17 +589,13 @@ func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Skip || res.SkipVerifyResult == nil {
-		t.Fatalf("expected local verify skip result, got %+v", res)
-	}
-	if res.SkipVerifyResult.IsValid {
-		t.Fatal("expected local verify to reject over-escrow voucher")
-	}
-	if res.SkipVerifyResult.InvalidReason != facilitator.ErrMaxClaimableExceedsBal {
-		t.Fatalf("InvalidReason = %q, want %q", res.SkipVerifyResult.InvalidReason, facilitator.ErrMaxClaimableExceedsBal)
-	}
-	if lockHeld(t, s, channelId, "") {
-		t.Fatal("invalid local verify must release the admission lock")
+	return s, channelId, res
+}
+
+func TestBeforeVerifyHook_PendingWithdrawalBypassesCachedState(t *testing.T) {
+	_, _, res := beforeVerifyOverEscrowVoucher(t, int(time.Now().Unix()))
+	if res != nil {
+		t.Fatalf("expected fallback to the facilitator, got %+v", res)
 	}
 }
 
@@ -1692,6 +1708,320 @@ func TestAfterSettleHook_RefundFullDeletesAfterPayloadEnrichment(t *testing.T) {
 	}
 }
 
+func TestAfterSettleHook_RefundWithoutBalanceKeepsChannel(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.TotalClaimed = "40"
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-refund")
+	stub := &stubPayload{data: map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "150",
+		"refundNonce": "4",
+		"claims":      []interface{}{},
+	}}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-refund",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"totalClaimed": "40",
+					"refundNonce":  "5",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil {
+		t.Fatal("missing balance deleted the channel")
+	}
+	if got.Balance != "1000" || got.TotalClaimed != "40" || got.WithdrawRequestedAt != 77 || got.RefundNonce != 5 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestAfterSettleHook_DepositEventBalanceKeepsStoredFields(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.TotalClaimed = "40"
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-deposit")
+	stub := &stubPayload{data: depositPayloadFor(id, "100", "0xsig")}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-deposit",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId": id,
+					"balance":   "2500",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.Balance != "2500" || got.TotalClaimed != "40" || got.WithdrawRequestedAt != 77 || got.RefundNonce != 4 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestAfterSettleHook_RefundClearsWithdrawRequestedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-refund")
+	stub := &stubPayload{data: map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "4",
+		"claims":      []interface{}{},
+	}}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-refund",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":           id,
+					"balance":             "900",
+					"totalClaimed":        "100",
+					"withdrawRequestedAt": 0,
+					"refundNonce":         "5",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.WithdrawRequestedAt != 0 || got.Balance != "900" || got.RefundNonce != 5 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestAfterSettleHook_DepositKeepsWithdrawRequestedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.WithdrawRequestedAt = 77
+	sess.RefundNonce = 4
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-deposit")
+	stub := &stubPayload{data: depositPayloadFor(id, "100", "0xsig")}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-deposit",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{
+			Payload:      stub,
+			Requirements: batchedReqs(),
+		},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":           id,
+					"balance":             "2500",
+					"withdrawRequestedAt": 0,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.WithdrawRequestedAt != 77 || got.Balance != "2500" || got.RefundNonce != 4 {
+		t.Fatalf("session = %+v", got)
+	}
+}
+
+func TestAfterSettleHook_ReleasesLockWhenChannelStateOmittedOrRejected(t *testing.T) {
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	refund := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId": id, "maxClaimableAmount": "100", "signature": "0xsig",
+		},
+		"amount": "100", "refundNonce": "4", "claims": []interface{}{},
+	}
+	cases := []struct {
+		name    string
+		data    map[string]interface{}
+		extra   map[string]interface{}
+		wantErr bool
+	}{
+		{name: "refund omits channelState", data: refund},
+		{name: "refund rejects a malformed field", data: refund, wantErr: true, extra: map[string]interface{}{
+			"channelState": map[string]interface{}{"balance": "01"},
+		}},
+		{name: "deposit rejects a malformed field", data: depositPayloadFor(id, "100", "0xsig"), wantErr: true, extra: map[string]interface{}{
+			"channelState": map[string]interface{}{"balance": "01"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			sess := sampleSession(id, "100")
+			sess.ChannelConfig = testConfig()
+			sess.Balance = "1000"
+			sess.WithdrawRequestedAt = 77
+			seedSession(t, s, id, sess)
+			reserveDepositPending(t, s, id, "p-lock")
+			stub := &stubPayload{data: tc.data}
+			s.MergeRequestContext(stub, BatchSettlementRequestContext{
+				ChannelId: id, PendingId: "p-lock", ReservationCommitted: reservationFlag(true),
+			})
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+				Result:        &x402.SettleResponse{Success: true, Extra: tc.extra},
+			})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), facilitator.ErrInvalidRefundPayload) {
+					t.Fatalf("err = %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if lockHeld(t, s, id, "p-lock") {
+				t.Fatal("admission lock still held")
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != "1000" || got.WithdrawRequestedAt != 77 {
+				t.Fatalf("session = %+v", got)
+			}
+		})
+	}
+}
+
+func TestAfterSettleHook_RejectsMalformedChannelState(t *testing.T) {
+	cases := []struct {
+		name    string
+		deposit bool
+		field   string
+		value   interface{}
+	}{
+		{name: "refund leading zero", field: "balance", value: "01"},
+		{name: "refund fraction", field: "totalClaimed", value: 1.5},
+		{name: "refund negative withdraw", field: "withdrawRequestedAt", value: -1},
+		{name: "deposit leading zero", deposit: true, field: "balance", value: "01"},
+		{name: "deposit fraction", deposit: true, field: "refundNonce", value: "1.0"},
+		{name: "deposit bool", deposit: true, field: "totalClaimed", value: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+			sess := sampleSession(id, "100")
+			sess.ChannelConfig = testConfig()
+			sess.Balance = "1000"
+			sess.TotalClaimed = "40"
+			sess.WithdrawRequestedAt = 77
+			sess.RefundNonce = 4
+			seedSession(t, s, id, sess)
+			reserveDepositPending(t, s, id, "p-malformed")
+			data := map[string]interface{}{
+				"type":          "refund",
+				"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+				"voucher": map[string]interface{}{
+					"channelId": id, "maxClaimableAmount": "100", "signature": "0xsig",
+				},
+				"amount": "100", "refundNonce": "4", "claims": []interface{}{},
+			}
+			if tc.deposit {
+				data = depositPayloadFor(id, "100", "0xsig")
+			}
+			stub := &stubPayload{data: data}
+			s.MergeRequestContext(stub, BatchSettlementRequestContext{
+				ChannelId: id, PendingId: "p-malformed", ReservationCommitted: reservationFlag(true),
+			})
+			state := map[string]interface{}{"channelId": id, "balance": "900", "totalClaimed": "100", "refundNonce": "5"}
+			state[tc.field] = tc.value
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+				Result:        &x402.SettleResponse{Success: true, Extra: map[string]interface{}{"channelState": state}},
+			})
+			if err == nil || !strings.Contains(err.Error(), facilitator.ErrInvalidRefundPayload) {
+				t.Fatalf("err = %v", err)
+			}
+			if tc.deposit {
+				var abort *x402.AfterSettleAbortError
+				if !errors.As(err, &abort) || abort.Reason != facilitator.ErrInvalidRefundPayload {
+					t.Fatalf("err = %v", err)
+				}
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != "1000" || got.TotalClaimed != "40" || got.WithdrawRequestedAt != 77 || got.RefundNonce != 4 {
+				t.Fatalf("session = %+v", got)
+			}
+		})
+	}
+}
+
 func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
 	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
@@ -1755,6 +2085,234 @@ func TestAfterSettleHook_RefundPartialUpdates(t *testing.T) {
 	}
 	if lockHeld(t, s, id, "") {
 		t.Fatal("admission lock not released after partial refund")
+	}
+}
+
+func TestApplySettleChannelState_StaleDepositKeepsRefundNonce(t *testing.T) {
+	next := ChannelSession{Balance: "1000", RefundNonce: 1}
+	applySettleChannelState(&next, &settleChannelNumbers{
+		balance: big.NewInt(4000), balanceSet: true,
+		refundNonce: big.NewInt(4), nonceSet: true,
+	}, false)
+	applySettleChannelState(&next, &settleChannelNumbers{
+		balance: big.NewInt(5000), balanceSet: true,
+		refundNonce: big.NewInt(2), nonceSet: true,
+	}, false)
+	if next.RefundNonce != 4 || next.Balance != "5000" {
+		t.Fatalf("session = %+v, want refundNonce 4 and balance 5000", next)
+	}
+}
+
+func TestApplySettleChannelState_TotalClaimedOnlyMovesForward(t *testing.T) {
+	cases := []struct {
+		name     string
+		stored   string
+		reported string
+		want     string
+	}{
+		{"lower reported value keeps the stored one", "500", "300", "500"},
+		{"higher reported value advances", "300", "500", "500"},
+		{"omitted value keeps the stored one", "500", "", "500"},
+		{"empty stored value takes the reported one", "", "300", "300"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next := ChannelSession{TotalClaimed: tc.stored, Balance: "1000"}
+			cs := &settleChannelNumbers{balance: big.NewInt(900), balanceSet: true}
+			if tc.reported != "" {
+				reported, ok := new(big.Int).SetString(tc.reported, 10)
+				if !ok {
+					t.Fatalf("reported %q", tc.reported)
+				}
+				cs.totalClaimed = reported
+				cs.claimedSet = true
+			}
+			applySettleChannelState(&next, cs, false)
+			if next.TotalClaimed != tc.want || next.Balance != "900" {
+				t.Fatalf("session = %+v, want totalClaimed %s and balance 900", next, tc.want)
+			}
+		})
+	}
+}
+
+func TestAfterSettleHook_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T) {
+	s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	sess := sampleSession(id, "100")
+	sess.ChannelConfig = testConfig()
+	sess.Balance = "1000"
+	sess.RefundNonce = 1
+	sess.OnchainSyncedAt = time.Now().UnixMilli()
+	seedSession(t, s, id, sess)
+	reserveDepositPending(t, s, id, "p-refund")
+	rp := map[string]interface{}{
+		"type":          "refund",
+		"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+		"voucher": map[string]interface{}{
+			"channelId":          id,
+			"maxClaimableAmount": "100",
+			"signature":          "0xsig",
+		},
+		"amount":      "100",
+		"refundNonce": "1",
+		"claims":      []interface{}{},
+	}
+	stub := &stubPayload{data: rp}
+	s.MergeRequestContext(stub, BatchSettlementRequestContext{
+		ChannelId:            id,
+		PendingId:            "p-refund",
+		ReservationCommitted: reservationFlag(true),
+	})
+	err := s.AfterSettleHook()(x402.SettleResultContext{
+		SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+		Result: &x402.SettleResponse{
+			Success: true,
+			Extra: map[string]interface{}{
+				"channelState": map[string]interface{}{
+					"channelId":    id,
+					"totalClaimed": "100",
+					"refundNonce":  "2",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	got, _ := s.GetSession(id)
+	if got == nil || got.Balance != "1000" || got.RefundNonce != 2 || got.OnchainSyncedAt != 0 {
+		t.Fatalf("session = %+v, want balance 1000, refundNonce 2, onchainSyncedAt 0", got)
+	}
+}
+
+func TestAfterSettleHook_RefundPendingWithdrawalWithoutBalanceKeepsCacheStale(t *testing.T) {
+	cases := []struct {
+		name                string
+		withdrawRequestedAt int
+	}{
+		{"refund below the withdrawal keeps it pending", 77},
+		{"refund covering the withdrawal clears it", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+			sess := sampleSession(id, "100")
+			sess.ChannelConfig = testConfig()
+			sess.Balance = "1000"
+			sess.RefundNonce = 1
+			sess.WithdrawRequestedAt = 77
+			sess.OnchainSyncedAt = time.Now().UnixMilli()
+			seedSession(t, s, id, sess)
+			reserveDepositPending(t, s, id, "p-refund")
+			stub := &stubPayload{data: map[string]interface{}{
+				"type":          "refund",
+				"channelConfig": batchsettlement.ChannelConfigToMap(testConfig()),
+				"voucher": map[string]interface{}{
+					"channelId":          id,
+					"maxClaimableAmount": "100",
+					"signature":          "0xsig",
+				},
+				"amount":      "100",
+				"refundNonce": "1",
+				"claims":      []interface{}{},
+			}}
+			s.MergeRequestContext(stub, BatchSettlementRequestContext{
+				ChannelId:            id,
+				PendingId:            "p-refund",
+				ReservationCommitted: reservationFlag(true),
+			})
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{Payload: stub, Requirements: batchedReqs()},
+				Result: &x402.SettleResponse{
+					Success: true,
+					Extra: map[string]interface{}{
+						"channelState": map[string]interface{}{
+							"channelId":           id,
+							"totalClaimed":        "100",
+							"withdrawRequestedAt": tc.withdrawRequestedAt,
+							"refundNonce":         "2",
+						},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != "1000" || got.WithdrawRequestedAt != tc.withdrawRequestedAt || got.OnchainSyncedAt != 0 {
+				t.Fatalf("session = %+v, want balance 1000, withdrawRequestedAt %d, onchainSyncedAt 0", got, tc.withdrawRequestedAt)
+			}
+		})
+	}
+}
+
+func TestAfterSettleHook_DepositOmittedFieldsClearOnchainSyncedAt(t *testing.T) {
+	id, _ := batchsettlement.ComputeChannelId(testConfig(), "eip155:8453")
+	cases := []struct {
+		name         string
+		state        map[string]interface{}
+		wantSynced   bool
+		wantBalance  string
+		wantClaimed  string
+		wantWithdraw int
+	}{
+		{
+			name: "omitted totalClaimed",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "withdrawRequestedAt": 80, "refundNonce": "1",
+			},
+			wantBalance: "10000", wantClaimed: "100", wantWithdraw: 80,
+		},
+		{
+			name: "omitted withdrawRequestedAt",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "totalClaimed": "200", "refundNonce": "1",
+			},
+			wantBalance: "10000", wantClaimed: "200", wantWithdraw: 77,
+		},
+		{
+			name: "totalClaimed and withdrawRequestedAt present",
+			state: map[string]interface{}{
+				"channelId": id, "balance": "10000", "totalClaimed": "200", "withdrawRequestedAt": 80, "refundNonce": "1",
+			},
+			wantSynced: true, wantBalance: "10000", wantClaimed: "200", wantWithdraw: 80,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewBatchSettlementEvmScheme("0xreceiver", nil)
+			sess := sampleSession(id, "0")
+			sess.Balance = "900"
+			sess.TotalClaimed = "100"
+			sess.WithdrawRequestedAt = 77
+			sess.OnchainSyncedAt = 50
+			seedSession(t, s, id, sess)
+			before := time.Now().UnixMilli()
+			err := s.AfterSettleHook()(x402.SettleResultContext{
+				SettleContext: x402.SettleContext{
+					Payload:      &stubPayload{data: depositPayloadFor(id, "100", "0xsig")},
+					Requirements: batchedReqs(),
+				},
+				Result: &x402.SettleResponse{Success: true, Extra: map[string]interface{}{"channelState": tc.state}},
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			got, _ := s.GetSession(id)
+			if got == nil || got.Balance != tc.wantBalance || got.TotalClaimed != tc.wantClaimed || got.WithdrawRequestedAt != tc.wantWithdraw {
+				t.Fatalf("session = %+v", got)
+			}
+			if tc.wantSynced {
+				if got.OnchainSyncedAt < before {
+					t.Fatalf("onchainSyncedAt = %d, want a fresh stamp", got.OnchainSyncedAt)
+				}
+				return
+			}
+			if got.OnchainSyncedAt != 0 {
+				t.Fatalf("onchainSyncedAt = %d, want 0", got.OnchainSyncedAt)
+			}
+		})
 	}
 }
 

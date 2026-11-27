@@ -679,6 +679,122 @@ func TestScheme_DirectModeRelaysPresignedClaim(t *testing.T) {
 	}
 }
 
+type countingAuthorizer struct {
+	fakeAuthorizerSigner
+	refunds int
+}
+
+func (a *countingAuthorizer) SignRefund(ctx context.Context, channelId, amount, nonce, network string) ([]byte, error) {
+	a.refunds++
+	return a.fakeAuthorizerSigner.SignRefund(ctx, channelId, amount, nonce, network)
+}
+
+func TestScheme_CallerIdentityRefundReadsBeforeSigning(t *testing.T) {
+	auth := &countingAuthorizer{fakeAuthorizerSigner: fakeAuthorizerSigner{addr: managedAuthorizer().Address()}}
+	cfg := managedConfig(auth.Address(), "00")
+	channelId := mustChannelId(t, cfg)
+	delegated := storage.NewInMemoryDelegatedAuthStore()
+	if _, err := delegated.Bind(context.Background(), storage.DelegatedAuthBinding{
+		ChannelId: channelId, Network: managedNetwork, CallerIdentity: "svc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	payload := managedEnvelope((&batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Voucher:       voucherFields(channelId, "0", dummySig),
+		Amount:        "1000",
+		RefundNonce:   "0",
+	}).ToMap())
+	reqs := types.PaymentRequirements{
+		Scheme:  batchsettlement.SchemeBatched,
+		Network: managedNetwork,
+		Amount:  "1000",
+		Asset:   managedToken,
+		PayTo:   managedReceiver,
+		Extra:   map[string]interface{}{"receiverAuthorizer": auth.Address(), "withdrawDelay": 900},
+	}
+	newScheme := func(read func(string, ...interface{}) (interface{}, error)) *BatchSettlementEvmScheme {
+		t.Helper()
+		scheme, err := NewBatchSettlementEvmSchemeWithConfig(
+			&fakeFacilitatorSigner{addresses: []string{"0xfacilitator"}, readContract: read},
+			auth,
+			&BatchSettlementEvmSchemeConfig{
+				ResolveCallerIdentity: identityResolver("svc"),
+				DelegatedAuthStore:    delegated,
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scheme
+	}
+
+	t.Run("failed read", func(t *testing.T) {
+		_, err := newScheme(func(string, ...interface{}) (interface{}, error) {
+			return nil, errors.New("rpc down")
+		}).Settle(context.Background(), payload, reqs, nil)
+		var se *x402.SettleError
+		if !errors.As(err, &se) || se.ErrorReason != ErrRpcReadFailed || auth.refunds != 0 {
+			t.Fatalf("err=%v refunds=%d", err, auth.refunds)
+		}
+	})
+	t.Run("nothing to refund", func(t *testing.T) {
+		before := auth.refunds
+		resp, err := newScheme(func(functionName string, _ ...interface{}) (interface{}, error) {
+			if functionName == "tryAggregate" {
+				return multicallChannelStateResult(t, big.NewInt(0), big.NewInt(0), 0, big.NewInt(0)), nil
+			}
+			return nil, errors.New("unexpected rpc")
+		}).Settle(context.Background(), payload, reqs, nil)
+		if err != nil || resp.Success || resp.ErrorReason != ErrRefundNoBalance || auth.refunds != before {
+			t.Fatalf("resp=%+v err=%v refunds=%d", resp, err, auth.refunds-before)
+		}
+	})
+}
+
+func TestScheme_CallerIdentityRefundChecksChannelConfig(t *testing.T) {
+	auth := &countingAuthorizer{fakeAuthorizerSigner: fakeAuthorizerSigner{addr: managedAuthorizer().Address()}}
+	cfg := managedConfig(auth.Address(), "00")
+	channelId := mustChannelId(t, cfg)
+	delegated := storage.NewInMemoryDelegatedAuthStore()
+	if _, err := delegated.Bind(context.Background(), storage.DelegatedAuthBinding{
+		ChannelId: channelId, Network: managedNetwork, CallerIdentity: "svc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	signer := &fakeFacilitatorSigner{
+		addresses:    []string{"0xfacilitator"},
+		readContract: func(string, ...interface{}) (interface{}, error) { return nil, errors.New("rpc down") },
+	}
+	scheme, err := NewBatchSettlementEvmSchemeWithConfig(signer, auth, &BatchSettlementEvmSchemeConfig{
+		ResolveCallerIdentity: func(DelegatedSettleContext) (string, error) { return "svc", nil },
+		DelegatedAuthStore:    delegated,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := managedEnvelope((&batchsettlement.BatchSettlementEnrichedRefundPayload{
+		Type:          "refund",
+		ChannelConfig: cfg,
+		Voucher:       voucherFields(channelId, "0", dummySig),
+		Amount:        "1000",
+		RefundNonce:   "0",
+	}).ToMap())
+	reqs := types.PaymentRequirements{
+		Scheme:  batchsettlement.SchemeBatched,
+		Network: managedNetwork,
+		Amount:  "1000",
+		Asset:   managedToken,
+		PayTo:   managedPayer,
+		Extra:   map[string]interface{}{"receiverAuthorizer": auth.Address(), "withdrawDelay": 900},
+	}
+	resp, err := scheme.Settle(context.Background(), payload, reqs, nil)
+	if err != nil || resp.Success || resp.ErrorReason != ErrReceiverMismatch || auth.refunds != 0 {
+		t.Fatalf("resp=%+v err=%v refunds=%d", resp, err, auth.refunds)
+	}
+}
+
 func TestScheme_GetExtraDelegatedRefundTracksCallerIdentity(t *testing.T) {
 	cases := []struct {
 		name   string
