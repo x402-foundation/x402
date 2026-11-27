@@ -392,9 +392,9 @@ func (s *BatchSettlementEvmScheme) evaluateVoucherAgainstCachedState(
 		return nil
 	}
 	// Skip the local fast path when the cached onchain fields for this
-	// channel are stale (or never synced) — the dispatcher will fall back
-	// to the remote facilitator verify.
-	if channel.OnchainSyncedAt == 0 || now-channel.OnchainSyncedAt > s.GetOnchainStateTtlMs() {
+	// channel are stale (or never synced) or a withdrawal is pending — the
+	// dispatcher will fall back to the remote facilitator verify.
+	if channel.OnchainSyncedAt == 0 || now-channel.OnchainSyncedAt > s.GetOnchainStateTtlMs() || channel.WithdrawRequestedAt != 0 {
 		return nil
 	}
 

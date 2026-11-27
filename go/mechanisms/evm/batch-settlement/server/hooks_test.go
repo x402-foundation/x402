@@ -512,6 +512,23 @@ func TestBeforeVerifyHook_FreshCumulativePasses(t *testing.T) {
 // locally approved. With an inflated cached balance (e.g. SettleDeposit
 // double-count), the same voucher would incorrectly pass the local fast path.
 func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
+	s, channelId, res := beforeVerifyOverEscrowVoucher(t, 0)
+	if res == nil || !res.Skip || res.SkipVerifyResult == nil {
+		t.Fatalf("expected local verify skip result, got %+v", res)
+	}
+	if res.SkipVerifyResult.IsValid {
+		t.Fatal("expected local verify to reject over-escrow voucher")
+	}
+	if res.SkipVerifyResult.InvalidReason != facilitator.ErrMaxClaimableExceedsBal {
+		t.Fatalf("InvalidReason = %q, want %q", res.SkipVerifyResult.InvalidReason, facilitator.ErrMaxClaimableExceedsBal)
+	}
+	if lockHeld(t, s, channelId, "") {
+		t.Fatal("invalid local verify must release the admission lock")
+	}
+}
+
+func beforeVerifyOverEscrowVoucher(t *testing.T, withdrawRequestedAt int) (*BatchSettlementEvmScheme, string, *x402.BeforeHookResult) {
+	t.Helper()
 	priv, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -541,6 +558,7 @@ func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
 	sess.ChannelConfig = cfg
 	sess.Balance = "100"
 	sess.TotalClaimed = "0"
+	sess.WithdrawRequestedAt = withdrawRequestedAt
 	sess.OnchainSyncedAt = time.Now().UnixMilli()
 	seedSession(t, s, channelId, sess)
 
@@ -571,17 +589,13 @@ func TestBeforeVerifyHook_LocalVerifyRejectsOverEscrow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if res == nil || !res.Skip || res.SkipVerifyResult == nil {
-		t.Fatalf("expected local verify skip result, got %+v", res)
-	}
-	if res.SkipVerifyResult.IsValid {
-		t.Fatal("expected local verify to reject over-escrow voucher")
-	}
-	if res.SkipVerifyResult.InvalidReason != facilitator.ErrMaxClaimableExceedsBal {
-		t.Fatalf("InvalidReason = %q, want %q", res.SkipVerifyResult.InvalidReason, facilitator.ErrMaxClaimableExceedsBal)
-	}
-	if lockHeld(t, s, channelId, "") {
-		t.Fatal("invalid local verify must release the admission lock")
+	return s, channelId, res
+}
+
+func TestBeforeVerifyHook_PendingWithdrawalBypassesCachedState(t *testing.T) {
+	_, _, res := beforeVerifyOverEscrowVoucher(t, int(time.Now().Unix()))
+	if res != nil {
+		t.Fatalf("expected fallback to the facilitator, got %+v", res)
 	}
 }
 

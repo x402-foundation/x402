@@ -402,8 +402,10 @@ func EvaluateVoucherAgainstCachedState(
 
 // IsOnchainStateFresh reports whether cached onchain fields are still within ttlMs.
 // ttlMs <= 0 disables the cache. OnchainSyncedAt == 0 means the row was never synced.
+// A pending withdrawal is never fresh: finalizeWithdraw can lower the balance at any time
+// once withdrawDelay elapses.
 func IsOnchainStateFresh(channel CachedChannelOnchain, ttlMs int64, now int64) bool {
-	if ttlMs <= 0 {
+	if ttlMs <= 0 || channel.WithdrawRequestedAt != 0 {
 		return false
 	}
 	return channel.OnchainSyncedAt != 0 && now-channel.OnchainSyncedAt <= ttlMs

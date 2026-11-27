@@ -1657,6 +1657,30 @@ func TestSettleManaged_HeldFreshMirrorSkipsRead(t *testing.T) {
 	}
 }
 
+func TestSettleManaged_HeldFreshMirrorWithPendingWithdrawalReadsChain(t *testing.T) {
+	store := storage.NewInMemoryChannelStorage[*FacilitatorChannel]()
+	auth := managedAuthorizer()
+	cfg := managedConfig(auth.addr, "00")
+	channelId := mustChannelId(t, cfg)
+	seedManagedChannel(t, store, storedManagedChannel(cfg, channelId, &channelFields{
+		OnchainSyncedAt:     time.Now().UnixMilli() - 1_000,
+		WithdrawRequestedAt: 77,
+	}))
+	voucher := voucherFields(channelId, "2000", dummySig)
+	acquireBound(t, store, "0xpending", voucher)
+	rpc := &managedRPC{balance: bigInt(7777)}
+
+	resp, err := SettleManaged(context.Background(), managedDeps(t, store, store, auth, newManagedSigner(t, rpc)),
+		voucherEnvelope(cfg, voucher, "0xpending"), managedRequirements(auth.addr), nil, nil)
+	if err != nil || !resp.Success {
+		t.Fatalf("got %+v %v", resp, err)
+	}
+	got, _ := store.Get(context.Background(), channelId)
+	if rpc.tryAggregate != 1 || got.Balance != "7777" {
+		t.Fatalf("tryAggregate=%d stored=%+v", rpc.tryAggregate, got)
+	}
+}
+
 func TestSettleManaged_HeldStaleMirrorReadsOnceAndStampsSample(t *testing.T) {
 	store := &countingChannelStore{InMemoryChannelStorage: storage.NewInMemoryChannelStorage[*FacilitatorChannel]()}
 	auth := managedAuthorizer()
