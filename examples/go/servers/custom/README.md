@@ -213,30 +213,42 @@ case x402http.ResultPaymentError:
 
 case x402http.ResultPaymentVerified:
     // Payment verified, continue with settlement handling
-    handlePaymentVerified(c, server, ctx, result)
+    handlePaymentVerified(c, server, ctx, reqCtx, result)
 }
 ```
 
 ### Settling Payment
 
 ```go
-settlementHeaders, err := server.ProcessSettlement(
+settleResult := server.ProcessSettlement(
     ctx,
     *result.PaymentPayload,
     *result.PaymentRequirements,
-    capture.statusCode,
+    nil,
+    &x402http.HTTPTransportContext{
+        Request:         &reqCtx,
+        ResponseBody:    capture.body.Bytes(),
+        ResponseHeaders: capture.Header(),
+    },
+    result.DeclaredExtensions,
+    result.BeforeHandlerSettlement,
+    "",
 )
 
-if err != nil {
-    c.JSON(http.StatusInternalServerError, gin.H{
-        "error":   "Settlement failed",
-        "details": err.Error(),
-    })
+if !settleResult.Success {
+    for key, value := range settleResult.Headers {
+        c.Header(key, value)
+    }
+    if settleResult.Response != nil {
+        handlePaymentError(c, settleResult.Response)
+        return
+    }
+    c.JSON(http.StatusPaymentRequired, gin.H{"error": x402.ErrCodeSettlementFailed})
     return
 }
 
 // Add settlement headers to response
-for key, value := range settlementHeaders {
+for key, value := range settleResult.Headers {
     c.Header(key, value)
 }
 ```
