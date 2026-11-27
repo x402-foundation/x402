@@ -520,6 +520,14 @@ class FailingSchemeNetworkFacilitator(MockSchemeNetworkFacilitator):
         raise RuntimeError("settlement rpc error")
 
 
+class RejectingSchemeNetworkFacilitator(MockSchemeNetworkFacilitator):
+    """Mock scheme whose verify returns is_valid=False."""
+
+    def verify(self, payload, requirements, context=None) -> VerifyResponse:
+        self.verify_calls.append((payload, requirements))
+        return VerifyResponse(is_valid=False, invalid_reason="invalid_signature")
+
+
 RECOVERED_VERIFY = VerifyResponse(is_valid=True, payer="0xRecovered")
 RECOVERED_SETTLE = SettleResponse(success=True, transaction="0xRecoveredTx", network="eip155:8453")
 
@@ -579,6 +587,22 @@ class TestX402FacilitatorHookErrorIsolation:
 
         assert result.is_valid is True
         assert failure_hook_called is False
+
+    @pytest.mark.asyncio
+    async def test_verify_rejection_runs_after_hooks_not_failure_hooks(self):
+        facilitator = x402Facilitator()
+        facilitator.register(["eip155:8453"], RejectingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        after_results = []
+        facilitator.on_after_verify(lambda ctx: after_results.append(ctx.result))
+        facilitator.on_verify_failure(lambda ctx: RecoveredVerifyResult(result=RECOVERED_VERIFY))
+
+        result = await facilitator.verify(_payload(requirements), requirements)
+
+        assert result.is_valid is False
+        assert result.invalid_reason == "invalid_signature"
+        assert after_results == [result]
 
     @pytest.mark.asyncio
     async def test_later_verify_failure_hook_recovers_when_earlier_one_throws(self):
@@ -800,6 +824,20 @@ class TestX402FacilitatorSyncHookErrorIsolation:
         result = facilitator.verify(_payload(requirements), requirements)
 
         assert result.is_valid is True
+
+    def test_verify_rejection_runs_after_hooks_not_failure_hooks(self):
+        facilitator = x402FacilitatorSync()
+        facilitator.register(["eip155:8453"], RejectingSchemeNetworkFacilitator("exact"))
+        requirements = _requirements("eip155:8453")
+
+        after_results = []
+        facilitator.on_after_verify(lambda ctx: after_results.append(ctx.result))
+        facilitator.on_verify_failure(lambda ctx: RecoveredVerifyResult(result=RECOVERED_VERIFY))
+
+        result = facilitator.verify(_payload(requirements), requirements)
+
+        assert result.is_valid is False
+        assert after_results == [result]
 
     def test_later_failure_hooks_recover_when_earlier_one_throws(self):
         facilitator = x402FacilitatorSync()
