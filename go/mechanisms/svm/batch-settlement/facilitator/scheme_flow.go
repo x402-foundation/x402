@@ -852,14 +852,18 @@ func (f *BatchSvmScheme) distributionChannels(ctx context.Context, prepared []Pr
 func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
 	feePayer := prepared[0].FeePayer
 	var previous *x402.SettleResponse
+	var previousSlot uint64
 	if f.config.OnDistributionConfirmed != nil {
 		raw, ok, err := f.payoutStore.Get(ctx, resultKey(key))
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			if previous, err = decodeDistributionResult(raw); err != nil {
+			if previous, previousSlot, err = decodeDistributionResultWithSlot(raw); err != nil {
 				return nil, err
+			}
+			if previousSlot > 0 {
+				f.rememberSlot(requirements.Network, previousSlot)
 			}
 			if pending := f.completePayout(ctx, key, previous, requirements); pending != nil {
 				return pending, nil
@@ -917,7 +921,7 @@ func (f *BatchSvmScheme) distributeKeyed(ctx context.Context, key string, prepar
 	}
 	if len(instructions) == 0 {
 		if previous != nil {
-			if states := replayDistributionStates(prepared, channels, previous); states != nil {
+			if states := replayDistributionStates(prepared, channels, previous, previousSlot > 0); states != nil {
 				return withChannelStates(previous, states), nil
 			}
 			return previous, nil
@@ -988,9 +992,10 @@ func completeStates(prepared []PreparedDistribution, channels []*generated.Chann
 
 // replayDistributionStates builds channelStates for a replayed successful distribute:
 // live channels use redemptionSnapshot, absent channels preserve a terminal distributed
-// snapshot from previous when present, and otherwise report closed. Returns nil for a
-// non-success response or if any live channel has an unrecognized onchain status.
-func replayDistributionStates(prepared []PreparedDistribution, channels []*generated.Channel, previous *x402.SettleResponse) []batchsettlement.BatchRedemptionChannelState {
+// snapshot from previous when present, and report closed only when allowClosed is true
+// (meaning the channel reads were constrained to the confirmation slot). Returns nil
+// for a non-success response or if any channel cannot be safely reported.
+func replayDistributionStates(prepared []PreparedDistribution, channels []*generated.Channel, previous *x402.SettleResponse, allowClosed bool) []batchsettlement.BatchRedemptionChannelState {
 	if !previous.Success {
 		return nil
 	}
@@ -1014,6 +1019,9 @@ func replayDistributionStates(prepared []PreparedDistribution, channels []*gener
 		if existing, ok := byID[item.ChannelID]; ok && existing.Status == batchsettlement.ChannelStatusDistributed {
 			states[i] = existing
 			continue
+		}
+		if !allowClosed {
+			return nil
 		}
 		states[i] = closedSnapshot(item.ChannelID)
 	}
@@ -1059,7 +1067,7 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 	unfinished := func(cause error) *x402.SettleResponse {
 		return f.unfinished(ctx, key, signature, "", requirements.Network, fromPending, cause)
 	}
-	response, err := f.attributeDistribution(ctx, signature, prepared, requirements)
+	response, confirmationSlot, err := f.attributeDistribution(ctx, signature, prepared, requirements)
 	if err != nil {
 		var ambiguous *PayoutAttributionAmbiguousError
 		if !errors.As(err, &ambiguous) {
@@ -1079,7 +1087,7 @@ func (f *BatchSvmScheme) finishDistribution(ctx context.Context, key, signature 
 			response.Extra[batchsettlement.ExtraChannelStates] = states
 		}
 		if f.config.OnDistributionConfirmed != nil {
-			if err := storePayoutResult(ctx, f.payoutStore, key, response); err != nil {
+			if err := storeDistributionResult(ctx, f.payoutStore, key, response, confirmationSlot); err != nil {
 				return unfinished(err), nil //nolint:nilerr // the sweep landed; a store failure stays pending
 			}
 			if pending := f.completePayout(ctx, key, response, requirements); pending != nil {
@@ -1202,15 +1210,16 @@ func ownerBalanceChange(evidence *svm.FacilitatorConfirmedTransaction, owner, mi
 }
 
 // attributeDistribution reads the confirmed sweep and attributes the
-// recipient's payout. It reads chain state only and can be repeated.
-func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, error) {
+// recipient's payout, returning its confirmation slot alongside the response.
+// It reads chain state only and can be repeated.
+func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature string, prepared []PreparedDistribution, requirements types.PaymentRequirements) (*x402.SettleResponse, uint64, error) {
 	evidence, err := f.confirmedEvidence(ctx, signature, requirements.Network)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	paid, err := f.distributionPayout(evidence, prepared, requirements)
 	if err != nil {
-		return nil, unattributable(err)
+		return nil, 0, unattributable(err)
 	}
 	return &x402.SettleResponse{
 		Success:     true,
@@ -1218,7 +1227,7 @@ func (f *BatchSvmScheme) attributeDistribution(ctx context.Context, signature st
 		Transaction: signature,
 		Amount:      strconv.FormatUint(paid, 10),
 		Extra:       map[string]any{"channels": channelIDs(prepared)},
-	}, nil
+	}, evidence.Slot, nil
 }
 
 func (f *BatchSvmScheme) distributionPayout(evidence *svm.FacilitatorConfirmedTransaction, prepared []PreparedDistribution, requirements types.PaymentRequirements) (uint64, error) {
@@ -1595,13 +1604,37 @@ type distributionExtra struct {
 
 type storedDistribution struct {
 	x402.SettleResponse
-	Extra *distributionExtra `json:"extra,omitempty"`
+	Extra            *distributionExtra `json:"extra,omitempty"`
+	ConfirmationSlot uint64             `json:"confirmationSlot,omitempty"`
+}
+
+type storedDistributionRecord struct {
+	x402.SettleResponse
+	ConfirmationSlot uint64 `json:"confirmationSlot,omitempty"`
+}
+
+// storeDistributionResult persists a distribution response alongside its confirmation
+// slot so a restarted facilitator constrains replay reads to at least that slot.
+func storeDistributionResult(ctx context.Context, store x402.PendingSettlementStore, key string, response *x402.SettleResponse, confirmationSlot uint64) error {
+	encoded, err := json.Marshal(storedDistributionRecord{
+		SettleResponse:   *response,
+		ConfirmationSlot: confirmationSlot,
+	})
+	if err != nil {
+		return err
+	}
+	return store.Set(ctx, resultKey(key), string(encoded))
 }
 
 func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
+	response, _, err := decodeDistributionResultWithSlot(raw)
+	return response, err
+}
+
+func decodeDistributionResultWithSlot(raw string) (*x402.SettleResponse, uint64, error) {
 	var stored storedDistribution
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	response := stored.SettleResponse
 	if stored.Extra != nil {
@@ -1610,7 +1643,7 @@ func decodeDistributionResult(raw string) (*x402.SettleResponse, error) {
 			response.Extra[batchsettlement.ExtraChannelStates] = stored.Extra.ChannelStates
 		}
 	}
-	return &response, nil
+	return &response, stored.ConfirmationSlot, nil
 }
 
 func channelIDs(prepared []PreparedDistribution) []string {

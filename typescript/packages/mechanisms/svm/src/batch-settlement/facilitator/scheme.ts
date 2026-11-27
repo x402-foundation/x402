@@ -87,6 +87,7 @@ import {
   envelopeFailure,
   openDisposition,
   parseOptionalSlot,
+  parseStoredSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
   refreshDistributionReplay,
@@ -625,8 +626,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       return this.finishDistribution(key, recovered.signature, prepared, requirements, undefined);
     }
     const previous = await this.pendingStore.get(`${key}:result`);
-    const previousSlot = await this.pendingStore.get(`${key}:slot`);
-    if (previousSlot) this.rememberSlot(requirements.network, BigInt(previousSlot));
+    const previousSlot = parseStoredSlot(await this.pendingStore.get(`${key}:slot`));
+    if (previousSlot !== undefined) this.rememberSlot(requirements.network, previousSlot);
     const instructions: ServerInstruction[] = [];
     const swept: PreparedDistribution[] = [];
     const channels: (Channel | undefined)[] = [];
@@ -673,6 +674,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           JSON.parse(previous) as SettleResponse,
           prepared,
           channels,
+          previousSlot !== undefined,
         );
         const encoded = JSON.stringify(refreshed);
         if (encoded !== previous) await this.pendingStore.set(`${key}:result`, encoded);
@@ -780,10 +782,13 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           JSON.stringify(response),
         );
       } else if (response.success && !response.extra?.channelStates) {
-        const cachedSlot = await this.pendingStore.get(`${key}:slot`);
-        if (cachedSlot) this.rememberSlot(requirements.network, BigInt(cachedSlot));
-        const channelStates = await distributionStates(prepared, undefined, channelId =>
-          this.readChannel(requirements.network, channelId),
+        const cachedSlot = parseStoredSlot(await this.pendingStore.get(`${key}:slot`));
+        if (cachedSlot !== undefined) this.rememberSlot(requirements.network, cachedSlot);
+        const channelStates = await distributionStates(
+          prepared,
+          undefined,
+          channelId => this.readChannel(requirements.network, channelId),
+          cachedSlot !== undefined,
         );
         if (channelStates) {
           response = { ...response, extra: { ...response.extra, channelStates } };

@@ -255,20 +255,34 @@ export function appliedFailure(
 }
 
 /**
+ * Parse a persisted positive slot floor from recovery storage.
+ *
+ * @param raw - Stored decimal slot string, if present
+ * @returns Positive slot bigint, or undefined when absent or malformed
+ */
+export function parseStoredSlot(raw: string | undefined): bigint | undefined {
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const slot = BigInt(raw);
+  return slot > 0n ? slot : undefined;
+}
+
+/**
  * Snapshot a batch read at or past a terminal point: live accounts use
  * `redemptionSnapshot`, absent ones keep a preserved `distributed` snapshot
- * when available or else become `closedSnapshot`. Returns undefined if any
- * live account has an unreported status byte.
+ * when available or else become `closedSnapshot` when `allowClosed` is true.
+ * Returns undefined if any channel cannot be safely reported.
  *
  * @param batch - The batch's channels
  * @param channels - The decoded channels in the same order, `undefined` where absent
  * @param preserved - Previously recorded snapshots, if any
- * @returns The states, or undefined when a live channel has no reportable state
+ * @param allowClosed - Whether absent PDAs were read with a confirmation slot floor
+ * @returns The states, or undefined when a channel cannot be safely reported
  */
 export function observedOrClosedStates(
   batch: readonly { channelId: string }[],
   channels: readonly (Channel | undefined)[],
   preserved?: readonly BatchRedemptionChannelState[],
+  allowClosed = true,
 ): BatchRedemptionChannelState[] | undefined {
   const byId = preserved ? new Map(preserved.map(entry => [entry.channelId, entry])) : undefined;
   const states = batch.map((item, index) => {
@@ -276,7 +290,7 @@ export function observedOrClosedStates(
     if (live) return redemptionSnapshot(item.channelId, live);
     const existing = byId?.get(item.channelId);
     if (existing?.status === "distributed") return existing;
-    return closedSnapshot(item.channelId);
+    return allowClosed ? closedSnapshot(item.channelId) : undefined;
   });
   return states.every((state): state is BatchRedemptionChannelState => state !== undefined)
     ? states
@@ -285,24 +299,27 @@ export function observedOrClosedStates(
 
 /**
  * Refresh `extra.channelStates` on a replayed successful distribute response,
- * converting absent PDAs to `closed` unless a terminal `distributed` snapshot
- * was already recorded. Non-success responses are returned unchanged.
+ * converting absent PDAs to `closed` only when `allowClosed` is true (unless a
+ * terminal `distributed` snapshot was already recorded). Non-success responses
+ * are returned unchanged.
  *
  * @param response - The previously cached distribute response
  * @param batch - The batch's channels
  * @param channels - Current chain reads for the batch, `undefined` where absent
+ * @param allowClosed - Whether the replay reads were constrained to the confirmation slot
  * @returns The refreshed response, or `response` unchanged
  */
 export function refreshDistributionReplay(
   response: SettleResponse,
   batch: readonly { channelId: string }[],
   channels: readonly (Channel | undefined)[],
+  allowClosed = true,
 ): SettleResponse {
   if (!response.success) return response;
   const existing = Array.isArray(response.extra?.channelStates)
     ? (response.extra.channelStates as BatchRedemptionChannelState[])
     : undefined;
-  const channelStates = observedOrClosedStates(batch, channels, existing);
+  const channelStates = observedOrClosedStates(batch, channels, existing, allowClosed);
   return channelStates ? { ...response, extra: { ...response.extra, channelStates } } : response;
 }
 
@@ -341,19 +358,21 @@ export function closedFailure(
  * @param batch - The batch's channels
  * @param channelsBefore - The channels read before the sweep, if it was just built
  * @param readChannel - Reads a channel now
+ * @param allowClosed - Whether absent accounts were read with a confirmation slot floor
  * @returns The states, or undefined when an RPC read failed or a channel has an unreported status
  */
 export async function distributionStates(
   batch: readonly { channelId: string }[],
   channelsBefore: readonly (Channel | undefined)[] | undefined,
   readChannel: (channelId: string) => Promise<Channel | undefined>,
+  allowClosed = true,
 ): Promise<BatchRedemptionChannelState[] | undefined> {
   if (channelsBefore) return completeStates(batch, channelsBefore, distributedSnapshot);
   const channels = await Promise.all(batch.map(item => readChannel(item.channelId))).catch(
     () => undefined,
   );
   if (!channels) return undefined;
-  return observedOrClosedStates(batch, channels);
+  return observedOrClosedStates(batch, channels, undefined, allowClosed);
 }
 
 /**

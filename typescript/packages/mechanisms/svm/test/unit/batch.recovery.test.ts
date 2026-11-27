@@ -775,6 +775,24 @@ describe("batch-settlement outcome recovery", () => {
     expect(third).toEqual(replayed);
     expect(api.submitRedemption).not.toHaveBeenCalled();
 
+    // 1b. Without a persisted confirmation slot, a restarted facilitator fails
+    // closed and does not infer closed from an unconstrained absent read.
+    const unconstrainedStore = new InMemoryPendingSettlementStore();
+    await unconstrainedStore.set(`${key}:result`, JSON.stringify(first));
+    const unconstrainedScheme = new BatchSvmScheme(signer() as never, {
+      channelStorage: new InMemoryPaymentChannelStorage(),
+      pendingSettlementStore: unconstrainedStore,
+    });
+    const unconstrainedApi = configure(unconstrainedScheme);
+    unconstrainedApi.readChannel = vi.fn().mockResolvedValue(undefined);
+    const unconstrained = await unconstrainedScheme.settleDistributions(
+      payment(payload),
+      payload,
+      requirements(),
+    );
+    expect(unconstrained).toEqual(first);
+    expect(JSON.parse((await unconstrainedStore.get(`${key}:result`))!)).toEqual(first);
+
     // 2. When onDistributionConfirmed also failed on the first recovery attempt,
     // retrying finishDistribution refreshes the cached transaction result with
     // closed channelStates instead of returning the stale state-less cache.

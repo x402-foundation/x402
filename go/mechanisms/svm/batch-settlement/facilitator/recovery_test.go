@@ -993,12 +993,21 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.Equal(t, int32(1), recorded.Load())
 		require.Zero(t, submits.Load())
 
-		// When a stored result has no channelStates and the account is absent,
-		// replay reports it as closed.
+		// Without a persisted confirmation slot, an absent read fails closed so a
+		// lagging RPC node cannot falsely retire a live channel.
 		require.NoError(t, storePayoutResult(context.Background(), store, key, storedWithoutStates))
 		scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
 			return nil, nil
 		}
+		unconstrained, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.Equal(t, storedWithoutStates, unconstrained)
+		require.Equal(t, int32(2), recorded.Load())
+		require.Zero(t, submits.Load())
+
+		// With a persisted confirmation slot, a stored result without channelStates
+		// reports an absent account as closed.
+		require.NoError(t, storeDistributionResult(context.Background(), store, key, storedWithoutStates, 100))
 		closedReplay, err := scheme.settleDistributions(context.Background(), distributePayload, requirements)
 		require.NoError(t, err)
 		require.True(t, closedReplay.Success)
@@ -1011,7 +1020,7 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 			TotalClaimed:    "0",
 			PayoutWatermark: "0",
 		}}, closedReplay.Extra[batchsettlement.ExtraChannelStates])
-		require.Equal(t, int32(2), recorded.Load())
+		require.Equal(t, int32(3), recorded.Load())
 		require.Zero(t, submits.Load())
 
 		// When the account is absent, a stored result's terminal distributed states are preserved.
@@ -1039,6 +1048,69 @@ func TestBatchSettlementOutcomeRecovery(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, storedWithStates, absent)
 		require.Zero(t, submits.Load())
+	})
+
+	t.Run("restores the persisted confirmation slot on replay after restart before reporting closed", func(t *testing.T) {
+		store := x402.NewInMemoryPendingSettlementStore()
+		key := "batch:distribute:" + network + ":" + channelID
+		require.NoError(t, store.Set(context.Background(), key, tx))
+
+		firstInner := newScriptedSigner(t, 1)
+		firstInner.keys[0] = feePayer
+		firstSigner := &capabilitySigner{
+			scriptedSigner: firstInner,
+			confirmed: func(context.Context, solana.Signature, string) (*svm.FacilitatorConfirmedTransaction, error) {
+				return payoutEvidence(t, "200", "1700"), nil
+			},
+		}
+		firstHook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			return errors.New("ledger unavailable")
+		}
+		firstScheme := newScheme(t, firstSigner, store, firstHook)
+		configure(firstScheme)
+		var firstReads atomic.Int32
+		firstScheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			if firstReads.Add(1) == 1 {
+				return nil, nil
+			}
+			return nil, errors.New("rpc unavailable")
+		}
+
+		// Recovery confirms at slot 100, fails to read states, and fails the hook,
+		// persisting the payout result together with its confirmation slot.
+		pending, err := firstScheme.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.Equal(t, x402.ErrSettlementPending, pending.ErrorReason)
+
+		// A fresh facilitator (empty confirmationSlots) restores slot 100 onto
+		// GetAccountInfo.MinContextSlot before treating an absent account as closed.
+		restartedInner := newScriptedSigner(t, 1)
+		restartedInner.keys[0] = feePayer
+		var recorded atomic.Int32
+		restartedHook := func(context.Context, *x402.SettleResponse, types.PaymentRequirements) error {
+			recorded.Add(1)
+			return nil
+		}
+		restarted := newScheme(t, &confirmingSigner{scriptedSigner: restartedInner}, store, restartedHook)
+		configure(restarted)
+
+		replayed, err := restarted.settleDistributions(context.Background(), distributePayload, requirements)
+		require.NoError(t, err)
+		require.True(t, replayed.Success)
+		require.Equal(t, tx, replayed.Transaction)
+		require.Equal(t, "1500", replayed.Amount)
+		require.Equal(t, int32(1), recorded.Load())
+		calls := restartedInner.accountCalls()
+		require.Len(t, calls, 1)
+		require.NotNil(t, calls[0].opts.MinContextSlot, "replay read must be constrained to the persisted confirmation slot")
+		require.Equal(t, uint64(100), *calls[0].opts.MinContextSlot)
+		require.Equal(t, []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID:       channelID,
+			Status:          batchsettlement.ChannelStatusClosed,
+			Balance:         "0",
+			TotalClaimed:    "0",
+			PayoutWatermark: "0",
+		}}, replayed.Extra[batchsettlement.ExtraChannelStates])
 	})
 
 	t.Run("attributes a timed-out sweep that landed before a claim moved the settled watermark", func(t *testing.T) {
