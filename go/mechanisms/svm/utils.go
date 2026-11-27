@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math"
+	"math/bits"
 	"regexp"
 	"strconv"
 	"strings"
@@ -219,7 +220,14 @@ func ParseAmount(amount string, decimals int) (uint64, error) {
 
 	// Calculate total in smallest unit
 	multiplier := uint64(math.Pow10(decimals))
-	result := intPart*multiplier + decPart
+	hi, scaled := bits.Mul64(intPart, multiplier)
+	if hi != 0 {
+		return 0, fmt.Errorf("amount overflows uint64: %s", amount)
+	}
+	result, carry := bits.Add64(scaled, decPart, 0)
+	if carry != 0 {
+		return 0, fmt.Errorf("amount overflows uint64: %s", amount)
+	}
 
 	return result, nil
 }

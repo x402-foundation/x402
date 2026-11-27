@@ -228,3 +228,14 @@ func TestDecodeTransactionRejectsUnknownMessageVersions(t *testing.T) {
 	_, err = DecodeTransaction(base64.StdEncoding.EncodeToString(raw))
 	require.ErrorContains(t, err, "unsupported message version: 2")
 }
+
+func TestParseAmountRejectsUint64Overflow(t *testing.T) {
+	amount, err := ParseAmount("18446744073709.551615", 6)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(18446744073709551615), amount)
+
+	for _, input := range []string{"18446744073710", "18446744073709.551616"} {
+		_, err := ParseAmount(input, 6)
+		require.ErrorContains(t, err, "overflows uint64", input)
+	}
+}
