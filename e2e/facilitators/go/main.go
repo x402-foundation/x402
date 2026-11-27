@@ -1482,9 +1482,7 @@ func main() {
 				return
 			}
 
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			writeSettleError(c, err)
 			return
 		}
 
