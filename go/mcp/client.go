@@ -441,12 +441,16 @@ func buildMCPToolCallResultFromSDK(result *mcp.CallToolResult, paymentMade bool)
 		}
 	}
 
-	return &MCPToolCallResult{
+	built := &MCPToolCallResult{
 		Content:         content,
 		IsError:         result.IsError,
 		PaymentResponse: paymentResponse,
 		PaymentMade:     paymentMade,
 	}
+	if sc, ok := result.StructuredContent.(map[string]interface{}); ok {
+		built.StructuredContent = sc
+	}
+	return built
 }
 
 // callToolResultToMCPToolResult converts *mcp.CallToolResult to MCPToolResult for hooks.

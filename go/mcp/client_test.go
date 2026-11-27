@@ -548,23 +548,10 @@ func TestX402MCPClient_CallTool_ForwardsStructuredContentFromPaidTool(t *testing
 			},
 		},
 	}
-	structuredBytes, err := json.Marshal(paymentRequired)
-	if err != nil {
-		t.Fatalf("marshal payment required: %v", err)
-	}
-	var paymentBody map[string]interface{}
-	if err := json.Unmarshal(structuredBytes, &paymentBody); err != nil {
-		t.Fatalf("unmarshal payment required: %v", err)
-	}
-
 	want := map[string]interface{}{"tempC": 21}
 	mockMCPCaller := &mockMCPCaller{
 		callToolResults: []MCPToolResult{
-			{
-				IsError:           true,
-				StructuredContent: paymentBody,
-				Content:           []MCPContentItem{{Type: "text", Text: string(structuredBytes)}},
-			},
+			paymentRequiredMCPToolResult(t, paymentRequired),
 			{
 				Content:           []MCPContentItem{{Type: "text", Text: `{"tempC":21}`}},
 				StructuredContent: want,
