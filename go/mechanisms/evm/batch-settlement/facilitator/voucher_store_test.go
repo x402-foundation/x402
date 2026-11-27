@@ -2603,6 +2603,29 @@ func TestSettleManaged_RefundOmittedBalanceClearsOnchainSyncedAt(t *testing.T) {
 	}
 }
 
+func TestSettleManagedRefund_KeepsHigherRefundNonce(t *testing.T) {
+	fields := unclaimedFields()
+	fields.RefundNonce = 5
+	h := newHotRefund(t, fields, workerMarker(), nil)
+	h.deps.SubmitMode = SubmitModeDirect
+	h.deps.AuthorizerSubmitter = h.signer
+	_, sig := signRefundConsent(t, h.channelID, "1000", "5", managedNetwork)
+
+	resp, err := SettleManaged(context.Background(), h.deps,
+		refundEnvelope(h.cfg, voucherFields(h.channelID, h.charged, dummySig), "1000", "", sig),
+		h.reqs, nil, nil)
+	if err != nil || resp == nil || !resp.Success {
+		t.Fatalf("refund %+v %v", resp, err)
+	}
+	state, _ := resp.Extra["channelState"].(map[string]interface{})
+	if state["refundNonce"] != "1" {
+		t.Fatalf("channelState refundNonce = %v, want 1", state["refundNonce"])
+	}
+	if got := h.row(); got.RefundNonce != 5 {
+		t.Fatalf("stored refundNonce = %d, want 5", got.RefundNonce)
+	}
+}
+
 func TestSettleManaged_RefundOnlyCapsPartialAmountAtUnchargedBalance(t *testing.T) {
 	h := newHotRefund(t, unclaimedFields(), workerMarker(), nil)
 	resp, err := h.settle("9000")
