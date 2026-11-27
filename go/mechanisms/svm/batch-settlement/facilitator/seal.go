@@ -49,14 +49,15 @@ type PreparedRefund struct {
 
 // SealDependencies are the scheme internals the seal path borrows.
 type SealDependencies struct {
-	PendingStore             x402.PendingSettlementStore
+	PendingStore x402.PendingSettlementStore
+	// PayoutStore holds payout records; required with OnDistributionConfirmed set.
+	PayoutStore              x402.PendingSettlementStore
 	ResolveTerms             func(context.Context, batchsettlement.BatchChannelConfig, types.PaymentRequirements, VoucherModeBinding) (BatchTerms, error)
 	ReadBinding              func(context.Context, string, string) (ChannelBinding, error)
 	IsDelegatedAuthorizer    func(string) bool
 	ResolveDelegatedIdentity func(context.Context, DelegatedSettleContext) (string, error)
 	DeriveChannelID          func(context.Context, batchsettlement.BatchChannelConfig, string) (string, error)
 	FetchChannel             func(context.Context, string, string) (*generated.Channel, error)
-	ReadChannel              func(context.Context, string, string) (*generated.Channel, error)
 	AssertClaimChannel       func(*generated.Channel, batchsettlement.BatchChannelConfig, BatchTerms, types.PaymentRequirements, []generated.ChannelStatus) error
 	DistributeInstruction    func(context.Context, string, *generated.Channel, BatchTerms, types.PaymentRequirements) (solana.Instruction, error)
 	SubmitRedemption         func(context.Context, string, string, []solana.Instruction, string, string) (durableResult, error)
@@ -143,21 +144,21 @@ func settleSeal(
 	}
 	key := fmt.Sprintf("batch:%s:%s:%s:%d", intent, network, channelID, cumulative)
 	if deps.OnDistributionConfirmed != nil {
-		if previous, ok, err := deps.PendingStore.Get(ctx, resultKey(key)); err != nil {
+		if previous, ok, err := deps.PayoutStore.Get(ctx, resultKey(key)); err != nil {
 			return nil, err
 		} else if ok {
 			var stored x402.SettleResponse
 			if err := json.Unmarshal([]byte(previous), &stored); err != nil {
 				return nil, err
 			}
-			return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
+			return completeSealDistribution(ctx, deps.PayoutStore, deps.OnDistributionConfirmed, key, &stored, requirements, intent), nil
 		}
 	}
 	required := generated.ChannelStatus_Closing
 	if intent == CloseIntentRefund {
 		required = generated.ChannelStatus_Open
 	}
-	run := closeRun{deps: deps, channelID: channelID, key: key, required: required, intent: intent, requirements: requirements, terms: terms, cumulative: cumulative}
+	run := closeRun{deps: deps, channelID: channelID, key: key, intent: intent, requirements: requirements, terms: terms, cumulative: cumulative}
 	// A close broadcast earlier may have landed since, and its channel no longer has
 	// the status a new close needs. Reconcile it before reading the channel.
 	if response, recovered, err := run.recoverPending(ctx, payer); err != nil || recovered {
@@ -274,7 +275,6 @@ type closeRun struct {
 	deps         SealDependencies
 	channelID    string
 	key          string
-	required     generated.ChannelStatus
 	intent       CloseIntent
 	requirements types.PaymentRequirements
 	terms        BatchTerms
@@ -344,9 +344,7 @@ func (r closeRun) unattributed(ctx context.Context, cause error, signature, paye
 
 // finish delivers a close that confirmed onchain. fromPending means the close was
 // recovered from its pending record, which finish then deletes once nothing else
-// holds the close's outcome. A fresh close is answered once its closed state is
-// visible; a recovered one confirmed earlier, so a channel read that fails or lags
-// does not hold it back.
+// holds the close's outcome.
 func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromPending bool) *x402.SettleResponse {
 	deps := r.deps
 	network, payer, signature := sealed.Network, sealed.Payer, sealed.Transaction
@@ -368,34 +366,15 @@ func (r closeRun) finish(ctx context.Context, sealed *x402.SettleResponse, fromP
 		}
 		return nil
 	}
-	visible := func() error {
-		if fromPending {
-			return nil
-		}
-		observed, err := deps.ReadChannel(ctx, r.requirements.Network, r.channelID)
-		if err != nil {
-			return err
-		}
-		if observed != nil && generated.ChannelStatus(observed.Status) == r.required {
-			return fmt.Errorf("%s confirmed but the sealed state is not visible yet", r.intent)
-		}
-		return nil
-	}
 	if deps.OnDistributionConfirmed != nil {
 		// The payout record outlives the pending one, so only the hook is left to run.
-		if err := storePayoutResult(ctx, deps.PendingStore, r.key, sealed); err != nil {
+		if err := storePayoutResult(ctx, deps.PayoutStore, r.key, sealed); err != nil {
 			return unfinished(err)
 		}
 		if pending := forgetPending(); pending != nil {
 			return pending
 		}
-		if err := visible(); err != nil {
-			return SettlementPending(network, payer, signature, err.Error())
-		}
-		return completeSealDistribution(ctx, deps.PendingStore, deps.OnDistributionConfirmed, r.key, sealed, r.requirements, r.intent)
-	}
-	if err := visible(); err != nil {
-		return unfinished(err)
+		return completeSealDistribution(ctx, deps.PayoutStore, deps.OnDistributionConfirmed, r.key, sealed, r.requirements, r.intent)
 	}
 	if pending := forgetPending(); pending != nil {
 		return pending

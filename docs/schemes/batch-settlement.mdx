@@ -824,7 +824,7 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
 <Tabs>
   <Tab title="TypeScript">
     ```typescript
-    const manager = batchSvmScheme.createChannelManager(facilitatorClient, requirements, {
+    const manager = batchSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
       rpcUrl: process.env.SVM_RPC_URL,
       onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
       onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
@@ -836,13 +836,27 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
   </Tab>
   <Tab title="Go">
     ```go
-    manager, err := scheme.CreateChannelManager(facilitatorClient, requirements, batchserver.BatchChannelManagerConfig{
+    manager := scheme.CreateChannelManager(facilitatorClient, svmNetwork, batchsvmserver.BatchChannelManagerConfig{
         RPCURL: os.Getenv("SVM_RPC_URL"),
+        OnClaim: func(r batchsvmserver.ClaimResult) {
+            fmt.Printf("[SVM] Claimed %d vouchers (tx: %s)\n", r.Vouchers, r.Transaction)
+        },
+        OnSettle: func(r batchsvmserver.SettleResult) {
+            fmt.Printf("[SVM] Settled (tx: %s)\n", r.Transaction)
+        },
+        OnSeal: func(r batchsvmserver.SealResult) {
+            fmt.Printf("[SVM] Sealed channel %s (tx: %s)\n", r.Channel, r.Transaction)
+        },
+        OnError: func(err error) {
+            fmt.Printf("[SVM] Settlement error: %v\n", err)
+        },
     })
-    // requirements must include extra.feePayer from the facilitator's supported kind
+    manager.Start(60) // seconds between passes
     ```
   </Tab>
 </Tabs>
+
+The worker derives redemption terms per channel from the stored `ChannelState` (fee payer, receiver, mint, token program, withdraw delay, receiver authorizer) and groups batches by those terms, so channels opened under different facilitator fee payers redeem in one pass. Batch capacity comes from the facilitator's `/supported` response.
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
 

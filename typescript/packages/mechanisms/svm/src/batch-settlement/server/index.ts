@@ -8,6 +8,7 @@ export {
   BatchChannelManager,
   type BatchChannelManagerConfig,
   type ClaimResult,
+  type RedemptionCapacity,
   type RedemptionResult,
   type RedemptionSettler,
   type SealResult,

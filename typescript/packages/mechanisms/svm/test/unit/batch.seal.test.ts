@@ -1,9 +1,11 @@
 import { address, generateKeyPairSigner, type Signature } from "@solana/kit";
-import type { PaymentRequirements } from "@x402/core/types";
+import { findAssociatedTokenPda } from "@solana-program/token-2022";
+import type { PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { signCloseAuthorization } from "../../src/batch-settlement/closeAuthorization";
 import { BatchError } from "../../src/batch-settlement/errors";
+import { CHANNEL_READ_ATTEMPTS } from "../../src/batch-settlement/facilitator/constants";
 import { InMemoryBatchPendingSettlementStore } from "../../src/batch-settlement/facilitator/recovery";
 import { InMemoryPaymentChannelStorage } from "../../src/payment-channels/storage";
 import { BatchSvmScheme } from "../../src/batch-settlement/facilitator/scheme";
@@ -20,6 +22,7 @@ import { getChannelDistributionHash } from "../../src/payment-channels/facilitat
 import { ChannelStatus } from "../../src/payment-channels/onchain";
 import { buildOpenPaymentChannelTransaction } from "../../src/payment-channels/open";
 import { signVoucher } from "../../src/payment-channels/voucher";
+import type { FacilitatorConfirmedTransaction } from "../../src/signer";
 
 const NETWORK = SOLANA_DEVNET_CAIP2;
 const MINT = USDC_DEVNET_ADDRESS;
@@ -32,6 +35,8 @@ let feePayer: Awaited<ReturnType<typeof generateKeyPairSigner>>;
 let authorizer: Awaited<ReturnType<typeof generateKeyPairSigner>>;
 let channelId: string;
 let channelConfig: BatchChannelConfig;
+// The voucher of the latest close payload built, which the default attribution reads.
+let closeCumulative: bigint;
 
 beforeAll(async () => {
   payer = await generateKeyPairSigner();
@@ -105,8 +110,9 @@ function channel(overrides: Partial<Channel> = {}): Channel {
   };
 }
 
-function signer() {
+function signer(confirmed?: () => FacilitatorConfirmedTransaction | null) {
   return {
+    getConfirmedTransaction: vi.fn(async () => confirmed?.() ?? null),
     confirmTransaction: vi.fn().mockResolvedValue(undefined),
     getAccountInfo: vi.fn().mockResolvedValue({ owner: TOKEN_PROGRAM_ADDRESS }),
     getAddresses: vi.fn(() => [feePayer.address]),
@@ -126,10 +132,14 @@ type Internals = {
   readChannel: ReturnType<typeof vi.fn>;
   distributeInstruction: ReturnType<typeof vi.fn>;
   submitRedemption: ReturnType<typeof vi.fn>;
+  reconcileBroadcast: ReturnType<typeof vi.fn>;
+  attributeClose: ReturnType<typeof vi.fn>;
+  waitForChannelRead: ReturnType<typeof vi.fn>;
   sealDependencies(): { nowSeconds(): number };
 };
 
 async function sealPayload(cumulative: bigint, overrides: Partial<BatchSealPayload> = {}) {
+  closeCumulative = cumulative;
   const signature = await signVoucher(payer, {
     channelId,
     cumulativeAmount: cumulative,
@@ -160,16 +170,21 @@ async function sealPayload(cumulative: bigint, overrides: Partial<BatchSealPaylo
  * @param options - Binding seed and live channel
  * @param options.live - The channel account the facilitator reads
  * @param options.bound - Whether the receiver authorizer was bound at deposit
+ * @param options.confirmed - Confirmed close transaction the signer reports; closes are then
+ * attributed from it, otherwise from the channel read before the close
  * @returns The scheme and its stubbed internals
  */
 async function facilitator(
   options: {
     live?: Channel;
     bound?: boolean;
+    confirmed?: () => FacilitatorConfirmedTransaction | null;
     onDistributionConfirmed?: ReturnType<typeof vi.fn>;
     pendingSettlementStore?: InMemoryBatchPendingSettlementStore;
   } = {},
 ) {
+  const pending = options.pendingSettlementStore ?? new InMemoryBatchPendingSettlementStore();
+  const live = options.live ?? channel();
   const store = new InMemoryPaymentChannelStorage();
   if (options.bound ?? true) {
     await store.recordOpen({
@@ -183,10 +198,10 @@ async function facilitator(
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     });
   }
-  const scheme = new BatchSvmScheme(signer() as never, {
+  const scheme = new BatchSvmScheme(signer(options.confirmed) as never, {
     channelStorage: store,
     onDistributionConfirmed: options.onDistributionConfirmed,
-    pendingSettlementStore: options.pendingSettlementStore,
+    pendingSettlementStore: pending,
   });
   const api = scheme as unknown as Internals;
   api.resolveTerms = vi.fn().mockResolvedValue({
@@ -198,21 +213,29 @@ async function facilitator(
     withdrawDelay: 900,
   });
   api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
-  api.fetchChannel = vi.fn().mockResolvedValue(options.live ?? channel());
+  api.fetchChannel = vi.fn().mockResolvedValue(live);
   api.readChannel = vi.fn().mockResolvedValue(undefined);
   api.distributeInstruction = vi.fn().mockResolvedValue({
     accounts: [],
     data: new Uint8Array([9]),
     programAddress: address(RECEIVER),
   });
-  api.submitRedemption = vi.fn().mockResolvedValue({
-    ok: true,
-    replayed: false,
-    signature: SIGNATURE,
+  api.submitRedemption = vi.fn(async (_feePayer, _network, _instructions, key: string) => {
+    // A broadcast stays recorded under its key until its close is completed.
+    await pending.set(key, SIGNATURE);
+    return { ok: true, replayed: false, signature: SIGNATURE };
   });
+  if (options.confirmed) {
+    api.waitForChannelRead = vi.fn().mockResolvedValue(undefined);
+  } else {
+    api.attributeClose = vi.fn(async () => ({
+      paidToReceiver: closeCumulative - live.settlement.payoutWatermark,
+      refundedToPayer: live.deposit - closeCumulative,
+    }));
+  }
   const original = api.sealDependencies.bind(scheme);
   api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
-  return { api, scheme, store };
+  return { api, pending, scheme, store };
 }
 
 const settle = (scheme: BatchSvmScheme, payload: BatchSealPayload) =>
@@ -260,6 +283,7 @@ describe("batch-settlement seal", () => {
     expect(key).toBe(`batch:seal:${NETWORK}:${channelId}:3000`);
     expect(record).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledWith(response, requirements());
+    expect(api.readChannel).not.toHaveBeenCalled();
 
     // The same close replays from the recorded result without a second broadcast.
     await expect(settle(scheme, await sealPayload(3_000n))).resolves.toMatchObject({
@@ -511,6 +535,8 @@ describe("batch-settlement seal", () => {
     });
     expect(record).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledWith({ ...above.response, amount: "2500" }, requirements());
+    // Voucher bounds and closing-state reads before the broadcast; none after it.
+    expect(above.api.readChannel).toHaveBeenCalledTimes(2);
     const [, , instructions, key] = above.api.submitRedemption.mock.calls[0]!;
     expect(instructions).toHaveLength(3);
     expect(key).toBe(`batch:refund:${NETWORK}:${channelId}:3000`);
@@ -575,6 +601,199 @@ describe("batch-settlement seal", () => {
     expect(api.submitRedemption).toHaveBeenCalledOnce();
     await expect(scheme.settle(payment, requirements())).resolves.toEqual(recovered);
     expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  describe("attributes a fresh close from its confirmed transaction", () => {
+    const openChannel = () => channel({ closureStartedAt: 0n, status: ChannelStatus.Open });
+
+    // A confirmed close that paid the receiver 2000 and returned 7000 to the payer.
+    async function closeEvidence(): Promise<FacilitatorConfirmedTransaction> {
+      const ata = async (owner: string) => {
+        const [account] = await findAssociatedTokenPda({
+          mint: address(MINT),
+          owner: address(owner),
+          tokenProgram: address(TOKEN_PROGRAM_ADDRESS),
+        });
+        return account;
+      };
+      const balance = (accountIndex: number, owner: string, amount: string) => ({
+        accountIndex,
+        mint: MINT,
+        owner,
+        uiTokenAmount: { amount },
+      });
+      return {
+        slot: 100,
+        meta: {
+          err: null,
+          preTokenBalances: [balance(0, RECEIVER, "200"), balance(1, payer.address, "50")],
+          postTokenBalances: [balance(0, RECEIVER, "2200"), balance(1, payer.address, "7050")],
+        },
+        transaction: { message: { accountKeys: [await ata(RECEIVER), await ata(payer.address)] } },
+      };
+    }
+
+    const closeCase = async (intent: "seal" | "refund") => {
+      return {
+        key: `batch:${intent}:${NETWORK}:${channelId}:3000`,
+        live: intent === "refund" ? openChannel() : channel(),
+        payment: {
+          accepted: requirements(),
+          payload: { ...(await sealPayload(3_000n)), type: intent },
+          x402Version: 2,
+        } as never,
+      };
+    };
+
+    const stored = async (pending: InMemoryBatchPendingSettlementStore, key: string) => {
+      const record = await pending.get(`${key}:result`);
+      return record === undefined ? undefined : (JSON.parse(record) as SettleResponse);
+    };
+
+    it.each(["seal", "refund"] as const)(
+      "pays and records a fresh %s from the confirmed transaction when a sweep moved the payout watermark after the channel read",
+      async intent => {
+        const { key, live, payment } = await closeCase(intent);
+        const evidence = await closeEvidence();
+        const record = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("ledger unavailable"))
+          .mockResolvedValue(undefined);
+        const { api, pending, scheme } = await facilitator({
+          confirmed: () => evidence,
+          live,
+          onDistributionConfirmed: record,
+        });
+        const wantAmount = intent === "seal" ? "2000" : "7000";
+
+        await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+          errorReason: "settlement_pending",
+          success: false,
+        });
+        await expect(stored(pending, key)).resolves.toMatchObject({
+          amount: wantAmount,
+          extra: { paidToReceiver: "2000" },
+        });
+
+        const recovered = await scheme.settle(payment, requirements());
+        expect(recovered).toMatchObject({
+          amount: wantAmount,
+          extra: { paidToReceiver: "2000" },
+          success: true,
+        });
+        expect(record).toHaveBeenCalledTimes(2);
+        for (const [response] of record.mock.calls) expect(response.amount).toBe("2000");
+        expect(api.submitRedemption).toHaveBeenCalledOnce();
+      },
+    );
+
+    it.each(["seal", "refund"] as const)(
+      "reports the deposit and refund of a fresh %s from the confirmed transaction when a top-up raised the deposit after the channel read",
+      async intent => {
+        const { key, live, payment } = await closeCase(intent);
+        const evidence = await closeEvidence();
+        evidence.meta!.postTokenBalances = [
+          evidence.meta!.postTokenBalances![0]!,
+          { ...evidence.meta!.postTokenBalances![1]!, uiTokenAmount: { amount: "12050" } },
+        ];
+        const record = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("ledger unavailable"))
+          .mockResolvedValue(undefined);
+        const { pending, scheme } = await facilitator({
+          confirmed: () => evidence,
+          live,
+          onDistributionConfirmed: record,
+        });
+        const wantAmount = intent === "seal" ? "2000" : "12000";
+
+        await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+          errorReason: "settlement_pending",
+          success: false,
+        });
+        await expect(stored(pending, key)).resolves.toMatchObject({
+          amount: wantAmount,
+          extra: { channelState: { balance: "15000" } },
+        });
+
+        await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+          amount: wantAmount,
+          extra: { channelState: { balance: "15000" }, paidToReceiver: "2000" },
+          success: true,
+        });
+        expect(record).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it.each(["seal", "refund"] as const)(
+      "keeps a fresh %s pending while its transaction metadata is not visible and attributes it from the transaction on retry",
+      async intent => {
+        const { key, live, payment } = await closeCase(intent);
+        let evidence: FacilitatorConfirmedTransaction | null = {
+          slot: 100,
+          meta: null,
+          transaction: { message: { accountKeys: [] } },
+        };
+        const confirmed = vi.fn(() => evidence);
+        const record = vi.fn().mockResolvedValue(undefined);
+        const { api, pending, scheme } = await facilitator({
+          confirmed,
+          live,
+          onDistributionConfirmed: record,
+        });
+
+        await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+          errorReason: "settlement_pending",
+          success: false,
+          transaction: SIGNATURE,
+        });
+        expect(confirmed).toHaveBeenCalledTimes(CHANNEL_READ_ATTEMPTS);
+        expect(record).not.toHaveBeenCalled();
+        expect(await pending.get(key)).toBe(SIGNATURE);
+        expect(await pending.get(`${key}:result`)).toBeUndefined();
+
+        evidence = await closeEvidence();
+        api.fetchChannel.mockRejectedValue(new Error("the closed channel is not read"));
+        api.reconcileBroadcast = vi.fn().mockResolvedValue({
+          ok: true,
+          replayed: false,
+          signature: SIGNATURE,
+        });
+        const recovered = await scheme.settle(payment, requirements());
+        expect(recovered).toMatchObject({ extra: { paidToReceiver: "2000" }, success: true });
+        expect(record).toHaveBeenCalledOnce();
+        expect(record.mock.calls[0]![0].amount).toBe("2000");
+        expect(api.submitRedemption).toHaveBeenCalledOnce();
+        expect(await pending.get(key)).toBeUndefined();
+      },
+    );
+
+    it.each(["seal", "refund"] as const)(
+      "fails a fresh %s whose confirmed transaction cannot attribute the payout, without reporting one",
+      async intent => {
+        const { key, live, payment } = await closeCase(intent);
+        const evidence = await closeEvidence();
+        evidence.transaction.message.accountKeys = evidence.transaction.message.accountKeys.slice(
+          0,
+          1,
+        );
+        const record = vi.fn().mockResolvedValue(undefined);
+        const { pending, scheme } = await facilitator({
+          confirmed: () => evidence,
+          live,
+          onDistributionConfirmed: record,
+        });
+
+        await expect(scheme.settle(payment, requirements())).resolves.toMatchObject({
+          errorReason: BatchError.PAYOUT_ATTRIBUTION_AMBIGUOUS,
+          success: false,
+          transaction: SIGNATURE,
+        });
+        expect(record).not.toHaveBeenCalled();
+        expect(await pending.get(key)).toBeUndefined();
+        expect(await pending.get(`${key}:result`)).toBeUndefined();
+      },
+    );
   });
 
   it("rejects a claim against a closing channel with the dedicated code", async () => {

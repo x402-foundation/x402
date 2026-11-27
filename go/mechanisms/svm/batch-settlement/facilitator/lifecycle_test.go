@@ -1585,12 +1585,6 @@ func TestBatchFacilitatorLifecycle(t *testing.T) {
 					c.Status = uint8(generated.ChannelStatus_Closing)
 				}), nil
 			}
-			deps.ReadChannel = func(context.Context, string, string) (*generated.Channel, error) {
-				return channel(func(c *generated.Channel) {
-					c.ClosureStartedAt = 20
-					c.Status = uint8(generated.ChannelStatus_Closing)
-				}), nil
-			}
 			return deps
 		}
 		closing, err := scheme.settleRefund(ctx, refund, req, nil)

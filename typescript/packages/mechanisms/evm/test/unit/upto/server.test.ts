@@ -234,6 +234,32 @@ describe("UptoEvmScheme (Server)", () => {
       expect(result.extra?.facilitatorAddress).toBe("0xFAC11174700123456789012345678901234aBCDe");
     });
 
+    it("should convert a dotted amount using the default asset decimals", async () => {
+      const network = "eip155:84532";
+      const asset = DEFAULT_ASSETS[network]![0]!;
+      const result = await server.enhancePaymentRequirements(
+        { ...baseRequirements, network, asset: asset.asset, amount: "0.01" },
+        { x402Version: 2, scheme: "upto", network },
+        [],
+      );
+
+      expect(result.amount).toBe(convertToTokenAmount("0.01", asset.decimals));
+    });
+
+    it("should reject a dotted amount when the asset is not a known default", () => {
+      expect(() =>
+        server.enhancePaymentRequirements(
+          {
+            ...baseRequirements,
+            asset: "0x1234567890123456789012345678901234567890",
+            amount: "0.01",
+          },
+          { x402Version: 2, scheme: "upto", network: "eip155:8453" },
+          [],
+        ),
+      ).toThrow("not a registered asset");
+    });
+
     it("should throw for invalid facilitatorAddress", () => {
       expect(() =>
         server.enhancePaymentRequirements(

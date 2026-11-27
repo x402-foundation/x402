@@ -184,17 +184,7 @@ The `amount` in `setSettlementOverrides` supports the same formats as upto:
 Vouchers are worthless until claimed onchain. Start `BatchChannelManager` outside the request path to claim batches and distribute payouts:
 
 ```typescript
-const supported = await facilitatorClient.getSupported();
-const kind = supported.kinds.find(
-  k => k.scheme === "batch-settlement" && k.network === SVM_NETWORK,
-);
-const requirements = await batchedSvmScheme.enhancePaymentRequirements(
-  { scheme: "batch-settlement", network: SVM_NETWORK, amount: "10000", asset: "...", payTo, maxTimeoutSeconds: 300, extra: {} },
-  kind!,
-  [],
-);
-
-const manager = batchedSvmScheme.createChannelManager(facilitatorClient, requirements, {
+const manager = batchedSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
   rpcUrl: process.env.SVM_RPC_URL,
   onClaim: r => console.log(`Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
   onSettle: r => console.log(`Distributed to payTo (tx: ${r.transaction})`),
@@ -203,6 +193,8 @@ const manager = batchedSvmScheme.createChannelManager(facilitatorClient, require
 });
 manager.start(60); // seconds between passes
 ```
+
+The worker redeems each stored channel against the terms it was opened with (fee payer, receiver, mint, token program, withdraw delay), so channels opened under different facilitator fee payers redeem in one pass, in separate batches. Batch capacity comes from the facilitator's `/supported` kind, which the resource server records at initialization.
 
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer.
 

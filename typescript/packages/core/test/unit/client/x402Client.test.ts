@@ -792,6 +792,23 @@ describe("x402Client", () => {
         expect(evmClient.createPaymentPayloadCalls.length).toBe(1);
       });
 
+      it("should use a wildcard scheme on a network that has another scheme registered", async () => {
+        const client = new x402Client();
+        const exactClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:*" as Network, exactClient);
+        client.register("eip155:8453" as Network, new MockSchemeNetworkClient("upto"));
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(exactClient.createPaymentPayloadCalls.length).toBe(1);
+      });
+
       it("should handle exact network matches", async () => {
         const client = new x402Client();
         const mockClient = new MockSchemeNetworkClient("exact");

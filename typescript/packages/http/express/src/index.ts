@@ -15,6 +15,7 @@ import {
   withPrivateCacheControl,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
+import type { OutgoingHttpHeaders } from "node:http";
 import { NextFunction, Request, Response } from "express";
 import { ExpressAdapter } from "./adapter";
 
@@ -85,6 +86,23 @@ function sendPaymentErrorBody(
     return;
   }
   res.json(response.body ?? {});
+}
+
+/**
+ * Reset response headers to a snapshot, dropping headers the route handler set.
+ *
+ * @param res - The Express response to reset
+ * @param headers - Headers captured before the route handler ran
+ */
+function resetHeaders(res: Response, headers: OutgoingHttpHeaders): void {
+  for (const name of Object.keys(res.getHeaders())) {
+    res.removeHeader(name);
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (value !== undefined) {
+      res.setHeader(name, value);
+    }
+  }
 }
 
 /**
@@ -264,6 +282,8 @@ export function paymentMiddlewareFromHTTPServer(
         res.writeHead = function (...args: Parameters<typeof originalWriteHead>) {
           if (!settled) {
             bufferedCalls.push(["writeHead", args]);
+            // writeHead() sets the status; mirror it so the >= 400 check sees it.
+            res.statusCode = args[0];
             return res;
           }
           return originalWriteHead(...args);
@@ -294,6 +314,8 @@ export function paymentMiddlewareFromHTTPServer(
           }
           return originalFlushHeaders();
         };
+
+        const preHandlerHeaders = { ...res.getHeaders() };
 
         // Proceed to the next middleware or route handler
         try {
@@ -385,6 +407,7 @@ export function paymentMiddlewareFromHTTPServer(
           // If settlement fails, return an error and do not send the buffered response
           if (!settleResult.success) {
             bufferedCalls = [];
+            resetHeaders(res, preHandlerHeaders);
             const { response } = settleResult;
             Object.entries(response.headers).forEach(([key, value]) => {
               res.setHeader(key, value);
@@ -407,14 +430,13 @@ export function paymentMiddlewareFromHTTPServer(
             ),
           );
         } catch (error) {
+          bufferedCalls = [];
+          resetHeaders(res, preHandlerHeaders);
           if (error instanceof FacilitatorResponseError) {
-            bufferedCalls = [];
             sendFacilitatorError(res, error);
             return;
           }
           console.error(error);
-          // If settlement fails, don't send the buffered response
-          bufferedCalls = [];
           res.status(402).json({ error: "settlement_failed" });
           return;
         } finally {

@@ -61,6 +61,7 @@ function signer() {
   return {
     getAccountInfo: vi.fn(),
     getAddresses: () => [feePayer.address],
+    getConfirmedTransaction: vi.fn(),
     getLatestBlockhash: vi.fn(),
     getSigner: () => feePayer,
     getSlot: vi.fn(),

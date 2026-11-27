@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .interfaces import SchemeNetworkClient, SchemeNetworkServer
-from .schemas.helpers import find_schemes_by_network
+from .schemas.helpers import find_by_network_and_scheme
 
 ResourceServerHookPhase = Literal[
     "before_verify",
@@ -250,14 +250,7 @@ def get_labeled_server_hooks(
         network = matched_scheme["network"]
         scheme = matched_scheme["scheme"]
         adapters_by_network: dict[str, dict[str, HookAdapterHandles]] = server._scheme_hook_adapters
-        scheme_handles = None
-        by_scheme = adapters_by_network.get(network)
-        if by_scheme is not None:
-            scheme_handles = by_scheme.get(scheme)
-        if scheme_handles is None:
-            by_scheme = find_schemes_by_network(adapters_by_network, network)
-            if by_scheme is not None:
-                scheme_handles = by_scheme.get(scheme)
+        scheme_handles = find_by_network_and_scheme(adapters_by_network, scheme, network)
         hook = getattr(scheme_handles, phase, None) if scheme_handles else None
         if hook is not None:
             out.append((f'scheme "{scheme}" {phase}', hook))
@@ -289,15 +282,11 @@ def get_labeled_client_hooks(
         client._scheme_client_hook_adapters
     )
     adapters_by_network = adapters_by_version.get(x402_version)
-    scheme_handles = None
-    if adapters_by_network is not None:
-        by_scheme = adapters_by_network.get(requirements.network)
-        if by_scheme is not None:
-            scheme_handles = by_scheme.get(requirements.scheme)
-        if scheme_handles is None:
-            by_scheme = find_schemes_by_network(adapters_by_network, requirements.network)
-            if by_scheme is not None:
-                scheme_handles = by_scheme.get(requirements.scheme)
+    scheme_handles = (
+        find_by_network_and_scheme(adapters_by_network, requirements.scheme, requirements.network)
+        if adapters_by_network is not None
+        else None
+    )
     hook = getattr(scheme_handles, phase, None) if scheme_handles else None
     if hook is not None:
         out.append((f'scheme "{requirements.scheme}" {phase}', hook))

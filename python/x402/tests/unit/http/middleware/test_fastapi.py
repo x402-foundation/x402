@@ -515,6 +515,73 @@ class TestFastAPIMiddlewareIntegration:
                 assert response.headers["Cache-Control"] == "max-age=60, private"
                 assert "PAYMENT-RESPONSE" in response.headers
 
+    def test_settlement_success_keeps_repeated_handler_headers(self):
+        """Successful settlement keeps every Set-Cookie and one merged Cache-Control."""
+        app = FastAPI()
+
+        @app.get("/api/protected")
+        def protected_route():
+            response = JSONResponse(
+                content={"data": "Protected content"},
+                headers={"Cache-Control": "max-age=60"},
+            )
+            response.set_cookie("session", "abc")
+            response.set_cookie("csrf", "xyz")
+            return response
+
+        mock_server = MagicMock()
+        routes = {
+            "GET /api/protected": RouteConfig(
+                accepts=PaymentOption(
+                    scheme="exact",
+                    pay_to="0x1234567890123456789012345678901234567890",
+                    price="$0.01",
+                    network="eip155:8453",
+                ),
+            )
+        }
+
+        payment_payload = make_v2_payload()
+        payment_requirements = make_payment_requirements()
+
+        with patch("x402.http.middleware.fastapi.x402HTTPResourceServer") as mock_http_server:
+            mock_http_server_instance = MagicMock()
+            mock_http_server_instance.requires_payment.return_value = True
+            mock_http_server_instance.process_http_request = AsyncMock(
+                return_value=HTTPProcessResult(
+                    type="payment-verified",
+                    payment_payload=payment_payload,
+                    payment_requirements=payment_requirements,
+                )
+            )
+            mock_http_server_instance.process_settlement = AsyncMock(
+                return_value=ProcessSettleResult(
+                    success=True,
+                    headers={"PAYMENT-RESPONSE": "settlement_encoded"},
+                )
+            )
+            mock_http_server.return_value = mock_http_server_instance
+
+            @app.middleware("http")
+            async def x402_middleware(request: Request, call_next):
+                return await payment_middleware(
+                    routes, mock_server, sync_facilitator_on_start=False
+                )(request, call_next)
+
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/protected",
+                    headers={"PAYMENT-SIGNATURE": "valid_payment"},
+                )
+                assert response.status_code == 200
+                assert response.json() == {"data": "Protected content"}
+                assert response.headers.get_list("set-cookie") == [
+                    "session=abc; Path=/; SameSite=lax",
+                    "csrf=xyz; Path=/; SameSite=lax",
+                ]
+                assert response.headers.get_list("cache-control") == ["max-age=60, private"]
+                assert response.headers["PAYMENT-RESPONSE"] == "settlement_encoded"
+
     def test_settlement_failure_returns_402(self):
         """Test that settlement failure returns 402 with empty body and PAYMENT-RESPONSE header."""
         app = FastAPI()

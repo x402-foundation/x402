@@ -312,7 +312,10 @@ export function paymentMiddlewareFromHTTPServer(
               headers: response.headers,
             });
           } else {
-            res = new Response(responseBody, { status: res.status, headers: res.headers });
+            res = new Response(res.body === null ? null : responseBody, {
+              status: res.status,
+              headers: res.headers,
+            });
             res.headers.delete("transfer-encoding");
             // Settlement succeeded - add headers to response
             Object.entries(settleResult.headers).forEach(([key, value]) => {

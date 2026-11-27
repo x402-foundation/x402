@@ -553,7 +553,9 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
 
 Register hooks in the `PaymentWrapperConfig.hooks` object when creating a payment wrapper. Use cases include rate limiting, logging tool executions or sending payment receipts.
 
-* **onBeforeExecution** — Runs after payment verification, before the tool handler executes. Return `false` to abort execution. May set the settlement amount within its verified ceiling.
+* **onBeforeExecution** — Runs before the tool handler. Return `false` when your policy denies the call. May set the settlement amount within its verified ceiling.
+
+  An `upfront` payment has already settled at this point, and an `escrow` payment has already locked funds. Apply buyer spend limits on the client before it creates a payment payload.
 * **onAfterExecution** — Runs after the tool handler returns, before settlement. May set the settlement amount within its verified ceiling.
 * **onAfterSettlement** — Runs after successful payment settlement.
 
@@ -565,11 +567,8 @@ Register hooks in the `PaymentWrapperConfig.hooks` object when creating a paymen
     const paid = createPaymentWrapper(resourceServer, {
       accepts,
       hooks: {
-        onBeforeExecution: async ({ toolName, paymentPayload }) => {
-          if (await isRateLimited(paymentPayload.payer)) {
-            return false; // Abort execution
-          }
-        },
+        onBeforeExecution: ({ toolName, arguments: args }) =>
+          isToolCallAllowed(toolName, args),
         onAfterExecution: async ({ toolName, result }) => {
           console.log(`Tool ${toolName} executed successfully`);
         },

@@ -649,13 +649,10 @@ func TestSVMIntegrationBatchSettlement(t *testing.T) {
 		matched := accepts[0]
 		before := batchPayeeBalance(t, ctx, env.payTo, matched)
 
-		manager, err := pipe.serverScheme.CreateChannelManager(&localSvmFacilitatorClient{
+		manager := pipe.serverScheme.CreateChannelManager(&localSvmFacilitatorClient{
 			facilitator: pipe.facilitator,
 			signer:      env.facSigner,
-		}, matched, batchserver.BatchChannelManagerConfig{RPCURL: uptoSvmRPCURL()})
-		if err != nil {
-			t.Fatalf("Failed to create channel manager: %v", err)
-		}
+		}, svm.SolanaDevnetCAIP2, batchserver.BatchChannelManagerConfig{RPCURL: uptoSvmRPCURL()})
 
 		redeemed, err := retryWhileRateLimited(ctx, func() (batchserver.RedemptionResult, error) {
 			return manager.Redeem(ctx)
@@ -711,10 +708,7 @@ func TestSVMIntegrationBatchSettlement(t *testing.T) {
 			localSvmFacilitatorClient: &localSvmFacilitatorClient{facilitator: pipe.facilitator, signer: env.facSigner},
 			lose:                      map[string]bool{batchsettlement.PayloadTypeClaim: true, batchsettlement.PayloadTypeSettle: true},
 		}
-		manager, err := pipe.serverScheme.CreateChannelManager(lossy, matched, batchserver.BatchChannelManagerConfig{})
-		if err != nil {
-			t.Fatalf("Failed to create channel manager: %v", err)
-		}
+		manager := pipe.serverScheme.CreateChannelManager(lossy, svm.SolanaDevnetCAIP2, batchserver.BatchChannelManagerConfig{})
 
 		for pass := 0; pass < 3; pass++ {
 			if _, err := retryWhileRateLimited(ctx, func() (batchserver.RedemptionResult, error) {
@@ -963,13 +957,10 @@ func TestSVMIntegrationBatchSettlementOperatorSigning(t *testing.T) {
 
 	matched := required.Accepts[0]
 	before := batchPayeeBalance(t, ctx, env.payTo, matched)
-	manager, err := serverScheme.CreateChannelManager(&localSvmFacilitatorClient{
+	manager := serverScheme.CreateChannelManager(&localSvmFacilitatorClient{
 		facilitator: facilitator,
 		signer:      env.facSigner,
-	}, matched, batchserver.BatchChannelManagerConfig{RPCURL: uptoSvmRPCURL()})
-	if err != nil {
-		t.Fatalf("Failed to create channel manager: %v", err)
-	}
+	}, svm.SolanaDevnetCAIP2, batchserver.BatchChannelManagerConfig{RPCURL: uptoSvmRPCURL()})
 	redeemed, err := retryWhileRateLimited(ctx, func() (batchserver.RedemptionResult, error) {
 		return manager.Redeem(ctx)
 	})
