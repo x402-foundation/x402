@@ -231,11 +231,21 @@ describe("isOnchainStateFresh", () => {
   const now = 1_000_000;
 
   it("is false when ttlMs is 0 even if the row was just synced", () => {
-    expect(isOnchainStateFresh({ onchainSyncedAt: now }, 0, now)).toBe(false);
+    expect(isOnchainStateFresh({ onchainSyncedAt: now, withdrawRequestedAt: 0 }, 0, now)).toBe(
+      false,
+    );
   });
 
   it("is true when the sync is still inside a positive ttl", () => {
-    expect(isOnchainStateFresh({ onchainSyncedAt: now - 1_000 }, 5_000, now)).toBe(true);
+    expect(
+      isOnchainStateFresh({ onchainSyncedAt: now - 1_000, withdrawRequestedAt: 0 }, 5_000, now),
+    ).toBe(true);
+  });
+
+  it("is false while a withdrawal is pending even inside the ttl", () => {
+    expect(
+      isOnchainStateFresh({ onchainSyncedAt: now - 1_000, withdrawRequestedAt: 1234 }, 5_000, now),
+    ).toBe(false);
   });
 });
 

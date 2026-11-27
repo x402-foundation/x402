@@ -947,6 +947,32 @@ describe("BatchSettlementEvmScheme — onBeforeVerify", () => {
     expect((await storage.get(channelId))?.chargedCumulativeAmount).toBe("1000");
   });
 
+  it("falls through to facilitator verification when a withdrawal is pending despite fresh onchain state", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    await storeChannel(storage, channelId, {
+      channelId,
+      channelConfig: config,
+      chargedCumulativeAmount: "1000",
+      signedMaxClaimable: "1000",
+      signature: "0x",
+      balance: "10000",
+      totalClaimed: "0",
+      withdrawRequestedAt: 1234,
+      refundNonce: 2,
+      onchainSyncedAt: Date.now(),
+      lastRequestTimestamp: 0,
+    });
+
+    const result = await server.schemeHooks.onBeforeVerify!({
+      paymentPayload: await buildSignedVoucherPayload(channelId, "2000", config),
+      requirements: makeRequirements({ amount: "1000" }),
+    } as never);
+
+    expect(result).toBeUndefined();
+    expect(await storage.isHeld(channelId)).toBe(true);
+  });
+
   it("does not refresh onchain sync time after a local voucher verify", async () => {
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
