@@ -1,0 +1,555 @@
+# Recovery Extension
+
+**1. Overview**
+
+The Recovery Extension adds two guarantees to x402 that today live only in the imagination of
+caller-side retry logic:
+
+1. **Evidence bundle**: every paid response carries re-checkable hashes — of the canonical
+   request and of the response body under a declared *projection* (a fixed set of keys that
+   MUST be excluded before hashing).
+2. **Settled-response recovery**: if a caller paid and the response was lost in transport,
+   a retry with the same idempotency key returns the SAME verdict, free of a second charge —
+   and the extension mandates the safety property that makes this honest:
+
+   > **Replayable recovery records MUST be gated on confirmed settlement.** A failed, aborted,
+   > or pending settlement MUST never leave a replayable free result (fail-closed).
+
+This extension supports downstream use cases including:
+
+- elimination of double-charges for network-loss retries (the common agent failure mode),
+- auditors recomputing exactly what the service claims, without trusting its word,
+- dispute evidence: the hashes bind an answer to a request and a block, on or off chain.
+
+The artifacts are **x402 version-agnostic**: they are plain JSON in the settlement response
+body (v1 pattern) or placed in `extensions` (v2 pattern); the header used for the key is
+declarable. No new cryptography is introduced — the extension standardizes behavior that a
+responsible service must implement anyway, so callers can *detect* its presence instead of
+guessing.
+
+**2. Status, Evolution, and Forward Compatibility**
+
+This extension is specified as an optional, composable addition to x402. It introduces no
+new transport fields inside `accepts[]` payment terms and does not alter settlement itself.
+
+- **Wire shape and field placement are not considered stable** and may change to align with
+  x402 canonical extension architecture.
+- **Behavioral requirements are stable**: the projection recipe, the settlement-gating rule,
+  the replay semantics, and the tombstone signal in this document are normative.
+
+**3. Extension Declaration**
+
+A server that implements this extension declares it in the `extensions` field of the
+payment requirements response:
+
+```
+extensions["recovery"].info
+```
+
+| Field                  | Type     | Required | Description                                                          |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------- |
+| `header`               | string   | No       | Request header carrying the caller's operation key. Default `"x-idempotency-key"`. Support for the conventional `idempotency-key` fallback is RECOMMENDED. |
+| `ttlSeconds`           | number   | Yes      | Replay window length, measured from settlement confirmation.          |
+| `maxReplays`           | number   | Yes      | Maximum free replays per operation.                                   |
+| `stageTimeoutSeconds`  | number   | No       | Maximum time a staged record may exist **without a dispatched settlement attempt** before it is silently discarded. Aged staged records MUST NOT leave tombstones. The timer MUST NOT evict a record whose settlement attempt was dispatched and whose outcome is unknown (§5.1(7)). |
+| `excludedKeys`         | string[] | Yes      | Body keys excluded from the response projection before hashing.       |
+| `contentCompanion`     | boolean  | No       | Whether the server also records verdicts under a canonical-request-content companion key. See §3.2. |
+| `reference`            | string   | No       | URL of an implementation's recovery contract documentation.           |
+
+Example (x402 v2):
+
+```json
+{
+  "extensions": {
+    "recovery": {
+      "info": {
+        "header": "x-idempotency-key",
+        "ttlSeconds": 600,
+        "maxReplays": 3,
+        "stageTimeoutSeconds": 300,
+        "excludedKeys": ["recovery", "evidence_bundle", "cache", "elapsedMs"],
+        "contentCompanion": true,
+        "reference": "https://example.com/recovery"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "header": { "type": "string" },
+          "ttlSeconds": { "type": "integer" },
+          "maxReplays": { "type": "integer" },
+          "stageTimeoutSeconds": { "type": "integer" },
+          "excludedKeys": { "type": "array", "items": { "type": "string" } },
+          "contentCompanion": { "type": "boolean" },
+          "reference": { "type": "string" }
+        },
+        "required": ["ttlSeconds", "maxReplays", "excludedKeys"]
+      }
+    }
+  }
+}
+```
+
+**3.1 Callers: one key per operation**
+
+Callers SHOULD send the declared header on the FIRST call of an operation and reuse the SAME
+value on retries of that operation. A caller that mints a fresh id per retry loses protection
+unless the server also implements the content companion (§3.2).
+
+The idempotency key is the **caller's secret**: whoever presents it can replay the verdict
+free within the window. Callers MUST NOT log it publicly. Callers SHOULD prefer presenting
+it only to the service that issued the protected resource.
+
+The credential MAY also be **server-issued**: a value returned in the response and echoed by
+the client on retry is a valid replay credential, and stock clients can echo it through the
+extension's `dynamicInfoFields` without any client change. A server-issued bearer value is
+still a bearer secret, not proof of payer control, and it does not replace the verified-scope
+requirement in §5.2 when the rail exposes a payer identity.
+
+A key is bound to ONE operation: the canonical request fingerprint plus, where the rail
+exposes it, the payer's authorization scope. Spectators cannot recover another caller's
+result by guessing a key, and the key cannot be replayed across a different payer (see §5.2).
+Response bodies that participate in recovery additionally carry a server-generated
+`operationId` under an excluded key (the reference implementation uses `recovery.operationId`)
+so the settlement hook can promote the exact operation whose payment settled (§5.1).
+
+**3.2 Content companion (optional, with stated limits)**
+
+If `contentCompanion` is declared, the server additionally records the verdict under a
+companion key derived from the canonical request content, so a retry that cannot reuse the
+caller's id (fresh id per retry, process restart) still replays free inside the window.
+Two different asks that canonicalize identically share one verdict — this is determinism,
+not cache leakage.
+
+Limits, made part of the spec rather than a footnote:
+
+- **Equal content is not permission.** The companion is a recovery alias for the SAME
+  operation and the SAME authorization scope, never a public cache. A server MUST NOT return
+  a companion hit to a caller whose authorization scope does not match the scope recorded at
+  staging (when the payment rail exposes a payer identity). Presenting a body that
+  canonicalizes to the same bytes does not establish the right to see another caller's
+  result.
+- **One replay budget per operation.** Implementations supporting the companion MUST share
+  ONE replay budget across all aliases of an operation (the cap is per operation, not per
+  alias).
+- **Bound to the operation identity.** A companion alias is only promotable through the same
+  settlement gating as the primary key (§5.1): the operation's own settlement, matched by
+  operation identity, never by content bytes alone.
+
+The companion MAY additionally record a **content-keyed tombstone** to signal that a verdict
+once existed. Such a tombstone proves only that a verdict existed; it MUST NOT be treated as
+evidence that THIS caller paid for it, and it MUST NOT unlock any replay.
+
+**4. Evidence Bundle**
+
+Every paid response of a protected resource implementing this extension carries:
+
+```json
+{
+  "evidence_bundle": {
+    "spec": "<implementation>/<bundle>@<version>",
+    "route": "/example",
+    "requestHash": "<sha256 hex>",
+    "responseHash": "<sha256 hex>",
+    "pinnedBlock": 26220878,
+    "mode": "testnet",
+    "createdAt": "2026-10-18T17:00:00.000Z",
+    "payment": { "protocol": "x402", "scheme": "exact" },
+    "recompute": "<one-sentence recipe>"
+  }
+}
+```
+
+- `requestHash` covers the canonical form of `{ route, body }`.
+- `responseHash` covers the canonical form of the response body with **every key listed in
+  `excludedKeys` removed**, recursively sorted keys, no whitespace. The exclusion set is
+  fixed per route by the declaration. Transport-volatile fields (timing, block cache
+  markers) and the bundle/recovery envelopes MUST be in the exclusion set.
+- The recipe sentence in `recompute` MUST describe exactly this procedure so a receiver can
+  recompute both hashes without reading source code.
+
+The projection MUST be identical across: the first paid response, any free replay, and any
+internal record keeping. One projection, one number everywhere. Evidence-bundle fields other
+than the hashes are informational.
+
+**The guarantee covers the projection, not the transport.** A replay reproduces the declared
+body projection and therefore `responseHash`. HTTP status, headers, and non-JSON or streamed
+bodies are reproduced only if the implementation records them. The stock x402 skip-handler
+path serialises a 200 body as JSON or HTML, so it cannot reproduce an arbitrary status, header
+set, or binary body. An implementation that advertises byte-identical HTTP responses MUST
+carry the original status and headers itself; one that reproduces only the projection MUST say
+so.
+
+**5. Recovery Semantics (Normative)**
+
+**5.1 Stage-then-promote**
+
+When a paid request computes a result and the caller supplied a key:
+
+- the server MAY stage the result immediately for recovery;
+- every operation MUST receive a **server-generated, unguessable operation identity**
+  (`operationId`). It MUST be carried in the response body under a key that is itself in the
+  projection exclusion set (the reference implementation uses `recovery.operationId`), so it
+  never perturbs the response hash;
+- the result MUST NOT become replayable until **settlement confirmation** — the point at
+  which the payment rail (facilitator or chain view) reports the settle as successful and
+  the response bytes are final;
+- promotion MUST be keyed on the operation identity, MUST require a confirmed settlement
+  carrying a **settlement reference** (a transaction identifier), and MUST additionally
+  verify that the projection hash of the bytes transmittable to the caller still matches the
+  staged record. Implementations SHOULD use the settlement lifecycle hook of their framework
+  for this (for the reference Express implementation: register an `onAfterSettle` handler
+  that passes `transportContext.responseBody` plus the settle result to the promotion step).
+
+> **Output equality does not identify an operation.** The projection hash is an additional
+> integrity check, never the primary key. Two distinct operations can legitimately produce
+> byte-identical output (e.g. two requests that both resolve to `{"verdict":"no_match"}`);
+> settling one MUST NOT promote the other.
+
+The following are normative consequences:
+
+1. **Failed or pending settlement promotes nothing.** A 402 outcome from settle failure
+   leaves staged state that cannot serve a free replay. A keyed retry after a failed
+   settlement hits the payment wall again; it does not receive the still-computed verdict
+   for free. Promotion MUST be refused unless the settle result reports success AND carries
+   a non-empty settlement reference.
+2. **Settle-cancellation promotes nothing.** Handler failures and after-verify cancellations
+   are the same class.
+3. **Authorization scope is part of the operation.** If the payment rail exposes a payer
+   identity at staging time, only an identity the rail has **verified** becomes an
+   authorization scope. Promotion MUST refuse a settlement whose payer does not match the
+   recorded verified scope. An unknown scope may still PAY; it may never replay or promote on
+   behalf of a known one.
+4. **Staged records are inert and age out silently — up to the settlement attempt.** A record is
+   `staged` only while no settlement attempt has been dispatched. A staged record that is never
+   attempted MUST be discarded after `stageTimeoutSeconds` and MUST NOT leave a tombstone: an
+   unsettled verdict is not a lost verdict, so no typed signal is owed. **The staging timeout MUST
+   NOT be applied across a dispatched settlement attempt** — see item 7. A settlement can land while
+   its reply is lost and the process dies before promotion; that record is still staged, and evicting
+   it on the timer would delete the only copy of a response the caller paid for.
+5. **Save-failure policy is fail-closed.** If the promotion step itself errors, the entry
+   stays staged. Implementations SHOULD log the error; they MUST NOT silently promote.
+6. **One claim per operation, taken before the handler.** Implementations MUST take an atomic
+   claim on the operation key before executing the handler, so concurrent copies of one signed
+   payment cannot each run it. A copy that arrives while the claim is held MUST either wait for
+   the promoted record and return its projection, or be rejected before the handler with the
+   typed `409 operation_in_flight` conflict. It MUST NOT be answered with a payment challenge:
+   a fresh `402` invites the client to sign a second authorization for one purchase, which is
+   harmless only while the first payment is still in flight and two charges once neither holds.
+   A `409` MUST tell the caller to retry the SAME payment; waiting remains optional. Read-only
+   verification is not a claim. Implementations MUST name the primitive (unique constraint,
+   conditional write, or lease), MUST expire a lease so a crash cannot block a retry forever,
+   and MUST release the claim on handler or settlement failure. Lease expiry ends waiting only: it
+   MUST NOT authorize a replacement handler run or a second settlement attempt while a settlement
+   attempt is outstanding (item 7).
+   (Reference implementation: `reserveRecovery` takes the claim before the paywall and answers
+   `409 operation_in_flight`; corroborated by Hitek-cel, who observed three handler runs and
+   one settlement on `@x402` 2.30.0 without a claim, and two `402 nonce_already_used` replies
+   that arrived after the handler had already run.)
+7. **The settlement attempt is a durable boundary.** The staging timer governs only records for which
+   settlement was never attempted. Before dispatching settlement to the facilitator — and before any
+   step that could move funds — the server MUST durably record on the operation that an attempt is in
+   flight (the `settling` state). **The write MUST precede the call, not follow it:** a crash between
+   the call and the recording MUST NOT leave a record that reads as never-attempted, because that
+   record is evictable and may be the only copy of a paid response. From the moment `settling` is
+   durable, and for as long as the outcome is unknown:
+
+   - the record MUST retain the stored response, the operation identity, the recorded request
+     fingerprint, and the verified scope, regardless of `stageTimeoutSeconds` — and regardless of
+     `ttlSeconds`, since the replay window is measured from settlement confirmation and does not run
+     while the outcome is unknown;
+   - the record MUST NOT be evicted, discarded, or tombstoned on any timer;
+   - the operation key MUST NOT be reused for new work: a retry MUST NOT re-run the handler, MUST NOT
+     be charged again, and MUST NOT receive a fresh `402`. It receives one of two typed answers, and
+     nothing else while the outcome is unknown:
+     - **`409 operation_in_flight`** while the attempt can still resolve — a claim contention, or a
+       retry while settlement is unresolved but expected to reconcile. `409` is the answer for an
+       outstanding request (the convention of the IETF `Idempotency-Key` draft): it is per-operation,
+       not per-server, and it MUST carry `Retry-After` (seconds, short) and tell the caller to retry
+       the SAME payment;
+     - **`503 payment_unresolved`** once the record resolves to `stuck` — the outcome can be proven
+       on neither side, the record is retained, the key stays blocked, and an operator has been
+       alarmed. It MUST NOT carry `Retry-After` (the block is not time-based), MUST name the reason
+       so a caller can tell it apart from a generic server-health `503`, and MUST NOT trigger client
+       failovers, circuit breakers or 5xx error budgets: this `503` means "this one operation is
+       stuck", not "the service is unhealthy".
+     Both answers tell the caller to retry the SAME payment, never a new one.
+     (Recommended body shape, both: `{"error":"operation_in_flight","reason":"payment_in_progress"
+     | "payment_unresolved","retry":"same_payment", …}`. The reference implementation answers
+     `409 recovery_conflict` with `code: settlement_pending` and `Retry-After: 1` while the record is
+     unresolved but reconcilable, and `503 payment_unresolved` — no `Retry-After`, `reason` named,
+     `retry: same_payment` — once it resolves to `stuck`; `stuck` and `settling` are counted on
+     `/info.recovery.observability`. The status split is the normative part of this rule.)
+   - the unknown outcome MUST be resolved by reconciliation against the payment rail, to exactly one
+     of three states: `delivered` (settlement confirmed, or the authorization was used → promote and
+     serve), `void` (settlement specifically failed, or the authorization expired unused → discard;
+     only now is a fresh paid call honest), or `stuck` (neither provable → retain the record, keep the
+     key blocked, raise an operator-visible alarm, and answer retries with `503 payment_unresolved`).
+
+   `stuck` is the one state in which neither side of the control-10 invariant can be proven. It MUST
+   be counted and surfaced, never silently aged out. A retry in this state receives `503 payment_unresolved`; every other unresolved outcome stays at `409 operation_in_flight`. This is the **"settlement attempted, outcome
+   unknown"** case, and it is precisely the case the staging timeout MUST NOT delete.
+
+> **Two mechanisms satisfy §5.1; the architecture chooses.** The stage-then-promote pattern
+> above is required when settlement confirmation is *asynchronous* — it can only arrive via a
+> lifecycle hook after the response has already been built. Where settlement confirmation is
+> *synchronous* with response construction (a runtime that settles inline before headers are
+> sent), the staging state MAY be collapsed: no separate `staged` state and no
+> `stageTimeoutSeconds`, because nothing is written speculatively and fail-closed falls out of
+> "don't release until the outcome is known."
+>
+> **The attempt boundary is not optional in either architecture.** A settlement the rail accepts
+> and a durable record of that settlement are not one atomic act. The rail can accept the
+> payment and the process can die before the settlement reference, the operation identity, or
+> the stored response becomes durable; in that window the caller has paid and the server holds
+> nothing to serve or reconcile. A synchronous implementation MUST therefore record a durable
+> attempt boundary — operation identity, request fingerprint, verified scope, the authorization
+> reference, and the response (or a response reproducible under the declared projection) —
+> *before* calling settle, exactly as §5.1(7) requires; it MAY omit the staging timer and the
+> promotion hook. An implementation that writes only after settlement MUST instead declare the
+> recoverable mechanism that closes the same window, and control 10 exercises that kill point
+> for both architectures. Implementations SHOULD state which mechanism they use.
+> (Production corroboration: scvd.store, `x402-foundation/x402#3847`. The synchronous crash
+> window is NSPG13's review finding on this PR.)
+
+**5.2 Replay and conflict**
+
+If a request presents the key (or a companion alias, when enabled) of an operation whose
+record is (a) promoted, (b) within `ttlSeconds` of its settlement, and (c) under
+`maxReplays`, the server returns the recorded response **without requiring payment** and
+MUST append:
+
+```json
+{
+  "recovery": {
+    "replayed": true,
+    "responseHash": "<sha256 hex>",
+    "replays": 2,
+    "ttlMinutes": 10,
+    "maxReplays": 3
+  }
+}
+```
+
+`replays` counts replays of the operation, shared across aliases when companions are enabled.
+The replayed body MUST hash to `recovery.responseHash` under the declared projection.
+
+**Conflict: a key is bound to one operation.** Because a key identifies an operation, not a
+slot in a cache, reusing it for a *different* operation is an error, not a hit:
+
+- If a key arrives with **changed request content** (the canonical request fingerprint
+  differs from the one recorded), the server MUST reject the request before payment and
+  before replay — it MUST NOT return the other operation's verdict and MUST NOT charge.
+- If the same key arrives under a **different verified authorization scope** (a different
+  verified payer identity on a rail that exposes one), the server MUST likewise reject
+  before payment and before replay.
+- The rejection SHOULD be a typed `4xx` (the reference implementation uses `409` with
+  `error: "recovery_conflict"` and a machine-readable `conflict` field such as
+  `request_mismatch` or `scope_mismatch`). A caller that encounters a conflict either
+  chooses a new key for the new operation or is charged normally for the fresh call.
+
+A key whose recorded request fingerprint and scope both match the incoming request is
+recoverable exactly as in the first paragraph.
+
+**Scope must be verified before replay.** A caller-supplied payer address is a claim, not
+proof of control. Before an early replay returns a cached result, the server MUST establish
+that the caller controls the recorded verified scope. Acceptable proof is a signature by the
+recorded payer over a server-issued challenge, an authenticated session bound to that payer,
+or an equivalent proof the payment rail already verifies; implementations MUST name the
+mechanism they use. A request that names the correct payer but supplies missing or invalid
+proof MUST NOT receive the cached result: it MAY be rejected, or treated as a fresh paid
+call, but it MUST NOT be treated as a replay. A retry that proves control of the recorded
+scope recovers the settled result without a second payment.
+
+**5.3 After the window (typed, not silent)**
+
+When the window closes, the promoted record is removed and the server MAY keep a
+**tombstone**: `{ responseHash, settledAt, expiredAt }` for a server-defined retention
+period. A retry within the tombstone window re-measures with the payment wall re-armed
+(there is no free measure — anything else would be a loophole) and the response carries:
+
+```json
+{
+  "recovery": {
+    "remeasured": true,
+    "previousResponseHash": "<sha256 hex>",
+    "expiredAt": "2026-10-18T18:00:00.000Z"
+  }
+}
+```
+
+so calling agents can branch on "this exact operation was charged before and its replay
+window expired" instead of guessing. A fresh settlement of the same operation clears the
+tombstone and re-opens the window. Tombstones themselves expire.
+
+**5.4 Conformance controls (implementation self-test)**
+
+An implementation claiming this extension SHOULD maintain the offline controls below. They
+are deterministic, need no live facilitator, and each one pins a rule that a plausible-
+looking but incorrect implementation silently violates:
+
+1. **Identical output does not cross-promote.** Stage two operations whose projections are
+   byte-identical (`{"verdict":"no_match"}` twice). Confirm settlement of A only. A MUST be
+   replayable; B MUST remain inert. Promoting by response bytes alone fails this control.
+2. **Settlement reference required.** Promotion of a staged record MUST return "not promoted"
+   for each of: `{ ok: false }`, a missing settlement reference, and an empty settlement
+   reference. A confirmed settlement with a reference MUST promote.
+3. **Operation identity required.** A response body that does not name `operationId` MUST NOT
+   promote, even when accompanied by a valid settlement.
+4. **Key + changed content conflicts.** A key recorded for request R1, presented with request
+   R2, MUST yield a typed conflict — not R1's verdict, not a charge.
+5. **Key + changed scope conflicts.** A key recorded for verified payer P1, presented with
+   verified payer P2, MUST yield a typed conflict.
+6. **Payer must match on promotion.** A settlement whose payer differs from the staged scope
+   MUST NOT promote.
+7. **Companion requires verified scope.** A companion alias MUST NOT be returned to a caller
+   with no verified scope, or a mismatched one — equal content or a matching declared address
+   alone is never permission — and MUST be returned only to a caller that proves control of
+   the recorded scope.
+8. **Unverified scope does not replay.** A promoted record under verified payer P, retried
+   with P's address but missing or invalid proof of control, MUST NOT return the cached
+   result. A retry that proves control of P's scope MUST recover the settled result without a
+   second payment.
+9. **Concurrent copies run the handler once.** With a claim in place, submit three copies of
+   one signed payment concurrently. Exactly one handler execution may occur; every response
+   must carry the same `responseHash`, and a copy that did not run the handler must be marked
+   `replayed` or receive the typed in-flight conflict. A copy that loses the claim MUST NOT
+   receive a payment challenge, because a fresh `402` invites a second signature. Three handler
+   runs, or a `402` to a loser, fail this control.
+
+10. **A crash at any durable write leaves one charge.** Kill the process at each store write —
+    claim, state transitions, stored response, settling, settle result, delivered, receipt —
+    both just before and just after the write becomes durable, then restart over the same store
+    and replay the caller's retry with the same payment — **including a restart that arrives only
+    after `stageTimeoutSeconds` has elapsed**, which is the lost-reply case where a timer would
+    otherwise remove the only copy of a response the caller paid for. The kill set MUST also
+    include the window between a settlement the rail has accepted and the durable write of the
+    attempt boundary, settlement reference, or stored response — in a synchronous settlement
+    architecture that is the whole span between the inline settle call and the record write — and
+    that window is exercised for both architectures. Across those kill points and
+    three facilitator behaviours (settle succeeds; settle hangs with nothing landed; settle lands and
+    the reply is lost), assert the safety invariants: at most one charge; at most one handler run
+    across both processes; every charge has a delivered or recoverable response behind it; no
+    response is released or replayed without a confirmed settlement behind it; and exactly one
+    receipt for a charged payment. These invariants hold regardless of how the operation ends.
+    The record MUST NOT end in flight; it MUST end `delivered`, `void`, or `stuck`, and the
+    terminal state is judged separately from the invariants above:
+    - `void` is admissible only when non-settlement is proven — the settle failed, or the
+      authorization expired unused. Voiding an outcome the service could not establish fails this
+      control; that is the case `stuck` exists for.
+    - `stuck` is a conforming terminal state here, provided the record is retained, the key stays
+      blocked, an operator is alarmed, and retries receive `503 payment_unresolved`. Converting
+      an unknown paid outcome to `void` in order to finish green fails this control.
+    A service that deliberately releases a response before settlement is final (for example,
+    batching on credit) MUST declare that mode in its extension advertisement; an undeclared
+    pre-settlement release fails this control.
+    (Vector set and results: Hitek-cel/detent — formerly latch402, `test/x402.test.ts`.)
+
+11. **The staging timeout does not cross a settlement attempt.** Drive one operation to a durable
+    `settling` state, stop the process, and restart `stageTimeoutSeconds` later with the rail
+    reporting the settlement as landed. The record MUST still exist, MUST NOT have been evicted or
+    tombstoned by the staging timer, MUST NOT permit a second handler run or a fresh `402` for the
+    same key, and MUST reconcile to `delivered` so the caller's retry recovers the stored response
+    without a second charge. The same setup with the rail reporting the authorization expired unused
+    MUST reconcile to `void`, and only then free the key for a fresh paid call. A crash between the
+    `settling` write and the facilitator call MUST similarly reconcile to `void` — nothing landed —
+    never to `delivered`. Evicting, discarding, or tombstoning the record on the timer fails this
+    control; so does a `settling` marker written after the facilitator call, because a crash in
+    between then reads as never-attempted. A retry while the record is stuck MUST receive
+    `503 payment_unresolved` (no `Retry-After`, key blocked, operator alarmed) — never a payment
+    challenge and never an unqualified server-health `503`.
+
+**6. Protocol Integration**
+
+The extension is transport-neutral. Normative behavior lives in the response body and the
+request header, which makes it identical for x402 v1 responses and v2 responses.
+
+For x402 v1 (body-level), a settlement response looks like:
+
+```json
+{
+  "verdict": "no_edge",
+  "netBps": -36.11,
+  "evidence_bundle": { "...": "..." },
+  "recovery": { "replayed": false }
+}
+```
+
+For x402 v2, implementations MAY surface the same structures in the response body and MAY
+additionally mirror declaration metadata into `extensions["recovery"]` as in §3. The v2
+extension placement uses `info` and `schema` following existing extension conventions.
+
+**7. Key Discovery and Trust**
+
+No trust system is mandated beyond the settlement itself: the recovery guarantee is
+anchored in the fact that an operation's verdict only becomes free-replayable through **that
+operation's own settlement confirmation**, matched by the operation identity the server
+generated and by the settlement reference the rail returned. The projection hash is an
+additional integrity check, not the identity. The content companion inherits the sandbox of
+the same promotion rule and the same authorization scope: it cannot promote records whose
+projection does not match a successfully settled response, and it cannot hand a result to a
+caller whose scope does not match.
+
+**8. Use Cases (Non-Normative)**
+
+- **Agent retry loops**: an agent that timed out after paying calls again with the same
+  idempotency key and gets the answer, not a second charge — without the caller of the agent
+  needing to keep a ledger.
+- **Audited measurements**: a downstream consumer recomputes `requestHash`/`responseHash`
+  from the body to prove the artifact they quote was really produced by the service for
+  that request.
+- **Dispute and reputation evidence**: hashes plus pinned block give attestation systems a
+  minimal, portable payload — the same artifacts can be lifted into external proof formats
+  verbatim.
+
+**9. Integration with Proof Systems**
+
+Both the evidence bundle and the recovery envelope are self-contained JSON objects and can
+be lifted verbatim into signatures or attestations (see the Offer and Receipt extension for
+signature formats). This extension does not sign anything itself; it makes the artifacts
+that CAN be signed well-defined.
+
+**10. Security Considerations**
+
+- The settlement-gating rule (§5.1) exists precisely because the naive implementation
+  (record in the route handler, settle afterwards) has been shown to reproduce: a failed
+  settlement with records promoted by the handler leaves free replayable output. An
+  independent review of a live deployment surfaced this and the fix is what §5.1 codifies.
+- Promotion keyed on the operation identity — not the projection hash — closes the
+  cross-promotion hole: two operations with identical output are still distinct, so settling
+  one cannot unlock the other. The projection hash remains as a second check against
+  staged-but-unsettled poisoning, and bounds damage from content-identical collisions:
+  content-identical asks are one measurement by construction.
+- The replay key is bound to request content and authorization scope, and a mismatch is a
+  typed conflict resolved before payment or replay (§5.2). This prevents a reused key from
+  returning the wrong caller's verdict or charging for a recovery the caller cannot receive.
+- The replay key is a bearer secret; implementations SHOULD keep the window short and
+  bounded so the 402 paywall remains effective.
+- Hash projection choice is part of the contract: ambiguous projections (different sets of
+  excluded fields in different places) make advertised hashes unrecomputable. This
+  extension requires the exclusion set to be declared once and used identically everywhere
+  (§4).
+- Clock: TTL is measured from settlement confirmation, not from handler execution.
+
+**11. Privacy Considerations**
+
+- The recovery key binds to an operation, not to a person; the extension fixes no identity
+  claim. Services SHOULD NOT add caller identity to artifacts without their own consent
+  story.
+- Tombstones reveal that "this request shape was measured before" — a bounded window keeps
+  the information coarse.
+
+**12. Version History**
+
+| Version | Date       | Changes                                            | Author                          |
+| ------- | ---------- | -------------------------------------------------- | ------------------------------- |
+| 0.1     | 2026-10-18 | Initial draft. Extracted from a live x402 service (verify402.onrender.com, reference implementation open-source) and hardened after independent reproduction of two defects by an external agent (SameDayDesk): recovery-before-settlement and projection mismatch. | a32116150-ctrl (verify402) |
+| 0.2     | 2026-10-19 | Addresses review by NSPG13 (x402-foundation/x402#3848, at `d97ebfa3`). Promotion now keys on a server-generated operation identity plus a confirmed settlement reference, with the projection hash as an additional check (§5.1) — output equality alone no longer identifies an operation. Added key/scope conflict semantics resolved before payment or replay (§5.2), scoped the content companion so equal content is not permission (§3.2, §7), and added a required self-test control set including the identical-output cross-promotion case (§5.4). | a32116150-ctrl (verify402) |
+| 0.3     | 2026-10-19 | Names both mechanisms that satisfy §5.1 — async stage-then-promote and synchronous write-after-settle — since the choice is determined by whether settlement confirmation can complete before the response is built. Prompted by production corroboration from scvd.store on x402-foundation/x402#3847 (request-identity keying, scope-bound cache keys, no speculative write). | a32116150-ctrl (verify402) |
+| 0.4     | 2026-10-20 | Requires a **verified** payer scope before replay, not merely a declared or matching address. §5.2 names acceptable proof-of-control mechanisms and forbids returning a cached result on missing or invalid proof; §5.4 adds the unverified-scope control. Prompted by NSPG13's review at `2a03ad6` (x402-foundation/x402#3848). | a32116150-ctrl (verify402) |
+| 0.5     | 2026-11-12 | Three clarifications from an independent implementation (Hitek-cel/detent, then latch402, exercised against `@x402/hono` and `@x402/fetch` 2.30.0 with only the chain faked): a server-issued bearer credential is a valid replay key but not proof of payer control (§3.1); recovery reproduces the declared projection, not status, headers, or non-JSON bodies (§4); and an atomic claim MUST be taken before the handler, because read-only verification lets concurrent copies run it once each (§5.1, §5.4 control 9). | a32116150-ctrl (verify402) |
+| 0.6     | 2026-11-12 | Tightens the losing-copy answer: it MUST NOT receive a payment challenge, because the SDK's settlement-failure path returns a fresh `402` after the handler has already run; `409 operation_in_flight` (or waiting) is required, and a `409` tells the caller to retry the same payment (§5.1(6), §5.4 control 9). Adds a crash-at-every-durable-write control with single-charge and recoverability invariants (§5.4 control 10). Prompted by Hitek-cel's concurrency and crash data on x402-foundation/x402#3848. | a32116150-ctrl (verify402) |
+| 0.7     | 2026-11-13 | The recovery invariant is now bidirectional (§5.4 control 10): every charge has a delivered or recoverable response behind it, and no response is released or replayed without a confirmed settlement behind it — a store can assert that offline, since every released or replayed response must point at a confirmed settlement. Modes that deliberately serve before settlement final (e.g., batching on credit) MUST declare the exception in their extension advertisement rather than ship it silently; an undeclared pre-settlement release fails the control. Prompted by Hitek-cel on x402-foundation/x402#3848 (comment 6837452445). | a32116150-ctrl (verify402) |
+| 0.8     | 2026-11-14 | Resolves the conflict NSPG13 found between §5.1(4) and control 10: the staging timeout now applies only to records with **no dispatched settlement attempt**. §5.1(7) makes the attempt a durable, write-ahead boundary (`settling` recorded before the facilitator call), retains the response, operation identity, fingerprint and scope for as long as the outcome is unknown, blocks key reuse and replacement work, and requires reconciliation to `delivered`, `void`, or an alarmed `stuck` — never a timer eviction. Control 10 now restarts past `stageTimeoutSeconds`; new control 11 pins the boundary and rejects a marker written after the call. Incorporates Hitek-cel's implementation data point that voiding a stale claim before `settling` is safe because nothing can have moved. | a32116150-ctrl (verify402) |
+| 0.9     | 2026-11-16 | Splits the two “don’t pay again yet” answers, after production evidence. While a settlement can still resolve, the retry gets `409 operation_in_flight` (per-operation conflict, `Retry-After` in seconds, caller retries the SAME payment — the IETF `Idempotency-Key` draft’s outstanding-request convention; corroborated by Hitek-cel’s Detent (then Latch), commits 23dc6df and a790564 — 0.6.0 on npm conforms to this split — and implemented identically in the reference implementation). Once the record resolves to `stuck`, the retry gets `503 payment_unresolved` with no `Retry-After`, naming the reason so it is not read as server-health 5xx (no failovers, breakers, or error budgets) — cv-scvd’s production design (“409 means I now know these conflict; 503 means I don’t know yet, retry”, source verified at commit d94addf72b7ed6ade375bca6f0fa34fae86ce745), and the outcome split Hitek-cel suggested. Control 11 now pins the `503` for stuck; no normative change to the write-ahead boundary itself. | a32116150-ctrl (verify402) |
+| 0.10    | 2026-11-18 | Closes the synchronous-settlement crash window NSPG13 found at `9238804`. §5.1 no longer permits a "write only after settlement" path with no intermediate state: settlement and its durable record are not atomic, so a synchronous implementation MUST either record the attempt boundary before the settle call (§5.1(7)) or declare the recoverable mechanism that closes the same window. Control 10 gains that kill point for both architectures, and its terminal-state clause is split from its safety invariants: `delivered`, `void`, or an alarmed, key-blocked `stuck` are all admissible endings, `void` only where non-settlement is proven, and converting an unknown paid outcome to `void` to finish green now fails the control. | a32116150-ctrl (verify402) |
