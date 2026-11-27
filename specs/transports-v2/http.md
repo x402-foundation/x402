@@ -116,14 +116,17 @@ request that discovered it. A server declares it in `resource.method` (see
 `ResourceInfo` in [x402-specification-v2 §5.1.2](../x402-specification-v2.md)).
 
 - A resource that accepts payment on a single method SHOULD declare that method
-  in `resource.method`.
+  in `resource.method`. A resource that accepts several MAY declare the one a
+  client should prefer.
 - A client SHOULD send the payment on the method declared in `resource.method`.
   Where the 402 has no `resource.method`, a client MAY use
   `extensions.bazaar.info.input.method` from the same 402. A client with
   neither SHOULD re-send the request that received the 402, unchanged except
   for the `PAYMENT-SIGNATURE` header.
-- A resource server SHOULD accept payment on any method whose response can
-  carry the resource. A server that refuses on method grounds MUST respond `405`
+- A resource server SHOULD accept payment on any method whose response can carry
+  the resource. Declaring `resource.method` does not narrow this: it is the
+  method a client uses when it has nothing better, not a list of the methods the
+  server accepts. A server that refuses on method grounds MUST respond `405`
   with an `Allow` header naming the methods it accepts, MUST NOT respond `400`,
   and MUST NOT settle. The method check precedes payload verification, so a
   refused request costs the client the purchase and not the payment.
