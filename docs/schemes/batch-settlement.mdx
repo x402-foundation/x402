@@ -610,6 +610,39 @@ Enable the voucher store on the facilitator. This requires an `authorizerSigner`
 The batch-settlement facilitator scheme accepts an optional `authorizerSigner`. Pass one to enable facilitator-delegated authorization; omit it to require servers to supply their own.
 
 <Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { toFacilitatorEvmSigner } from "@x402/evm";
+    import { BatchSettlementEvmScheme } from "@x402/evm/batch-settlement/facilitator";
+    import { createWalletClient, createPublicClient, http } from "viem";
+    import { baseSepolia } from "viem/chains";
+    import { privateKeyToAccount } from "viem/accounts";
+
+    const account = privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain: baseSepolia, transport: http() });
+    const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
+    const signer = toFacilitatorEvmSigner({ ...walletClient, ...publicClient, address: account.address });
+
+    // Optional: provide an authorizer key to enable facilitator-delegated authorization.
+    // When undefined, no receiverAuthorizer is advertised and servers must supply their own.
+    const authorizerSigner = process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY
+      ? privateKeyToAccount(process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as `0x${string}`)
+      : undefined;
+
+    const scheme = new BatchSettlementEvmScheme(signer, authorizerSigner, {
+      // Set delegatedRefund: true only when the host authenticates /settle callers out of band
+      // (e.g. in the HTTP layer). When true, the facilitator advertises delegatedRefund: true
+      // in /supported and signs unsigned refunds with authorizerSigner. Requires authorizerSigner.
+      // delegatedRefund: true,
+    });
+
+    facilitator.register(["eip155:84532"], scheme);
+    ```
+
+    <Callout type="warning">
+    If you use a custom signer (not built with `toFacilitatorEvmSigner`), its `waitForTransactionReceipt` must return `logs` as a required field. Signers built with `toFacilitatorEvmSigner` over a viem client already conform.
+    </Callout>
+  </Tab>
   <Tab title="Go">
     ```go
     import (
