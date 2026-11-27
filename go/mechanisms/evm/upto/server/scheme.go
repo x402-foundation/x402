@@ -137,23 +137,22 @@ func (s *UptoEvmScheme) EnhancePaymentRequirements(
 ) (types.PaymentRequirements, error) {
 	networkStr := string(requirements.Network)
 
-	var assetInfo *evm.AssetInfo
-	var err error
-	if requirements.Asset != "" {
-		assetInfo, err = evm.GetAssetInfo(networkStr, requirements.Asset)
-		if err != nil {
-			return requirements, err
-		}
-	} else {
-		assetInfo, err = evm.GetAssetInfo(networkStr, "")
+	if requirements.Asset == "" {
+		assetInfo, err := evm.GetAssetInfo(networkStr, "")
 		if err != nil {
 			return requirements, fmt.Errorf(ErrNoAssetSpecified+": %w", err)
 		}
 		requirements.Asset = assetInfo.Address
 	}
 
+	// Decimals and EIP-712 domain are only known for default assets; other tokens are left as configured.
+	defaultAsset := evm.FindDefaultAsset(requirements.Asset, networkStr)
+
 	if requirements.Amount != "" && strings.Contains(requirements.Amount, ".") {
-		amount, err := evm.ParseAmount(requirements.Amount, assetInfo.Decimals)
+		if defaultAsset == nil {
+			return requirements, fmt.Errorf("%s: token %s is not a registered asset for network %s; provide amount in atomic units", ErrFailedToParseAmount, requirements.Asset, networkStr)
+		}
+		amount, err := evm.ParseAmount(requirements.Amount, defaultAsset.Decimals)
 		if err != nil {
 			return requirements, fmt.Errorf(ErrFailedToParseAmount+": %w", err)
 		}
@@ -164,12 +163,14 @@ func (s *UptoEvmScheme) EnhancePaymentRequirements(
 		requirements.Extra = make(map[string]interface{})
 	}
 
-	// Upto always includes name/version and always sets permit2
-	if _, ok := requirements.Extra["name"]; !ok {
-		requirements.Extra["name"] = assetInfo.Name
-	}
-	if _, ok := requirements.Extra["version"]; !ok {
-		requirements.Extra["version"] = assetInfo.Version
+	// Upto includes name/version for default assets and always sets permit2
+	if defaultAsset != nil {
+		if _, ok := requirements.Extra["name"]; !ok {
+			requirements.Extra["name"] = defaultAsset.Name
+		}
+		if _, ok := requirements.Extra["version"]; !ok {
+			requirements.Extra["version"] = defaultAsset.Version
+		}
 	}
 	requirements.Extra["assetTransferMethod"] = "permit2"
 
