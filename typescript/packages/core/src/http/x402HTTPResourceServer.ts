@@ -23,6 +23,7 @@ import {
   Price,
   Network,
   PaymentRequirements,
+  VerifyResponse,
 } from "../types";
 import { x402Version } from "..";
 
@@ -146,6 +147,17 @@ export type SettlementFailedResponseBody = (
   settleResult: Omit<ProcessSettleFailureResponse, "response">,
 ) => HTTPResponseBody | Promise<HTTPResponseBody>;
 
+/** Override an HTTP failure response, or return void to keep the default 402. */
+export type VerificationFailedResponse = (
+  context: HTTPRequestContext,
+  verifyResult: VerifyResponse,
+) => HTTPResponseInstructions | void | Promise<HTTPResponseInstructions | void>;
+
+export type SettlementFailedResponse = (
+  context: HTTPRequestContext,
+  settleResult: Omit<ProcessSettleFailureResponse, "response">,
+) => HTTPResponseInstructions | void | Promise<HTTPResponseInstructions | void>;
+
 /**
  * A single payment option for a route
  * Represents one way a client can pay for access to the resource
@@ -202,6 +214,12 @@ export interface RouteConfig {
    * @returns An object containing both contentType and body for the 402 response
    */
   settlementFailedResponseBody?: SettlementFailedResponseBody;
+
+  /** HTTP error response for a rejected verification, including an afterVerify abort. */
+  verificationFailedResponse?: VerificationFailedResponse;
+
+  /** HTTP error response for a failed settlement; takes precedence over the body callback. */
+  settlementFailedResponse?: SettlementFailedResponse;
 
   // Extensions
   extensions?: Record<string, unknown>;
@@ -296,6 +314,60 @@ export interface HTTPResponseInstructions {
   headers: Record<string, string>;
   body?: unknown; // e.g. Paywall for web browser requests, but could be any other type
   isHtml?: boolean; // e.g. if body is a paywall, then isHtml is true
+}
+
+/** A configured payment refusal must not become a successful HTTP response. */
+class InvalidFailureResponseError extends Error {}
+
+/**
+ * Preserve settlement metadata and prevent caching of a configured refusal.
+ *
+ * @param response - Route-provided HTTP error response
+ * @param settlementHeaders - Existing settlement receipt headers
+ * @returns Uncacheable HTTP error response
+ */
+function createFailureResponse(
+  response: HTTPResponseInstructions,
+  settlementHeaders: Record<string, string> = {},
+): HTTPResponseInstructions {
+  if (!Number.isInteger(response.status) || response.status < 400 || response.status > 599) {
+    throw new InvalidFailureResponseError(
+      "Payment failure responses must use an HTTP error status (400-599)",
+    );
+  }
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(settlementHeaders)) {
+    headers.set(name, value);
+  }
+  headers.set("Cache-Control", PAYMENT_REQUIRED_CACHE_CONTROL);
+  return { ...response, headers: Object.fromEntries(headers.entries()) };
+}
+
+/**
+ * Resolve a route override without turning callback errors into fresh payment challenges.
+ *
+ * @param callback - Optional route override
+ * @param context - HTTP request context
+ * @param failure - Verification or settlement failure
+ * @param settlementHeaders - Existing settlement receipt headers
+ * @returns Custom refusal, or undefined to retain the default response
+ */
+async function resolveFailureResponse<T>(
+  callback:
+    | ((context: HTTPRequestContext, failure: T) => ReturnType<VerificationFailedResponse>)
+    | undefined,
+  context: HTTPRequestContext,
+  failure: T,
+  settlementHeaders: Record<string, string> = {},
+): Promise<HTTPResponseInstructions | undefined> {
+  if (!callback) return undefined;
+  try {
+    const response = await callback(context, failure);
+    return response ? createFailureResponse(response, settlementHeaders) : undefined;
+  } catch (cause) {
+    if (cause instanceof InvalidFailureResponseError) throw cause;
+    throw new InvalidFailureResponseError("Payment failure response callback failed", { cause });
+  }
 }
 
 /**
@@ -690,6 +762,14 @@ export class x402HTTPResourceServer {
       );
 
       if (!verifyResult.isValid) {
+        const customResponse = await resolveFailureResponse(
+          routeConfig.verificationFailedResponse,
+          enrichedContext,
+          verifyResult,
+        );
+        if (customResponse) {
+          return { type: "payment-error", response: customResponse };
+        }
         const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
           requirements,
           resourceInfo,
@@ -760,7 +840,10 @@ export class x402HTTPResourceServer {
         declaredExtensions: extensions,
       };
     } catch (error) {
-      if (error instanceof FacilitatorResponseError) {
+      if (
+        error instanceof FacilitatorResponseError ||
+        error instanceof InvalidFailureResponseError
+      ) {
         throw error;
       }
       const errorResponse = await this.ResourceServer.createPaymentRequiredResponse(
@@ -888,7 +971,10 @@ export class x402HTTPResourceServer {
         requirements,
       };
     } catch (error) {
-      if (error instanceof FacilitatorResponseError) {
+      if (
+        error instanceof FacilitatorResponseError ||
+        error instanceof InvalidFailureResponseError
+      ) {
         throw error;
       }
       if (error instanceof SettleError) {
@@ -1057,11 +1143,11 @@ export class x402HTTPResourceServer {
 
   /**
    * Build HTTPResponseInstructions for settlement failure.
-   * Uses settlementFailedResponseBody hook if configured, otherwise defaults to empty body.
+   * Uses the route's full response override, or its legacy body callback and default 402.
    *
    * @param failure - Settlement failure result with headers
    * @param transportContext - Optional HTTP transport context for the request
-   * @returns HTTP response instructions for the 402 settlement failure response
+   * @returns HTTP error response instructions; defaults to 402 with an empty body
    */
   private async buildSettlementFailureResponse(
     failure: Omit<ProcessSettleFailureResponse, "response">,
@@ -1075,6 +1161,18 @@ export class x402HTTPResourceServer {
           transportContext.request.decodedPath,
         )
       : undefined;
+
+    const customResponse = transportContext
+      ? await resolveFailureResponse(
+          routeConfig?.config.settlementFailedResponse,
+          transportContext.request,
+          failure,
+          settlementHeaders,
+        )
+      : undefined;
+    if (customResponse) {
+      return customResponse;
+    }
 
     const customBody = routeConfig?.config.settlementFailedResponseBody
       ? await routeConfig.config.settlementFailedResponseBody(transportContext!.request, failure)
