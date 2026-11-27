@@ -185,9 +185,11 @@ class TestX402AsyncTransport:
         )
         encoded = encode_payment_required_header(payment_required)
         sent_bodies = []
+        sent_headers = []
 
         async def handle_request(request):
             sent_bodies.append(await request.aread())
+            sent_headers.append(request.headers)
             if len(sent_bodies) == 1:
                 return httpx.Response(
                     402,
@@ -212,6 +214,9 @@ class TestX402AsyncTransport:
 
         assert response.status_code == 200
         assert sent_bodies == [b'{"tool":"paid"}', b'{"tool":"paid"}']
+        # The buffered retry must not keep the original chunked framing.
+        assert "Transfer-Encoding" not in sent_headers[1]
+        assert sent_headers[1]["Content-Length"] == str(len(b'{"tool":"paid"}'))
 
     @pytest.mark.asyncio
     async def test_retry_request_has_payment_headers(self):

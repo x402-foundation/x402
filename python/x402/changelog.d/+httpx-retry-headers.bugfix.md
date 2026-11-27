@@ -1,0 +1,1 @@
+Fixed the httpx transport's paid retry of a streamed request body: it kept the original `Transfer-Encoding: chunked` header next to the new `Content-Length`, so servers could read the chunk framing as the body. A non-402 paid response is now closed when a recovery retry replaces it, instead of holding a pooled connection.

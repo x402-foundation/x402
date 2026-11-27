@@ -1,6 +1,6 @@
 """HTTP client wrappers with automatic x402 payment handling.
 
-Provides wrappers for httpx (async) and requests (sync) that
+Provides wrappers for httpx (async and sync) and requests (sync) that
 automatically handle 402 Payment Required responses.
 
 Note: Import specific client modules directly to avoid
@@ -10,7 +10,7 @@ requiring all HTTP client dependencies:
     from x402.http.clients.requests import x402_requests
 
 Install the appropriate extra:
-    uv add x402[httpx]     # For async httpx client
+    uv add x402[httpx]     # For httpx clients
     uv add x402[requests]  # For sync requests client
 """
 
@@ -21,6 +21,7 @@ __all__ = [
     "MissingRequestConfigError",
     # httpx
     "x402AsyncTransport",
+    "x402SyncTransport",
     "x402_httpx_transport",
     "wrapHttpxWithPayment",
     "wrapHttpxWithPaymentFromConfig",
@@ -43,6 +44,7 @@ def __getattr__(name: str):
         "PaymentAlreadyAttemptedError",
         "MissingRequestConfigError",
         "x402AsyncTransport",
+        "x402SyncTransport",
         "x402_httpx_transport",
         "wrapHttpxWithPayment",
         "wrapHttpxWithPaymentFromConfig",
