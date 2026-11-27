@@ -1,0 +1,5 @@
+---
+"@x402/svm": minor
+---
+
+SVM `createChannelManager` is now `createChannelManager(facilitator, network, options?)`, the same call as EVM. **Breaking:** the `requirements` argument and `BatchChannelManagerConfig.requirements` are removed; pass the network instead. The worker builds each claim, settle and seal request from the stored `ChannelState` (`feePayer`, `receiver`, `mint`, `tokenProgram`, `withdrawDelay`, `channelConfig.receiverAuthorizer`) and groups batches by those terms, so channels opened under different facilitator fee payers redeem in one pass. Batch capacity comes from the `maxClaimChannels` and `maxSettleChannels` the scheme records in `validateFacilitatorSupport` (four when the server has not initialized, still clamped to the protocol maximum and `maxChannelsPerBatch`). Redemption requests use `maxTimeoutSeconds` 300, which is also the seal `CloseAuthorization` `validBefore` window. `BatchChannelManagerConfig` takes `network` and an optional `capacity` reader. Wire format and facilitator behavior are unchanged.

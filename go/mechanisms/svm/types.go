@@ -355,10 +355,9 @@ type FacilitatorConfirmedTransaction struct {
 	AccountKeys []string
 }
 
-// FacilitatorConfirmedTransactionReader is the optional read a facilitator
-// signer provides so batch payout accounting can attribute a landed sweep.
-// Assert it the same way as SmartWalletRPCCapabilities: present when the
-// facilitator settles distributions, absent on exact-only signers.
+// FacilitatorConfirmedTransactionReader is the read batch-settlement facilitator
+// signers provide so payout accounting can attribute a landed sweep, seal or
+// cooperative refund. ConfirmedTransactionEvidence builds it from an rpc.Client.
 type FacilitatorConfirmedTransactionReader interface {
 	// GetConfirmedTransaction returns the confirmed transaction, or (nil, nil)
 	// when the signature is unknown.
@@ -443,7 +442,9 @@ type AssetInfo struct {
 	Decimals int    // Token decimals
 }
 
-// ClientConfig contains optional client configuration
+// ClientConfig contains optional client configuration.
+// Valid splits distribute the quoted total among multiple recipients by default.
+// Applications can screen recipients with x402Client.OnBeforePaymentCreation.
 type ClientConfig struct {
 	RPCURL string // Custom RPC URL
 	// TransactionVersions narrows the transaction message versions this client

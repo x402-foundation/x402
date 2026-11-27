@@ -68,11 +68,10 @@ export class BatchSettlementEvmScheme implements SchemeNetworkFacilitator {
    * @param signer - Facilitator EVM signer(s) used for tx submission and onchain reads.
    * @param authorizerSigner - Optional dedicated key that provides EIP-712 signatures for
    *   `claimWithSignature` / `refundWithSignature`. When provided, the facilitator advertises
-   *   its address as `receiverAuthorizer` in `/supported` and signs missing authorizer
-   *   signatures using this key when the server omits them. A facilitator that advertises a
-   *   `receiverAuthorizer` for servers to delegate to must authenticate refund requests (see the
-   *   spec); when no such mechanism exists, omit this signer so no `receiverAuthorizer` is
-   *   advertised and servers supply their own signatures.
+   *   its address as `receiverAuthorizer` in `/supported` and signs a missing claim authorizer
+   *   signature using this key when the server omits it. Refunds are never signed on the server's
+   *   behalf: a refund without `refundAuthorizerSignature` is rejected, since this scheme has no
+   *   `/settle` caller authentication.
    * @param config - Optional configuration (e.g. ERC-6492 factory allowlist).
    */
   constructor(

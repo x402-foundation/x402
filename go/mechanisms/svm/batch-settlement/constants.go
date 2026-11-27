@@ -22,23 +22,24 @@ var CloseDomain = []byte("x402:batch-settlement:svm:close:v1")
 
 // Extra field names carried on batch-settlement payment requirements.
 const (
-	ExtraPaymentFlow        = "paymentFlow"
-	ExtraMinDeposit         = "minDeposit"
-	ExtraFeePayer           = "feePayer"
-	ExtraReceiverAuthorizer = "receiverAuthorizer"
-	ExtraWithdrawDelay      = "withdrawDelay"
-	ExtraTokenProgram       = "tokenProgram"
-	ExtraMemo               = "memo"
-	ExtraRecentBlockhash    = "recentBlockhash"
-	ExtraRecentSlot         = "recentSlot"
-	ExtraChannelState       = "channelState"
-	ExtraVoucherState       = "voucherState"
-	ExtraVoucherSigner      = "voucherSigner"
-	ExtraOperator           = "operator"
-	ExtraMaxIdleSecs        = "maxIdleSecs"
-	ExtraMaxClaimChannels   = "maxClaimChannels"
-	ExtraMaxSettleChannels  = "maxSettleChannels"
-	ExtraChannelStates      = "channelStates"
+	ExtraPaymentFlow          = "paymentFlow"
+	ExtraMinDeposit           = "minDeposit"
+	ExtraFeePayer             = "feePayer"
+	ExtraReceiverAuthorizer   = "receiverAuthorizer"
+	ExtraWithdrawDelay        = "withdrawDelay"
+	ExtraTokenProgram         = "tokenProgram"
+	ExtraMemo                 = "memo"
+	ExtraRecentBlockhash      = "recentBlockhash"
+	ExtraLastValidBlockHeight = "lastValidBlockHeight"
+	ExtraRecentSlot           = "recentSlot"
+	ExtraChannelState         = "channelState"
+	ExtraVoucherState         = "voucherState"
+	ExtraVoucherSigner        = "voucherSigner"
+	ExtraOperator             = "operator"
+	ExtraMaxIdleSecs          = "maxIdleSecs"
+	ExtraMaxClaimChannels     = "maxClaimChannels"
+	ExtraMaxSettleChannels    = "maxSettleChannels"
+	ExtraChannelStates        = "channelStates"
 )
 
 // BatchRedemptionChannelState.Status values.
@@ -83,7 +84,20 @@ const (
 	AuthorizationTypeProof   = "proof"
 )
 
-// DynamicExtraFields are the PaymentRequirements.extra keys a server
-// regenerates for every PaymentRequired, so they are not part of requirements
-// matching.
-var DynamicExtraFields = []string{ExtraRecentBlockhash, ExtraRecentSlot}
+// DynamicExtraFields are the PaymentRequirements.extra keys left out of
+// requirements matching: the server matching a payment to its accepts, and the
+// facilitator checking paymentPayload.accepted against the forwarded
+// requirements.
+//
+// recentBlockhash, lastValidBlockHeight and recentSlot are regenerated for
+// every PaymentRequired. maxClaimChannels and maxSettleChannels are the
+// facilitator's redemption capacity, copied from its /supported kind: they
+// size the server's own claim and settle batches, nothing the payer signs
+// reads them, and the facilitator enforces its own capacity, not theirs.
+var DynamicExtraFields = []string{
+	ExtraRecentBlockhash,
+	ExtraLastValidBlockHeight,
+	ExtraRecentSlot,
+	ExtraMaxClaimChannels,
+	ExtraMaxSettleChannels,
+}

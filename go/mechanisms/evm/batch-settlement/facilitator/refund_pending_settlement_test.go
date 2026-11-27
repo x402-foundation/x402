@@ -140,7 +140,18 @@ func refundPendingScheme(t *testing.T, mode SubmitMode, chain *refundChain, stor
 	t.Helper()
 	authorizer := &fakeAuthorizerSigner{addr: validConfig().ReceiverAuthorizer}
 	signer := chain.signer
-	config := &BatchSettlementEvmSchemeConfig{SubmitMode: mode, PendingSettlementStore: store}
+	delegated := storage.NewInMemoryDelegatedAuthStore()
+	if _, err := delegated.Bind(context.Background(), storage.DelegatedAuthBinding{
+		ChannelId: refundPendingChannelId(t), Network: testNetwork, CallerIdentity: "svc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config := &BatchSettlementEvmSchemeConfig{
+		SubmitMode:             mode,
+		PendingSettlementStore: store,
+		ResolveCallerIdentity:  func(DelegatedSettleContext) (string, error) { return "svc", nil },
+		DelegatedAuthStore:     delegated,
+	}
 	if mode == SubmitModeDirect {
 		signer = &fakeFacilitatorSigner{
 			addresses:      []string{"0xfacilitator"},

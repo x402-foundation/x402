@@ -792,6 +792,23 @@ describe("x402Client", () => {
         expect(evmClient.createPaymentPayloadCalls.length).toBe(1);
       });
 
+      it("should use a wildcard scheme on a network that has another scheme registered", async () => {
+        const client = new x402Client();
+        const exactClient = new MockSchemeNetworkClient("exact");
+        client.register("eip155:*" as Network, exactClient);
+        client.register("eip155:8453" as Network, new MockSchemeNetworkClient("upto"));
+
+        const paymentRequired = buildPaymentRequired({
+          accepts: [
+            buildPaymentRequirements({ scheme: "exact", network: "eip155:8453" as Network }),
+          ],
+        });
+
+        await client.createPaymentPayload(paymentRequired);
+
+        expect(exactClient.createPaymentPayloadCalls.length).toBe(1);
+      });
+
       it("should handle exact network matches", async () => {
         const client = new x402Client();
         const mockClient = new MockSchemeNetworkClient("exact");
@@ -1000,6 +1017,41 @@ describe("x402Client", () => {
         await client.createPaymentPayload(paymentRequired);
 
         expect(mockClient.createPaymentPayloadCalls[0].requirements).toEqual(upfrontReq);
+      });
+
+      describe("authorization-only client on Base EIP-3009", () => {
+        const offer = buildPaymentRequirements({
+          scheme: "exact",
+          network: "eip155:8453",
+          extra: { assetTransferMethod: "eip3009" },
+        });
+
+        function setup() {
+          const scheme = new MockSchemeNetworkClient("exact");
+          const client = new x402Client();
+          client.register(offer.network, scheme);
+          client.registerPolicy((_version, requirements) =>
+            requirements.filter(r => (r.extra?.paymentFlow ?? "authorization") === "authorization"),
+          );
+          return { client, scheme };
+        }
+
+        it("creates a payload for the default authorization flow when paymentFlow is omitted", async () => {
+          const { client, scheme } = setup();
+          await client.createPaymentPayload(buildPaymentRequired({ accepts: [offer] }));
+
+          expect(scheme.createPaymentPayloadCalls.map(call => call.requirements)).toEqual([offer]);
+        });
+
+        it("refuses an upfront offer before creating a payload", async () => {
+          const { client, scheme } = setup();
+          const upfront = { ...offer, extra: { ...offer.extra, paymentFlow: "upfront" } };
+
+          await expect(
+            client.createPaymentPayload(buildPaymentRequired({ accepts: [upfront] })),
+          ).rejects.toThrow();
+          expect(scheme.createPaymentPayloadCalls).toHaveLength(0);
+        });
       });
 
       it("should let custom policies override authorization preference", async () => {

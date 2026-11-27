@@ -1630,6 +1630,49 @@ func TestValidateRouteConfiguration_Success(t *testing.T) {
 	}
 }
 
+func TestValidateRouteConfiguration_WildcardScheme(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api": {
+			Accepts: PaymentOptions{
+				{Scheme: "exact", PayTo: "0xtest", Price: "$1.00", Network: "eip155:8453"},
+			},
+		},
+	}
+
+	mockClient := &mockFacilitatorClient{
+		supported: func(ctx context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+				},
+				Extensions: []string{},
+				Signers:    make(map[string][]string),
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:*", &mockSchemeServer{scheme: "exact"}),
+	)
+
+	if err := server.Initialize(ctx); err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: &mockHTTPAdapter{method: "GET", path: "/api", url: "http://example.com/api", accept: "application/json"},
+		Path:    "/api",
+		Method:  "GET",
+	}, nil)
+	if result.Response == nil || result.Response.Status != 402 {
+		t.Fatalf("Expected 402 response, got %+v", result.Response)
+	}
+}
+
 func TestValidateRouteConfiguration_MissingScheme(t *testing.T) {
 	ctx := context.Background()
 
@@ -2028,6 +2071,100 @@ func TestProcessHTTPRequest_VerifyFailureIncludesInvalidReasonInJSONBody(t *test
 	}
 	if decoded.Error != "insufficient_funds" {
 		t.Fatalf("expected header error insufficient_funds, got %q", decoded.Error)
+	}
+}
+
+func TestProcessHTTPRequest_Permit2AllowanceRequiredReturns412(t *testing.T) {
+	ctx := context.Background()
+
+	routes := RoutesConfig{
+		"GET /api/test": {
+			Accepts: PaymentOptions{
+				{Scheme: "exact", PayTo: "0xabc", Price: "$1.00", Network: "eip155:8453"},
+			},
+		},
+	}
+
+	verifyCalls := 0
+	mockClient := &mockFacilitatorClient{
+		verify: func(context.Context, []byte, []byte) (*x402.VerifyResponse, error) {
+			verifyCalls++
+			return &x402.VerifyResponse{
+				IsValid:       false,
+				InvalidReason: "permit2_allowance_required",
+				Payer:         "0xpayer",
+			}, nil
+		},
+		supported: func(context.Context) (x402.SupportedResponse, error) {
+			return x402.SupportedResponse{
+				Kinds: []x402.SupportedKind{
+					{X402Version: 2, Scheme: "exact", Network: "eip155:8453"},
+				},
+				Extensions: []string{},
+				Signers:    map[string][]string{},
+			}, nil
+		},
+	}
+
+	server := Newx402HTTPResourceServer(
+		routes,
+		x402.WithFacilitatorClient(mockClient),
+		x402.WithSchemeServer("eip155:8453", &mockSchemeServer{scheme: "exact"}),
+	)
+	_ = server.Initialize(ctx)
+
+	accepted := x402.PaymentRequirements{
+		Scheme:            "exact",
+		Network:           "eip155:8453",
+		Asset:             "USDC",
+		Amount:            "1000000",
+		PayTo:             "0xabc",
+		MaxTimeoutSeconds: 300,
+		Extra: map[string]interface{}{
+			"resourceUrl": "https://example.com/api/test",
+		},
+	}
+	payload := x402.PaymentPayload{
+		X402Version: 2,
+		Accepted:    accepted,
+		Payload:     map[string]interface{}{},
+	}
+	encoded := base64.StdEncoding.EncodeToString(mustMarshal(t, payload))
+
+	result := server.ProcessHTTPRequest(ctx, HTTPRequestContext{
+		Adapter: &mockHTTPAdapter{
+			method:  "GET",
+			path:    "/api/test",
+			url:     "https://example.com/api/test",
+			accept:  "application/json",
+			agent:   "Vitest",
+			headers: map[string]string{"PAYMENT-SIGNATURE": encoded},
+		},
+		Path:   "/api/test",
+		Method: "GET",
+	}, nil)
+
+	if verifyCalls != 1 {
+		t.Fatalf("expected 1 verify call, got %d", verifyCalls)
+	}
+	if result.Type != ResultPaymentError {
+		t.Fatalf("expected payment-error, got %s", result.Type)
+	}
+	if result.Response == nil {
+		t.Fatal("expected response")
+	}
+	if result.Response.Status != http.StatusPreconditionFailed {
+		t.Fatalf("expected status 412, got %d", result.Response.Status)
+	}
+	body, ok := result.Response.Body.(map[string]string)
+	if !ok || body["error"] != "permit2_allowance_required" {
+		t.Fatalf("expected body {error: permit2_allowance_required}, got %#v", result.Response.Body)
+	}
+	if result.Response.Headers["PAYMENT-REQUIRED"] == "" {
+		t.Fatal("expected PAYMENT-REQUIRED header")
+	}
+	if result.Response.Headers["Cache-Control"] != "no-store" {
+		t.Fatalf("expected Cache-Control no-store, got %q", result.Response.Headers["Cache-Control"])
 	}
 }
 

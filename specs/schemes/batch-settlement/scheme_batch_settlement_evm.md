@@ -822,6 +822,8 @@ The recovery baseline is:
 | `invalid_batch_settlement_evm_unknown_settle_action`                     | Settle payload requested an unknown action                                   |
 | `invalid_batch_settlement_evm_voucher_payload`                           | Voucher payload is malformed                                                 |
 | `invalid_batch_settlement_evm_voucher_signature`                         | EIP-712 voucher signature does not recover to the expected signer          |
+| `invalid_batch_settlement_evm_voucher_store_mode_mismatch`               | `extra.voucherManager` does not match the configured voucher store mode, or a self-managed refund targets a facilitator-managed channel |
+| `invalid_batch_settlement_evm_voucher_store_unavailable`                 | Voucher store is not configured for a facilitator-managed request, or a voucher store read or write failed |
 | `invalid_batch_settlement_evm_wait_for_receipt_failed`                   | Facilitator failed while waiting for the transaction receipt                 |
 | `invalid_batch_settlement_evm_withdraw_delay_mismatch`                   | Channel withdraw delay does not match `extra.withdrawDelay`                  |
 | `invalid_batch_settlement_evm_withdraw_delay_out_of_range`               | Withdraw delay is outside the 15 min - 30 day bounds                         |

@@ -13,7 +13,6 @@ import {
   convertToTokenAmount,
   deepEqual,
   findByNetworkAndScheme,
-  findSchemesByNetwork,
   networkMatchesPattern,
   parseMoney,
   toComparableArray,
@@ -783,12 +782,7 @@ export class x402Client {
 
     // Step 1: Filter by registered schemes
     const supportedPaymentRequirements = paymentRequirements.filter(requirement => {
-      let clientSchemes = findSchemesByNetwork(clientSchemesByNetwork, requirement.network);
-      if (!clientSchemes) {
-        return false;
-      }
-
-      return clientSchemes.has(requirement.scheme);
+      return !!findByNetworkAndScheme(clientSchemesByNetwork, requirement.scheme, requirement.network);
     })
 
     if (supportedPaymentRequirements.length === 0) {

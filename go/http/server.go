@@ -1312,10 +1312,15 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 		return nil, fmt.Errorf("failed to encode payment required header: %w", err)
 	}
 
+	status := 402
+	if paymentRequired.Error == "permit2_allowance_required" {
+		status = 412
+	}
+
 	if isWebBrowser {
 		html := s.generatePaywallHTMLV2(paymentRequired, paywallConfig, customHTML)
 		return &HTTPResponseInstructions{
-			Status: 402,
+			Status: status,
 			Headers: map[string]string{
 				"Content-Type":     "text/html",
 				"PAYMENT-REQUIRED": encodedHeader,
@@ -1339,7 +1344,7 @@ func (s *x402HTTPResourceServer) createHTTPResponseV2(paymentRequired types.Paym
 	}
 
 	return &HTTPResponseInstructions{
-		Status: 402,
+		Status: status,
 		Headers: map[string]string{
 			"Content-Type":     contentType,
 			"PAYMENT-REQUIRED": encodedHeader,

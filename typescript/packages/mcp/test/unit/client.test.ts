@@ -414,6 +414,17 @@ describe("x402MCPClient", () => {
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(1);
     });
 
+    it("should forward structuredContent from a free tool", async () => {
+      mockMcpClient.callTool.mockResolvedValue({
+        content: [{ type: "text", text: '{"tempC":21}' }],
+        structuredContent: { tempC: 21 },
+      });
+
+      const result = await client.callTool("weather");
+
+      expect(result.structuredContent).toEqual({ tempC: 21 });
+    });
+
     it("should throw when the MCP result is missing a content array", async () => {
       mockMcpClient.callTool.mockResolvedValue({ isError: false });
 
@@ -463,6 +474,21 @@ describe("x402MCPClient", () => {
       expect(result.paymentResponse).toEqual(mockSettleResponse);
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(2);
       expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledWith(mockPaymentRequired);
+    });
+
+    it("should forward structuredContent from a paid tool", async () => {
+      mockMcpClient.callTool
+        .mockResolvedValueOnce(createEmbeddedPaymentError(mockPaymentRequired))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: '{"tempC":21}' }],
+          structuredContent: { tempC: 21 },
+          _meta: { "x402/payment-response": mockSettleResponse },
+        });
+
+      const result = await client.callTool("paid_weather");
+
+      expect(result.paymentResponse).toEqual(mockSettleResponse);
+      expect(result.structuredContent).toEqual({ tempC: 21 });
     });
 
     it("should include payment in _meta on retry", async () => {
@@ -623,12 +649,14 @@ describe("x402MCPClient", () => {
         .mockResolvedValueOnce(createEmbeddedPaymentError(correctivePaymentRequired))
         .mockResolvedValueOnce({
           content: [{ type: "text", text: "recovered result" }],
+          structuredContent: { recovered: true },
           _meta: { "x402/payment-response": mockSettleResponse },
         });
 
       const result = await client.callTool("paid_tool");
 
       expect(result.content[0]?.text).toBe("recovered result");
+      expect(result.structuredContent).toEqual({ recovered: true });
       expect(mockMcpClient.callTool).toHaveBeenCalledTimes(3);
       expect(mockPaymentClient.createPaymentPayload).toHaveBeenCalledTimes(2);
       expect(mockPaymentClient.createPaymentPayload).toHaveBeenNthCalledWith(

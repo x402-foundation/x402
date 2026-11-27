@@ -296,6 +296,38 @@ def find_schemes_by_network(
     return None
 
 
+def find_by_network_and_scheme(
+    schemes: dict[Network, dict[str, T]],
+    scheme: str,
+    network: Network,
+) -> T | None:
+    """Find one scheme registered for a network, falling back to network patterns.
+
+    An exact-network registration wins for the same scheme. A scheme that is
+    registered only under a pattern (for example ``eip155:*``) still resolves
+    when a different scheme has an exact-network registration.
+
+    Args:
+        schemes: Map of network -> (scheme -> implementation).
+        scheme: Scheme identifier to resolve.
+        network: Specific network (e.g., "eip155:8453").
+
+    Returns:
+        The registered implementation, or None if not found.
+    """
+    exact = schemes.get(network)
+    if exact is not None and scheme in exact:
+        return exact[scheme]
+
+    for pattern, scheme_map in schemes.items():
+        if matches_network_pattern(network, pattern):
+            found = scheme_map.get(scheme)
+            if found is not None:
+                return found
+
+    return None
+
+
 class ParsedMoney(TypedDict, total=False):
     """Result of :func:`parse_money`."""
 

@@ -178,6 +178,8 @@ describe("batch wire guards", () => {
     expect(isBatchRequirements(requirements({ transactionVersions: [0, 2] }))).toBe(false);
     expect(isBatchRequirements(requirements({ transactionVersions: ["1"] }))).toBe(false);
     expect(isBatchRequirements(requirements({ maxClaimChannels: 0 }))).toBe(false);
+    expect(isBatchRequirements(requirements({ lastValidBlockHeight: "291470237" }))).toBe(true);
+    expect(isBatchRequirements(requirements({ lastValidBlockHeight: 291470237 }))).toBe(false);
     expect(isBatchRequirements({ ...requirements(), scheme: "exact" })).toBe(false);
     expect(isBatchRequirements({ ...requirements(), network: "eip155:1" })).toBe(false);
     expect(isBatchRequirements({ ...requirements(), amount: "1e3" })).toBe(false);
@@ -572,6 +574,7 @@ describe("batch facilitator open-slot window and accepted versions", () => {
           account === MINT ? { owner: TOKEN_PROGRAM_ADDRESS } : atas(account),
         ),
       getAddresses: vi.fn(() => [feePayer.address]),
+      getConfirmedTransaction: vi.fn(),
       getLatestBlockhash: vi.fn(),
       getSigner: vi.fn(() => feePayer),
       getSlot: vi.fn().mockResolvedValue(slot),

@@ -26,6 +26,10 @@ import (
 // is unset.
 const DefaultFacilitatorTransactionVersion = paymentchannels.FacilitatorTransactionVersion1
 
+// PayoutRetention is how long the default PayoutStore keeps a payout record.
+// The shared in-memory store keeps entries for five minutes, which is too short for a failing payout hook.
+const PayoutRetention = 24 * time.Hour
+
 // Config is the optional configuration of the batch-settlement SVM facilitator.
 type Config struct {
 	// PaymentChannelsTreasuryOwner overrides the treasury owner the
@@ -36,10 +40,14 @@ type Config struct {
 	// PendingSettlementStore remembers a broadcast whose confirmation was not
 	// observed, so a retry reconciles that signature instead of sending again.
 	// It is read once per settle and written only on a confirmation timeout.
-	// With OnDistributionConfirmed set it also holds the payout record until the
-	// hook has run, so its retention bounds how long a failing hook can be retried.
-	// Unset uses a process-local store that keeps entries for PendingRetention.
+	// Unset uses x402.NewInMemoryPendingSettlementStore.
 	PendingSettlementStore x402.PendingSettlementStore
+	// PayoutStore holds each observed payout until OnDistributionConfirmed has
+	// run, so its retention bounds how long a failing hook can be retried. It is
+	// used only with OnDistributionConfirmed set. It may be the same instance as
+	// PendingSettlementStore, whose TTL must then be at least PayoutRetention.
+	// Unset uses an in-memory store that keeps entries for PayoutRetention.
+	PayoutStore x402.PendingSettlementStore
 	// DuplicateSettlementStore rejects concurrent settles of one operation
 	// across workers: a worker reserves the signature it is about to send and
 	// a loser answers duplicate_settlement. Share one backed by a networked store
@@ -101,13 +109,21 @@ type schemeHooks struct {
 	broadcastDurably      func(context.Context, string, string, string, func(func(string, string) error) (string, error)) (durableResult, error)
 }
 
+// batchFacilitatorSigner is the payment-channel signer narrowed to the caps batch
+// settlement also requires: the confirmed-transaction read payout attribution uses.
+type batchFacilitatorSigner interface {
+	paymentchannels.PaymentChannelFacilitatorSigner
+	svm.FacilitatorConfirmedTransactionReader
+}
+
 // BatchSvmScheme is the facilitator role of SVM batch settlement.
 type BatchSvmScheme struct {
 	config         Config
-	raw            paymentchannels.PaymentChannelFacilitatorSigner
+	raw            batchFacilitatorSigner
 	signer         *recordingSigner
 	channelStorage paymentchannels.PaymentChannelStorage
 	pendingStore   x402.PendingSettlementStore
+	payoutStore    x402.PendingSettlementStore
 	duplicateStore svm.DuplicateSettlementStore
 	maxIdleSecs    int64
 	history        ReceiverBindingHistoryReader
@@ -132,7 +148,11 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	if config == nil {
 		config = &Config{}
 	}
-	raw := paymentchannels.AssertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme")
+	channelSigner := paymentchannels.AssertPaymentChannelFacilitatorSigner(signer, "BatchSvmScheme")
+	raw, ok := channelSigner.(batchFacilitatorSigner)
+	if !ok {
+		panic("BatchSvmScheme requires GetConfirmedTransaction on the signer")
+	}
 	if len(raw.GetAddresses(ctx, "")) == 0 {
 		panic("BatchSvmScheme requires at least one fee payer signer")
 	}
@@ -154,7 +174,11 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 	}
 	pending := config.PendingSettlementStore
 	if pending == nil {
-		pending = newRetainedPendingStore()
+		pending = x402.NewInMemoryPendingSettlementStore()
+	}
+	payouts := config.PayoutStore
+	if payouts == nil && config.OnDistributionConfirmed != nil {
+		payouts = x402.NewInMemoryPendingSettlementStore(x402.WithPendingSettlementTTL(PayoutRetention))
 	}
 	duplicates := config.DuplicateSettlementStore
 	if duplicates == nil {
@@ -165,6 +189,7 @@ func NewBatchSvmScheme(ctx context.Context, signer svm.FacilitatorSvmSigner, con
 		raw:                 raw,
 		channelStorage:      config.ChannelStorage,
 		pendingStore:        pending,
+		payoutStore:         payouts,
 		duplicateStore:      duplicates,
 		maxIdleSecs:         idle,
 		history:             config.ReceiverBindingHistoryReader,
@@ -1025,6 +1050,7 @@ func (f *BatchSvmScheme) sealDependencies() SealDependencies {
 func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 	return SealDependencies{
 		PendingStore: f.pendingStore,
+		PayoutStore:  f.payoutStore,
 		ResolveTerms: f.resolveTerms,
 		ReadBinding: func(ctx context.Context, network, channelID string) (ChannelBinding, error) {
 			return ReadReceiverAuthorizer(ctx, f.channelStorage, f.history, network, channelID, nil)
@@ -1035,7 +1061,6 @@ func (f *BatchSvmScheme) defaultSealDependencies() SealDependencies {
 		},
 		DeriveChannelID:         f.deriveChannelID,
 		FetchChannel:            f.fetchChannel,
-		ReadChannel:             f.readChannel,
 		AssertClaimChannel:      f.assertClaimChannel,
 		DistributeInstruction:   f.distributeInstruction,
 		SubmitRedemption:        f.submitRedemption,

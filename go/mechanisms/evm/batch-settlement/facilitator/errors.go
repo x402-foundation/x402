@@ -129,6 +129,7 @@ const (
 	ErrCumulativeAmountMismatch      = batchsettlement.ErrCumulativeAmountMismatch
 	ErrPendingIdMismatch             = batchsettlement.ErrPendingIdMismatch
 	ErrVoucherStoreUnavailable       = batchsettlement.ErrVoucherStoreUnavailable
+	ErrVoucherStoreModeMismatch      = batchsettlement.ErrVoucherStoreModeMismatch
 	ErrRefundAuthorizerMismatch      = batchsettlement.ErrRefundAuthorizerMismatch
 	ErrRefundAuthorizerSignature     = batchsettlement.ErrRefundAuthorizerSignature
 	ErrRefundAmountInvalid           = batchsettlement.ErrRefundAmountInvalid

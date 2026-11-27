@@ -617,11 +617,11 @@ class PaymentResponseExtra:
 
 @runtime_checkable
 class AuthorizerSigner(Protocol):
-    """EIP-712 signer for ClaimBatch / Refund typed-data digests.
+    """EIP-712 signer for ClaimBatch and Refund typed-data digests.
 
     Wraps the receiver-authorizer key. The facilitator uses this protocol to
-    auto-sign claim and refund authorizations when the server delegates that
-    key to the facilitator; otherwise the server's own signer fills these in.
+    sign missing claim authorizations. The server supplies refund
+    authorizations. A refund without `refundAuthorizerSignature` is rejected.
     """
 
     @property

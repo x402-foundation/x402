@@ -3,6 +3,7 @@ export * from "./types";
 export * from "./constants";
 export * from "./signer";
 export * from "./preflight";
+export * from "./transferExecutorCapabilities";
 export * from "./utils";
 export {
   DEFAULT_ASSETS,

@@ -143,7 +143,7 @@ Launches an interactive CLI where you can select:
 - **Protocols** - EVM, SVM, AVM, Aptos, Concordium, Hedera, NEAR, Stellar, and/or TVM networks
 - **Payment schemes** (when multiple apply) - `exact`, `upto`, `batch-settlement`, or `auth-capture`
 - **Payment flows** (when multiple apply) - `authorization`, `upfront`, or `escrow`
-- **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, or `ticketSequence`
+- **Asset transfer methods** (when multiple apply) - `eip3009`, `permit2`, `sequence`, `ticketSequence`, `cryptoTransfer`, or `transferExecutor`
 
 Every valid combination of your selections will be tested. For example, selecting 2 facilitators, 3 servers, and 2 clients will generate and run all compatible test scenarios.
 
@@ -362,6 +362,22 @@ XRPL_IOU_PAYER_BALANCE=1000       # Target payer balance maintained by setup
 XRPL_IOU_TRUST_LIMIT=1000000      # Payer/payee trust-line limit
 ```
 
+Optional environment variables for the Hedera `transferExecutor` routes
+(`/exact/hedera/transferExecutor` and `/exact/hedera/transferExecutor/upfront`). Both routes
+are omitted unless `HEDERA_TE_EXECUTOR_ID` is set (`requiresEnv`), and the TypeScript
+facilitator turns `transferExecutor` on from the same variable, so the existing Hedera routes
+run unchanged without them. They quote the same `HEDERA_AMOUNT` and `HEDERA_ASSET` as the
+other Hedera routes. See [Hedera transferExecutor](#hedera-transferexecutor) before setting them:
+
+```bash
+HEDERA_TE_EXECUTOR_ID=0.0....       # Executor contract id (ITransferExecutor); the facilitator admits only this one. Testnet SignedOwnerExecutor: 0.0.11591435
+HEDERA_TE_AUTHORIZATION=0x...       # Optional: hex authorization the executor validates, single-use. Unset: the client signs one per payment for a SignedOwnerExecutor
+HEDERA_TE_ALLOWANCE_HBAR=1          # Optional: HBAR allowance `pnpm hedera:te:setup` grants the executor (default 1)
+HEDERA_TE_PAYER_ACCOUNT_ID=0.0....  # Optional: account the executor debits (payload.payer); defaults to CLIENT_HEDERA_ACCOUNT_ID
+HEDERA_TE_GAS_LIMIT=400000          # Optional: gas for the facilitator's simulation and submission (default 400000)
+HEDERA_MIRROR_NODE_URL=https://...  # Optional: mirror node for the facilitator's checks and the client's signing (default: the network's public mirror)
+```
+
 ### Account Setup Instructions
 
 #### XRPL Testnet Issued Currency
@@ -399,6 +415,42 @@ payee are external parties with Ed25519 keys.
 pnpm canton:setup
 pnpm test --testnet --min --families=canton --versions=2
 ```
+
+#### Hedera transferExecutor
+
+An authorization's format belongs to the executor. The client either signs one per payment
+for a `SignedOwnerExecutor`, or hands over a value you prepared.
+
+**SignedOwnerExecutor (default).** A test-only executor (not audited) deployed on testnet at
+[`0.0.11591435`](https://hashscan.io/testnet/contract/0.0.11591435); its source is
+[`SignedOwnerExecutor.sol`](../typescript/packages/mechanisms/hedera/test/integrations/mock-executor/src/SignedOwnerExecutor.sol).
+It holds no funds. It checks a signature by the payer's current key and moves HBAR from the payer
+under a HIP-336 allowance, so the payer is your own `CLIENT_HEDERA_ACCOUNT_ID`. It pays HBAR only
+(with `HEDERA_ASSET` set to a token, the client rejects these routes) and needs a single ECDSA key
+on the client account. Grant the allowance once, then run:
+
+```bash
+HEDERA_TE_EXECUTOR_ID=0.0.11591435     # in e2e/.env
+pnpm hedera:te:setup                   # client account grants the executor HEDERA_TE_ALLOWANCE_HBAR (default 1)
+pnpm test --testnet --families=hedera --assetTransferMethod=transferExecutor \
+  --facilitators=typescript --servers=typescript/http/express --clients=typescript/http/fetch
+```
+
+With `HEDERA_TE_AUTHORIZATION` unset, the client signs a fresh authorization for each payment
+with `CLIENT_HEDERA_PRIVATE_KEY`, for the payer, `payTo` and amount the route quotes, valid for its
+`maxTimeoutSeconds`. Both routes run in one session and across runs. Each payment spends its amount
+from the allowance (1 HBAR covers about 1000 default payments); run the setup again when it runs
+low. The facilitator pays the contract call fee.
+
+**Any other executor.** Set `HEDERA_TE_AUTHORIZATION` to an authorization prepared outside the
+suite, for exactly the payer (`HEDERA_TE_PAYER_ACCOUNT_ID`), asset, `payTo`
+(`SERVER_HEDERA_ADDRESS`) and amount the route quotes, valid for the whole run. The
+[`@x402/hedera` README](../typescript/packages/mechanisms/hedera/README.md#transferexecutor-live-test)
+covers the prerequisites, funding, and an example for the reference executor. Such an
+authorization settles once, so run exactly one scenario per value (add
+`--paymentflow=authorization` or `--paymentflow=upfront`) and prepare a fresh one before each run.
+
+The routes are TypeScript only. CI does not set `HEDERA_TE_*`, so they never run there.
 
 #### Stellar Testnet
 

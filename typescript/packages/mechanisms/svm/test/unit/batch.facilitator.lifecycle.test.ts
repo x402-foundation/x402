@@ -231,6 +231,7 @@ describe("batch facilitator lifecycle", () => {
           {
             getAccountInfo: vi.fn(),
             getAddresses: () => [],
+            getConfirmedTransaction: vi.fn(),
             getLatestBlockhash: vi.fn(),
             getSigner: vi.fn(),
             getSlot: vi.fn(),
@@ -291,6 +292,15 @@ describe("batch facilitator lifecycle", () => {
           channelStorage: new InMemoryPaymentChannelStorage(),
         }),
     ).toThrow("requires getAccountInfo");
+  });
+
+  it("requires confirmed transaction reads for payout attribution", () => {
+    expect(
+      () =>
+        new BatchSvmScheme(signer({ getConfirmedTransaction: undefined }) as never, {
+          channelStorage: new InMemoryPaymentChannelStorage(),
+        }),
+    ).toThrow("BatchSvmScheme requires getConfirmedTransaction on the signer.");
   });
 
   it("rejects a deposit during verify when its settlement path is unavailable", async () => {
@@ -510,13 +520,36 @@ describe("batch facilitator lifecycle", () => {
     const { extra, ...core } = requirements();
     await expect(
       scheme.verify(
-        { ...payment, accepted: { ...requirements(), extra: { ...extra, recentSlot: "1" } } },
-        { extra: { recentBlockhash: "fresh", recentSlot: "2", ...extra }, ...core },
+        {
+          ...payment,
+          accepted: {
+            ...requirements(),
+            extra: { ...extra, lastValidBlockHeight: "1", recentSlot: "1" },
+          },
+        },
+        {
+          extra: { recentBlockhash: "fresh", lastValidBlockHeight: "2", recentSlot: "2", ...extra },
+          ...core,
+        },
       ),
     ).resolves.toMatchObject({ isValid: true });
     await expect(
       scheme.verify({ ...payment, accepted: { ...core } }, { ...core, extra: {} }),
     ).resolves.toMatchObject({ isValid: true });
+    // The facilitator's redemption capacity is not compared either: each
+    // server process copies it from `/supported` at its own time.
+    const larger = { ...core, extra: { ...extra, maxClaimChannels: 18, maxSettleChannels: 13 } };
+    for (const accepted of [
+      { ...core, extra },
+      { ...core, extra: { ...extra, maxClaimChannels: 4, maxSettleChannels: 4 } },
+    ]) {
+      await expect(scheme.verify({ ...payment, accepted }, larger)).resolves.toMatchObject({
+        isValid: true,
+      });
+      await expect(
+        scheme.verify({ ...payment, accepted: larger }, accepted),
+      ).resolves.toMatchObject({ isValid: true });
+    }
   });
 
   it("routes verify variants and classifies validation failures", async () => {

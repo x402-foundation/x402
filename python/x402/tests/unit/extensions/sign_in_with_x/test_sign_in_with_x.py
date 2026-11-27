@@ -983,6 +983,50 @@ class TestServerExtension:
         assert result["info"]["domain"] == "api.example.com"
         assert result["info"]["uri"] == "https://api.example.com/profile"
 
+    @pytest.mark.asyncio
+    async def test_supported_chains_keep_requirements_order(self):
+        storage = InMemorySIWxStorage()
+        ext = create_siwx_resource_server_extension(
+            CreateSIWxHookOptions(storage=storage, origin=API_ORIGIN)
+        )
+        declaration = declare_siwx_extension()
+        networks = [
+            "eip155:84532",
+            "eip155:8453",
+            "eip155:137",
+            "eip155:84532",
+            "eip155:1",
+            "eip155:10",
+            "eip155:42161",
+        ]
+        ctx = type(
+            "Ctx",
+            (),
+            {
+                "requirements": [
+                    PaymentRequirements(
+                        scheme="exact",
+                        network=network,
+                        asset="0x",
+                        amount="1",
+                        pay_to="0x0",
+                        max_timeout_seconds=300,
+                    )
+                    for network in networks
+                ],
+                "resource_info": ResourceInfo(url="https://api.example.com/data"),
+            },
+        )()
+        result = await ext.enrich_payment_required_response(declaration[SIGN_IN_WITH_X], ctx)
+        assert [chain["chainId"] for chain in result["supportedChains"]] == [
+            "eip155:84532",
+            "eip155:8453",
+            "eip155:137",
+            "eip155:1",
+            "eip155:10",
+            "eip155:42161",
+        ]
+
     def test_declares_dynamic_info_fields(self):
         storage = InMemorySIWxStorage()
         ext = create_siwx_resource_server_extension(

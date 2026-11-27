@@ -203,6 +203,8 @@ export interface x402MCPToolCallResult {
   content: MCPContentItem[];
   /** Whether the tool returned an error */
   isError?: boolean;
+  /** Structured tool output, forwarded from the MCP SDK when present */
+  structuredContent?: Record<string, unknown>;
   /** Payment settlement response if payment was made */
   paymentResponse?: SettleResponse;
   /** Whether payment was required and submitted */
@@ -604,6 +606,7 @@ export class x402MCPClient {
       return {
         content: result.content,
         isError: result.isError,
+        structuredContent: result.structuredContent,
         paymentMade: false,
       };
     }
@@ -835,6 +838,7 @@ export class x402MCPClient {
       return {
         content: retryResult.content,
         isError: retryResult.isError,
+        structuredContent: retryResult.structuredContent,
         paymentResponse: retryPaymentResponse ?? undefined,
         paymentMade: true,
       };
@@ -844,6 +848,7 @@ export class x402MCPClient {
     return {
       content: result.content,
       isError: result.isError,
+      structuredContent: result.structuredContent,
       paymentResponse: paymentResponse ?? undefined,
       paymentMade: true,
     };

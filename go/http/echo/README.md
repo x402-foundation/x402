@@ -181,14 +181,18 @@ e.Use(echomw.PaymentMiddlewareFromConfig(routes,
 Configure with custom authentication:
 
 ```go
+type facilitatorAuth struct{}
+
+func (facilitatorAuth) GetAuthHeaders(ctx context.Context) (x402http.AuthHeaders, error) {
+	return x402http.AuthHeaders{
+		Verify: map[string]string{"Authorization": "Bearer verify-token"},
+		Settle: map[string]string{"Authorization": "Bearer settle-token"},
+	}, nil
+}
+
 facilitator := x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-	URL: "https://your-facilitator.com",
-	CreateAuthHeaders: func() (*x402http.FacilitatorAuthHeaders, error) {
-		return &x402http.FacilitatorAuthHeaders{
-			Verify: map[string]string{"Authorization": "Bearer verify-token"},
-			Settle: map[string]string{"Authorization": "Bearer settle-token"},
-		}, nil
-	},
+	URL:          "https://your-facilitator.com",
+	AuthProvider: facilitatorAuth{},
 })
 ```
 

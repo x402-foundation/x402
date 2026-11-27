@@ -36,11 +36,10 @@ from .schemas import (
     RecoveredResponseResult,
     ResourceInfo,
     SchemeNotFoundError,
-    find_schemes_by_network,
     matches_network_pattern,
 )
 from .schemas.extensions import ClientExtension
-from .schemas.helpers import convert_to_token_amount, parse_money
+from .schemas.helpers import convert_to_token_amount, find_by_network_and_scheme, parse_money
 from .server_base import _ADDITIVE_LIST_INFO_FIELDS
 
 # ============================================================================
@@ -484,8 +483,7 @@ class x402ClientBase:
         # Filter to supported schemes
         supported = []
         for req in requirements:
-            schemes = find_schemes_by_network(self._schemes, req.network)
-            if schemes and req.scheme in schemes:
+            if find_by_network_and_scheme(self._schemes, req.scheme, req.network) is not None:
                 supported.append(req)
 
         if not supported:
@@ -527,8 +525,7 @@ class x402ClientBase:
         # Filter to supported schemes
         supported = []
         for req in requirements:
-            schemes = find_schemes_by_network(self._schemes_v1, req.network)
-            if schemes and req.scheme in schemes:
+            if find_by_network_and_scheme(self._schemes_v1, req.scheme, req.network) is not None:
                 supported.append(req)
 
         if not supported:
@@ -564,10 +561,9 @@ class x402ClientBase:
             return requirement.get_amount()
 
         def scheme_for(requirement: RequirementsView) -> Any:
-            schemes = find_schemes_by_network(client_schemes_by_network, requirement.network)
-            if schemes is None:
-                return None
-            return schemes.get(requirement.scheme)
+            return find_by_network_and_scheme(
+                client_schemes_by_network, requirement.scheme, requirement.network
+            )
 
         def default_asset_for(requirement: RequirementsView) -> dict[str, Any] | None:
             scheme = scheme_for(requirement)
@@ -800,11 +796,9 @@ class x402ClientBase:
 
         try:
             # 4. Find scheme client
-            schemes = find_schemes_by_network(self._schemes, selected.network)
-            if schemes is None or selected.scheme not in schemes:
+            client = find_by_network_and_scheme(self._schemes, selected.scheme, selected.network)
+            if client is None:
                 raise SchemeNotFoundError(selected.scheme, selected.network)
-
-            client = schemes[selected.scheme]
 
             # 5. Create inner payload (pass extensions + spend cap when the scheme
             # accepts them).
@@ -923,11 +917,9 @@ class x402ClientBase:
 
         try:
             # 4. Find scheme client
-            schemes = find_schemes_by_network(self._schemes_v1, selected.network)
-            if schemes is None or selected.scheme not in schemes:
+            client = find_by_network_and_scheme(self._schemes_v1, selected.scheme, selected.network)
+            if client is None:
                 raise SchemeNotFoundError(selected.scheme, selected.network)
-
-            client = schemes[selected.scheme]
 
             # 5. Create inner payload
             inner_payload = yield ("create", client.create_payment_payload, selected)

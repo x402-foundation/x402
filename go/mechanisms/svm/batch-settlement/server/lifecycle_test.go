@@ -1200,16 +1200,15 @@ func TestBatchServerLifecycleBoundaries(t *testing.T) {
 		require.Equal(t, ChannelStatusClosing, fallback.Status)
 
 		facilitator := &recordingFacilitator{}
-		manager, err := fallbackServer.CreateChannelManager(
+		manager := fallbackServer.CreateChannelManager(
 			facilitator,
-			f.requirements(),
+			svm.SolanaDevnetCAIP2,
 			BatchChannelManagerConfig{
 				ReadPayoutWatermark: func(context.Context, string) (uint64, bool, error) {
 					return 1_000, true, nil
 				},
 			},
 		)
-		require.NoError(t, err)
 		result, err := manager.Redeem(context.Background())
 		require.NoError(t, err)
 		require.Equal(t, []string{f.channelID}, result.Sealed)

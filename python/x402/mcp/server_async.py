@@ -69,45 +69,6 @@ class PaymentWrapperConfig:
         self.extensions = extensions
 
 
-def wrap_fastmcp_tool(
-    payment_wrapper: Callable[[AsyncToolHandler], Any],
-    handler: AsyncToolHandler,
-    *,
-    tool_name: str | None = None,
-) -> Callable[[dict[str, Any], Any], Any]:
-    """Bridge an async payment-wrapped tool handler to work with FastMCP.
-
-    Async counterpart to ``wrap_fastmcp_tool_sync``. See that function for
-    full documentation.
-
-    Args:
-        payment_wrapper: The result of ``create_payment_wrapper(resource_server, config)``
-        handler: Your async tool handler ``(args, MCPToolContext) -> MCPToolResult``
-        tool_name: Optional explicit tool name. Falls back to the handler
-            function name, then ``"paid_tool"`` as a last resort.
-
-    Returns:
-        An async function ``(args, fastmcp_context) -> CallToolResult``
-    """
-    from .server import (
-        _extract_meta_from_fastmcp_context,
-        _mcp_tool_result_to_call_tool_result,
-    )
-
-    wrapped = payment_wrapper(handler)
-    resolved_name = tool_name or getattr(handler, "__name__", "paid_tool")
-
-    async def fastmcp_bridge(args: dict[str, Any], ctx: Any) -> Any:
-        meta = _extract_meta_from_fastmcp_context(ctx)
-        extra = {"_meta": meta, "toolName": resolved_name}
-        result = wrapped(args, extra)
-        if hasattr(result, "__await__"):
-            result = await result
-        return _mcp_tool_result_to_call_tool_result(result)
-
-    return fastmcp_bridge
-
-
 def create_payment_wrapper(
     resource_server: x402ResourceServerAsync,
     config: PaymentWrapperConfig,

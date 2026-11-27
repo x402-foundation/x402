@@ -36,6 +36,8 @@ type AssetTransferMethod =
   | 'permit2'
   | 'sequence'
   | 'ticketSequence'
+  | 'cryptoTransfer'
+  | 'transferExecutor'
   | 'default'
   | 'masumi'
   | 'script';

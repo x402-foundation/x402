@@ -529,6 +529,50 @@ func TestClientNetworkPatternMatching(t *testing.T) {
 	}
 }
 
+type mockRecoveringSchemeClient struct {
+	mockSchemeNetworkClientV2
+}
+
+func (m *mockRecoveringSchemeClient) OnPaymentResponse(context.Context, PaymentResponseContext) (PaymentResponseResult, error) {
+	return PaymentResponseResult{Recovered: true}, nil
+}
+
+func TestClientWildcardSchemeOnNetworkWithOtherRegistration(t *testing.T) {
+	client := Newx402Client().
+		Register("eip155:*", &mockSchemeNetworkClientV2{scheme: "exact"}).
+		Register("eip155:*", &mockRecoveringSchemeClient{mockSchemeNetworkClientV2{scheme: "upto"}}).
+		Register("eip155:1", &mockSchemeNetworkClientV2{scheme: "exact"})
+
+	requirements := types.PaymentRequirements{
+		Scheme:  "upto",
+		Network: "eip155:1",
+		Asset:   "USDC",
+		Amount:  "1000000",
+		PayTo:   "0xrecipient",
+	}
+
+	selected, err := client.SelectPaymentRequirements([]types.PaymentRequirements{requirements})
+	if err != nil {
+		t.Fatalf("SelectPaymentRequirements: %v", err)
+	}
+	if selected.Scheme != "upto" {
+		t.Fatalf("Expected upto, got %s", selected.Scheme)
+	}
+
+	ctx := context.Background()
+	if _, err := client.CreatePaymentPayload(ctx, requirements, nil, nil); err != nil {
+		t.Fatalf("CreatePaymentPayload: %v", err)
+	}
+
+	result, err := client.HandlePaymentResponse(ctx, PaymentResponseContext{Requirements: requirements})
+	if err != nil {
+		t.Fatalf("HandlePaymentResponse: %v", err)
+	}
+	if !result.Recovered {
+		t.Fatal("Expected the wildcard upto scheme's OnPaymentResponse to run")
+	}
+}
+
 // mockFailableV1 and mockFailableV2 support failure simulation for hook tests
 
 type mockFailableV1 struct{ fail bool }
