@@ -44,7 +44,7 @@ The server agent indicates payment is required using A2A's task state `input-req
                 "description": "Generate an image",
                 "mimeType": "application/json",
                 "outputSchema": {},
-                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913",
+                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
                 "payTo": "0xServerWalletAddressHere",
                 "maxAmountRequired": "48240000",
                 "maxTimeoutSeconds": 600,
