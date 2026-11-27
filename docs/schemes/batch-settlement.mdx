@@ -858,6 +858,12 @@ Start `BatchChannelManager` outside the request path to claim batches and distri
 
 The worker derives redemption terms per channel from the stored `ChannelState` (fee payer, receiver, mint, token program, withdraw delay, receiver authorizer) and groups batches by those terms, so channels opened under different facilitator fee payers redeem in one pass. Batch capacity comes from the facilitator's `/supported` response.
 
+**Watermark reads and resync.** When a claim or distribute response is lost (e.g. due to an RPC timeout), the facilitator attaches `extra.channelStates[]` to the rejection so the manager can resync without resubmitting. The manager adopts those states when they name exactly the submitted channels, records already-applied channels, and re-claims the rest once. When `extra.channelStates[]` is absent or unusable, the manager falls back to `rpcUrl`, `readSettledWatermark`, or `readPayoutWatermark`. **The manager never reads from the network's public Solana RPC endpoint.** If none of these are configured and the facilitator does not return `extra.channelStates`, distributed channels stay payable until a later pass resolves them.
+
+<Callout type="warning">
+**Migration:** if your facilitator does not return `extra.channelStates` on claim and distribute responses, set `rpcUrl` or `readPayoutWatermark` on the channel manager; otherwise distributed channels stay payable indefinitely.
+</Callout>
+
 Claim promptly: if the facilitator or payer forces a close before your latest voucher is claimed, unclaimed value returns to the payer. Set `withdrawDelay` comfortably above your claim cadence.
 
 #### Client Setup (SVM)
