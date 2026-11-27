@@ -1448,17 +1448,17 @@ func extraNumber(v interface{}) (int, bool) {
 }
 
 // refundNonceFromExtra applies a channelState refundNonce.
-// A numeric value replaces the stored nonce. A non-numeric string leaves it.
+// A numeric value never moves the stored nonce backwards. A non-numeric string leaves it.
 // Any other shape increments it.
 func refundNonceFromExtra(current int, extra map[string]interface{}) int {
 	if v, ok := extra["refundNonce"].(string); ok {
 		if n, ok := extraNumber(v); ok {
-			return n
+			return max(current, n)
 		}
 		return current
 	}
 	if n, ok := extraNumber(extra["refundNonce"]); ok {
-		return n
+		return max(current, n)
 	}
 	return current + 1
 }
