@@ -12,6 +12,7 @@ Express.js facilitator service demonstrating advanced x402 patterns including al
 - Hedera account id + private key for Hedera testnet fees (optional)
 - Keeta mnemonic (seed phrase) and wallet with Testnet KTA for transaction fees (create wallet on [Keeta Testnet Wallet](https://wallet.test.keeta.com/) and fund via [Keeta Testnet Faucet](https://faucet.test.keeta.com/))
 - Cardano: a Blockfrost project id (preprod/preview) for chain queries and submission, plus an optional facilitator mnemonic — the facilitator only broadcasts the client's signed transaction, so it needs **no funds**
+- No Sui account or key: this example does not sponsor gas, so the payer signs and pays gas; set `SUI_NETWORK` to enable it (optional)
 - No XRPL account or key: the XRPL facilitator is keyless (the payer signs and pays transaction fees); set `XRPL_NETWORK` to enable it (optional)
 - Casper private key with testnet CSPR for transaction fees (fund via the [CSPR.live testnet faucet](https://testnet.cspr.live/tools/faucet))
 
@@ -37,6 +38,7 @@ and fill required environment variables:
 - `EVM_PRIVATE_KEY` - Ethereum private key
 - `SVM_PRIVATE_KEY` - Solana private key
 - `STELLAR_PRIVATE_KEY` - Stellar secret key (starts with `S`)
+- `SUI_NETWORK` - Sui network CAIP-2 (e.g., `sui:testnet`); set to enable the keyless Sui scheme (optional; `all-networks`)
 - `HEDERA_ACCOUNT_ID` - Hedera account id for fee payer (optional)
 - `HEDERA_PRIVATE_KEY` - Hedera **ECDSA** private key (0x-prefixed or DER-encoded) for fee payer (optional)
 - `KEETA_MNEMONIC` - Keeta mnemonic
@@ -302,6 +304,8 @@ Networks use [CAIP-2](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/cai
 - `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` — Solana Mainnet
 - `stellar:testnet` — Stellar Testnet
 - `stellar:pubnet` — Stellar Mainnet
+- `sui:testnet` — Sui Testnet
+- `sui:mainnet` — Sui Mainnet
 - `hedera:testnet` — Hedera Testnet
 - `hedera:mainnet` — Hedera Mainnet
 - `keeta:1413829460` — Keeta Testnet
