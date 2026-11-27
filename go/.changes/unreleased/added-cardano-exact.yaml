@@ -1,0 +1,3 @@
+kind: added
+body: 'Add the Cardano exact scheme (client, server and facilitator) with the default, script and Masumi asset transfer methods, wire-compatible with @x402/cardano, and reference signers in signers/cardano, with optional full Conway phase-1 ledger validation in the facilitator signer.'
+time: 2026-10-19T00:00:00.000000+00:00

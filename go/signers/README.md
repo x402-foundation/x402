@@ -71,6 +71,9 @@ This package provides **helper implementations** of mechanism-defined signer int
   - Helper: `NewClientSignerFromPrivateKey(base58Key)` - Creates SVM client signer
   - Eliminates: ~70 lines of Ed25519 signing code
 
+- **`signers/cardano`** - Implements `mechanisms/cardano.ClientCardanoSigner` (Apollo over any Apollo chain backend) and `mechanisms/cardano.FacilitatorCardanoSigner` (Blockfrost)
+  - Helpers: `NewClientSigner` (CIP-1852 wallet from a BIP-39 mnemonic), `NewBlockfrostProvider`, `NewFacilitatorSigner` (no key; the facilitator never signs), `NewMasumiSellerSigner`
+
 - **`signers/casper`** - Implements `mechanisms/casper.ClientCasperSigner` interface
   - Helpers: `NewClientSignerFromKeyFile(path, algo)` and `NewClientSignerFromSecret(hex, algo)` - Creates Casper client signer (ed25519 or secp256k1)
   - Eliminates: ~60 lines of EIP-712 signing and address-formatting code

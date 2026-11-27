@@ -1,0 +1,2940 @@
+{
+ "collateral": [
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "358",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "1542980",
+   "collateral": "1542980"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "1542980",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "1542980",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "1542980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "1542980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "15752",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "15752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "15752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "15752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "15752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "408",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "1758480",
+   "collateral": "1758480"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "1758480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "1758480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "1758480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "1758480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "17952",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "17952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "17952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "17952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "17952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "508",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "2189480",
+   "collateral": "2189480"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "2189480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "2189480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "2189480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "2189480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "22352",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "22352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "22352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "22352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 0,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "22352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "359",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "359",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "359",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "359",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "359",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "1547290",
+   "collateral": "1547290"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "1547290",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "1547290",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "1547290",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "1547290",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "15796",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "15796",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "15796",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "15796",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "15796",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "409",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "409",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "409",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "409",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "409",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "1762790",
+   "collateral": "1762790"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "1762790",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "1762790",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "1762790",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "1762790",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "17996",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "17996",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "17996",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "17996",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "17996",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "509",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "509",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "509",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "509",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "509",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "2193790",
+   "collateral": "2193790"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "2193790",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "2193790",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "2193790",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "2193790",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "22396",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "22396",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "22396",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "22396",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "22396",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "658",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "658",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "658",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "658",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "658",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "2835980",
+   "collateral": "2835980"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "2835980",
+   "collateral": "1835980"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "2835980",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "2835980",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "2835980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "28952",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "28952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "28952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "28952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "28952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "708",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "708",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "708",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "708",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "708",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "3051480",
+   "collateral": "3051480"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "3051480",
+   "collateral": "2051480"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "3051480",
+   "collateral": "1616250"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "3051480",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "3051480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "31152",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "31152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "31152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "31152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "31152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "808",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "3482480",
+   "collateral": "3482480"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "3482480",
+   "collateral": "2482480"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "3482480",
+   "collateral": "2047250"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "3482480",
+   "collateral": "1482480"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "3482480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "35552",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 300,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "808",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "808",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "3482480",
+   "collateral": "3482480"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "3482480",
+   "collateral": "2482480"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "3482480",
+   "collateral": "2047250"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "3482480",
+   "collateral": "1482480"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "3482480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "35552",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "35552",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "858",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "858",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "858",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "858",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "858",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "3697980",
+   "collateral": "3697980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "3697980",
+   "collateral": "2697980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "3697980",
+   "collateral": "2262750"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "3697980",
+   "collateral": "1697980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "3697980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "37752",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "37752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "37752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "37752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "37752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "958",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "958",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "958",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "958",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "958",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "4128980",
+   "collateral": "4128980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "4128980",
+   "collateral": "3128980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "4128980",
+   "collateral": "2693750"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "4128980",
+   "collateral": "2128980"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "4128980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "42152",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "42152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "42152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "42152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 450,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "42152",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "1358",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "1358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "1358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "1358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "1358",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "5852980",
+   "collateral": "5852980"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "5852980",
+   "collateral": "4852980"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "5852980",
+   "collateral": "4417750"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "5852980",
+   "collateral": "3852980"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "5852980",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "59752",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "59752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "59752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "59752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "59752",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "1408",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "1408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "1408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "1408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "1408",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "6068480",
+   "collateral": "6068480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "6068480",
+   "collateral": "5068480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "6068480",
+   "collateral": "4633250"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "6068480",
+   "collateral": "4068480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "6068480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "61952",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "61952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "61952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "61952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "61952",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "1508",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "1508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "1508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "1508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "1508",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "6499480",
+   "collateral": "6499480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "6499480",
+   "collateral": "5499480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "6499480",
+   "collateral": "5064250"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "6499480",
+   "collateral": "4499480"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "6499480",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "66352",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "66352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "66352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "66352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 1000,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "66352",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "12703",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "12703",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "12703",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "12703",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "12703",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "54749930",
+   "collateral": "54749930"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "54749930",
+   "collateral": "53749930"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "54749930",
+   "collateral": "53314700"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "54749930",
+   "collateral": "52749930"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "54749930",
+   "collateral": "4749930"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "558932",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "558932",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "558932",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "558932",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 0,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "558932",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "12753",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "12753",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "12753",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "12753",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "12753",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "54965430",
+   "collateral": "54965430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "54965430",
+   "collateral": "53965430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "54965430",
+   "collateral": "53530200"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "54965430",
+   "collateral": "52965430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "54965430",
+   "collateral": "4965430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "561132",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "561132",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "561132",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "561132",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 1,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "561132",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "0",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "1435230",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "2000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "0",
+   "requested": "50000000",
+   "minUtxo": "0",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "0",
+   "minUtxo": "12853",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1000000",
+   "minUtxo": "12853",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "1435230",
+   "minUtxo": "12853",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "2000000",
+   "minUtxo": "12853",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "1",
+   "requested": "50000000",
+   "minUtxo": "12853",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "0",
+   "minUtxo": "55396430",
+   "collateral": "55396430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1000000",
+   "minUtxo": "55396430",
+   "collateral": "54396430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "1435230",
+   "minUtxo": "55396430",
+   "collateral": "53961200"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "2000000",
+   "minUtxo": "55396430",
+   "collateral": "53396430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "4310",
+   "requested": "50000000",
+   "minUtxo": "55396430",
+   "collateral": "5396430"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "0",
+   "minUtxo": "565532",
+   "collateral": "1435230"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1000000",
+   "minUtxo": "565532",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "1435230",
+   "minUtxo": "565532",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "2000000",
+   "minUtxo": "565532",
+   "collateral": "0"
+  },
+  {
+   "datumBytes": 12345,
+   "tokens": 3,
+   "coinsPerUtxoByte": "44",
+   "requested": "50000000",
+   "minUtxo": "565532",
+   "collateral": "0"
+  }
+ ],
+ "intervals": [
+  {
+   "times": [
+    "1000",
+    "301000",
+    "1201000",
+    "2101000"
+   ],
+   "hold": true
+  },
+  {
+   "times": [
+    "1000",
+    "300999",
+    "1201000",
+    "2101000"
+   ],
+   "hold": false
+  },
+  {
+   "times": [
+    "1000",
+    "301000",
+    "1200999",
+    "2101000"
+   ],
+   "hold": false
+  },
+  {
+   "times": [
+    "1000",
+    "301000",
+    "1201000",
+    "2100999"
+   ],
+   "hold": false
+  },
+  {
+   "times": [
+    "0",
+    "0",
+    "0",
+    "0"
+   ],
+   "hold": false
+  },
+  {
+   "times": [
+    "99999999999999999999",
+    "100000000000000299999",
+    "100000000000001199999",
+    "100000000000002099999"
+   ],
+   "hold": true
+  }
+ ]
+}

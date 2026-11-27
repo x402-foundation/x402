@@ -75,6 +75,8 @@ For production deployments with additional features (Bazaar discovery, multiple 
 ```bash
 EVM_PRIVATE_KEY=<your-evm-private-key>
 SVM_PRIVATE_KEY=<your-svm-private-key>
+# Optional: Cardano for the all-networks example (needs no key; the client pays fees)
+BLOCKFROST_PROJECT_ID=<your-blockfrost-project-id>
 
 # Optional: Casper Testnet
 CASPER_PRIVATE_KEY=<your-casper-private-key-hex>

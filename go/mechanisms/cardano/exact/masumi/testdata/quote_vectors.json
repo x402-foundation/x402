@@ -1,0 +1,1001 @@
+[
+ {
+  "name": "lovelace unregistered absent",
+  "seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "input": {
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true
+  },
+  "registry": false,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "50000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0a",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e1f35a2913056b0161684702526861a1729081f2839286b06081a2b14a52ba59aab0aa7b4468a973d2912714abda6112dae2ab91831969619b01100a89a391124a2969525968974bf46339e8aae3c912e0e560bb014ab456b22863b3aab22dd4822a50f3b3296d612cb3cf76657080a960e229e491bf64611390cb7b92bbea59f07a2230190c04f891488d0a3108894410e1886a512518ec55c169f4c4500a8a44f2f8819caa7d149a2580c390a8460783d5a5a11208546a470902c2766a28c15c2e0009c00fa0017150019c0524003b800bd851815251c5c32c0002c00d6e29524a00368a45000adc55a002d970006e0047220f32dc280398003d2892956658026800380a6dc05ca7a0076ec714606d400"
+   }
+  },
+  "signedTermsJcs": "{\"amount\":\"50000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preprod\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee1",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "819c00819a599aa6e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee1"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "50000000"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "50000000"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "50000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f45820819c00819a599aa65840e048d01b08ab7c034b83f6a142ea3e86998eed4601d03ee158403322e7baeb95bba0b24a8704dc976429e8df874134ce2d3028353aaf7bed3c437a8302e1bc6d581a637c23c528572da034dbe558cf6111b8407f2177a1c5422a4c0aff5820abababababababababababababababababababababababababababababababab40401a01dc13005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "31200000",
+    "locked": "81200000"
+   }
+  ]
+ },
+ {
+  "name": "agentIdentifier null",
+  "seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "input": {
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "1000000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true,
+   "agentIdentifier": null
+  },
+  "registry": false,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "1000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "agentIdentifier": null,
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05efc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9fe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e11391694ab29911497229a302291160a94b293148db9112289080ab38614b01f08229a490a9d300291386b2c460aae0812ab14b93da61f3c5914893297162e228eab173f706b316522849ab4d125012285a0bce16e61af171322549aae02a78c6efd16bca517284aad535a35693f2e7f337339b91486961616a28a962939571bcfb5faf434182206190c07049148d50a311e6821c310d4a229a51580d6f80c88a024a7d8220672a9f4692d16030e42a118723972080b422410a8d48e12059ceb841943460027003e8005c5400672149000ee002f517d52892a19600016006b494a9a5001b45228005692ad0016cb800370023910f956d1401cc001e94696ab58a2534001c85b6ca948bd003b7624a30b6a0000"
+   }
+  },
+  "signedTermsJcs": "{\"agentIdentifier\":null,\"amount\":\"1000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preprod\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "79f3cb0fdc8ac05efc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f71",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "79f3cb0fdc8ac05efc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f71"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05e5840fc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9581afe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404ff5820abababababababababababababababababababababababababababababababab40401a002624885820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "2499720",
+    "locked": "3499720"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05e5840fc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9581afe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404ff5820abababababababababababababababababababababababababababababababab40401a0028e7a45820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "2680740",
+    "locked": "3680740"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05e5840fc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9581afe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "1000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582079f3cb0fdc8ac05e5840fc226f9370c1be134fa08bcf91e64a3503c38a4e2b5c3f7158408c012f1c2d52c943dd5073bc6c74eac706aac442106a0e15a60d265efea23586c8fe469d36d9581afe38b5803018be18b5c365b47f8e559ce501e6d1723e51c8e404ff5820abababababababababababababababababababababababababababababababab40401a04c7c1405820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "80200000",
+    "locked": "81200000"
+   }
+  ]
+ },
+ {
+  "name": "agentIdentifier empty",
+  "seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "input": {
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "1000000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true,
+   "agentIdentifier": ""
+  },
+  "registry": false,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "1000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "agentIdentifier": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582019fa52176717a5bf00ef4a910840c4fa1ef569ee989c790f396345f890d09d6c58405975ae7a2e9c8b44dcb91178272524526c7f75b7f12de98ad212d5a61436d98c94ad2ec702250c7c99362b74db9b89ee287974517bea8bb9dd3c8438cf21800c",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e291694b0162095393798481491110a807016891f0611228628492243968a8a969a16a2b9169114ab16a52b3614b15117368f3ea6111616b9218ab9212162bf0597298a779e233876132954974839149917215a18a0ae172197862b251711628e9acaa9512e2c867921cda52e3ce488168831416e1a19449637881abf23d73c8063b34228644278a2990c074aa552ac0a31088b77b104d4a24a2286a2a5c095c244502e4b044720819caa7d148b45a2c061c854230fc7e24ad08904056023848163db9d21622e0009c00fa0017150019c4524003b800bdc51815251a5872c0002c00d6d2952ca00368a45000ada55a002d970006e00472200b6de280398003d28b28d6d58016800388a1dc0561497d003b7634a300ea000"
+   }
+  },
+  "signedTermsJcs": "{\"agentIdentifier\":\"\",\"amount\":\"1000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preprod\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "19fa52176717a5bf00ef4a910840c4fa1ef569ee989c790f396345f890d09d6c",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "19fa52176717a5bf00ef4a910840c4fa1ef569ee989c790f396345f890d09d6c"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582019fa52176717a5bf584000ef4a910840c4fa1ef569ee989c790f396345f890d09d6c58405975ae7a2e9c8b44dcb91178272524526c7f75b7f12de98ad212d5a61436d98c94ad2ec70225581a0c7c99362b74db9b89ee287974517bea8bb9dd3c8438cf21800cff5820abababababababababababababababababababababababababababababababab40401a002624885820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "2499720",
+    "locked": "3499720"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582019fa52176717a5bf584000ef4a910840c4fa1ef569ee989c790f396345f890d09d6c58405975ae7a2e9c8b44dcb91178272524526c7f75b7f12de98ad212d5a61436d98c94ad2ec70225581a0c7c99362b74db9b89ee287974517bea8bb9dd3c8438cf21800cff5820abababababababababababababababababababababababababababababababab40401a0028e7a45820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "2680740",
+    "locked": "3680740"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582019fa52176717a5bf584000ef4a910840c4fa1ef569ee989c790f396345f890d09d6c58405975ae7a2e9c8b44dcb91178272524526c7f75b7f12de98ad212d5a61436d98c94ad2ec70225581a0c7c99362b74db9b89ee287974517bea8bb9dd3c8438cf21800cff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "1000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582019fa52176717a5bf584000ef4a910840c4fa1ef569ee989c790f396345f890d09d6c58405975ae7a2e9c8b44dcb91178272524526c7f75b7f12de98ad212d5a61436d98c94ad2ec70225581a0c7c99362b74db9b89ee287974517bea8bb9dd3c8438cf21800cff5820abababababababababababababababababababababababababababababababab40401a04c7c1405820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "80200000",
+    "locked": "81200000"
+   }
+  ]
+ },
+ {
+  "name": "registered with return address",
+  "seed": "0909090909090909090909090909090909090909090909090909090909090909",
+  "input": {
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true,
+   "buyerNonce": "0102030405060708090a0b0c0d",
+   "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+   "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+   "confirmationPolicy": {
+    "l1Confirmations": 3
+   }
+  },
+  "registry": true,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "lovelace",
+   "amount": "2500000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "confirmationPolicy": {
+     "l1Confirmations": 3
+    },
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u",
+     "sellerReturnAddress": "addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "0102030405060708090a0b0c0d",
+     "agentIdentifier": "67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "referenceSignature": "84582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4bf0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03",
+    "blockchainIdentifier": "218235ed23ab67ee8840d80eca003018c09c0262c01660b011995230038701598537656814c5da3710d382a03352b5480661082f210ca8f28d1004c3080c94572b5ab4803a35783308c923b229d430e4e8bb06399aaa15a54f3060bb49e54682b242dfa7354c2010ea472c678b4a8a484787284a1a83858c858e12484f8a82c2078babcc87cc07a2c96a85806b1c29438142cb8b50cc88d541401c8cdb4de7cf68ed85e205820a818180ef42054c2bca420952c384a74b8a8202c3439eea27854727c12811dc9f8fa38f372587c0e9254ac85c872b4207c27a87254e3c2784a7a5854b5a8a87c50b1584541200350b442210f8f9390b1222c3e13ce87c52ae0f038404d00139386111e181621458c27d24931bf5a27df49c6ab007044ea248042036804b0bc1c1b958542b30934c0492a83ed261b20f0821ea0348d242083e8852c04359d0c1950b0a10c1e00a2113a91015954720c4c22c0385872219e0893f612b131142a00ae4720013801f4002e2c0033a7b48007700178fb082c6400770b40005801ac032c20c006cb058001580670005b39000dc008e18575167d00730007b2083b1e13117300074f69780c23e13600768100e114b4000"
+   }
+  },
+  "signedTermsJcs": "{\"agentIdentifier\":\"67ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101\",\"amount\":\"2500000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"0102030405060708090a0b0c0d\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preprod\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vqjhzsk56euudsj6cjf8av3q4ph6q0stqlqy6scsjc0vnmqhclw5u\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"sellerReturnAddress\":\"addr_test1vpk3we70vc2e92avfgvmjeefauywkgf986j569dulffj2wqt99enq\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "c616bcb700585ab83a81b31e9b095c97be8922273b28df2437566c923099bdcf"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "1435230",
+    "locked": "3935230"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a0018112c5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "1577260",
+    "locked": "4077260"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b0101010101010101005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "2500000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9ecffd87a80ffd8799fd8799fd8799f581c6d1767cf661592abac4a19b96729ef08eb21253ea54d15bcfa532538ffd87a80ffff582aa4010103272006215820fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f6185f584084582aa201276761646472657373581d60257142d4d679c6c25ac4927eb220a86fa03e0b07c04d4310961ec9eca166686173686564f45820c616bcb700585ab858403a81b31e9b095c97be8922273b28df2437566c923099bdcf584085ea06d5bf997d8b832b003c8ec77fd6e038ac7f7544f6fde71eff995f7cc929fd897f22de4b581af0ea0e330409f8e52b300a96a9ea0840f1b6873ca89125e80c03ff5820abababababababababababababababababababababababababababababababab4d0102030405060708090a0b0c0d582467ab0c92c4ac1610895a1c965ee50aba41a8f1513b15240723b3bd0b01010101010101011a053d3f605820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "87900000",
+    "locked": "90400000"
+   }
+  ]
+ },
+ {
+  "name": "token custom deployment multi part",
+  "seed": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+  "input": {
+   "network": "cardano:preprod",
+   "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+   "amount": "1500000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l",
+   "commitment": [
+    {
+     "name": "parameters",
+     "canonicalization": "jcs",
+     "content": {
+      "n": 9007199254740992,
+      "f": 0.1,
+      "e": 1e+21,
+      "s": 1e-7,
+      "neg": 0,
+      "u": "é😀 ",
+      "nested": [
+       {
+        "b": 1,
+        "a": [
+         true,
+         null
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "name": "raw",
+     "canonicalization": "raw",
+     "mediaType": "application/octet-stream",
+     "content": "aGVsbG8gd29ybGQ",
+     "echoContent": false
+    },
+    {
+     "name": "empty",
+     "canonicalization": "jcs",
+     "mediaType": "",
+     "content": {}
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true,
+   "deployment": {
+    "requiredAdmins": "2",
+    "adminVkeys": [
+     "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+     "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+     "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+    ],
+    "cooldownPeriod": "999999"
+   }
+  },
+  "registry": false,
+  "approve": true,
+  "localContent": {
+   "raw": "aGVsbG8gd29ybGQ"
+  },
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preprod",
+   "asset": "e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d",
+   "amount": "1500000",
+   "payTo": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "parameters",
+       "canonicalization": "jcs",
+       "content": {
+        "n": 9007199254740992,
+        "f": 0.1,
+        "e": 1e+21,
+        "s": 1e-7,
+        "neg": 0,
+        "u": "é😀 ",
+        "nested": [
+         {
+          "b": 1,
+          "a": [
+           true,
+           null
+          ]
+         }
+        ]
+       },
+       "digest": "bf5dc3c09409a2d74b6d2586b32f9a7ddd01371fab9a996d581d27324a9152b6"
+      },
+      {
+       "name": "raw",
+       "canonicalization": "raw",
+       "mediaType": "application/octet-stream",
+       "digest": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+      },
+      {
+       "name": "empty",
+       "canonicalization": "jcs",
+       "mediaType": "",
+       "content": {},
+       "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "digest": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+    "referenceSignature": "84582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a85235013d8aa84010610fc53ce2d018afd846a989225af3471ced05",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a54511804e0066584b912c003180530cc03092243240f2435a4ac5d6569203a50b4d3a655c20857119599a112527069fa8705ad6d2531ad287ac748761e112b9624a19380973db8808908162e09062b13b924a9a49a28718096287a7b2b0e0e17063f295a5a861093962e4e196b061664ab25912b2e0624a2703917081156301d17112e749a476740ab00ae171f49091a12a52131ab2b083d3506349e595996c8f0166e11691b5a012629112792a686b482e90dc5a63ac09a3cee30fa830e21918cb0c8793dd149d461f14c241c311ac2049b48b6b849391e4582da74405c48b04d4fd10110f2224d018240f6022dacf8b420d84201f2292440d6301c15c2e0009c00fa0017690019c0524003b800bc009e5c001d8002d2800075c000dc790a802d8f37000736170ba5005754569a4006b000d9cbc86ab57900056e2f239195c69e40a794411509c5994955ad516c9100",
+    "deployment": {
+     "requiredAdmins": "2",
+     "adminVkeys": [
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6"
+     ],
+     "cooldownPeriod": "999999"
+    }
+   }
+  },
+  "signedTermsJcs": "{\"amount\":\"1500000\",\"asset\":\"e675b46e4d2242c991a8932a99db3044e80515ae14b4c4ccf6b3f4c9.0014df10745553444d\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preprod\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vqzf75t34nj2gy8ujleuthj96x003mnzhl04vev0289wnmccsps4l\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe9595",
+  "inputHash": "8abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzydnh6p2vrhmr2gssyue35dekln7vv7jw77purtr0esfwc8zlvkc",
+   "termsDigest": "a15cf8e99d1c7191b52143e97c62c85cee955cc63735858d404d47c7f4fe9595"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a0038b09458208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "3715220",
+    "locked": "3715220"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a003b73b058208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "3896240",
+    "locked": "3896240"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a0015e65e58208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "1435230",
+    "locked": "1435230"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efffd87a80ffd87a80582aa401010327200621582066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a5f584084582aa201276761646472657373581d60049f5171ace4a410fc97f3c5de45d19ef8ee62bfdf56658f51cae9efa166686173686564f45820a15cf8e99d1c71915840b52143e97c62c85cee955cc63735858d404d47c7f4fe959558403485c3df0324c21a7db355a64d095e7c03329392da71180f6a2ee33b46674e55402b33a6a852581a35013d8aa84010610fc53ce2d018afd846a989225af3471ced05ff5820abababababababababababababababababababababababababababababababab40401a05234ec058208abf13a103d14ac0c560cafbbcf9451df4335f26489935922eca13ee3f973908401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "86200000",
+    "locked": "86200000"
+   }
+  ]
+ },
+ {
+  "name": "mainnet default",
+  "seed": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+  "input": {
+   "network": "cardano:mainnet",
+   "asset": "lovelace",
+   "amount": "7000000",
+   "maxTimeoutSeconds": 3600,
+   "sellerAddress": "addr1v80qxm73qm3t982h5sqt0ltnjyd2nykfsvfuxv3ywq3uy5gkyewxu",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true
+  },
+  "registry": false,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:mainnet",
+   "asset": "lovelace",
+   "amount": "7000000",
+   "payTo": "addr1wxs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgge2j6d",
+   "maxTimeoutSeconds": 3600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr1v80qxm73qm3t982h5sqt0ltnjyd2nykfsvfuxv3ywq3uy5gkyewxu",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a401010327200621582091a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a",
+    "referenceSignature": "84582aa201276761646472657373581d61de036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251a166686173686564f45820e51d7406ef3fe6ca2f9c2f58783089e64698d0f1b24e22d77546e85caffa1d805840d1fab1c534f84a98270f071276457be9a3d4440e9fb7e16891eb95060883a06bb71c1e36a846f1b30172724e583f66663669410e949f7225cac3c3af1a68d609",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a5dc0a6455a500665c4914a7d7085c0138b8b601889110e545b592448159b370063596958956075ab5cb833922b9cee2c3b6a54a6979b77cceb0ec7888f99cb9c99525855984f9280d0985640d718471c84c88d165a3e98cb88984486430a57043c8b1e8f8d0b163858581b8d0887194c4ea40480cb158318531818c28f289c8c8a9b1c840f9658158b831e7036584d4f9683248f84164b025d24d802440d43a36858130440b594919188a7122dcdc85296431c4a63097189d622c2d80f9603b878445932094a428559182a4a2e04838621690868039a830ac3422364ac25170deaf163e9d2fa4a2020c68ae1e12926591a8e898ac3d3326069860407888570b8002712001dc001e006722a5005462c0002c00d602be000bc00360603000ac05b2002d970006e0047222f38d22803990b288ad9775807a80038005ccd336133acd5275650b8400000"
+   }
+  },
+  "signedTermsJcs": "{\"amount\":\"7000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr1wxs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgge2j6d\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":3600,\"network\":\"cardano:mainnet\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr1v80qxm73qm3t982h5sqt0ltnjyd2nykfsvfuxv3ywq3uy5gkyewxu\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "e51d7406ef3fe6ca2f9c2f58783089e64698d0f1b24e22d77546e85caffa1d80",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr1wxs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgge2j6d",
+   "termsDigest": "e51d7406ef3fe6ca2f9c2f58783089e64698d0f1b24e22d77546e85caffa1d80"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581cde036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251ffd87a80ffd87a80582aa401010327200621582091a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a5f584084582aa201276761646472657373581d61de036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251a166686173686564f45820e51d7406ef3fe6ca58402f9c2f58783089e64698d0f1b24e22d77546e85caffa1d805840d1fab1c534f84a98270f071276457be9a3d4440e9fb7e16891eb95060883a06bb71c1e36a846581af1b30172724e583f66663669410e949f7225cac3c3af1a68d609ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "7000000"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr1vyxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsjpczl2",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581cde036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251ffd87a80ffd87a80582aa401010327200621582091a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a5f584084582aa201276761646472657373581d61de036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251a166686173686564f45820e51d7406ef3fe6ca58402f9c2f58783089e64698d0f1b24e22d77546e85caffa1d805840d1fab1c534f84a98270f071276457be9a3d4440e9fb7e16891eb95060883a06bb71c1e36a846581af1b30172724e583f66663669410e949f7225cac3c3af1a68d609ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "7000000"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581cde036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251ffd87a80ffd87a80582aa401010327200621582091a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a5f584084582aa201276761646472657373581d61de036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251a166686173686564f45820e51d7406ef3fe6ca58402f9c2f58783089e64698d0f1b24e22d77546e85caffa1d805840d1fab1c534f84a98270f071276457be9a3d4440e9fb7e16891eb95060883a06bb71c1e36a846581af1b30172724e583f66663669410e949f7225cac3c3af1a68d609ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "7000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581cde036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251ffd87a80ffd87a80582aa401010327200621582091a28a0b74381593a4d9469579208926afc8ad82c8839b7644359b9eba9a4b3a5f584084582aa201276761646472657373581d61de036fd106e2b29d57a400b7fd73911aa992c98313c332247023c251a166686173686564f45820e51d7406ef3fe6ca58402f9c2f58783089e64698d0f1b24e22d77546e85caffa1d805840d1fab1c534f84a98270f071276457be9a3d4440e9fb7e16891eb95060883a06bb71c1e36a846581af1b30172724e583f66663669410e949f7225cac3c3af1a68d609ff5820abababababababababababababababababababababababababababababababab40401a046c33c05820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "74200000",
+    "locked": "81200000"
+   }
+  ]
+ },
+ {
+  "name": "preview custom",
+  "seed": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+  "input": {
+   "network": "cardano:preview",
+   "asset": "lovelace",
+   "amount": "3000000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vpsnmptmtv46mmf7wmhydkzdt5jupp384m5xmrpufz9pufcgch92y",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true,
+   "deployment": {
+    "requiredAdmins": "2",
+    "adminVkeys": [
+     "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+     "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+     "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+    ],
+    "cooldownPeriod": "420000"
+   }
+  },
+  "registry": false,
+  "approve": true,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cardano:preview",
+   "asset": "lovelace",
+   "amount": "3000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vpsnmptmtv46mmf7wmhydkzdt5jupp384m5xmrpufz9pufcgch92y",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c",
+    "referenceSignature": "84582aa201276761646472657373581d60613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27a166686173686564f458207d9b0aaa8176dce6ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0584057b274db5eff58e44e8e3f7bb0a06dcd63cdea435672d4082abaea53067f331ce04ad7aec62e6960b106b0b3ec9fb504e934959570828f483db6ed5338628c00",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a546526b2e685882c217182e014cbab2954a54fa423172c5d71600c644d250ac115ea15b5968c68d3012520ed4a94f49368f99d0066d8f11725c027081101301a33a5171694a516b0393b883d1c8806962b2e3b97062b32592e06192b2f061f911116891fa5adb9962518110e06037938b92aa894bbbb8e1286149a14ab3b8b60701f044f19b4b0166d63266ebe1814b02a5f1c6b2b092451063017392196be945faf08091f20481c969fbc562ed49fab31561f8b22da279a2088250c952ac3d2e0d03a2232066a4685a518a57d09070c47f081dcb812058da5661168d07e2e2ac08424511102ee2d2e0b8972c06558f8fc8ccb4e433aa528ac2c061dc415b094ca90ae170004e007d000b94800cea292001dc005e12bea5065772c0002c00d632a91ca00365a2d000ac657e002d970006e00472220b6d1280398003d28728d6bd80168003a8a1dc021afa0076ec194601d400000",
+    "deployment": {
+     "requiredAdmins": "2",
+     "adminVkeys": [
+      "fc16a1fcf309aed03ec18bb2176f5ea29acea70bb79145ebaffa8e75",
+      "7f78161369549d8e2b138fee724c9fa606d6107a66720bdb4c48ada6",
+      "89eef9ea84e0ee7fe4921fa93eb2873ff6e34473f751d5d52cb75aa6"
+     ],
+     "cooldownPeriod": "420000"
+    }
+   }
+  },
+  "signedTermsJcs": "{\"amount\":\"3000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cardano:preview\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vpsnmptmtv46mmf7wmhydkzdt5jupp384m5xmrpufz9pufcgch92y\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "7d9b0aaa8176dce6ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "7d9b0aaa8176dce6ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27ffd87a80ffd87a80582aa4010103272006215820d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c5f584084582aa201276761646472657373581d60613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27a166686173686564f458207d9b0aaa8176dce65840ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0584057b274db5eff58e44e8e3f7bb0a06dcd63cdea435672d4082abaea53067f331ce04ad7aec62e581a6960b106b0b3ec9fb504e934959570828f483db6ed5338628c00ff5820abababababababababababababababababababababababababababababababab40401a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "1435230",
+    "locked": "4435230"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27ffd87a80ffd87a80582aa4010103272006215820d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c5f584084582aa201276761646472657373581d60613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27a166686173686564f458207d9b0aaa8176dce65840ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0584057b274db5eff58e44e8e3f7bb0a06dcd63cdea435672d4082abaea53067f331ce04ad7aec62e581a6960b106b0b3ec9fb504e934959570828f483db6ed5338628c00ff5820abababababababababababababababababababababababababababababababab40401a0015e65e5820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "1435230",
+    "locked": "4435230"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27ffd87a80ffd87a80582aa4010103272006215820d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c5f584084582aa201276761646472657373581d60613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27a166686173686564f458207d9b0aaa8176dce65840ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0584057b274db5eff58e44e8e3f7bb0a06dcd63cdea435672d4082abaea53067f331ce04ad7aec62e581a6960b106b0b3ec9fb504e934959570828f483db6ed5338628c00ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "3000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27ffd87a80ffd87a80582aa4010103272006215820d9bf2148748a85c89da5aad8ee0b0fc2d105fd39d41a4c796536354f0ae2900c5f584084582aa201276761646472657373581d60613d857b5b2baded3e76ee46d84d5d25c08627aee86d8c3c488a1e27a166686173686564f458207d9b0aaa8176dce65840ca7fb463ebd2532fd43bd1224123604900c1988e2c456ba0584057b274db5eff58e44e8e3f7bb0a06dcd63cdea435672d4082abaea53067f331ce04ad7aec62e581a6960b106b0b3ec9fb504e934959570828f483db6ed5338628c00ff5820abababababababababababababababababababababababababababababababab40401a04a93cc05820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "78200000",
+    "locked": "81200000"
+   }
+  ]
+ },
+ {
+  "name": "cip34 alias network",
+  "seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "input": {
+   "network": "cip34:0-1",
+   "asset": "lovelace",
+   "amount": "4000000",
+   "maxTimeoutSeconds": 600,
+   "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+   "commitment": [
+    {
+     "name": "body",
+     "canonicalization": "jcs",
+     "mediaType": "application/json",
+     "content": {
+      "days": 3,
+      "units": "metric"
+     }
+    }
+   ],
+   "payByTime": "1785756000000",
+   "submitResultTime": "1785756300000",
+   "unlockTime": "1785757200000",
+   "externalDisputeUnlockTime": "1785758100000",
+   "sellerNonce": "abababababababababababababababababababababababababababababababab",
+   "unsafeSkipPolicyChecks": true
+  },
+  "registry": false,
+  "approve": false,
+  "localContent": null,
+  "requirements": {
+   "scheme": "exact",
+   "network": "cip34:0-1",
+   "asset": "lovelace",
+   "amount": "4000000",
+   "payTo": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "maxTimeoutSeconds": 600,
+   "extra": {
+    "assetTransferMethod": "masumi",
+    "inputCommitment": {
+     "version": "1",
+     "algorithm": "sha256",
+     "parts": [
+      {
+       "name": "body",
+       "canonicalization": "jcs",
+       "mediaType": "application/json",
+       "content": {
+        "days": 3,
+        "units": "metric"
+       },
+       "digest": "e33986d62ef871de151b8258eb9624fbfa220b6f9a4fe170bf168dfa2c957440"
+      }
+     ],
+     "digest": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7"
+    },
+    "terms": {
+     "version": "1",
+     "paymentType": "Web3CardanoV2",
+     "sellerAddress": "addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p",
+     "sellerNonce": "abababababababababababababababababababababababababababababababab",
+     "buyerNonce": "",
+     "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+     "payByTime": "1785756000000",
+     "submitResultTime": "1785756300000",
+     "unlockTime": "1785757200000",
+     "externalDisputeUnlockTime": "1785758100000"
+    },
+    "referenceKey": "a4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "referenceSignature": "84582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582075b551d073c74e7ed776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c15840a9c2d51e37203ea96dd3fb22d99a80e64a7817866b9d76e15b33ec51363fdcdae74151daaee07dcda455a1309bc7e4aa3afa994ac7a9b52440059ae87b867500",
+    "blockchainIdentifier": "218235ed23ab67ee8840e9900e00b0158d026630b800c0232e03b006c549946779ba55b90331b389009a545a22e1299706605dc862e00cd7162eacb00635c014d81a1544027288c8a956602a06290203061124b6b5624b251b255b05a9529a4a24d87e674a761e11391608161637306b22848ab90ab8951722b03061b909291eb914a8549a9514be76393014b0294614b91108252c9122bda6113016b297044abb312b1a96a5173c9480ae171696ba910a9d055a37a7a50816b8a50abd882d8abeb3a52b14b2571184bdb7010aa6b921f03621b3b6880c4aa8b00bb944e88c5b5848861111161262a34390409e10bfd9037520c3581462111eacd621a94494451ec54b87696188a0152e4b0c11033954fa2904cb018721508c20631c596224105d808e1205906b85c228a1430013801f4002e2a0033b0a480077001798a303329628b4580005801aca52a194006d148a001594ab4005b2e000dc008e447e4dac500730007a5065ead6289cd0007617db5e521f400edd8528c3da8000"
+   }
+  },
+  "signedTermsJcs": "{\"amount\":\"4000000\",\"asset\":\"lovelace\",\"assetTransferMethod\":\"masumi\",\"buyerNonce\":\"\",\"contractAddress\":\"addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g\",\"externalDisputeUnlockTime\":\"1785758100000\",\"inputHash\":\"f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7\",\"maxTimeoutSeconds\":600,\"network\":\"cip34:0-1\",\"payByTime\":\"1785756000000\",\"paymentType\":\"Web3CardanoV2\",\"scheme\":\"exact\",\"sellerAddress\":\"addr_test1vz9jrppy446d7fwntsh23cy55nzutt4jew6yysvnx9tfxycvp587p\",\"sellerNonce\":\"abababababababababababababababababababababababababababababababab\",\"submitResultTime\":\"1785756300000\",\"unlockTime\":\"1785757200000\",\"version\":\"1\"}",
+  "termsDigest": "75b551d073c74e7ed776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c1",
+  "inputHash": "f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7",
+  "authorization": {
+   "ok": true,
+   "escrowAddress": "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g",
+   "termsDigest": "75b551d073c74e7ed776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c1"
+  },
+  "locks": [
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582075b551d073c74e7e5840d776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c15840a9c2d51e37203ea96dd3fb22d99a80e64a7817866b9d76e15b33ec51363fdcdae74151daaee0581a7dcda455a1309bc7e4aa3afa994ac7a9b52440059ae87b867500ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "4000000"
+   },
+   {
+    "coinsPerUtxoByte": "4310",
+    "buyerReturnAddress": "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd8799fd8799fd8799f581c0d6a577e9441ad8ed9663931906e4d43ece8f82c712b1d0235affb06ffd87a80ffffd8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582075b551d073c74e7e5840d776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c15840a9c2d51e37203ea96dd3fb22d99a80e64a7817866b9d76e15b33ec51363fdcdae74151daaee0581a7dcda455a1309bc7e4aa3afa994ac7a9b52440059ae87b867500ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "4000000"
+   },
+   {
+    "coinsPerUtxoByte": "44",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582075b551d073c74e7e5840d776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c15840a9c2d51e37203ea96dd3fb22d99a80e64a7817866b9d76e15b33ec51363fdcdae74151daaee0581a7dcda455a1309bc7e4aa3afa994ac7a9b52440059ae87b867500ff5820abababababababababababababababababababababababababababababababab4040005820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "0",
+    "locked": "4000000"
+   },
+   {
+    "coinsPerUtxoByte": "100000",
+    "buyerReturnAddress": "",
+    "datum": "d8799fd8799fd8799f581c7d4f4764f5de9248b86a92e1ba1466b217e75c184cf7f82278653df6ffd8799fd8799fd8799f581cd32575b8b369eb80e647753b58a86b2485d7a5c92db54ff18876dca8ffffffffd87a80d8799fd8799f581c8b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313ffd87a80ffd87a80582aa4010103272006215820ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c5f584084582aa201276761646472657373581d608b218424ad74df25d35c2ea8e094a4c5c5aeb2cbb442419331569313a166686173686564f4582075b551d073c74e7e5840d776dca075a71014c7f5bfea76ffe457afa7a4f70b6250c15840a9c2d51e37203ea96dd3fb22d99a80e64a7817866b9d76e15b33ec51363fdcdae74151daaee0581a7dcda455a1309bc7e4aa3afa994ac7a9b52440059ae87b867500ff5820abababababababababababababababababababababababababababababababab40401a0499fa805820f336fadcc1b29faacba71b6e0ec7f80bc5bc4673db6b8fc93f59e5f9fb3c49c7401b0000019fc75a1f001b0000019fc75eb2e01b0000019fc76c6e801b0000019fc77a2a200000d87980ff",
+    "collateral": "77200000",
+    "locked": "81200000"
+   }
+  ]
+ }
+]

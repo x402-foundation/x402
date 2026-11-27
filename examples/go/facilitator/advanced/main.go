@@ -54,9 +54,11 @@ func main() {
 		return
 	}
 
-	// Validate at least one private key is provided
-	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" {
-		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or CASPER_PRIVATE_KEY is required")
+	// Validate at least one network is configured; all-networks can run with
+	// Cardano alone, which needs no key.
+	cardanoOnly := pattern == "all-networks" && os.Getenv("BLOCKFROST_PROJECT_ID") != ""
+	if evmPrivateKey == "" && svmPrivateKey == "" && casperPrivateKey == "" && !cardanoOnly {
+		fmt.Println("❌ At least one of EVM_PRIVATE_KEY, SVM_PRIVATE_KEY, or CASPER_PRIVATE_KEY (or, for all-networks, BLOCKFROST_PROJECT_ID) is required")
 		os.Exit(1)
 	}
 
