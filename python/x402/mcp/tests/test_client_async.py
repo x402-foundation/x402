@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from x402.mcp import PaymentRequiredError, x402MCPClient
+from x402.mcp import PaymentRequiredError, x402MCPClient, x402MCPSession
 from x402.schemas import PaymentPayload, PaymentRequired
 
 
@@ -51,6 +51,23 @@ async def test_x402_mcp_client_async_free_tool():
     assert result.payment_made is False
     assert result.is_error is False
     assert len(result.content) > 0
+    mock_payment.create_payment_payload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_x402_mcp_client_async_forwards_structured_content_from_free_tool():
+    """Free tool results keep the tool's structured content."""
+    mock_mcp = MockAsyncMCPClient()
+    mock_payment = MockAsyncPaymentClient()
+    mock_mcp.call_tool.return_value = MockAsyncMCPResult(
+        content=[{"type": "text", "text": '{"tempC":21}'}],
+        structured_content={"tempC": 21},
+    )
+
+    client = x402MCPClient(mock_mcp, mock_payment, auto_payment=True)
+    result = await client.call_tool("weather", {})
+
+    assert result.structured_content == {"tempC": 21}
     mock_payment.create_payment_payload.assert_not_called()
 
 
@@ -105,6 +122,55 @@ async def test_x402_mcp_client_async_payment_required_auto_payment():
     assert result.payment_response is not None
     assert result.payment_response.success is True
     assert mock_payment.create_payment_payload.called
+
+
+@pytest.mark.asyncio
+async def test_x402_mcp_client_async_forwards_structured_content_from_paid_tool():
+    """Paid tool results keep structured content after settlement."""
+    mock_mcp = MockAsyncMCPClient()
+    mock_payment = MockAsyncPaymentClient()
+
+    payment_required_result = MockAsyncMCPResult(
+        content=[
+            {
+                "type": "text",
+                "text": '{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"1000","asset":"USDC","payTo":"0xrecipient","maxTimeoutSeconds":300}]}',
+            }
+        ],
+        is_error=True,
+    )
+    success_result = MockAsyncMCPResult(
+        content=[{"type": "text", "text": '{"tempC":21}'}],
+        meta={
+            "x402/payment-response": {
+                "success": True,
+                "transaction": "0xtx",
+                "network": "eip155:84532",
+            }
+        },
+        structured_content={"tempC": 21},
+    )
+    mock_mcp.call_tool.side_effect = [payment_required_result, success_result]
+    mock_payment.create_payment_payload.return_value = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+
+    client = x402MCPClient(mock_mcp, mock_payment, auto_payment=True)
+    result = await client.call_tool("paid_weather", {})
+
+    assert result.payment_response is not None
+    assert result.payment_response.success is True
+    assert result.payment_response.transaction == "0xtx"
+    assert result.structured_content == {"tempC": 21}
 
 
 @pytest.mark.asyncio
@@ -605,3 +671,80 @@ async def test_x402_mcp_client_async_get_tool_payment_requirements():
     assert len(result.accepts) == 1
     if hasattr(result.accepts[0], "scheme"):
         assert result.accepts[0].scheme == "exact"
+
+
+@pytest.mark.asyncio
+async def test_x402_mcp_session_forwards_structured_content_from_free_tool():
+    """Session results keep structured content on a free call."""
+    session = MockAsyncMCPClient()
+    payment = MockAsyncPaymentClient()
+    session.call_tool.return_value = MockAsyncMCPResult(
+        content=[{"type": "text", "text": '{"tempC":21}'}],
+        structured_content={"tempC": 21},
+    )
+
+    result = await x402MCPSession(session, payment).call_tool("weather", {})
+
+    assert result.structured_content == {"tempC": 21}
+    payment.create_payment_payload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_x402_mcp_session_forwards_structured_content_from_paid_tool():
+    """Session results keep structured content after a paid retry."""
+    session = MockAsyncMCPClient()
+    payment = MockAsyncPaymentClient()
+    session.call_tool.side_effect = [
+        MockAsyncMCPResult(
+            content=[
+                {
+                    "type": "text",
+                    "text": '{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"1000","asset":"USDC","payTo":"0xrecipient","maxTimeoutSeconds":300}]}',
+                }
+            ],
+            is_error=True,
+            structured_content={
+                "x402Version": 2,
+                "accepts": [
+                    {
+                        "scheme": "exact",
+                        "network": "eip155:84532",
+                        "amount": "1000",
+                        "asset": "USDC",
+                        "payTo": "0xrecipient",
+                        "maxTimeoutSeconds": 300,
+                    }
+                ],
+            },
+        ),
+        MockAsyncMCPResult(
+            content=[{"type": "text", "text": '{"tempC":21}'}],
+            meta={
+                "x402/payment-response": {
+                    "success": True,
+                    "transaction": "0xtx",
+                    "network": "eip155:84532",
+                }
+            },
+            structured_content={"tempC": 21},
+        ),
+    ]
+    payment.create_payment_payload.return_value = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+
+    result = await x402MCPSession(session, payment).call_tool("paid_weather", {})
+
+    assert result.payment_response is not None
+    assert result.payment_response.success is True
+    assert result.payment_response.transaction == "0xtx"
+    assert result.structured_content == {"tempC": 21}
