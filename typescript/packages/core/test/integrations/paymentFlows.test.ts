@@ -242,6 +242,7 @@ describe("Payment flow integration (MockAuthorize / MockUpfront / MockEscrow)", 
       expect(result.beforeHandlerSettlement?.flow).toBe("escrow");
       expect(facilitatorClient.verifyCalls).toBe(0);
       expect(facilitatorClient.settleCalls).toBe(1);
+      expect(result.payer).toBe("~John");
 
       const settle = await httpServer.processSettlement(
         result.paymentPayload,
