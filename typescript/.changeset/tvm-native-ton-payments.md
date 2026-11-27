@@ -1,0 +1,5 @@
+---
+"@x402/tvm": minor
+---
+
+The TVM exact scheme accepts native TON payments (`asset: "native"`). The facilitator requires the payer's own balance to cover the amount and forward fee, and the relay attaches only gas.

@@ -40,6 +40,10 @@ DEFAULT_TVM_EMULATION_WALLET_ID = 2147483409
 DEFAULT_TVM_EMULATION_SEQNO = 1
 DEFAULT_TVM_EMULATION_RELAY_AMOUNT = 130_000_000
 
+# Reserved asset identifier for payments in the network's native coin (TON).
+NATIVE_ASSET = "native"
+NATIVE_DECIMALS = 9
+
 USDT_MAINNET_MINTER = "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe"
 USDT_TESTNET_MINTER = "0:f418a04cf196ebc959366844a6cdf53a6fd6fff1eadafc892f05210bba31593e"
 
@@ -76,6 +80,7 @@ ERR_EXACT_TVM_INVALID_SETTLEMENT_BOC = "invalid_exact_tvm_payload_settlement_boc
 ERR_EXACT_TVM_INVALID_W5_MESSAGE = "invalid_exact_tvm_payload_w5_internal_signed_request"
 ERR_EXACT_TVM_INVALID_W5_ACTIONS = "invalid_exact_tvm_payload_w5_actions"
 ERR_EXACT_TVM_INVALID_JETTON_TRANSFER = "invalid_exact_tvm_payload_jetton_transfer"
+ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER = "invalid_exact_tvm_payload_native_transfer"
 ERR_EXACT_TVM_INVALID_SIGNATURE = "invalid_exact_tvm_payload_invalid_signature"
 ERR_EXACT_TVM_INVALID_CODE_HASH = "invalid_exact_tvm_payload_invalid_code_hash"
 ERR_EXACT_TVM_INVALID_ASSET = "invalid_exact_tvm_payload_asset_mismatch"

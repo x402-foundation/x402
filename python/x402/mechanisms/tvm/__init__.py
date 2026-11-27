@@ -2,10 +2,13 @@
 
 from .codecs.common import (
     get_network_global_id,
+    is_native_asset,
     normalize_address,
+    normalize_asset,
     parse_amount,
 )
 from .codecs.jetton import build_jetton_transfer_body, build_jetton_transfer_body_fields
+from .codecs.native import native_transfer_body, parse_native_transfer
 from .codecs.w5 import (
     address_from_state_init,
     build_w5_signed_body,
@@ -45,6 +48,7 @@ from .constants import (
     ERR_EXACT_TVM_INVALID_CODE_HASH,
     ERR_EXACT_TVM_INVALID_EXTENSIONS_DICT,
     ERR_EXACT_TVM_INVALID_JETTON_TRANSFER,
+    ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER,
     ERR_EXACT_TVM_INVALID_PAYLOAD,
     ERR_EXACT_TVM_INVALID_RECIPIENT,
     ERR_EXACT_TVM_INVALID_SEQNO,
@@ -67,6 +71,8 @@ from .constants import (
     HIGHLOAD_V3_CODE_HEX,
     JETTON_TRANSFER_OPCODE,
     MIN_FACILITATOR_TON_BALANCE,
+    NATIVE_ASSET,
+    NATIVE_DECIMALS,
     SCHEME_EXACT,
     SEND_MODE_BOUNCE_ON_ACTION_FAIL,
     SEND_MODE_CARRY_ALL_BALANCE,
@@ -96,7 +102,7 @@ from .constants import (
 
 # Default assets
 from .default_assets import DEFAULT_ASSETS, find_default_asset, get_default_asset
-from .exact.codec import parse_exact_tvm_payload
+from .exact.codec import parse_exact_tvm_native_payload, parse_exact_tvm_payload
 from .provider import TonapiRestClient, ToncenterRestClient, create_tvm_provider_client
 from .settlement_cache import SettlementCache
 from .signer import ClientTvmSigner, FacilitatorTvmSigner
@@ -109,6 +115,7 @@ from .signers import (
 from .types import (
     ExactTvmPayload,
     ParsedJettonTransfer,
+    ParsedNativeTransfer,
     ParsedTvmSettlement,
     TvmAccountState,
     TvmJettonWalletData,
@@ -116,6 +123,15 @@ from .types import (
 )
 
 __all__ = [
+    "NATIVE_ASSET",
+    "NATIVE_DECIMALS",
+    "ERR_EXACT_TVM_INVALID_NATIVE_TRANSFER",
+    "ParsedNativeTransfer",
+    "is_native_asset",
+    "normalize_asset",
+    "native_transfer_body",
+    "parse_native_transfer",
+    "parse_exact_tvm_native_payload",
     "SCHEME_EXACT",
     "SUPPORTED_NETWORKS",
     "TVM_MAINNET",

@@ -18,6 +18,16 @@ export interface ParsedJettonTransfer {
   bodyHash: Buffer;
 }
 
+export interface ParsedNativeTransfer {
+  kind: "native";
+  destination: string;
+  amount: bigint;
+  body: Cell;
+  bounce: boolean;
+  hasExtraCurrencies: boolean;
+  hasStateInit: boolean;
+}
+
 export interface ParsedTvmSettlement {
   payer: string;
   walletId: number;
@@ -28,7 +38,7 @@ export interface ParsedTvmSettlement {
   signedSliceHash: Buffer;
   signature: Buffer;
   stateInit: StateInit | null;
-  transfer: ParsedJettonTransfer;
+  transfer: ParsedJettonTransfer | ParsedNativeTransfer;
 }
 
 export interface TvmAccountState {
