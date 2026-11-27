@@ -351,6 +351,7 @@ class ExactEvmSchemeV1:
             return SettleResponse(
                 success=False,
                 error_reason=verify_result.invalid_reason,
+                error_message=verify_result.invalid_message,
                 network=payload.network,
                 payer=verify_result.payer,
                 transaction="",

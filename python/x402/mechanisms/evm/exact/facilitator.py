@@ -500,6 +500,7 @@ class ExactEvmScheme:
             return SettleResponse(
                 success=False,
                 error_reason=verify_result.invalid_reason,
+                error_message=verify_result.invalid_message,
                 network=str(payload.accepted.network),
                 payer=verify_result.payer,
                 transaction="",

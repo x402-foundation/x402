@@ -29,8 +29,10 @@ from x402.mechanisms.svm.constants import (
     ERR_PREFLIGHT_POSTFLIGHT_FEE_PAYER_NOT_ISOLATED,
 )
 from x402.mechanisms.svm.exact import ExactSvmFacilitatorScheme, InstructionIdentity
+from x402.mechanisms.svm.exact.v1.facilitator import ExactSvmSchemeV1 as ExactSvmFacilitatorSchemeV1
 from x402.mechanisms.svm.utils import derive_ata, transaction_message_hash
 from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
+from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 
 
 class MockFacilitatorSigner:
@@ -680,6 +682,38 @@ class TestSettle:
         assert result.success is False
         assert result.error_reason == "unsupported_scheme"
         assert result.network == SOLANA_DEVNET_CAIP2
+
+    def test_v1_keeps_verify_message_when_reverification_fails(self):
+        """V1 settle should carry the verify message into error_message."""
+        facilitator = ExactSvmFacilitatorSchemeV1(MockFacilitatorSigner())
+        payload = PaymentPayloadV1(
+            scheme="exact",
+            network="solana-devnet",
+            payload={"transaction": "base64transaction=="},
+        )
+        requirements = PaymentRequirementsV1(
+            scheme="exact",
+            network="solana-devnet",
+            asset=USDC_DEVNET_ADDRESS,
+            max_amount_required="100000",
+            pay_to="PayToAddress11111111111111111111111111",
+            max_timeout_seconds=3600,
+            resource="https://example.com",
+            extra={"feePayer": "FeePayer1111111111111111111111111111"},
+        )
+        failed = VerifyResponse(
+            is_valid=False,
+            invalid_reason="transaction_simulation_failed",
+            invalid_message='{"InstructionError":[2,{"Custom":1}]}',
+            payer="Payer",
+        )
+
+        with patch.object(facilitator, "verify", return_value=failed):
+            result = facilitator.settle(payload, requirements)
+
+        assert result.success is False
+        assert result.error_reason == "transaction_simulation_failed"
+        assert result.error_message == '{"InstructionError":[2,{"Custom":1}]}'
 
     def test_should_fail_settlement_with_settlement_pending_on_confirm_timeout(self):
         """Confirm-timeout must report settlement_pending (not transaction_failed) and

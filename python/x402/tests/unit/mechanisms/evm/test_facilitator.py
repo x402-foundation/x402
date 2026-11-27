@@ -38,7 +38,7 @@ from x402.mechanisms.evm.exact import (
 from x402.mechanisms.evm.exact.v1.client import ExactEvmSchemeV1 as ExactEvmClientSchemeV1
 from x402.mechanisms.evm.exact.v1.facilitator import ExactEvmSchemeV1
 from x402.mechanisms.evm.types import TransactionReceipt
-from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo
+from x402.schemas import PaymentPayload, PaymentRequirements, ResourceInfo, VerifyResponse
 from x402.schemas.v1 import PaymentPayloadV1, PaymentRequirementsV1
 
 NETWORK = "eip155:8453"
@@ -807,6 +807,42 @@ class TestSettle:
         assert result.success is False
         assert "unsupported_scheme" in result.error_reason
         assert result.network == NETWORK
+
+    def test_keeps_verify_message_when_reverification_fails(self):
+        signer = MockFacilitatorSigner(
+            typed_data_valid=False,
+            code=b"\x01",
+            transfer_simulation_should_revert=True,
+            multicall_results=make_diagnostic_results(),
+        )
+        facilitator = ExactEvmFacilitatorScheme(
+            signer, ExactEvmSchemeConfig(simulate_in_settle=True)
+        )
+
+        result = facilitator.settle(
+            make_payment_payload(signature="0x" + "22" * 66),
+            make_requirements(),
+        )
+
+        assert result.success is False
+        assert result.error_reason == "invalid_exact_evm_transaction_simulation_failed"
+        assert result.error_message == "simulation reverted"
+
+    def test_v1_keeps_verify_message_when_reverification_fails(self):
+        facilitator = ExactEvmSchemeV1(MockFacilitatorSigner())
+        failed = VerifyResponse(
+            is_valid=False,
+            invalid_reason="invalid_exact_evm_payload_signature",
+            invalid_message="could not recover signer",
+            payer=PAYER,
+        )
+
+        with patch.object(facilitator, "_verify", return_value=failed):
+            result = facilitator.settle(make_payment_payload_v1(), make_requirements_v1())
+
+        assert result.success is False
+        assert result.error_reason == "invalid_exact_evm_payload_signature"
+        assert result.error_message == "could not recover signer"
 
     @pytest.mark.parametrize(
         "amount",
