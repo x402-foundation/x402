@@ -78,8 +78,13 @@ paid. A client MUST NOT use an adapter that cannot return the preimage.
 
 A receiver adapter MUST be able to create a fresh invoice for an exact
 millisatoshi amount with a caller-supplied BOLT11 description hash. The resource
-server MUST have exclusive invoice-issuance authority for the receiver key in
-`payTo`; an untrusted party MUST NOT be able to create invoices signed by that key.
+server MUST either have exclusive invoice-issuance authority for the receiver key
+in `payTo` or meet the shared-receiver requirements in
+[Receiver Key Isolation](#receiver-key-isolation). Either way, an untrusted party
+MUST NOT be able to create an invoice signed by that key that the server accepts.
+Under the shared-receiver requirements, the adapter MUST also report whether an
+invoice was settled to the resource server's account and the amount paid to
+that invoice.
 
 ## Amounts
 
@@ -210,8 +215,10 @@ hashes.
 
 The payment hash identifies the invoice, not a particular request attempt.
 An unused proof MUST be accepted for another challenge with the same request
-binding and payment terms if all validation rules pass. Servers need not track
-issued payment hashes per challenge.
+binding and payment terms if all validation rules pass. Servers with exclusive
+issuance authority need not track issued payment hashes per challenge; servers
+on a shared receiver key track them as
+[Receiver Key Isolation](#receiver-key-isolation) requires.
 
 The server MUST select the profile for the operation being purchased. MCP tool
 calls MUST use `mcp:1`, including when MCP uses an HTTP transport. Other HTTP
@@ -679,6 +686,8 @@ failure into one:
 | Reason | Meaning |
 |---|---|
 | `exact_lnbtc_invoice_issuance_denied` | The server's issuance limiter denied a new invoice. |
+| `invalid_exact_lnbtc_invoice_not_issued` | On a shared receiver key, the server has no issued-hash record for the accepted invoice's payment hash with the same network, amount, and request hash. |
+| `exact_lnbtc_invoice_not_settled` | On a shared receiver key, the receiver did not confirm that the invoice was settled to the server's account for at least `amount`. The proof is not consumed and may be presented again. |
 | `invalid_exact_lnbtc_payer_invoice_mismatch` | The payer adapter returned a different invoice. |
 | `invalid_exact_lnbtc_payer_payment_hash_mismatch` | The payer adapter returned a different payment hash. |
 | `invalid_exact_lnbtc_payer_amount_mismatch` | The payer adapter returned a different amount. |
@@ -710,15 +719,93 @@ the receiver node key.
 
 Request binding does not identify the payer. A disclosed preimage and invoice
 remain bearer proof for the bound request; replay protection permits at most one
-successful claim. No server challenge store or receiver lookup is required.
+successful claim. A server with exclusive issuance authority needs no challenge
+store or receiver lookup.
 
 ### Receiver Key Isolation
 
-`payTo` binds the invoice to the receiver node. A shared custodial node is not
-compatible if an untrusted tenant can create invoices under the same node key. The
-tenant could pay its own invoice and use the preimage against another tenant's
-payment requirement. A compliant deployment MUST give the resource server
-exclusive invoice-issuance authority for the receiver key.
+`payTo` binds the invoice to the receiver node. If an untrusted party can create
+invoices under the same key, as other tenants of a custodial or hosted node can,
+it could pay its own invoice (or read the preimage when the invoice is created)
+and present the proof against another party's payment requirement. Facilitator
+validation cannot detect this: the invoice is correctly signed by `payTo`.
+
+A compliant deployment MUST do one of the following:
+
+1. Give the resource server exclusive invoice-issuance authority for the receiver
+   key. No further tracking is required.
+2. If the receiver key is shared with parties the resource server does not
+   trust, the resource server MUST, in addition to every other rule in this
+   document:
+   1. Record the payment hash of every invoice it issues for that key, with its
+      network, amount, request hash, and `invoice_end`, in the issued-hash store
+      described below, before returning the challenge.
+   2. Before calling `/settle`, reject the payment with
+      `invalid_exact_lnbtc_invoice_not_issued` unless that store holds a record
+      for the accepted invoice's payment hash whose network, amount, and request
+      hash equal those of the requirements it would send to `/settle`.
+   3. After 2.2 passes and still before calling `/settle`, confirm with the
+      receiver that the invoice was settled to the resource server's account for
+      at least `amount`, and otherwise reject the payment with
+      `exact_lnbtc_invoice_not_settled`. An invoice that is settled on the
+      shared node but not credited to this server's account does not satisfy
+      this check. The amount compared is the amount paid to the invoice; a fee
+      the operator deducts from the account does not reduce it.
+
+Requirement 2.2 stops a co-tenant's self-issued invoice. Requirement 2.3 stops a
+leaked preimage for an invoice the server issued but nobody paid. Neither is
+sufficient alone. These checks belong to the resource server, because only it
+knows which invoices it issued; facilitator validation is unchanged and still
+needs no receiver access.
+
+The server MUST NOT call `/settle` for a payment that 2.2 or 2.3 rejects, so a
+rejection never consumes the payment hash.
+
+A rejection under 2.3 is not final. A custodial receiver can credit the account
+shortly after the preimage is released, and the lookup itself can fail. The
+server MAY repeat the lookup for a short time before rejecting. The client may
+present the same proof again, subject to the expiry policy, and the server MUST
+repeat the lookup instead of reusing an earlier negative answer.
+
+The issued-hash store follows rules like those for the replay store:
+
+- It MUST be restart-durable. If a record cannot be written, the server MUST NOT
+  return the challenge.
+- It MUST be shared by every resource server instance that can receive the paid
+  retry. Otherwise a retry routed to another instance is wrongly rejected under
+  2.2.
+- A record MUST be kept until at least `invoice_end + skew`, as defined in
+  [Paid-but-expired Policy](#paid-but-expired-policy), so it remains while the
+  invoice can still settle. After that time it MAY be removed, and the server
+  MUST treat the payment hash as not issued even if the record remains.
+  Otherwise, once the replay entry is gone, an old record could vouch for a
+  later invoice that reuses its payment hash.
+
+These requirements protect against other users of the shared key, not against
+its operator. The operator signs the invoices, holds the funds, and answers the
+check in 2.3, so a resource server on a shared receiver trusts it. A dishonest
+or compromised operator is outside this threat model.
+
+#### Shared Receiver Test Vectors
+
+These cases apply to a resource server under requirement 2. They use the HTTP
+examples in [Request Binding Test Vectors](#request-binding-test-vectors). The
+server issued the example invoice for article A and recorded its payment hash,
+`a923c2c0e4fe77061ff1cb882171f6fdf926719bb7f5ffe2e05458438c52825e`, with the
+mainnet network, amount `25000`, article A's request hash, and `invoice_end`
+`1700000300`. Each case starts independently at validation time `1700000000`
+with an empty replay store. Unless stated otherwise, the request is for article
+A and the receiver reports the example invoice as settled to the server's
+account for 25000 millisatoshis.
+
+| Case | Expected result |
+|---|---|
+| Present the example proof. | The server calls `/settle`; settlement succeeds. |
+| Present another invoice signed by `payTo` for the same network, amount, and request hash, which the server did not issue, with that invoice's valid preimage. | `invalid_exact_lnbtc_invoice_not_issued`. The server does not call `/settle` and the replay store stays empty. Facilitator validation alone would accept this proof. |
+| Request article B at the same price. Present an invoice signed by `payTo` that reuses the example payment hash but commits to article B's request hash, with the example preimage. | `invalid_exact_lnbtc_invoice_not_issued`; the record holds article A's request hash. The server does not call `/settle`. Facilitator validation alone would accept this proof. |
+| The receiver reports the example invoice as unpaid. Present the example proof. | `exact_lnbtc_invoice_not_settled`. The server does not call `/settle` and the replay store stays empty. |
+| Continue the previous case: the receiver now reports the example invoice as settled to the server's account for 25000 millisatoshis. Present the same proof again. | The server calls `/settle`; settlement succeeds. |
+| At validation time `1700004000`, after a replay entry for the example payment hash may have been removed, present an invoice signed by `payTo` and created at that time that reuses the example payment hash with the same network, amount, and request hash, with the example preimage. | `invalid_exact_lnbtc_invoice_not_issued`; the record ended at `1700000360`. The server does not call `/settle`. Facilitator validation alone would accept this proof. |
 
 ### Invoice Issuance Denial of Service
 
