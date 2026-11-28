@@ -110,6 +110,37 @@ Servers should avoid using `id` alone as the storage key for authorization
 decisions when the same backend handles multiple paid resources. Scope the key
 by tenant, merchant, route, or facilitator account when those boundaries exist.
 
+The fingerprint suits deduplication that runs after the payment is verified,
+when the payment itself authenticates the request. A lookup that runs before
+verification, as response recovery does, binds the `id` to the exact
+`PaymentPayload` instead (see below).
+
+### Recovering a Lost Response
+
+A client that did not receive the response to a paid request MAY resend the
+identical `PaymentPayload`, with the same `id`, to recover it. Only a resource
+server can return that response; a facilitator never holds it. A resource
+server that returns stored responses for this purpose:
+
+- MUST look up the `id` before verifying the payment. Otherwise a resend whose
+  payment has already settled, or whose authorization has expired, fails
+  verification, and the client cannot learn how the original request ended.
+- MUST store the response exactly as it was sent, including the
+  `PAYMENT-RESPONSE` header, and SHOULD store it atomically with completing the
+  payment. A client reconciles its payment state from the settlement response,
+  so a stored body without that header leaves the original payment unresolved.
+- MUST return a stored response only for a `PaymentPayload` identical to the
+  one it was stored for. Before verification nothing in the request is
+  authenticated, so a key built from the fingerprint fields above would let
+  anyone who learns an `id` read another payer's response. A different payload
+  with the same `id` MUST be answered with `409 Conflict`.
+- MUST NOT process a resend while the original request is still being
+  processed. It SHOULD return the original's response once it is available,
+  or an error the client can retry.
+
+A resend that finds no stored response is processed like any other request,
+and the payment scheme's own replay protection decides the outcome.
+
 ---
 
 ## Responsibilities
