@@ -204,8 +204,18 @@ function createFacilitatorSigner(
 
     async waitForFinalization(txHash: string, timeoutMs = 60_000): Promise<TransactionInfo> {
       const hash = TransactionHash.fromHexString(txHash);
+      const deadline = Date.now() + timeoutMs;
 
-      await grpcClient.waitForTransactionFinalization(hash, timeoutMs);
+      // A node may not know a just-submitted transaction yet and answers NOT_FOUND; retry until the deadline.
+      for (;;) {
+        try {
+          await grpcClient.waitForTransactionFinalization(hash, Math.max(1, deadline - Date.now()));
+          break;
+        } catch (err) {
+          if ((err as { code?: string }).code !== "NOT_FOUND" || Date.now() >= deadline) throw err;
+          await new Promise(resolve => setTimeout(resolve, 1_000));
+        }
+      }
 
       const blockStatus = await grpcClient.getBlockItemStatus(hash);
 
