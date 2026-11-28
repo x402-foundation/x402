@@ -51,5 +51,8 @@ export * from "./policy";
 // Signer protocols
 export * from "./signer";
 
+// CIP-30 browser-wallet client signer (default method only)
+export * from "./cip30";
+
 // Utils
 export * from "./utils";

@@ -19,6 +19,17 @@ const NODE_TESTABLE_COVERAGE = [
   "src/svm/index.ts",
   "src/svm/paywall.ts",
   "src/svm/solana/transactionVersions.ts",
+  "src/cardano/index.ts",
+  "src/cardano/handler.ts",
+  "src/cardano/paywall.ts",
+  "src/cardano/protocolParams.ts",
+  "src/cardano/params.ts",
+  "src/cardano/clock.ts",
+  "src/cardano/format.ts",
+  "src/cardano/wallets.ts",
+  "src/cardano/payment.ts",
+  "src/cardano/signing.ts",
+  "src/cardano/messages.ts",
 ];
 
 export default defineConfig(({ mode }) => ({

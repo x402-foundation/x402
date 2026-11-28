@@ -41,3 +41,17 @@ vi.mock("./svm/template-loader", () => ({
 vi.mock("./avm/template-loader", () => ({
   getAvmTemplate: vi.fn(() => MOCK_AVM_TEMPLATE),
 }));
+
+const MOCK_CARDANO_TEMPLATE = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Cardano Paywall</title>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>`;
+
+vi.mock("./cardano/template-loader", () => ({
+  getCardanoTemplate: vi.fn(() => MOCK_CARDANO_TEMPLATE),
+}));
