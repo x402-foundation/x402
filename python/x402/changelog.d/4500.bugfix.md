@@ -1,0 +1,1 @@
+Voucher verify now re-reads channel state after 150ms, 400ms, and 1s while the balance cannot cover maxClaimableAmount, and keeps the last read when it is still short. A cached channel with a non-zero withdrawRequestedAt is no longer treated as fresh, so verify reads the chain while a withdrawal is pending.

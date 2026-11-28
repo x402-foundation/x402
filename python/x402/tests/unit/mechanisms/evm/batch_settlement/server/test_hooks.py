@@ -55,6 +55,7 @@ try:
         SettleContext,
         SettleResultContext,
         SkipSettleResult,
+        SkipVerifyResult,
         VerifyContext,
         VerifyResultContext,
     )
@@ -215,6 +216,48 @@ class TestHandleBeforeVerify:
         assert request_ctx is not None
         assert request_ctx.pending_id is not None
         assert request_ctx.reservation_committed is False
+
+    def _fresh_cached_voucher(self, *, withdraw_requested_at: int):
+        scheme = _scheme()
+        _seed_channel(
+            scheme,
+            charged_cumulative_amount="0",
+            balance="1000",
+            total_claimed="0",
+            withdraw_requested_at=withdraw_requested_at,
+            onchain_synced_at=int(time.time() * 1000),
+        )
+        payload = _voucher_payload(max_claimable="100")
+        requirements = _requirements(amount="100")
+        requirements.extra = {"receiverAuthorizer": AUTHORIZER}
+        ctx = VerifyContext(payment_payload=payload, requirements=requirements)
+        return scheme, payload, ctx
+
+    def test_fresh_cached_channel_skips_facilitator_verify(self, monkeypatch):
+        monkeypatch.setattr(
+            "x402.mechanisms.evm.batch_settlement.server.verify._verify_local_voucher_signature",
+            lambda *_args, **_kwargs: True,
+        )
+        scheme, payload, ctx = self._fresh_cached_voucher(withdraw_requested_at=0)
+        out = handle_before_verify(scheme, ctx)
+        assert isinstance(out, SkipVerifyResult)
+        assert out.result.is_valid is True
+        assert out.result.extra["balance"] == "1000"
+        request_ctx = scheme.read_request_context(payload)
+        assert request_ctx is not None
+        assert request_ctx.local_verify is True
+
+    def test_pending_withdrawal_does_not_skip_facilitator_verify(self, monkeypatch):
+        monkeypatch.setattr(
+            "x402.mechanisms.evm.batch_settlement.server.verify._verify_local_voucher_signature",
+            lambda *_args, **_kwargs: True,
+        )
+        scheme, payload, ctx = self._fresh_cached_voucher(withdraw_requested_at=77)
+        out = handle_before_verify(scheme, ctx)
+        assert out is None
+        request_ctx = scheme.read_request_context(payload)
+        assert request_ctx is not None
+        assert request_ctx.local_verify is False
 
     def test_snapshot_is_bound_to_request_network_without_mutating_storage(self):
         scheme = _scheme()

@@ -123,6 +123,9 @@ def _build_provisional_channel(
 
 
 def _is_onchain_state_fresh(channel: Channel, ttl_ms: int, now_ms: int) -> bool:
+    # finalizeWithdraw can lower the balance once withdrawDelay elapses.
+    if channel.withdraw_requested_at != 0:
+        return False
     return channel.onchain_synced_at is not None and now_ms - channel.onchain_synced_at <= ttl_ms
 
 
