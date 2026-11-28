@@ -735,6 +735,19 @@ class TestIsValidIconUrl:
         assert _is_valid_icon_url("http://0x7f000001/icon.png") is False
         assert _is_valid_icon_url("http://0X7F000001/icon.png") is False
 
+    def test_rejects_short_and_octal_ipv4_forms(self) -> None:
+        for url in (
+            "http://127.1/icon.png",
+            "http://0177.0.0.1/icon.png",
+            "http://0x7f.0.0.1/icon.png",
+        ):
+            assert _is_valid_icon_url(url) is False, url
+
+    def test_rejects_trailing_dot_loopback_hosts(self) -> None:
+        assert _is_valid_icon_url("http://localhost./icon.png") is False
+        assert _is_valid_icon_url("http://127.0.0.1./icon.png") is False
+        assert _is_valid_icon_url("https://cdn.example.com./icon.png") is True
+
     def test_rejects_localhost(self) -> None:
         assert _is_valid_icon_url("http://localhost/icon.png") is False
         assert _is_valid_icon_url("http://LOCALHOST/icon.png") is False

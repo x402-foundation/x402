@@ -687,7 +687,8 @@ func isValidIconUrl(s string) bool {
 	if err != nil {
 		return false
 	}
-	host = strings.ToLower(asciiHost)
+	// A trailing dot names the same host ("localhost." resolves like "localhost").
+	host = strings.TrimSuffix(strings.ToLower(asciiHost), ".")
 	if host == "" {
 		return false
 	}
@@ -705,10 +706,13 @@ func isValidIconUrl(s string) bool {
 		// Defensive: any colon-bearing host after IPv6 bracket-stripping.
 		return false
 	}
-	if allDigitsRegex.MatchString(host) {
+	// Resolvers parse a host whose last label is numeric as IPv4, including
+	// short and octal/hex forms such as "127.1", "0177.0.0.1" and "0x7f.1".
+	lastLabel := host[strings.LastIndex(host, ".")+1:]
+	if allDigitsRegex.MatchString(lastLabel) {
 		return false
 	}
-	if hexLiteralRegex.MatchString(host) {
+	if hexLiteralRegex.MatchString(lastLabel) {
 		return false
 	}
 	return true

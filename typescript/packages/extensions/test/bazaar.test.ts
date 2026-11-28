@@ -2424,6 +2424,12 @@ describe("Bazaar Discovery Extension", () => {
       expect(isValidIconUrl("http://0X7F000001/icon.png")).toBe(false);
     });
 
+    it("rejects trailing-dot loopback hosts", () => {
+      expect(isValidIconUrl("http://localhost./icon.png")).toBe(false);
+      expect(isValidIconUrl("http://127.0.0.1./icon.png")).toBe(false);
+      expect(isValidIconUrl("https://cdn.example.com./icon.png")).toBe(true);
+    });
+
     it("rejects localhost", () => {
       expect(isValidIconUrl("http://localhost/icon.png")).toBe(false);
       expect(isValidIconUrl("http://LOCALHOST/icon.png")).toBe(false);

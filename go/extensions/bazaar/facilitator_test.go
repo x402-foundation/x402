@@ -303,6 +303,18 @@ func TestIsValidIconUrl(t *testing.T) {
 		assert.False(t, isValidIconUrl("http://0X7F000001/icon.png"))
 	})
 
+	t.Run("rejects short and octal IPv4 forms", func(t *testing.T) {
+		for _, u := range []string{"http://127.1/icon.png", "http://0177.0.0.1/icon.png", "http://0x7f.0.0.1/icon.png"} {
+			assert.False(t, isValidIconUrl(u), u)
+		}
+	})
+
+	t.Run("rejects trailing-dot loopback hosts", func(t *testing.T) {
+		assert.False(t, isValidIconUrl("http://localhost./icon.png"))
+		assert.False(t, isValidIconUrl("http://127.0.0.1./icon.png"))
+		assert.True(t, isValidIconUrl("https://cdn.example.com./icon.png"))
+	})
+
 	t.Run("rejects localhost", func(t *testing.T) {
 		assert.False(t, isValidIconUrl("http://localhost/icon.png"))
 		assert.False(t, isValidIconUrl("http://LOCALHOST/icon.png"))
