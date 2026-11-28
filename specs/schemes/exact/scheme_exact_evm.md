@@ -78,7 +78,8 @@ The `payload` field must contain:
 2.  **Verify** the `client` has sufficient balance of the `asset`.
 3.  **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`.
 4.  **Verify** the Token and Network match the requirement.
-5.  **Simulate** `token.transferWithAuthorization(...)` to ensure success.
+5.  **Verify** `requirements.asset` belongs to the network configuration's `allowed_assets` whitelist for the configured `network` (Facilitator Asset Allowlist). If the asset is not whitelisted, **reject immediately** — return `402 Payment Required` and do not proceed to settlement.
+6.  **Simulate** `token.transferWithAuthorization(...)` to ensure success.
 
 ### Phase 3: Settlement Logic
 
@@ -191,8 +192,9 @@ The verifier must execute these checks in order:
 5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
 
 6.  **Verify** the Token and Network match the requirement.
+7.  **Verify** `requirements.asset` belongs to the network configuration's `allowed_assets` whitelist for the configured `network` (Facilitator Asset Allowlist). If the asset is not whitelisted, **reject immediately** — return `402 Payment Required` and do not proceed to settlement.
 
-7.  **Simulation (Recommended):**
+8.  **Simulation (Recommended):**
 
     Simulation is recommended but implementations may defer to re-verify-before-settle.
 
@@ -293,11 +295,13 @@ Unlike EIP-3009 and Permit2, ERC-7710 verification is performed entirely through
 
 The facilitator:
 
-1. **Constructs** the `executionCallData` encoding an ERC-20 `transfer(payTo, amount)` call for the required payment.
+1. **Verify** `requirements.asset` belongs to the network configuration's `allowed_assets` whitelist for the configured `network` (Facilitator Asset Allowlist). If the asset is not whitelisted, **reject immediately** without simulation.
 
-2. **Constructs** the `mode` appropriate for the execution (typically `0x00...` for single call mode per ERC-7579).
+2. **Constructs** the `executionCallData` encoding an ERC-20 `transfer(payTo, amount)` call for the required payment.
 
-3. **Simulates** `delegationManager.redeemDelegations([permissionContext], [mode], [executionCallData])` to verify:
+3. **Constructs** the `mode` appropriate for the execution (typically `0x00...` for single call mode per ERC-7579).
+
+4. **Simulates** `delegationManager.redeemDelegations([permissionContext], [mode], [executionCallData])` to verify:
    - The delegation is valid and authorizes the intended transfer.
    - The delegator has sufficient balance of the asset.
    - The transaction will succeed when executed.
