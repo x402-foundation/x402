@@ -351,3 +351,22 @@ func cloneExtra(extra map[string]any) map[string]any {
 	}
 	return cloned
 }
+
+func TestSchemeStateJSONNumbers(t *testing.T) {
+	for _, in := range []json.Number{"60.0", "6e1"} {
+		got, ok := extraInt(in)
+		require.True(t, ok, string(in))
+		require.Equal(t, 60, got, string(in))
+	}
+	for _, in := range []json.Number{"1.5", "9223372036854775808"} {
+		_, ok := extraInt(in)
+		require.False(t, ok, string(in))
+	}
+
+	state, ok := parseChannelState(map[string]any{"channelId": "c", "withdrawRequestedAt": json.Number("1700000000.0")})
+	require.True(t, ok)
+	require.EqualValues(t, 1700000000, state.WithdrawRequestedAt)
+	voucher, ok := parseVoucherState(map[string]any{"signature": "s", "expiresAt": json.Number("1.9e9")})
+	require.True(t, ok)
+	require.EqualValues(t, 1900000000, voucher.ExpiresAt)
+}

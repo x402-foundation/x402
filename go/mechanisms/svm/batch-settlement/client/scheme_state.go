@@ -1026,11 +1026,11 @@ func extraInt(value any) (int, bool) {
 		}
 		return int(typed), true
 	case json.Number:
-		parsed, err := typed.Int64()
-		if err != nil {
+		i, ok := x402.ParseJSONInteger(typed)
+		if !ok || !i.IsInt64() {
 			return 0, false
 		}
-		return int(parsed), true
+		return extraInt(i.Int64())
 	default:
 		return 0, false
 	}
@@ -1068,7 +1068,7 @@ func parseWireVoucher(value any) (batchsettlement.BatchVoucher, bool) {
 	if !ok || !batchsettlement.IsBatchVoucher(record) {
 		return batchsettlement.BatchVoucher{}, false
 	}
-	encoded, err := json.Marshal(record)
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(record))
 	if err != nil {
 		return batchsettlement.BatchVoucher{}, false
 	}
@@ -1083,7 +1083,7 @@ func parseChannelState(value any) (batchsettlement.BatchChannelState, bool) {
 	if value == nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return batchsettlement.BatchChannelState{}, false
 	}
@@ -1098,7 +1098,7 @@ func parseVoucherState(value any) (batchsettlement.BatchVoucherState, bool) {
 	if value == nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(x402.NormalizeJSONNumbers(value))
 	if err != nil {
 		return batchsettlement.BatchVoucherState{}, false
 	}

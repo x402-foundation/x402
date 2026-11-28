@@ -2850,6 +2850,9 @@ func TestMapStringField(t *testing.T) {
 	if got := mapStringField(m, "c", "d"); got != "d" {
 		t.Fatalf("missing = %s", got)
 	}
+	if got := mapStringField(map[string]interface{}{"n": json.Number("9007199254740993")}, "n", "d"); got != "9007199254740993" {
+		t.Fatalf("json.Number = %s", got)
+	}
 }
 
 func TestMapIntField(t *testing.T) {
@@ -2871,6 +2874,38 @@ func TestMapIntField(t *testing.T) {
 	}
 	if got := mapIntField(m, "missing", 5); got != 5 {
 		t.Fatalf("missing = %d", got)
+	}
+	if got := mapIntField(map[string]interface{}{"n": json.Number("7")}, "n", -1); got != 7 {
+		t.Fatalf("json.Number = %d", got)
+	}
+	if got := mapIntField(map[string]interface{}{"n": json.Number("x")}, "n", -1); got != -1 {
+		t.Fatalf("bad json.Number fallback = %d", got)
+	}
+}
+
+func TestParseSettleChannelStateJSONNumber(t *testing.T) {
+	cs, err := parseSettleChannelState(map[string]interface{}{
+		"channelState": map[string]interface{}{
+			"balance":             json.Number("9007199254740991"),
+			"totalClaimed":        json.Number("12.0"),
+			"withdrawRequestedAt": json.Number("1.7e9"),
+			"refundNonce":         json.Number("3"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.balance.String() != "9007199254740991" || cs.totalClaimed.String() != "12" ||
+		cs.withdrawAt != 1700000000 || cs.refundNonce.String() != "3" {
+		t.Fatalf("got %+v", cs)
+	}
+	// Same canonical rule as float64: non-negative safe integers only.
+	for _, bad := range []json.Number{"9007199254740992", "-1", "1.5"} {
+		if _, err := parseSettleChannelState(map[string]interface{}{
+			"channelState": map[string]interface{}{"balance": bad},
+		}); err == nil {
+			t.Fatalf("balance %s accepted", bad)
+		}
 	}
 }
 

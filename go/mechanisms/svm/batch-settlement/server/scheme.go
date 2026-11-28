@@ -1609,8 +1609,11 @@ func asRequirementInt(value any) (int64, bool) {
 		}
 		return int64(typed), true
 	case json.Number:
-		parsed, err := typed.Int64()
-		return parsed, err == nil
+		i, ok := x402.ParseJSONInteger(typed)
+		if !ok || !i.IsInt64() {
+			return 0, false
+		}
+		return i.Int64(), true
 	default:
 		return 0, false
 	}

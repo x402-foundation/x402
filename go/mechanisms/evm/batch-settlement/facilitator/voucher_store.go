@@ -2,6 +2,7 @@ package facilitator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -986,6 +987,11 @@ func optionalUintString(value interface{}) *string {
 			s := fmt.Sprintf("%d", int(v))
 			return &s
 		}
+	case json.Number:
+		if i, ok := x402.ParseJSONInteger(v); ok && i.Sign() >= 0 {
+			s := i.String()
+			return &s
+		}
 	}
 	return nil
 }
@@ -1433,6 +1439,12 @@ func extraNumber(v interface{}) (int, bool) {
 		return int(n), true
 	case float64:
 		return int(n), true
+	case json.Number:
+		i, ok := x402.ParseJSONInteger(n)
+		if !ok || !i.IsInt64() {
+			return 0, false
+		}
+		return int(i.Int64()), true
 	case string:
 		if !atomicAmountPattern.MatchString(n) {
 			return 0, false

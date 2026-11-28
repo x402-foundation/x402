@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 	"github.com/x402-foundation/x402/go/v2/types"
 )
@@ -135,11 +136,11 @@ func JSONNumberToUint64(value interface{}) (uint64, bool) {
 	case uint64:
 		return v, true
 	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
+		i, ok := x402.ParseJSONInteger(v)
+		if !ok || i.Sign() < 0 || !i.IsUint64() {
 			return 0, false
 		}
-		return nonNegative(n)
+		return i.Uint64(), true
 	default:
 		return 0, false
 	}

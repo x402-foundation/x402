@@ -2,6 +2,8 @@ package svm
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -164,6 +166,10 @@ func TestResolveTransactionVersion(t *testing.T) {
 		{name: "[1] alone selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{float64(1)}}, want: v1},
 		{name: "[] is unsupported", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{}}, wantErr: true},
 		{name: "in-process []int{1} selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []int{1}}, want: v1},
+		{name: "json.Number [1,0] selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{json.Number("1"), json.Number("0")}}, want: v1},
+		{name: "json.Number [1.0] selects v1", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{json.Number("1.0")}}, want: v1},
+		{name: "json.Number [2,0] fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{json.Number("2"), json.Number("0")}}, wantErr: true},
+		{name: "json.Number near-integer fails closed", extra: map[string]interface{}{ExtraTransactionVersions: []interface{}{json.Number("1.0000000000000000001")}}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -176,6 +182,23 @@ func TestResolveTransactionVersion(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, test.want, version)
 		})
+	}
+}
+
+func TestParseHintUint64JSONNumber(t *testing.T) {
+	valid := map[json.Number]uint64{
+		"12345":                12345,
+		"9007199254740993.0":   9007199254740993,
+		"18446744073709551615": math.MaxUint64,
+	}
+	for value, want := range valid {
+		got, ok := parseHintUint64(value)
+		assert.True(t, ok, string(value))
+		assert.Equal(t, want, got, string(value))
+	}
+	for _, value := range []json.Number{"-1", "18446744073709551616"} {
+		_, ok := parseHintUint64(value)
+		assert.False(t, ok, string(value))
 	}
 }
 

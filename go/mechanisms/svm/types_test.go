@@ -1,7 +1,10 @@
 package svm
 
 import (
+	"encoding/json"
 	"testing"
+
+	"github.com/x402-foundation/x402/go/v2/types"
 )
 
 func TestExactSvmPayloadV1Structure(t *testing.T) {
@@ -83,5 +86,50 @@ func TestPayloadFromMapRequiresTransaction(t *testing.T) {
 func TestUptoPayloadFromMapRequiresFields(t *testing.T) {
 	if _, err := UptoPayloadFromMap(map[string]interface{}{"from": "x"}); err == nil {
 		t.Fatal("expected error for incomplete upto payload")
+	}
+}
+
+func uptoPayloadFromJSON(t *testing.T, expiresAt string) (*UptoSvmPayload, error) {
+	t.Helper()
+	body := `{"x402Version":2,"accepted":{"scheme":"upto","network":"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1","amount":"1","asset":"a","payTo":"b","maxTimeoutSeconds":60},` +
+		`"payload":{"from":"f","maxAmount":"1","expiresAt":` + expiresAt + `,"validAfter":1.0e0,"nonce":"1","openSlot":"5","channelId":"c","deposit":"1","authorizedSigner":"s","openTransaction":"dGVzdA=="}}`
+	p, err := types.ToPaymentPayload([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return UptoPayloadFromMap(p.Payload)
+}
+
+func TestUptoPayloadFromMapIntegralDecimals(t *testing.T) {
+	for _, in := range []string{"1900000000", "1900000000.0", "1.9e9"} {
+		p, err := uptoPayloadFromJSON(t, in)
+		if err != nil {
+			t.Fatalf("expiresAt %s: %v", in, err)
+		}
+		if p.ExpiresAt != 1900000000 || p.ValidAfter != 1 {
+			t.Fatalf("expiresAt %s decoded as %d / %d", in, p.ExpiresAt, p.ValidAfter)
+		}
+	}
+	if _, err := uptoPayloadFromJSON(t, "1900000000.5"); err == nil {
+		t.Fatal("fractional expiresAt accepted")
+	}
+}
+
+func TestUptoNumberHelpersJSONNumber(t *testing.T) {
+	for in, want := range map[json.Number]string{"60.0": "60", "9007199254740993.0": "9007199254740993"} {
+		if got, ok := uptoOpenSlotString(in); !ok || got != want {
+			t.Fatalf("uptoOpenSlotString(%q) = (%q, %v), want %q", in, got, ok, want)
+		}
+	}
+	if got, ok := uptoOpenSlotString(json.Number("-1")); ok {
+		t.Fatalf("uptoOpenSlotString(-1) = %q, want ok=false", got)
+	}
+	if !jsonNumberIsInt64(json.Number("6e1")) {
+		t.Fatal("jsonNumberIsInt64(6e1) = false")
+	}
+	for _, bad := range []json.Number{"1.5", "9223372036854775808"} {
+		if jsonNumberIsInt64(bad) {
+			t.Fatalf("jsonNumberIsInt64(%q) = true", bad)
+		}
 	}
 }

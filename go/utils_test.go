@@ -1,6 +1,7 @@
 package x402
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 )
@@ -481,5 +482,54 @@ func TestNumberToDecimalString(t *testing.T) {
 	}
 	if got := NumberToDecimalString(0); got != "0" {
 		t.Errorf("NumberToDecimalString(0) = %q, want \"0\"", got)
+	}
+}
+
+func TestParseJSONInteger(t *testing.T) {
+	valid := []struct {
+		in   json.Number
+		want string
+	}{
+		{"60", "60"},
+		{"60.0", "60"},
+		{"6e1", "60"},
+		{"6E+1", "60"},
+		{"600e-1", "60"},
+		{"-0", "0"},
+		{"-60", "-60"},
+		{"9007199254740993", "9007199254740993"},
+		{"9007199254740993.0", "9007199254740993"},
+		{"18446744073709551616", "18446744073709551616"},
+		{"1.8446744073709551615e19", "18446744073709551615"},
+	}
+	for _, tc := range valid {
+		got, ok := ParseJSONInteger(tc.in)
+		if !ok || got.String() != tc.want {
+			t.Errorf("ParseJSONInteger(%q) = (%v, %v), want %s", tc.in, got, ok, tc.want)
+		}
+	}
+	for _, in := range []json.Number{"60.5", "60.0000000000000000001", "1e-1", "", "abc", "0x10", "1/2", "01", "1e1000000000", "1e-1000000000"} {
+		if got, ok := ParseJSONInteger(in); ok {
+			t.Errorf("ParseJSONInteger(%q) = %v, want rejected", in, got)
+		}
+	}
+}
+
+func TestNormalizeJSONNumbers(t *testing.T) {
+	in := map[string]any{
+		"a": json.Number("60.0"),
+		"b": []any{json.Number("6e1"), map[string]any{"c": json.Number("60.5")}},
+		"s": "60.0",
+	}
+	out := NormalizeJSONNumbers(in).(map[string]any)
+	if out["a"] != json.Number("60") || out["s"] != "60.0" {
+		t.Fatalf("got %#v", out)
+	}
+	arr := out["b"].([]any)
+	if arr[0] != json.Number("60") || arr[1].(map[string]any)["c"] != json.Number("60.5") {
+		t.Fatalf("nested %#v", arr)
+	}
+	if in["a"] != json.Number("60.0") || in["b"].([]any)[0] != json.Number("6e1") {
+		t.Fatalf("input modified: %#v", in)
 	}
 }

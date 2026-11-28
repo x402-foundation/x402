@@ -9,6 +9,7 @@ import (
 
 	solana "github.com/gagliardetto/solana-go"
 
+	x402 "github.com/x402-foundation/x402/go/v2"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels"
 	"github.com/x402-foundation/x402/go/v2/mechanisms/svm/paymentchannels/generated"
 )
@@ -603,8 +604,11 @@ func asInt64(value any) (int64, bool) {
 		}
 		return int64(typed), true
 	case json.Number:
-		parsed, err := typed.Int64()
-		return parsed, err == nil
+		i, ok := x402.ParseJSONInteger(typed)
+		if !ok || !i.IsInt64() {
+			return 0, false
+		}
+		return i.Int64(), true
 	default:
 		return 0, false
 	}

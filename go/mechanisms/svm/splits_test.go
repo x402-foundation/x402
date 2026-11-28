@@ -212,6 +212,8 @@ func TestGetSplitCapabilities_FailsClosed(t *testing.T) {
 		GetSplitCapabilities(map[string]interface{}{"maxSplits": 3, "ataCreationSponsored": true}))
 	assert.Equal(t, SplitCapabilities{MaxSplits: 3}, GetSplitCapabilities(map[string]interface{}{"maxSplits": float64(3)}))
 	assert.Equal(t, SplitCapabilities{MaxSplits: 8}, GetSplitCapabilities(map[string]interface{}{"maxSplits": json.Number("20")}))
+	assert.Equal(t, SplitCapabilities{MaxSplits: 3}, GetSplitCapabilities(map[string]interface{}{"maxSplits": json.Number("3.0")}))
+	assert.Equal(t, SplitCapabilities{}, GetSplitCapabilities(map[string]interface{}{"maxSplits": json.Number("3.0000000000000000001")}))
 }
 
 func TestAssertWithinCapabilities(t *testing.T) {
