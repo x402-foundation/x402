@@ -194,6 +194,19 @@ Algorand `network` values **MUST** use CAIP-2 identifiers in the `algorand` name
 
 See the [Algorand CAIP-2 namespace profile](https://namespaces.chainagnostic.org/algorand/caip2) for the encoding rules.
 
+### Legacy Identifiers
+
+Early implementations used the full base64 genesis hash as the reference. These values are not valid CAIP-2 and are deprecated:
+
+| Network | Legacy `network` value |
+| ------- | ---------------------- |
+| Mainnet | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
+| Testnet | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` |
+
+Implementations **MUST NOT** choose a legacy value as a `network`: a resource server in the payment requirements it issues, or a facilitator in the kinds it advertises as supported.
+
+A receiver **SHOULD** reject a message whose `network` is a legacy value. A receiver that still accepts legacy values during a migration **MAY** treat one as equal to its canonical counterpart when matching networks, but it **MUST NOT** change the `network` value of a message it received.
+
 ## Additional Considerations
 
 ### Assets
