@@ -554,19 +554,22 @@ For custom implementations:
       createSIWxPayload,
       encodeSIWxHeader,
     } from '@x402/extensions/sign-in-with-x';
+    import { isSolanaSigner } from '@x402/extensions/sign-in-with-x/solana';
 
-    // 1. Get extension and network from 402 response
+    // 1. Get extension from 402 response
     const paymentRequired = await response.json();
     const extension = paymentRequired.extensions['sign-in-with-x'];
-    const paymentNetwork = paymentRequired.accepts[0].network; // e.g., "eip155:8453"
 
-    // 2. Find matching chain in supportedChains
+    // 2. Find a chain that matches the signer's signature type
+    // Match by signer type (not by accepts[0].network) so this works on
+    // auth-only routes (accepts: []) and multi-chain servers.
+    const expectedSignatureType = isSolanaSigner(signer) ? 'ed25519' : 'eip191';
     const matchingChain = extension.supportedChains.find(
-      chain => chain.chainId === paymentNetwork
+      (chain: { type: string }) => chain.type === expectedSignatureType
     );
 
     if (!matchingChain) {
-      throw new Error('Chain not supported');
+      throw new Error('No chain compatible with this signer type');
     }
 
     // 3. Build complete info with selected chain
