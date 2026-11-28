@@ -89,3 +89,28 @@ export function isUptoSvmPayload(payload: Record<string, unknown>): payload is U
     (payload.type === undefined || payload.type === "deposit" || payload.type === "claim")
   );
 }
+
+/**
+ * Auth-Capture SVM payload structure.
+ *
+ * For the client's authorize payload, carries a base64-encoded partially signed
+ * transaction containing an `Approve` instruction, plus the delegate address.
+ * For facilitator-relayed lifecycle settles (capture/void/refund), carries the
+ * operation type and settlement parameters.
+ */
+export type AuthCaptureSvmPayloadV2 = {
+  /** Base64 encoded Solana transaction (authorize: Approve; void: pre-signed Revoke) */
+  transaction?: string;
+  /** The facilitator's delegate authority (base58 address) */
+  delegate?: string;
+  /** Lifecycle operation type: capture, void, or refund */
+  type?: "capture" | "void" | "refund";
+  /** Amount to capture or refund, in atomic units */
+  amount?: string;
+  /** Fee amount to take at capture, in atomic units */
+  feeAmount?: string;
+  /** Fee recipient address */
+  feeReceiver?: string;
+  /** Merchant signature for refund (base58-encoded Ed25519) */
+  merchantSignature?: string;
+};
