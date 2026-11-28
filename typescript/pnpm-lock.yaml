@@ -151,6 +151,9 @@ importers:
       eslint-plugin-sonarjs:
         specifier: ^3.0.7
         version: 3.0.7(eslint@9.34.0)
+      jcs-admit:
+        specifier: 0.1.1
+        version: 0.1.1
       prettier:
         specifier: 3.5.2
         version: 3.5.2
@@ -7723,6 +7726,10 @@ packages:
     resolution: {integrity: sha512-VfJ9t1YLwacIubLhONk0KFeosUBwstRWQ0IRT1KDjEjnVnSOVHC3uwugyV7L0c7R9lpVyrUGT2XWiBA1UTtpyg==}
     engines: {node: '>=8'}
     hasBin: true
+
+  jcs-admit@0.1.1:
+    resolution: {integrity: sha512-8NUbUb2h36n3nnV/JEnqhtJzEsra0Gnv/0G4SspE4CpHo3ADpcvcMbBPmyEUTtHunTtwMDp9KxzgcI66E95/og==}
+    engines: {node: '>=22.14.0'}
 
   jose@5.10.0:
     resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
@@ -17515,6 +17522,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  jcs-admit@0.1.1: {}
 
   jose@5.10.0: {}
 
