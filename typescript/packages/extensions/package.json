@@ -86,6 +86,16 @@
         "default": "./dist/cjs/sign-in-with-x/index.js"
       }
     },
+    "./sign-in-with-x/evm": {
+      "import": {
+        "types": "./dist/esm/sign-in-with-x/evm/index.d.mts",
+        "default": "./dist/esm/sign-in-with-x/evm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/sign-in-with-x/evm/index.d.ts",
+        "default": "./dist/cjs/sign-in-with-x/evm/index.js"
+      }
+    },
     "./offer-receipt": {
       "import": {
         "types": "./dist/esm/offer-receipt/index.d.mts",
