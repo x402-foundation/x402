@@ -240,6 +240,15 @@ client
   });
 ```
 
+Each `createPaymentPayload` call shares one context object across its before,
+after, and failure hooks. Use that object as a `WeakMap` key to correlate
+reservations across hooks, including concurrent calls using the same requirements.
+The context gains `paymentPayload` after creation and `error` on failure.
+
+When a before hook aborts or throws, failure hooks run for cleanup. Recovery
+results and cleanup errors cannot override that rejection, and all failure hooks
+are notified. Failures after the before hooks complete retain normal recovery.
+
 ### Server Hooks
 
 ```typescript
