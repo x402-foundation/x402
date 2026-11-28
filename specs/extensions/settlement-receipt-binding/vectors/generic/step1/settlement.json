@@ -1,0 +1,11 @@
+{
+  "actionRef": "sha256:8dbf7695750975ac7aa702fccad8f7c5f15b71e97828cf484c8934b657fa301d",
+  "actionType": "purchase.fulfill",
+  "agentId": "agent:sui-gasless-crosscheck",
+  "paymentHash": "sha256:dd2ec77abc528a65117347a4f5809fac5942339ae0b40626679db171fc58d2f4",
+  "schema": "x402.settlement/v0",
+  "scope": "x402:sui-exact-gasless/asset:USDC/amount:10000/payTo:0xf0dab0db",
+  "seq": 1,
+  "terminal": true,
+  "timestampMs": 1782987830704
+}

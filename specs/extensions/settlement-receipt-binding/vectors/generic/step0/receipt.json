@@ -1,0 +1,28 @@
+{
+  "alg": "ES256",
+  "backLink": {
+    "attestationDigest": "sha256:9d519fe78479af25de30e326a963a8eb02ca968e8861e15e9701f960aadeb72e",
+    "attestationNonce": "x402-srb-generic-step0"
+  },
+  "decisionDerived": {
+    "decidedAt": "2026-07-02T10:23:50.704Z",
+    "decision": "allow",
+    "evidenceRef": {
+      "canonicalization": "JCS",
+      "digest": "sha256:e5756400ce04cce57d0e47a33dacedf5ef2de29b610b852e49ea760097a53f19",
+      "ref": "x402:action_ref/sha256:a0f241e92370e24eed3e0575c3258cb1d599b6308946bbf58b937cf0b1d493c3",
+      "schema": "x402.settlement/v0"
+    },
+    "reason": "x402 payment verified, settlement in progress"
+  },
+  "issuerAsserted": {
+    "alg": "ES256",
+    "iat": "2026-07-02T10:23:50.704Z",
+    "iss": "issuer://x402-srb-conformance",
+    "nonce": "50ac79e3cb1f14865419b172558cad28",
+    "secretVersion": "v1",
+    "sub": "agent:sui-gasless-crosscheck"
+  },
+  "signature": "4e7d00a3e3e11ba600ae9a2462eb43216741a7053f5b189ee2fa1085882b4fa4707403c2975b0d67cd7027f1ebae3ae73bceef791aa206387c925ba169298291",
+  "version": 1
+}
