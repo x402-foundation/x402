@@ -270,6 +270,38 @@ describe("Concordium Signer", () => {
       );
     });
 
+    it("retries when the node does not know the transaction yet", async () => {
+      mockGrpcClient.waitForTransactionFinalization
+        .mockRejectedValueOnce(
+          Object.assign(new Error("transaction not found."), { code: "NOT_FOUND" }),
+        )
+        .mockResolvedValueOnce(undefined);
+      mockGrpcClient.getBlockItemStatus.mockResolvedValue({ status: "finalized" });
+      const signer = toConcordiumFacilitatorSigner(
+        SPONSOR_ADDRESS,
+        { kind: "signer" } as any,
+        createGrpcConfig(),
+      );
+
+      const info = await signer.waitForFinalization(TX_HASH);
+      expect(mockGrpcClient.waitForTransactionFinalization).toHaveBeenCalledTimes(2);
+      expect(info.status).toBe("finalized");
+    });
+
+    it("does not retry other finalization errors", async () => {
+      mockGrpcClient.waitForTransactionFinalization.mockRejectedValueOnce(
+        new Error("Function timed out."),
+      );
+      const signer = toConcordiumFacilitatorSigner(
+        SPONSOR_ADDRESS,
+        { kind: "signer" } as any,
+        createGrpcConfig(),
+      );
+
+      await expect(signer.waitForFinalization(TX_HASH)).rejects.toThrow("Function timed out.");
+      expect(mockGrpcClient.waitForTransactionFinalization).toHaveBeenCalledTimes(1);
+    });
+
     it("returns minimal info when the block item has no outcome summary", async () => {
       mockGrpcClient.getBlockItemStatus.mockResolvedValue({ status: "committed" });
       const signer = toConcordiumFacilitatorSigner(
