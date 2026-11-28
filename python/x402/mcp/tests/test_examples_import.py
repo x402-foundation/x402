@@ -26,7 +26,7 @@ def _load_example(
     monkeypatch.setenv("EVM_PRIVATE_KEY", "0x" + "11" * 32)
 
     path = directory / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"_example_{directory.name}_{name}", path)
+    spec = importlib.util.spec_from_file_location(f"_example_{name}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)
