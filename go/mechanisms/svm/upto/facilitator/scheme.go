@@ -433,7 +433,7 @@ func uptoClaimCacheKey(network, channelId string) string {
 // previously recorded under cacheKey by a broadcast that couldn't confirm in
 // time, shared by the deposit and claim fast paths in settleDeposit and
 // settleClaim. hit is false when there is nothing to reconcile (no store
-// configured or no entry), telling the caller to fall through to full
+// configured or no entry). Only hit=false with err=nil permits full
 // validation; hit is true whenever a reconciliation attempt was made,
 // regardless of whether it succeeded.
 func (f *UptoSvmScheme) reconcilePendingUpto(
@@ -447,7 +447,10 @@ func (f *UptoSvmScheme) reconcilePendingUpto(
 	if f.pendingStore == nil {
 		return nil, false, nil
 	}
-	sigStr, ok, _ := f.pendingStore.Get(ctx, cacheKey)
+	sigStr, ok, err := f.pendingStore.Get(ctx, cacheKey)
+	if err != nil {
+		return nil, false, err
+	}
 	if !ok {
 		return nil, false, nil
 	}
@@ -539,7 +542,7 @@ func (f *UptoSvmScheme) settleDeposit(
 	// even though the original payment is (or will be) fine.
 	if parseErr == nil {
 		depositKey := uptoDepositCacheKey(string(requirements.Network), uptoPayload.ChannelId)
-		if resp, hit, err := f.reconcilePendingUpto(ctx, depositKey, uptoPayload.From, uptoPayload.MaxAmount, network, string(requirements.Network)); hit {
+		if resp, hit, err := f.reconcilePendingUpto(ctx, depositKey, uptoPayload.From, uptoPayload.MaxAmount, network, string(requirements.Network)); err != nil || hit {
 			return resp, err
 		}
 	}
@@ -718,7 +721,7 @@ func (f *UptoSvmScheme) settleClaim(
 	// fetchAndVerifyOpenChannel's "channel is not open" check even though the
 	// original payment succeeded.
 	settlementKey := uptoClaimCacheKey(string(requirements.Network), uptoPayload.ChannelId)
-	if resp, hit, err := f.reconcilePendingUpto(ctx, settlementKey, uptoPayload.From, strconv.FormatUint(actual, 10), network, string(requirements.Network)); hit {
+	if resp, hit, err := f.reconcilePendingUpto(ctx, settlementKey, uptoPayload.From, strconv.FormatUint(actual, 10), network, string(requirements.Network)); err != nil || hit {
 		return resp, err
 	}
 

@@ -1,0 +1,3 @@
+kind: fixed
+body: Propagate SVM exact and upto pending-settlement store read errors before reconciliation or new settlement work, preserving pending transactions for recovery.
+time: 2026-10-25T17:30:00.000000+05:30
