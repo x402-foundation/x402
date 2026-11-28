@@ -4,7 +4,7 @@ import { type PaymentRequired } from "@x402/core/types";
 import { type AxiosInstance, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 type X402RetryConfig = InternalAxiosRequestConfig & { __is402Retry?: boolean };
-type AxiosHeaderValue = string | string[];
+type AxiosHeaderValue = string | string[] | false | null;
 type AxiosHeaderRecord = Record<string, AxiosHeaderValue>;
 
 /**
@@ -48,13 +48,26 @@ function resolveAxiosRequestUrl(
  * @returns Serializable headers for Axios to normalize in the caller's instance.
  */
 function cloneAxiosHeaders(headers: InternalAxiosRequestConfig["headers"]): AxiosHeaderRecord {
-  const source =
-    typeof headers.toJSON === "function"
+  const source = {
+    ...(typeof headers.toJSON === "function"
       ? (headers.toJSON() as Record<string, unknown>)
-      : (headers as unknown as Record<string, unknown>);
+      : (headers as unknown as Record<string, unknown>)),
+  };
+
+  // toJSON omits suppression markers, but Axios needs them to override defaults.
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === false || value === null) {
+      source[key] = value;
+    }
+  }
 
   return Object.entries(source).reduce<AxiosHeaderRecord>((acc, [key, value]) => {
-    if (value === undefined || value === null || typeof value === "function") {
+    if (value === undefined || typeof value === "function") {
+      return acc;
+    }
+
+    if (value === false || value === null) {
+      acc[key] = value;
       return acc;
     }
 

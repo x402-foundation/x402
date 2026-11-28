@@ -755,7 +755,7 @@ describe("wrapAxiosWithPayment()", () => {
       }),
     );
     expect(retryConfig.headers.skip).toBeUndefined();
-    expect(retryConfig.headers.drop).toBeUndefined();
+    expect(retryConfig.headers.drop).toBeNull();
     expect(retryConfig.headers.compute).toBeUndefined();
   });
 
