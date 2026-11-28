@@ -70,7 +70,8 @@ vi.mock("@concordium/web-sdk", async importOriginal => {
 });
 
 import { ConcordiumGRPCNodeClient, credentials } from "@concordium/web-sdk/nodejs";
-import { buildBasicAccountSigner } from "@concordium/web-sdk";
+import { buildBasicAccountSigner, RpcError } from "@concordium/web-sdk";
+import { ExactConcordiumScheme } from "../../src/exact/facilitator/scheme";
 import { toConcordiumFacilitatorSigner } from "../../src/signer";
 
 const SPONSOR_ADDRESS = "4FmiTW2L4RvCsSVTjFAavYvrgnPLGNj43eiwPYmbhNqtAcMbWW";
@@ -278,7 +279,7 @@ describe("Concordium Signer", () => {
         createGrpcConfig(),
       );
 
-      const info = await signer.waitForFinalization(TX_HASH);
+      const info = await signer.waitForFinalization(TX_HASH, 0);
       expect(info).toEqual({ txHash: TX_HASH, status: "committed", sender: "" });
     });
 
@@ -426,6 +427,109 @@ describe("Concordium Signer", () => {
       await expect(signer.getTokenDecimals("USDR")).resolves.toBe(6);
       expect(mockTokenFromId).toHaveBeenCalled();
       expect(mockTokenBalanceOf).toHaveBeenCalled();
+    });
+
+    function finalizedTransferStatus() {
+      return {
+        status: "finalized",
+        outcome: {
+          summary: {
+            transactionType: "transfer",
+            sender: { address: SENDER_ADDRESS },
+            transfer: {
+              to: { address: SPONSOR_ADDRESS },
+              amount: { microCcd: 1_000_000n },
+            },
+          },
+        },
+      };
+    }
+
+    function transactionNotFound(): RpcError {
+      return new RpcError("transaction not found.", "NOT_FOUND");
+    }
+
+    async function settleTransfer(timeoutMs: number) {
+      const signer = toConcordiumFacilitatorSigner(
+        SPONSOR_ADDRESS,
+        { kind: "signer" } as any,
+        createGrpcConfig(),
+      );
+      const facilitator = new ExactConcordiumScheme({
+        signer,
+        finalizationTimeoutMs: timeoutMs,
+      });
+      vi.spyOn(facilitator, "verify").mockResolvedValue({
+        isValid: true,
+        payer: SENDER_ADDRESS,
+      });
+
+      return facilitator.settle(
+        {
+          x402Version: 2,
+          accepted: { scheme: "exact", network: CONCORDIUM_TESTNET_CAIP2 } as any,
+          payload: { signedTransaction: createSampleTx() } as any,
+        },
+        {
+          scheme: "exact",
+          network: CONCORDIUM_TESTNET_CAIP2,
+          amount: "1000000",
+          asset: "CCD",
+          payTo: SPONSOR_ADDRESS,
+          maxTimeoutSeconds: 600,
+          extra: { feePayer: SPONSOR_ADDRESS },
+        },
+      );
+    }
+
+    it("settles when the first status call is NOT_FOUND and a later call is a finalized transfer", async () => {
+      mockGrpcClient.getBlockItemStatus
+        .mockRejectedValueOnce(transactionNotFound())
+        .mockResolvedValue(finalizedTransferStatus());
+
+      const result = await settleTransfer(1_000);
+
+      expect(result).toEqual({
+        success: true,
+        network: CONCORDIUM_TESTNET_CAIP2,
+        transaction: TX_HASH,
+        payer: SENDER_ADDRESS,
+      });
+      expect(mockGrpcClient.waitForTransactionFinalization).not.toHaveBeenCalled();
+    });
+
+    it("fails settle with a timeout when NOT_FOUND lasts until the deadline", async () => {
+      mockGrpcClient.getBlockItemStatus.mockRejectedValue(transactionNotFound());
+
+      const result = await settleTransfer(40);
+
+      expect(result).toMatchObject({
+        success: false,
+        transaction: TX_HASH,
+        payer: SENDER_ADDRESS,
+        errorReason: `finalization_failed: Transaction ${TX_HASH} finalization timed out`,
+      });
+      expect(mockGrpcClient.getBlockItemStatus.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("fails settle immediately when status returns an error other than NOT_FOUND", async () => {
+      mockGrpcClient.waitForTransactionFinalization.mockReturnValue(new Promise(() => {}));
+      mockGrpcClient.getBlockItemStatus.mockRejectedValue(
+        new RpcError("node unavailable", "UNAVAILABLE"),
+      );
+
+      const result = await Promise.race([
+        settleTransfer(5_000),
+        new Promise<string>(resolve => {
+          setTimeout(() => resolve("hung"), 300);
+        }),
+      ]);
+
+      expect(result).toMatchObject({
+        success: false,
+        errorReason: "finalization_failed: node unavailable",
+      });
+      expect(mockGrpcClient.getBlockItemStatus).toHaveBeenCalledTimes(1);
     });
   });
 });
