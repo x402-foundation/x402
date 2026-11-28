@@ -11,6 +11,7 @@ import {
   prepareHttpServer,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  VerifiedPayment,
   checkIfBazaarNeeded,
   withPrivateCacheControl,
 } from "@x402/core/server";
@@ -28,6 +29,18 @@ import { HonoAdapter } from "./adapter";
  */
 export function setSettlementOverrides(c: Context, overrides: SettlementOverrides): void {
   c.header(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
+
+const verifiedPayments = new WeakMap<Context, VerifiedPayment>();
+
+/**
+ * Get the payment the middleware verified for this request.
+ *
+ * @param c - Hono context passed to the route handler
+ * @returns The verified payment, or undefined if the request did not carry a verified payment
+ */
+export function getVerifiedPayment(c: Context): VerifiedPayment | undefined {
+  return verifiedPayments.get(c);
 }
 
 /**
@@ -226,8 +239,10 @@ export function paymentMiddlewareFromHTTPServer(
           beforeHandlerSettlement,
           paymentPayload,
           paymentRequirements,
+          payer,
           declaredExtensions,
         } = result;
+        verifiedPayments.set(c, { paymentPayload, paymentRequirements, payer });
 
         // Proceed to the next middleware or route handler
         try {
@@ -444,7 +459,12 @@ export type {
   SchemeNetworkServer,
 } from "@x402/core/types";
 
-export type { PaywallProvider, PaywallConfig, SettlementOverrides } from "@x402/core/server";
+export type {
+  PaywallProvider,
+  PaywallConfig,
+  SettlementOverrides,
+  VerifiedPayment,
+} from "@x402/core/server";
 
 export { RouteConfigurationError, SETTLEMENT_OVERRIDES_HEADER } from "@x402/core/server";
 

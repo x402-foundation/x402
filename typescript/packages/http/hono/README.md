@@ -246,6 +246,19 @@ app.use(
 );
 ```
 
+### Reading the Verified Payment
+
+On a paid request, `getVerifiedPayment` returns the payment the middleware accepted: `paymentPayload`, the matched `paymentRequirements`, and the `payer` reported by the facilitator (if it returned one). It returns `undefined` when the request carried no verified payment. With the default `authorization` flow, the payment is settled only after the handler responds, so settlement can still fail.
+
+```typescript
+import { getVerifiedPayment } from "@x402/hono";
+
+app.get("/api/premium/report", c => {
+  const payment = getVerifiedPayment(c);
+  return c.json({ payer: payment?.payer, network: payment?.paymentRequirements.network });
+});
+```
+
 ### Custom Facilitator Client
 
 If you need to use a custom facilitator server, configure it when creating the x402ResourceServer:

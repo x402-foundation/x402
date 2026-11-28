@@ -20,6 +20,7 @@ import {
   paymentMiddlewareFromConfig,
   paymentMiddlewareFromHTTPServer,
   setSettlementOverrides,
+  getVerifiedPayment,
   type SchemeRegistration,
 } from "./index";
 
@@ -522,6 +523,34 @@ describe("paymentMiddleware", () => {
     expect(reply.send).not.toHaveBeenCalled();
     expect(request.x402Context).toBeDefined();
     expect(request.x402RawGuard).toBeDefined();
+  });
+
+  it("exposes the verified payment to the route handler", async () => {
+    setupMockHttpServer({
+      type: "payment-verified",
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
+
+    const { app, hooks } = createMockApp();
+    paymentMiddleware(
+      app,
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+
+    const request = createMockRequest();
+    await hooks.onRequest[0](request, createMockReply());
+
+    expect(getVerifiedPayment(request)).toEqual({
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
   });
 
   it("settles payment and adds headers in onSend for verified payments", async () => {

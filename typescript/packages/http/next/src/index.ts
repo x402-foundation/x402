@@ -9,6 +9,7 @@ import {
   checkIfBazaarNeeded,
   SETTLEMENT_OVERRIDES_HEADER,
   SettlementOverrides,
+  VerifiedPayment,
   prepareHttpServer,
 } from "@x402/core/server";
 import { SchemeNetworkServer, Network } from "@x402/core/types";
@@ -31,6 +32,19 @@ import {
  */
 export function setSettlementOverrides(res: NextResponse, overrides: SettlementOverrides): void {
   res.headers.set(SETTLEMENT_OVERRIDES_HEADER, JSON.stringify(overrides));
+}
+
+const verifiedPayments = new WeakMap<NextRequest, VerifiedPayment>();
+
+/**
+ * Get the payment `withX402` verified for this request. Not available behind `paymentProxy`,
+ * which runs in a separate middleware context.
+ *
+ * @param request - The `NextRequest` passed to the handler wrapped by `withX402`
+ * @returns The verified payment, or undefined if the request did not carry a verified payment
+ */
+export function getVerifiedPayment(request: NextRequest): VerifiedPayment | undefined {
+  return verifiedPayments.get(request);
 }
 
 const prepareBazaar = (httpServer: x402HTTPResourceServer): Promise<void> | null => {
@@ -332,6 +346,11 @@ export function withX402FromHTTPServer<T = unknown>(
         return handlePaymentError(result.response) as NextResponse<T>;
 
       case "payment-verified": {
+        verifiedPayments.set(request, {
+          paymentPayload: result.paymentPayload,
+          paymentRequirements: result.paymentRequirements,
+          payer: result.payer,
+        });
         let handlerResponse: NextResponse<T>;
         try {
           handlerResponse = await routeHandler(request);
@@ -453,6 +472,7 @@ export type {
   PaywallConfig,
   RouteConfig,
   SettlementOverrides,
+  VerifiedPayment,
 } from "@x402/core/server";
 
 export {

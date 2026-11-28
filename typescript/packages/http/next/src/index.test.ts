@@ -20,7 +20,9 @@ import {
   setSettlementOverrides,
   withX402,
   withX402FromHTTPServer,
+  getVerifiedPayment,
   type SchemeRegistration,
+  type VerifiedPayment,
 } from "./index";
 
 import { createHttpServer } from "./utils";
@@ -690,6 +692,49 @@ describe("withX402", () => {
     expect(handler).toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("X-Settlement")).toBe("complete");
+  });
+
+  it("exposes the verified payment to the wrapped handler", async () => {
+    const mockServer = createMockHttpServer(
+      {
+        type: "payment-verified",
+        paymentPayload: mockPaymentPayload,
+        paymentRequirements: mockPaymentRequirements,
+        payer: "0xpayer",
+      },
+      { success: true, headers: {} },
+    );
+    setupMockCreateHttpServer(mockServer);
+    let seen: VerifiedPayment | undefined;
+    const handler = vi.fn(async (request: NextRequest) => {
+      seen = getVerifiedPayment(request);
+      return NextResponse.json({ data: "protected" });
+    });
+
+    const wrappedHandler = withX402(handler, mockRouteConfig, {} as unknown as x402ResourceServer);
+    await wrappedHandler(createMockRequest());
+
+    expect(seen).toEqual({
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
+  });
+
+  it("does not expose a payment when none is required", async () => {
+    const mockServer = createMockHttpServer({ type: "no-payment-required" });
+    setupMockCreateHttpServer(mockServer);
+    let seen: VerifiedPayment | undefined;
+    const handler = vi.fn(async (request: NextRequest) => {
+      seen = getVerifiedPayment(request);
+      return NextResponse.json({ data: "free" });
+    });
+
+    const wrappedHandler = withX402(handler, mockRouteConfig, {} as unknown as x402ResourceServer);
+    await wrappedHandler(createMockRequest());
+
+    expect(handler).toHaveBeenCalled();
+    expect(seen).toBeUndefined();
   });
 
   it("skips settlement when handler returns >= 400", async () => {

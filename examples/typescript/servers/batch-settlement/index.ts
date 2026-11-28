@@ -1,6 +1,5 @@
 import { base58 } from "@scure/base";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
-import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { Network } from "@x402/core/types";
 import {
@@ -9,6 +8,7 @@ import {
 } from "@x402/evm/batch-settlement/server";
 import { FileChannelStorage } from "@x402/evm/batch-settlement/server/file-storage";
 import {
+  getVerifiedPayment,
   paymentMiddlewareFromHTTPServer,
   setSettlementOverrides,
   x402HTTPResourceServer,
@@ -221,9 +221,9 @@ async function main() {
   app.use(paymentMiddlewareFromHTTPServer(httpServer, undefined, undefined, false));
 
   app.get("/weather", (req, res) => {
-    const paymentHeader = req.header("payment-signature") ?? req.header("x-payment");
-    if (paymentHeader) {
-      const { accepted } = decodePaymentSignatureHeader(paymentHeader);
+    const payment = getVerifiedPayment(req);
+    if (payment) {
+      const { accepted } = payment.paymentPayload;
       // EVM batch-settlement supports charging less than the authorized max,
       // and so does an SVM server-signed channel (the operator signs the
       // actual charge). A client-signed SVM channel is fixed-price: the

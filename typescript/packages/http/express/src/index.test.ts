@@ -24,7 +24,9 @@ import {
   paymentMiddlewareFromConfig,
   paymentMiddlewareFromHTTPServer,
   setSettlementOverrides,
+  getVerifiedPayment,
   type SchemeRegistration,
+  type VerifiedPayment,
 } from "./index";
 
 // --- Test Fixtures ---
@@ -614,6 +616,54 @@ describe("paymentMiddleware", () => {
       undefined,
     );
     expect(res.setHeader).toHaveBeenCalledWith("PAYMENT-RESPONSE", "settled");
+  });
+
+  it("exposes the verified payment to the route handler", async () => {
+    setupMockHttpServer({
+      type: "payment-verified",
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = createMockRequest();
+    const res = createMockResponse();
+    let seen: VerifiedPayment | undefined;
+    const next = vi.fn(() => {
+      seen = getVerifiedPayment(req);
+      res.end();
+    });
+
+    await middleware(req, res, next);
+
+    expect(seen).toEqual({
+      paymentPayload: mockPaymentPayload,
+      paymentRequirements: mockPaymentRequirements,
+      payer: "0xpayer",
+    });
+  });
+
+  it("does not expose a payment when none is required", async () => {
+    setupMockHttpServer({ type: "no-payment-required" });
+
+    const middleware = paymentMiddleware(
+      mockRoutes,
+      {} as unknown as x402ResourceServer,
+      undefined,
+      undefined,
+      false,
+    );
+    const req = createMockRequest();
+    await middleware(req, createMockResponse(), vi.fn());
+
+    expect(getVerifiedPayment(req)).toBeUndefined();
   });
 
   it("buffers writeHead, write, flushHeaders, and end until settlement succeeds", async () => {
