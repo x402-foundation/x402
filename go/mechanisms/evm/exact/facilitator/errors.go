@@ -5,7 +5,7 @@ import "github.com/x402-foundation/x402/go/v2/mechanisms/evm"
 // Facilitator error constants for the exact EVM scheme
 const (
 	// EIP-3009 Verify errors
-	ErrInvalidScheme               = "invalid_exact_evm_scheme"
+	ErrInvalidScheme               = "unsupported_scheme"
 	ErrNetworkMismatch             = "invalid_exact_evm_network_mismatch"
 	ErrInvalidPayload              = "invalid_exact_evm_payload"
 	ErrMissingSignature            = "invalid_exact_evm_payload_missing_signature"
