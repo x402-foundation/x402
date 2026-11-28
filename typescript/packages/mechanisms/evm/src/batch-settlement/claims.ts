@@ -13,7 +13,9 @@ export type SelectClaimableVouchersOptions = {
  *
  * A voucher is claimable when its `chargedCumulativeAmount` exceeds what has
  * already been claimed onchain. An optional idle filter skips sessions that
- * received a request within the last `idleSecs` seconds. Input order is preserved.
+ * received a request within the last `idleSecs` seconds, except channels with a
+ * pending timed withdrawal: those vouchers must land before `finalizeWithdraw`
+ * or they become unclaimable. Input order is preserved.
  *
  * @param channels - Channel records to inspect.
  * @param opts - Optional wall-clock and idle filter.
@@ -30,7 +32,7 @@ export function selectClaimableVouchers(
     if (BigInt(c.chargedCumulativeAmount) <= BigInt(c.totalClaimed)) {
       continue;
     }
-    if (opts?.idleSecs !== undefined) {
+    if (opts?.idleSecs !== undefined && !(c.withdrawRequestedAt > 0)) {
       const idleMs = now - c.lastRequestTimestamp;
       if (idleMs < opts.idleSecs * 1000) {
         continue;

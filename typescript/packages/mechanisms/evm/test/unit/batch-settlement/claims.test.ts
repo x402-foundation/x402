@@ -58,6 +58,13 @@ describe("selectClaimableVouchers", () => {
     expect(claims).toHaveLength(1);
     expect(claims[0].totalClaimed).toBe(idle.chargedCumulativeAmount);
   });
+
+  it("ignores the idle window for channels with a pending withdrawal", () => {
+    const now = 1_000_000;
+    const pending = baseChannel({ lastRequestTimestamp: now - 1_000, withdrawRequestedAt: 999 });
+    const claims = selectClaimableVouchers([pending], { now, idleSecs: 60 });
+    expect(claims).toHaveLength(1);
+  });
 });
 
 describe("applyClaimedTotals", () => {
