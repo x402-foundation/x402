@@ -17,6 +17,7 @@ Packages that **read or write** the `extensions` property on x402 payloads (`Pay
 | [PEAC Protocol](https://x402.peacprotocol.org) | Verifiable receipts for x402 payments | TypeScript | [GitHub](https://github.com/peacprotocol/peac) · [npm](https://www.npmjs.com/package/@peac/adapter-x402) |
 | [x402aff](https://github.com/MiroShark/x402aff) | Affiliate builder-code revenue splits | Python, TypeScript | [GitHub](https://github.com/MiroShark/x402aff) · [PyPI](https://pypi.org/project/x402aff/) · [npm](https://www.npmjs.com/package/x402aff) |
 | [x402r](https://x402r.org) | Non-custodial refund and arbitration protocol | TypeScript | [GitHub](https://github.com/BackTrackCo/x402r-sdk) · [npm](https://www.npmjs.com/package/@x402r/sdk) |
+| [ShipBastion Celo Corridor](https://github.com/zColdWater/shipbastion-celo-corridor) | Zero-dependency Celo local-currency (wBRL, wARS, cNGN) x402 v2 middleware writing `bazaar` and `eip2612GasSponsoring` extensions, Permit2/EIP-3009 verifier, Textile FX settlement, and 9-check compliance CLI | JavaScript | [GitHub](https://github.com/zColdWater/shipbastion-celo-corridor) · [Live API](https://api.shipbastion.com/v1/celo/corridor/rates) |
 
 ## Third-party utilities
 
