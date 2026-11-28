@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- Nethereum.Signer pulls in Nethereum.Util (Keccak-256) and secp256k1 ECDSA recovery. -->
+  <ItemGroup>
+    <PackageReference Include="Nethereum.Signer" Version="4.26.0" />
+    <PackageReference Include="Nethereum.ABI" Version="4.26.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\X402.Core\X402.Core.csproj" />
+  </ItemGroup>
+
+</Project>

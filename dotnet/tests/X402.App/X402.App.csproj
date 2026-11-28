@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.6"/>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\src\X402.AspNetCore\X402.AspNetCore.csproj" />
+      <ProjectReference Include="..\..\src\X402.Core\X402.Core.csproj" />
+      <ProjectReference Include="..\..\src\X402.Mechanisms.Evm\X402.Mechanisms.Evm.csproj" />
+    </ItemGroup>
+
+</Project>
