@@ -1,0 +1,9 @@
+{
+  "title": "A different POST body never reaches the facilitator, even WITHOUT a configured resource",
+  "provenance": "Same lines as body-never-reaches-facilitator-configured.json. This vector exists to show the body gap is unconditional: unlike the query string, it does not depend on whether routeConfig.resource is set, because req.originalUrl (used by the auto-derived path) never contains the POST body either.",
+  "limits": "Same as the companion vector.",
+  "request_a": { "path": "/orders", "configured_resource": null, "method": "POST", "body": "{\"item\":\"small\",\"qty\":1}" },
+  "request_b": { "path": "/orders", "configured_resource": null, "method": "POST", "body": "{\"item\":\"large\",\"qty\":500}" },
+  "claim": "collapses-to-same-message",
+  "note": "Same path, same absent resource config, different bodies: still collapses. Contrast with query-distinguished-under-auto-resource.json, where removing the configured resource DOES restore a distinction, because the query string (unlike the body) lives inside req.originalUrl."
+}
