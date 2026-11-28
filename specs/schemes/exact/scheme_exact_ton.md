@@ -13,7 +13,7 @@ This spec uses [CAIP-2](https://namespaces.chainagnostic.org/tvm/caip2) identifi
 - `tvm:-3` — TON testnet
 
 > [!NOTE]
-> **Scope:** This spec covers [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)-compliant Jetton transfers using **W5 wallets** (v5r1) with gasless relay (`areFeesSponsored: true`). Non-gasless flows (`external_signed`, native TON transfers) are planned for a follow-up spec extension.
+> **Scope:** This spec covers [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)-compliant Jetton transfers and native TON transfers (see [Native TON](#native-ton)) using **W5 wallets** (v5r1) with gasless relay (`areFeesSponsored: true`). Non-gasless flows (`external_signed`) are planned for a follow-up spec extension.
 >
 > For clients, only W5 wallets in account states `active` and `uninit`/`nonexist` are supported. `frozen` accounts are not supported. In practice this is not expected to constrain implementations because `frozen` W5 accounts are not expected to appear in the next 5 years.
 
@@ -215,6 +215,47 @@ Facilitators SHOULD maintain a short-term, in-memory cache of BoC hashes that ha
 4. Evict entries older than `maxTimeoutSeconds` (default 300s). After this window, the signed message's `validUntil` will have passed and it cannot land on-chain regardless. This is analogous to SVM's fixed 120-second eviction window (tied to blockhash lifetime).
 
 This approach requires no external storage or long-lived state — only an in-process set with time-based eviction. It preserves the facilitator's otherwise stateless design while closing the duplicate settlement attack vector.
+
+## Native TON
+
+Payments in the network's native coin use the same flow, payload shape, signature, replay and duplicate-settlement rules as Jetton payments. Only the asset identifier, the signed action and the payment-intent checks differ.
+
+### `PaymentRequirements`
+
+```json
+{
+  "scheme": "exact",
+  "network": "tvm:-239",
+  "amount": "10000000",
+  "asset": "native",
+  "payTo": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
+  "maxTimeoutSeconds": 300,
+  "extra": {
+    "forwardPayload": "te6cckEBAQEADAAAFAAAAABpbnYtNDKmzFhn",
+    "areFeesSponsored": true
+  }
+}
+```
+
+- `asset`: the reserved value `"native"`. `payload.asset` MUST carry the same value.
+- `amount`: nanotons (9 decimals, so `10000000` = 0.01 TON).
+- `extra.forwardPayload` (optional): Base64-encoded cell used as the body of the transfer message, for example a text comment (`0x00000000` followed by UTF-8) carrying an invoice ID. If omitted, the effective value is an empty body.
+- `extra.forwardTonAmount` and `extra.responseDestination` MUST NOT be present.
+
+### Payment intent (replaces section 3 for native TON)
+
+- The W5 message MUST contain exactly **1** `action_send_msg` with sending mode 1 (`PAY_FEES_SEPARATELY`) or mode 3 (`PAY_FEES_SEPARATELY | IGNORE_ERRORS`). Modes that carry remaining value or balance (`64`, `128`) MUST be rejected. No additional actions are permitted.
+- The outbound message `dest` MUST equal `requirements.payTo`, its `value` MUST equal `requirements.amount` exactly, it MUST NOT carry extra currencies or a `stateInit`, and its body MUST equal the effective `extra.forwardPayload`.
+- The client's wallet balance, **excluding** any TON attached by the facilitator's relay message, MUST cover `requirements.amount` plus the forward fee of the outbound message. Facilitators SHOULD check this via emulation against the pre-relay account state.
+
+### Settlement differences
+
+- The relay message MUST attach only the TON needed for relay delivery and payer-wallet execution. It MUST NOT fund the payment value.
+- Settlement succeeds only if the trace shows a message from the payer to `payTo` with value equal to `requirements.amount`. A skipped action (mode 3) or a bounced transfer MUST be reported as `success: false`.
+
+### Why the balance rule matters
+
+The relay message credits the payer wallet before the signed actions run. Without the balance rule, a wallet with zero balance could sign a transfer smaller than the relay's gas allowance, and the facilitator would pay the resource server out of its own gas budget. Jetton payments are not exposed in the same way, because the transferred asset comes from the payer's Jetton wallet, not from the attached TON.
 
 ## Reference Implementations
 
