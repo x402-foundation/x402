@@ -6,6 +6,9 @@ const baseConfig = {
     "exact/client/index": "src/exact/client/index.ts",
     "exact/server/index": "src/exact/server/index.ts",
     "exact/facilitator/index": "src/exact/facilitator/index.ts",
+    "upto/client/index": "src/upto/client/index.ts",
+    "upto/server/index": "src/upto/server/index.ts",
+    "upto/facilitator/index": "src/upto/facilitator/index.ts",
   },
   dts: {
     resolve: true,
