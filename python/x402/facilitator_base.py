@@ -291,14 +291,19 @@ class x402FacilitatorBase:
         scheme: str,
         network: Network,
     ) -> FacilitatorT | None:
+        """Return the registration that lists network, else the first pattern match.
+
+        A registration that lists the network wins over an earlier wildcard one.
+        """
+        pattern_match: FacilitatorT | None = None
         for scheme_data in schemes:
             if scheme_data.facilitator.scheme != scheme:
                 continue
-            if network in scheme_data.networks or matches_network_pattern(
-                network, scheme_data.pattern
-            ):
+            if network in scheme_data.networks:
                 return scheme_data.facilitator
-        return None
+            if pattern_match is None and matches_network_pattern(network, scheme_data.pattern):
+                pattern_match = scheme_data.facilitator
+        return pattern_match
 
     def _find_facilitator(
         self,

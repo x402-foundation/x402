@@ -649,6 +649,27 @@ describe("x402Facilitator", () => {
       expect(patternFacilitator.verifyCalls.length).toBe(0);
     });
 
+    it("prefers exact match over a pattern registered earlier", async () => {
+      const facilitator = new x402Facilitator();
+      const patternFacilitator = new TestFacilitator("exact", { isValid: true });
+      const exactFacilitator = new TestFacilitator("exact", { isValid: true });
+
+      facilitator.register("eip155:*" as Network, patternFacilitator);
+      facilitator.register("eip155:8453" as Network, exactFacilitator);
+
+      const payload = buildPaymentPayload({ x402Version: 2 });
+      const requirements = buildPaymentRequirements({
+        scheme: "exact",
+        network: "eip155:8453" as Network,
+      });
+
+      const result = await facilitator.verify(payload, requirements);
+
+      expect(result.isValid).toBe(true);
+      expect(exactFacilitator.verifyCalls.length).toBe(1);
+      expect(patternFacilitator.verifyCalls.length).toBe(0);
+    });
+
     it("advertises each network once in getSupported() for a mixed-namespace registration", async () => {
       // Regression for the bug reported on #3215: registering one
       // facilitator across two CAIP-2 namespaces (stellar + eip155) in a

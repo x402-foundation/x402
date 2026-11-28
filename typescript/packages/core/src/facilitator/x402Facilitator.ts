@@ -426,8 +426,9 @@ export class x402Facilitator {
   }
 
   /**
-   * Returns the first facilitator for this version whose scheme matches and whose
-   * network is listed or matches that registration's pattern.
+   * Returns the facilitator for this version and scheme that lists the network,
+   * falling back to the first one whose pattern matches it, so a registration
+   * that lists the network wins over an earlier wildcard registration.
    *
    * @param x402Version - Payment payload version
    * @param requirements - Scheme and network to match
@@ -442,16 +443,20 @@ export class x402Facilitator {
       throw new Error(`No facilitator registered for x402 version: ${x402Version}`);
     }
 
+    let patternMatch: SchemeNetworkFacilitator | undefined;
     for (const schemeData of schemeDataArray) {
       if (schemeData.facilitator.scheme !== requirements.scheme) {
         continue;
       }
-      if (
-        schemeData.networks.has(requirements.network) ||
-        networkMatchesPattern(schemeData.pattern, requirements.network)
-      ) {
+      if (schemeData.networks.has(requirements.network)) {
         return schemeData.facilitator;
       }
+      if (!patternMatch && networkMatchesPattern(schemeData.pattern, requirements.network)) {
+        patternMatch = schemeData.facilitator;
+      }
+    }
+    if (patternMatch) {
+      return patternMatch;
     }
 
     throw new Error(

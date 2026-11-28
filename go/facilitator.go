@@ -425,17 +425,8 @@ func (f *x402Facilitator) verifyV1(ctx context.Context, payload types.PaymentPay
 	network := Network(requirements.Network)
 	fctx := NewFacilitatorContext(f.extensions)
 
-	// Find matching facilitator from array
-	for _, data := range f.schemesV1 {
-		facilitator := data.facilitator.(SchemeNetworkFacilitatorV1)
-		if facilitator.Scheme() != scheme {
-			continue
-		}
-
-		// Check if network matches (exact or pattern)
-		if matchesSchemeData(data, network) {
-			return facilitator.Verify(ctx, payload, requirements, fctx)
-		}
+	if data := findSchemeData(f.schemesV1, scheme, network); data != nil {
+		return data.facilitator.(SchemeNetworkFacilitatorV1).Verify(ctx, payload, requirements, fctx)
 	}
 
 	registered := f.registeredV1Summary()
@@ -451,17 +442,8 @@ func (f *x402Facilitator) verifyV2(ctx context.Context, payload types.PaymentPay
 	network := Network(requirements.Network)
 	fctx := NewFacilitatorContext(f.extensions)
 
-	// Find matching facilitator from array
-	for _, data := range f.schemes {
-		facilitator := data.facilitator.(SchemeNetworkFacilitator)
-		if facilitator.Scheme() != scheme {
-			continue
-		}
-
-		// Check if network matches (exact or pattern)
-		if matchesSchemeData(data, network) {
-			return facilitator.Verify(ctx, payload, requirements, fctx)
-		}
+	if data := findSchemeData(f.schemes, scheme, network); data != nil {
+		return data.facilitator.(SchemeNetworkFacilitator).Verify(ctx, payload, requirements, fctx)
 	}
 
 	registered := f.registeredV2Summary()
@@ -477,17 +459,8 @@ func (f *x402Facilitator) settleV1(ctx context.Context, payload types.PaymentPay
 	network := Network(requirements.Network)
 	fctx := NewFacilitatorContext(f.extensions)
 
-	// Find matching facilitator from array
-	for _, data := range f.schemesV1 {
-		facilitator := data.facilitator.(SchemeNetworkFacilitatorV1)
-		if facilitator.Scheme() != scheme {
-			continue
-		}
-
-		// Check if network matches (exact or pattern)
-		if matchesSchemeData(data, network) {
-			return facilitator.Settle(ctx, payload, requirements, fctx)
-		}
+	if data := findSchemeData(f.schemesV1, scheme, network); data != nil {
+		return data.facilitator.(SchemeNetworkFacilitatorV1).Settle(ctx, payload, requirements, fctx)
 	}
 
 	registered := f.registeredV1Summary()
@@ -503,17 +476,8 @@ func (f *x402Facilitator) settleV2(ctx context.Context, payload types.PaymentPay
 	network := Network(requirements.Network)
 	fctx := NewFacilitatorContext(f.extensions)
 
-	// Find matching facilitator from array
-	for _, data := range f.schemes {
-		facilitator := data.facilitator.(SchemeNetworkFacilitator)
-		if facilitator.Scheme() != scheme {
-			continue
-		}
-
-		// Check if network matches (exact or pattern)
-		if matchesSchemeData(data, network) {
-			return facilitator.Settle(ctx, payload, requirements, fctx)
-		}
+	if data := findSchemeData(f.schemes, scheme, network); data != nil {
+		return data.facilitator.(SchemeNetworkFacilitator).Settle(ctx, payload, requirements, fctx)
 	}
 
 	registered := f.registeredV2Summary()
@@ -671,16 +635,23 @@ func derivePattern(networks []Network) Network {
 	return networks[0]
 }
 
-// matchesSchemeData checks if a network matches the scheme data
-// Returns true if network is in registered networks or matches the pattern
-func matchesSchemeData(data *schemeData, network Network) bool {
-	// Check exact match first
-	if data.networks[network] {
-		return true
+// findSchemeData returns the registration for scheme that lists network,
+// falling back to the first one whose pattern matches it. A registration that
+// lists the network wins over an earlier wildcard registration.
+func findSchemeData(schemes []*schemeData, scheme string, network Network) *schemeData {
+	var patternMatch *schemeData
+	for _, data := range schemes {
+		if data.facilitator.(interface{ Scheme() string }).Scheme() != scheme {
+			continue
+		}
+		if data.networks[network] {
+			return data
+		}
+		if patternMatch == nil && matchesNetworkPattern(string(network), string(data.pattern)) {
+			patternMatch = data
+		}
 	}
-
-	// Try pattern matching
-	return matchesNetworkPattern(string(network), string(data.pattern))
+	return patternMatch
 }
 
 // matchesNetworkPattern checks if a concrete network matches a registered pattern
