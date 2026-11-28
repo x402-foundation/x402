@@ -7,9 +7,15 @@ import { evmPaywall } from "@x402/paywall/evm";
 import { svmPaywall } from "@x402/paywall/svm";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-const facilitatorUrl = process.env.FACILITATOR_URL;
-export const evmAddress = process.env.EVM_ADDRESS as `0x${string}`;
-export const svmAddress = process.env.SVM_ADDRESS;
+// next build imports this module with no .env. Stand-ins and the skipped sync exist only for that phase.
+const isProductionBuild = process.env.NEXT_PHASE === "phase-production-build";
+export const syncFacilitatorOnStart = !isProductionBuild;
+const facilitatorUrl =
+  process.env.FACILITATOR_URL || (isProductionBuild ? "http://build-only.invalid" : undefined);
+export const evmAddress = (process.env.EVM_ADDRESS ||
+  (isProductionBuild ? "0x0000000000000000000000000000000000000000" : undefined)) as `0x${string}`;
+export const svmAddress =
+  process.env.SVM_ADDRESS || (isProductionBuild ? "build-only-svm" : undefined);
 
 if (!facilitatorUrl) {
   console.error("❌ FACILITATOR_URL environment variable is required");
@@ -70,6 +76,7 @@ export const proxy = paymentProxy(
   server,
   undefined, // paywallConfig (using custom paywall instead)
   paywall, // custom paywall provider
+  syncFacilitatorOnStart,
 );
 
 // Configure which paths the proxy should run on
