@@ -412,11 +412,57 @@ The facilitator MUST reject transactions with:
 - `Flags` including `tfPartialPayment` (`0x00020000`).
 - Both `Amount` and `DeliverMax` present.
 - Neither `Amount` nor `DeliverMax` present.
+- A non-empty `Signers` array the facilitator does not verify per §10.1 (a facilitator that has not implemented multisig verification MUST reject `Signers` rather than return a `valid` result).
 
 ### 10. Signature Validation
 
 - `/verify` MUST validate the signature offline.
 - `/settle` MUST handle signature-related failures and report them appropriately.
+
+For a single-signer transaction this validates `tx_json.TxnSignature` over `encodeForSigning(tx_json)` with `tx_json.SigningPubKey`. A payer MAY instead be a multi-signing account, in which case §10.1 applies.
+
+#### 10.1 Multisig Validation (SignerList)
+
+A payer MAY be a multi-signing account. In that case the decoded transaction carries a non-empty `Signers` array and an empty top-level `SigningPubKey`. When `tx_json.Signers` is a non-empty array, the facilitator MUST verify it **offline**, against the payer's `SignerList` at the same validated ledger used in §7 (Expiry and Account Sequencing), in addition to every other check in this section:
+
+1. **Empty transaction key.** `tx_json.SigningPubKey` MUST be the empty string `""`. A non-empty value alongside `Signers` is malformed and MUST be rejected.
+2. **Account and SignerList.** `tx_json.Account` MUST exist at the validated ledger and MUST have a `SignerList` with a positive `SignerQuorum`; otherwise verification MUST fail.
+3. **Per-signer verification**, matching `rippled`'s `checkMultiSign`. Construct the multi-signing payload: the transaction with `SigningPubKey` set to `""` and the `Signers` and `TxnSignature` fields removed. `Signers` MUST contain 1–32 entries, sorted by account ID ascending, with no duplicate accounts, and MUST NOT include the payer account itself. The sort key is the 160-bit `AccountID` that each `Signer.Account` decodes to, compared as an unsigned big-endian number, not the base58 `r…` address string: the two orders differ for most pairs of accounts, and `rippled` rejects a `Signers` array that is not in `AccountID` order. For each `Signers[i].Signer`:
+   - its `Account` MUST be a `SignerEntry` on the payer's `SignerList`; otherwise verification MUST fail;
+   - its `TxnSignature` MUST verify over `encodeForMultisigning(payload, Signer.Account)` using the entry's `SigningPubKey` — a canonical public key with a fully-canonical signature;
+   - the `SigningPubKey` MUST be authorized for `Signer.Account`. The signer's account **need not exist** on the ledger: if it does not exist, the `SigningPubKey` MUST derive to `Signer.Account` (its implicit master key); if it exists, the key MUST be its `RegularKey`, or its master key unless `lsfDisableMaster` is set. Unlike `checkSingleSign` (post `fixMasterKeyAsRegularKey`), `checkMultiSign` does not treat a `RegularKey` equal to the account as a master-key substitute: a signer's own master key is refused when that account has `lsfDisableMaster`.
+4. **Quorum.** Sum `SignerEntry.SignerWeight` over the distinct, verified signers. The total MUST be greater than or equal to the account's `SignerQuorum`; otherwise verification MUST fail. The facilitator MUST sum weights against the quorum rather than count signatures, so a set of valid but insufficient signatures is rejected.
+
+`simulate` (§11) is complementary, not a substitute: simulation does not check signatures, so the offline `SignerList`/quorum verification above remains REQUIRED. The `PaymentPayload` is unchanged: `payload.signedTxBlob` already carries `Signers` and the empty top-level `SigningPubKey`.
+
+**Example** — the decoded transaction of a 2-of-N multisigned payment (hex truncated):
+
+```json
+{
+  "TransactionType": "Payment",
+  "Account": "rPayerEngagementAccount...",
+  "Destination": "rMerchant...",
+  "Amount": "1000",
+  "InvoiceID": "A6C1...E11",
+  "SigningPubKey": "",
+  "Signers": [
+    { "Signer": { "Account": "rAgent...",    "SigningPubKey": "ED75...", "TxnSignature": "BCF9..." } },
+    { "Signer": { "Account": "rCoSigner...", "SigningPubKey": "EDA0...", "TxnSignature": "0238..." } }
+  ]
+}
+```
+
+The signer accounts (`rAgent…`, `rCoSigner…`) need not be funded or exist on the ledger; each `SigningPubKey` deriving to its `Signer.Account` is sufficient (step 3).
+
+Rejection identifiers (proposed; they follow the `invalid_exact_xrpl_payload_*` form the reference facilitator uses for its other rejections):
+
+- `invalid_exact_xrpl_payload_multisig_signers_malformed`: the top-level `SigningPubKey` is not empty, or `Signers` has more than 32 entries, is not sorted by account ID, or includes the payer account (steps 1 and 3).
+- `invalid_exact_xrpl_payload_multisig_account_not_found`: the payer account does not exist at the validated ledger (step 2).
+- `invalid_exact_xrpl_payload_multisig_signer_not_authorized`: the payer has no `SignerList`, a signer is not on it, a signer appears twice, or a signer's key is not authorized for its account (steps 2–3).
+- `invalid_exact_xrpl_payload_multisig_signature_invalid`: a `Signer` entry is malformed or its `TxnSignature` does not verify (step 3).
+- `invalid_exact_xrpl_payload_multisig_quorum_not_met`: the summed `SignerWeight` of the verified signers is below `SignerQuorum` (step 4).
+
+A facilitator that does not implement this section rejects `Signers` per §9; the reference facilitator already uses `invalid_exact_xrpl_payload_multisig_not_supported` for that.
 
 ### 11. Simulation
 
@@ -518,6 +564,10 @@ Implementations MAY include additional fields when defined by the SDK or facilit
 - `tfPartialPayment` is explicitly rejected.
 - `Paths` and `DeliverMin` are rejected.
 - IOU payments require `SendMax` to match the destination currency and issuer.
+
+### Multisig Authorization Scope
+
+Multisig authorization is read from the payer's `SignerList` at a validated ledger, exactly as single-signer authorization is read from the account's master-key / `RegularKey` state. A `SignerList` can change between `/verify` and `/settle` — the same race that already exists for a `RegularKey` — so `/settle` MUST re-run verification, and the validated ledger remains the final arbiter. Facilitators MUST reject signer accounts that are absent from the `SignerList` and duplicate signer entries, and MUST compare summed `SignerWeight` against `SignerQuorum` rather than counting signatures, so that a below-quorum set of otherwise-valid signatures does not verify.
 
 ## References
 
