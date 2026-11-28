@@ -21,7 +21,7 @@ const (
 	ErrInsufficientBalance         = "invalid_exact_evm_insufficient_balance"
 	ErrInvalidSignatureFormat      = "invalid_exact_evm_signature_format"
 	ErrFailedToVerifySignature     = "invalid_exact_evm_failed_to_verify_signature"
-	ErrInvalidSignature            = "invalid_exact_evm_signature"
+	ErrInvalidSignature            = "invalid_exact_evm_payload_signature"
 	ErrInvalidSignatureS           = "invalid_exact_evm_non_canonical_signature"
 	ErrValidBeforeExpired          = "invalid_exact_evm_payload_authorization_valid_before"
 	ErrValidAfterInFuture          = "invalid_exact_evm_payload_authorization_valid_after"
