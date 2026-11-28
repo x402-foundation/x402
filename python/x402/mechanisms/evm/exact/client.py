@@ -6,21 +6,18 @@ import time
 from typing import Any
 
 from ....schemas import PaymentRequirements
-from ..constants import ERC20_ALLOWANCE_ABI, PERMIT2_ADDRESS, SCHEME_EXACT
+from ..constants import SCHEME_EXACT
 from ..default_assets import find_default_asset
 from ..eip712 import build_typed_data_for_signing
+from ..gas_sponsoring import try_sign_gas_sponsoring_extensions
 from ..signer import (
     ClientEvmSigner,
-    ClientEvmSignerWithReadContract,
-    ClientEvmSignerWithSignTransaction,
-    warn_cannot_read_for_sponsoring,
 )
 from ..types import ExactEIP3009Authorization, ExactEIP3009Payload, TypedDataField
 from ..utils import (
     create_nonce,
     get_asset_info,
     get_evm_chain_id,
-    normalize_address,
 )
 from .permit2_utils import create_permit2_payload
 
@@ -89,7 +86,9 @@ class ExactEvmScheme:
             result = create_permit2_payload(self._signer, requirements)
 
             if extensions:
-                ext_data = self._try_sign_extensions(requirements, result, extensions)
+                ext_data = try_sign_gas_sponsoring_extensions(
+                    self._signer, requirements, result, extensions
+                )
                 if ext_data:
                     result["__extensions"] = ext_data
 
@@ -114,133 +113,6 @@ class ExactEvmScheme:
         payload = ExactEIP3009Payload(authorization=authorization, signature=signature)
 
         return payload.to_dict()
-
-    def _try_sign_extensions(
-        self,
-        requirements: PaymentRequirements,
-        result: dict[str, Any],
-        extensions: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Try to sign gas sponsoring extensions for Permit2 flows."""
-
-        # Try EIP-2612 first
-        eip2612_ext = self._try_sign_eip2612(requirements, result, extensions)
-        if eip2612_ext:
-            return eip2612_ext
-
-        # Try ERC-20 approval fallback
-        erc20_ext = self._try_sign_erc20_approval(requirements, extensions)
-        if erc20_ext:
-            return erc20_ext
-
-        return None
-
-    def _try_sign_eip2612(
-        self,
-        requirements: PaymentRequirements,
-        result: dict[str, Any],
-        extensions: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Try to sign an EIP-2612 permit for gasless Permit2 approval."""
-        from ....extensions.eip2612_gas_sponsoring import EIP2612_GAS_SPONSORING_KEY
-        from ....extensions.eip2612_gas_sponsoring.client import sign_eip2612_permit
-
-        if EIP2612_GAS_SPONSORING_KEY not in extensions:
-            return None
-
-        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
-            warn_cannot_read_for_sponsoring(str(requirements.network))
-            return None
-
-        extra = requirements.extra or {}
-        token_name = extra.get("name")
-        token_version = extra.get("version")
-        if not token_name or not token_version:
-            return None
-
-        chain_id = get_evm_chain_id(str(requirements.network))
-        token_address = normalize_address(requirements.asset)
-
-        try:
-            allowance = self._signer.read_contract(
-                token_address,
-                ERC20_ALLOWANCE_ABI,
-                "allowance",
-                self._signer.address,
-                PERMIT2_ADDRESS,
-            )
-            if int(allowance) >= int(requirements.amount):
-                return None
-        except Exception:
-            pass  # Allowance check failed, proceed with signing
-
-        permit2_auth = result.get("permit2Authorization", {})
-        deadline = permit2_auth.get("deadline", "")
-        if not deadline:
-            import time
-
-            deadline = str(int(time.time()) + (requirements.max_timeout_seconds or 3600))
-
-        info = sign_eip2612_permit(
-            self._signer,
-            token_address,
-            token_name,
-            token_version,
-            chain_id,
-            deadline,
-            requirements.amount,
-        )
-
-        return {EIP2612_GAS_SPONSORING_KEY: {"info": info.to_dict()}}
-
-    def _try_sign_erc20_approval(
-        self,
-        requirements: PaymentRequirements,
-        extensions: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Try to sign an ERC-20 approval tx for gasless Permit2 approval."""
-        from ....extensions.erc20_approval_gas_sponsoring import (
-            ERC20_APPROVAL_GAS_SPONSORING_KEY,
-        )
-        from ....extensions.erc20_approval_gas_sponsoring.client import (
-            sign_erc20_approval_transaction,
-        )
-
-        if ERC20_APPROVAL_GAS_SPONSORING_KEY not in extensions:
-            return None
-
-        if not isinstance(self._signer, ClientEvmSignerWithReadContract):
-            warn_cannot_read_for_sponsoring(str(requirements.network))
-            return None
-
-        if not isinstance(self._signer, ClientEvmSignerWithSignTransaction):
-            return None
-
-        chain_id = get_evm_chain_id(str(requirements.network))
-        token_address = normalize_address(requirements.asset)
-
-        # Skip if allowance is already sufficient
-        if isinstance(self._signer, ClientEvmSignerWithReadContract):
-            try:
-                allowance = self._signer.read_contract(
-                    token_address,
-                    ERC20_ALLOWANCE_ABI,
-                    "allowance",
-                    self._signer.address,
-                    PERMIT2_ADDRESS,
-                )
-                if int(allowance) >= int(requirements.amount):
-                    return None
-            except Exception:
-                pass
-
-        info = sign_erc20_approval_transaction(
-            self._signer,
-            token_address,
-            chain_id,
-        )
-
-        return {ERC20_APPROVAL_GAS_SPONSORING_KEY: {"info": info.to_dict()}}
 
     def _sign_authorization(
         self,
