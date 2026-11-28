@@ -1,0 +1,16 @@
+{
+  "id": "X4-033",
+  "title": "Payment Deadline Bypass",
+  "category": "protocol_abuse",
+  "requirement": "HC-23: Servers must reject payments with expired deadlines",
+  "method": "GET",
+  "request": {
+    "expired_deadline": 1783085654
+  },
+  "owasp_asi": "ASI03",
+  "severity": "high",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-033"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "X4-038",
+  "title": "Double-Spend Detection",
+  "category": "trust_abuse",
+  "requirement": "HC-28: Servers must track payment nonces and reject duplicate submissions",
+  "method": "GET",
+  "request": {
+    "nonce": "a1bed042219646d59c5158c5fc879520",
+    "submitted_twice": true
+  },
+  "owasp_asi": "ASI03",
+  "severity": "critical",
+  "impact": "fund_theft",
+  "normative": "MUST",
+  "expected": "A conformant x402 implementation satisfies the stated requirement; a divergent response is a finding.",
+  "source": "agent-security-harness (Apache-2.0) :: x402_harness.py :: X4-038"
+}
