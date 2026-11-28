@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
 
 try:
     from x402.mechanisms.evm.batch_settlement.errors import (
+        ERR_CHANNEL_NOT_FOUND,
         ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,
+        ERR_CUMULATIVE_EXCEEDS_BALANCE,
         ERR_DEPOSIT_PAYLOAD,
         ERR_VOUCHER_PAYLOAD,
     )
@@ -153,6 +156,105 @@ class TestVoucherAdvancesByPrice:
         voucher_env(balance=10_000, total_claimed=500)
         out = _verify_voucher(500, payload_type="refund", amount="not-a-number")
         assert out.is_valid is True
+
+
+class TestVoucherChannelStateReread:
+    def _install(self, monkeypatch, read):
+        sleeps: list[float] = []
+        monkeypatch.setattr(voucher_mod, "validate_channel_config", lambda *a, **k: None)
+        monkeypatch.setattr(
+            voucher_mod, "verify_batch_settlement_voucher_typed_data", lambda *a, **k: True
+        )
+        monkeypatch.setattr(voucher_mod, "read_channel_state", read)
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        return sleeps
+
+    def _balance_reader(self, monkeypatch, balances: list[int], *, total_claimed: int = 0):
+        calls = {"n": 0}
+
+        def read(*_args, **_kwargs):
+            balance = balances[min(calls["n"], len(balances) - 1)]
+            calls["n"] += 1
+            return ChannelState(
+                balance=balance,
+                total_claimed=total_claimed,
+                withdraw_requested_at=0,
+                refund_nonce=0,
+            )
+
+        sleeps = self._install(monkeypatch, read)
+        return calls, sleeps
+
+    def test_balance_that_stays_zero_is_channel_not_found_after_three_rereads(self, monkeypatch):
+        calls, sleeps = self._balance_reader(monkeypatch, [0])
+        out = _verify_voucher(1000)
+        assert out.is_valid is False
+        assert out.invalid_reason == ERR_CHANNEL_NOT_FOUND
+        assert calls["n"] == 4
+        assert sleeps == [0.15, 0.4, 1.0]
+
+    def test_balance_that_stays_short_exceeds_after_three_rereads(self, monkeypatch):
+        calls, sleeps = self._balance_reader(monkeypatch, [500])
+        out = _verify_voucher(1000)
+        assert out.is_valid is False
+        assert out.invalid_reason == ERR_CUMULATIVE_EXCEEDS_BALANCE
+        assert calls["n"] == 4
+        assert sleeps == [0.15, 0.4, 1.0]
+
+    def test_stale_balance_is_reread_until_it_covers_max_claimable(self, monkeypatch):
+        calls, sleeps = self._balance_reader(monkeypatch, [500, 500, 10_000])
+        out = _verify_voucher(1000)
+        assert out.is_valid is True
+        assert out.extra["balance"] == "10000"
+        assert calls["n"] == 3
+        assert sleeps == [0.15, 0.4]
+
+    def test_covering_balance_is_read_once(self, monkeypatch):
+        calls, sleeps = self._balance_reader(monkeypatch, [1000])
+        out = _verify_voucher(1000)
+        assert out.is_valid is True
+        assert calls["n"] == 1
+        assert sleeps == []
+
+    def test_zero_max_claimable_still_rereads_until_the_channel_is_funded(self, monkeypatch):
+        calls, sleeps = self._balance_reader(monkeypatch, [0, 1])
+        out = _verify_voucher(0, payload_type="refund")
+        assert out.is_valid is True
+        assert out.extra["balance"] == "1"
+        assert calls["n"] == 2
+        assert sleeps == [0.15]
+
+    def test_read_error_after_a_short_balance_stops_the_rereads(self, monkeypatch):
+        calls = {"n": 0}
+
+        def read(*_args, **_kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ChannelState(
+                    balance=0, total_claimed=0, withdraw_requested_at=0, refund_nonce=0
+                )
+            raise RuntimeError("rpc down")
+
+        sleeps = self._install(monkeypatch, read)
+        out = _verify_voucher(1000)
+        assert out.is_valid is False
+        assert out.invalid_reason == ERR_CHANNEL_NOT_FOUND
+        assert calls["n"] == 2
+        assert sleeps == [0.15]
+
+    def test_first_read_error_does_not_retry(self, monkeypatch):
+        calls = {"n": 0}
+
+        def read(*_args, **_kwargs):
+            calls["n"] += 1
+            raise RuntimeError("rpc down")
+
+        sleeps = self._install(monkeypatch, read)
+        out = _verify_voucher(1000)
+        assert out.is_valid is False
+        assert out.invalid_reason == ERR_CHANNEL_NOT_FOUND
+        assert calls["n"] == 1
+        assert sleeps == []
 
 
 class _Result:
