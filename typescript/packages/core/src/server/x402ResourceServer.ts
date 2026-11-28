@@ -356,9 +356,13 @@ export function resolveSettlementOverrideAmount(
         );
       }
       resolved = convertToTokenAmount(dollarMatch[1], decimals);
-    } else {
-      // Raw atomic units (existing behavior)
+    } else if (/^\d+$/.test(rawAmount)) {
       resolved = rawAmount;
+    } else {
+      // BigInt() would otherwise accept "", "-1", "0x10" and " 100".
+      throw new Error(
+        `Invalid settlement override amount "${rawAmount}": expected atomic units, a percent, or a $ price.`,
+      );
     }
   }
 
