@@ -325,6 +325,34 @@ var BatchSettlementRefundNonceABI = []byte(`[
 	}
 ]`)
 
+// BatchSettlementDepositedEventABI is Deposited(bytes32 indexed channelId, address indexed sender, uint128 amount, uint128 newBalance).
+var BatchSettlementDepositedEventABI = []byte(`[
+	{
+		"type": "event",
+		"name": "Deposited",
+		"inputs": [
+			{"name": "channelId", "type": "bytes32", "indexed": true},
+			{"name": "sender", "type": "address", "indexed": true},
+			{"name": "amount", "type": "uint128", "indexed": false},
+			{"name": "newBalance", "type": "uint128", "indexed": false}
+		],
+		"anonymous": false
+	}
+]`)
+
+// BatchSettlementChannelClosedEventABI is ChannelClosed(bytes32 indexed channelId, ChannelConfig config).
+var BatchSettlementChannelClosedEventABI = []byte(`[
+	{
+		"type": "event",
+		"name": "ChannelClosed",
+		"inputs": [
+			{"name": "channelId", "type": "bytes32", "indexed": true},
+			{"name": "config", "type": "tuple", "indexed": false, "components": ` + channelConfigComponentsJSON + `}
+		],
+		"anonymous": false
+	}
+]`)
+
 // BatchSettlementRefundedEventABI for decoding Refunded(channelId, sender, amount).
 var BatchSettlementRefundedEventABI = []byte(`[
 	{

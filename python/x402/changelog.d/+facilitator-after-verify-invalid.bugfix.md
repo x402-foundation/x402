@@ -1,0 +1,1 @@
+The facilitator now runs after_verify for a verify result with is_valid false and keeps on_verify_failure for raised errors, as the Python server, TypeScript and Go do. Previously a rejection went to on_verify_failure, where a recovery hook could replace it with a valid result.

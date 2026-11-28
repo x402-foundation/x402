@@ -56,8 +56,6 @@ import {
   ReceiverAuthorizerConflictError,
   reportStorageError,
   writeThenBroadcast,
-  type OpenBroadcastDisposition,
-  type PaymentChannelRecord,
   type PaymentChannelStorage,
 } from "../../payment-channels/storage";
 import { assertMaxIdleSecs } from "../../payment-channels/rentCleanup";
@@ -66,23 +64,33 @@ import {
   InMemoryBatchPendingSettlementStore,
   PayoutAttributionAmbiguousError,
   broadcastExpiredWithoutLanding,
+  channelPastCloseGate,
   discardWire,
   distributionsForStore,
   hasTokenBalances,
   ownerBalanceChange,
+  readBatchOrClosed,
   reserveBroadcast,
+  withConfirmationSlot,
   type BatchPendingSettlementStore,
   type ConfirmedEvidence,
 } from "./recovery";
 import {
+  activityRecord,
+  ALL_CHANNEL_STATUSES,
+  appliedFailure,
   CHANNEL_BUSY,
   claimResponse,
   classifyError,
   depositResponse,
+  distributionStates,
   envelopeFailure,
+  openDisposition,
   parseOptionalSlot,
+  parseStoredSlot,
   pendingSignatureOf,
   recoveredRefundResponse,
+  refreshDistributionReplay,
   refundResponse,
   settleFailure,
   settlementPending,
@@ -199,7 +207,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (signer.getAddresses().length === 0) {
       throw new Error("BatchSvmScheme requires at least one fee payer signer");
     }
-    this.signer = this.withConfirmationSlot(signer);
+    this.signer = withConfirmationSlot(signer, (network, slot) => this.rememberSlot(network, slot));
     assertBindingSource(config.channelStorage, config.receiverBindingHistoryReader);
     this.delegatedReceiverAuth = assertDelegatedReceiverAuth(config.delegatedReceiverAuth);
     this.channelStorage = config.channelStorage ?? new InMemoryPaymentChannelStorage();
@@ -464,9 +472,17 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       payer,
       onCompleted: async signature => claimResponse(prepared, requirements.network, signature),
       beforeSend: async () => {
-        const channels = await Promise.all(
-          prepared.map(item => this.fetchChannel(requirements.network, item.channelId)),
-        );
+        const batch = await readBatchOrClosed({
+          assertClaimChannel: this.assertClaimChannel.bind(this),
+          configOf: item => item.claim.channelConfig,
+          fetchChannelOrClosed: this.fetchChannelOrClosed.bind(this),
+          network: requirements.network,
+          prepared,
+          requirements,
+        });
+        if ("response" in batch) return batch.response;
+        const { channels } = batch;
+        let applied = false;
         for (let index = 0; index < prepared.length; index += 1) {
           const item = prepared[index]!;
           const channel = channels[index]!;
@@ -474,9 +490,10 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           this.assertClaimChannel(channel, item.claim.channelConfig, item.terms, requirements, [
             ChannelStatus.Open,
           ]);
-          if (item.cumulative <= channel.settlement.settled || item.cumulative > channel.deposit) {
+          if (item.cumulative > channel.deposit) {
             throw new Error(BatchError.CUMULATIVE_AMOUNT_MISMATCH);
           }
+          applied ||= item.cumulative <= channel.settlement.settled;
           instructions.push(
             ...buildSettleInstructions({
               channelId: item.channelId,
@@ -489,6 +506,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             }),
           );
         }
+        if (applied)
+          return appliedFailure(requirements, "claim already applied onchain", prepared, channels);
         if (this.settlementCache.isDuplicate(claimKey)) {
           return settleFailure(payment.accepted.network, CHANNEL_BUSY, payer);
         }
@@ -520,14 +539,16 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
           }),
         }),
       onReplay: signature => claimResponse(prepared, requirements.network, signature),
-      postcondition: async signature => {
+      postcondition: async (signature, phase) => {
+        const pendingView = phase === "pending";
         const confirmed = await this.fetchChannelsUntil(
           requirements.network,
           prepared.map(item => item.channelId),
           channels =>
-            channels.every(
-              (channel, index) =>
-                channel !== undefined && channel.settlement.settled >= prepared[index]!.cumulative,
+            channels.every((channel, index) =>
+              channel === undefined
+                ? pendingView
+                : channel.settlement.settled >= prepared[index]!.cumulative,
             ),
         );
         if (!confirmed) {
@@ -541,7 +562,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             ),
           };
         }
-        this.assertRecoveredClaims(confirmed, prepared, requirements);
+        this.assertRecoveredClaims(confirmed, prepared, requirements, pendingView);
         return { ok: true as const, channel: confirmed };
       },
     });
@@ -602,17 +623,33 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     if (pending) {
       const recovered = await this.reconcileBroadcast(key, pending, requirements.network, "");
       if (!recovered.ok) return recovered.response;
-      return this.finishDistribution(key, recovered.signature, prepared, requirements);
+      return this.finishDistribution(key, recovered.signature, prepared, requirements, undefined);
     }
     const previous = await this.pendingStore.get(`${key}:result`);
-    const previousSlot = await this.pendingStore.get(`${key}:slot`);
-    if (previousSlot) this.rememberSlot(requirements.network, BigInt(previousSlot));
+    const previousSlot = parseStoredSlot(await this.pendingStore.get(`${key}:slot`));
+    if (previousSlot !== undefined) this.rememberSlot(requirements.network, previousSlot);
     const instructions: ServerInstruction[] = [];
     const swept: PreparedDistribution[] = [];
-    for (const item of prepared) {
-      const channel = previous
-        ? await this.readChannel(requirements.network, item.channelId)
-        : await this.fetchChannel(requirements.network, item.channelId);
+    const channels: (Channel | undefined)[] = [];
+    if (previous) {
+      for (const item of prepared) {
+        channels.push(await this.readChannel(requirements.network, item.channelId));
+      }
+    } else {
+      const batch = await readBatchOrClosed({
+        assertClaimChannel: this.assertClaimChannel.bind(this),
+        configOf: item => item.channelConfig,
+        fetchChannelOrClosed: this.fetchChannelOrClosed.bind(this),
+        network: requirements.network,
+        prepared,
+        requirements,
+      });
+      if ("response" in batch) return batch.response;
+      channels.push(...batch.channels);
+    }
+    for (let index = 0; index < prepared.length; index += 1) {
+      const item = prepared[index]!;
+      const channel = channels[index];
       if (!channel && previous) continue; // The preceding payout may have closed it.
       if (!channel) throw new Error(BatchError.CHANNEL_STATE);
       this.assertClaimChannel(channel, item.channelConfig, item.terms, requirements, [
@@ -632,9 +669,19 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       );
     }
     if (instructions.length === 0) {
-      if (previous) return JSON.parse(previous) as SettleResponse;
+      if (previous) {
+        const refreshed = refreshDistributionReplay(
+          JSON.parse(previous) as SettleResponse,
+          prepared,
+          channels,
+          previousSlot !== undefined,
+        );
+        const encoded = JSON.stringify(refreshed);
+        if (encoded !== previous) await this.pendingStore.set(`${key}:result`, encoded);
+        return refreshed;
+      }
       // State alone cannot identify a previous payment or its amount.
-      return settleFailure(payment.accepted.network, BatchError.CUMULATIVE_AMOUNT_MISMATCH, "");
+      return appliedFailure(requirements, "nothing to distribute onchain", prepared, channels);
     }
     // Different sweeps can share a recent blockhash. Give each new signed
     // transaction its own identity; recovery always reuses these exact bytes.
@@ -664,7 +711,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       }),
     });
     if (!submitted.ok) return submitted.response;
-    return this.finishDistribution(key, submitted.signature, prepared, requirements);
+    return this.finishDistribution(key, submitted.signature, prepared, requirements, channels);
   }
 
   private async finishDistribution(
@@ -672,6 +719,7 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     signature: string,
     prepared: PreparedDistribution[],
     requirements: PaymentRequirements,
+    channelsBefore: readonly (Channel | undefined)[] | undefined,
   ): Promise<SettleResponse> {
     try {
       // A cached result contains the actual transfer, including on its first
@@ -715,18 +763,40 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
             throw new PayoutAttributionAmbiguousError();
           }
         }
+        const channelStates = await distributionStates(prepared, channelsBefore, channelId =>
+          this.readChannel(requirements.network, channelId),
+        );
         response = {
           success: true,
           network: requirements.network,
           payer: "",
           transaction: signature,
           amount: amount.toString(),
-          extra: { channels: prepared.map(item => item.channelId) },
+          extra: {
+            channels: prepared.map(item => item.channelId),
+            ...(channelStates ? { channelStates } : {}),
+          },
         };
         await this.pendingStore.set(
           `batch:transaction:${requirements.network}:${signature}:result`,
           JSON.stringify(response),
         );
+      } else if (response.success && !response.extra?.channelStates) {
+        const cachedSlot = parseStoredSlot(await this.pendingStore.get(`${key}:slot`));
+        if (cachedSlot !== undefined) this.rememberSlot(requirements.network, cachedSlot);
+        const channelStates = await distributionStates(
+          prepared,
+          undefined,
+          channelId => this.readChannel(requirements.network, channelId),
+          cachedSlot !== undefined,
+        );
+        if (channelStates) {
+          response = { ...response, extra: { ...response.extra, channelStates } };
+          await this.pendingStore.set(
+            `batch:transaction:${requirements.network}:${signature}:result`,
+            JSON.stringify(response),
+          );
+        }
       }
       await this.config.onDistributionConfirmed?.(response, requirements);
       await this.pendingStore.set(`${key}:result`, JSON.stringify(response));
@@ -1697,13 +1767,26 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     for (let attempt = 0; attempt < CHANNEL_READ_ATTEMPTS; attempt += 1) {
       const channel = await this.readChannel(network, channelId);
       if (channel) return channel;
-      if (attempt + 1 < CHANNEL_READ_ATTEMPTS) {
-        await new Promise(resolve =>
-          setTimeout(resolve, CHANNEL_READ_INITIAL_BACKOFF_MS * 2 ** attempt),
-        );
-      }
+      if (attempt + 1 < CHANNEL_READ_ATTEMPTS) await this.waitForChannelRead(attempt);
     }
     throw new Error(`${BatchError.CHANNEL_STATE}: channel is not visible after confirmation`);
+  }
+
+  private async fetchChannelOrClosed(
+    network: string,
+    channelId: string,
+    openSlot: number,
+    slotCache: { value?: bigint } = {},
+  ): Promise<{ channel: Channel; closed: false } | { channel: undefined; closed: true }> {
+    if (Object.prototype.hasOwnProperty.call(this, "fetchChannel")) {
+      return { channel: await this.fetchChannel(network, channelId), closed: false };
+    }
+    const channel = await this.readChannel(network, channelId);
+    if (channel) return { channel, closed: false };
+    if (await channelPastCloseGate(this.signer, network, openSlot, slotCache)) {
+      return { channel: undefined, closed: true };
+    }
+    return { channel: await this.fetchChannel(network, channelId), closed: false };
   }
 
   /**
@@ -1743,53 +1826,17 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
     network: string,
     channelIds: readonly string[],
     predicate: (channels: readonly (Channel | undefined)[]) => boolean,
-  ): Promise<Channel[] | undefined> {
+  ): Promise<(Channel | undefined)[] | undefined> {
     for (let attempt = 0; attempt < CHANNEL_READ_ATTEMPTS; attempt += 1) {
       try {
         const channels = await Promise.all(channelIds.map(id => this.readChannel(network, id)));
-        if (predicate(channels) && channels.every((value): value is Channel => value !== undefined))
-          return channels;
+        if (predicate(channels)) return channels;
       } catch {
         /* Keep transaction identity while the RPC catches up. */
       }
       if (attempt + 1 < CHANNEL_READ_ATTEMPTS) await this.waitForChannelRead(attempt);
     }
     return undefined;
-  }
-
-  /**
-   * Forward the facilitator signer and keep the slot from each confirmation.
-   *
-   * Shared submit helpers confirm and discard the status. The next account
-   * read uses that slot as `minContextSlot` without a second status RPC.
-   *
-   * @param signer - Facilitator signer supplied to the scheme
-   * @returns The same signer, with confirmation slots recorded on this scheme
-   */
-  private withConfirmationSlot(signer: BatchFacilitatorSigner): BatchFacilitatorSigner {
-    return new Proxy(signer, {
-      get: (target, property) => {
-        if (property === "confirmTransaction") {
-          return (
-            signature: string,
-            network: string,
-            options?: { searchTransactionHistory?: boolean },
-          ) => {
-            const confirm = target.confirmTransaction.bind(target);
-            const confirmation =
-              options === undefined
-                ? confirm(signature, network)
-                : confirm(signature, network, options);
-            return confirmation.then(status => {
-              if (status?.slot !== undefined) this.rememberSlot(network, BigInt(status.slot));
-              return status;
-            });
-          };
-        }
-        const value = Reflect.get(target, property, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
   }
 
   private rememberSlot(network: string, slot: bigint): void {
@@ -1804,23 +1851,24 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
   }
 
   private assertRecoveredClaims(
-    channels: readonly Channel[],
+    channels: readonly (Channel | undefined)[],
     prepared: readonly PreparedClaim[],
     requirements: PaymentRequirements,
+    allowAbsent = false,
   ): void {
     for (let index = 0; index < prepared.length; index += 1) {
+      const channel = channels[index];
+      if (!channel) {
+        if (allowAbsent) continue;
+        throw new Error(BatchError.CHANNEL_STATE);
+      }
       const item = prepared[index]!;
       this.assertClaimChannel(
-        channels[index]!,
+        channel,
         item.claim.channelConfig,
         item.terms,
         requirements,
-        [
-          ChannelStatus.Open,
-          ChannelStatus.Sealed,
-          ChannelStatus.Closing,
-          ChannelStatus.Distributed,
-        ],
+        ALL_CHANNEL_STATUSES,
       );
     }
   }
@@ -1909,6 +1957,8 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
       distributeInstruction: (channelId, channel, terms, requirements) =>
         this.distributeInstruction(channelId, channel, terms as BatchTerms, requirements),
       fetchChannel: (network, channelId) => this.fetchChannel(network, channelId),
+      fetchChannelOrClosed: (network, channelId, openSlot) =>
+        this.fetchChannelOrClosed(network, channelId, openSlot),
       nowSeconds: () => Math.floor(Date.now() / 1000),
       onDistributionConfirmed: this.config.onDistributionConfirmed,
       pendingStore: this.pendingStore,
@@ -1930,56 +1980,4 @@ export class BatchSvmScheme implements SchemeNetworkFacilitator {
         this.submitRedemption(feePayer, network, instructions, key, payer),
     };
   }
-}
-
-/**
- * Channel facts for an activity or open write. Bindings stay empty unless
- * the caller sets them; activity never changes a stored binding.
- *
- * @param fields - Channel key and the facts this write knows
- * @param fields.network - CAIP-2 network
- * @param fields.channelId - Channel PDA
- * @param fields.payTo - Distribution recipient
- * @param fields.tokenProgram - Token program that owns the mint
- * @param fields.expiresAt - Voucher expiry in Unix seconds, `0` for batch
- * @param fields.receiverAuthorizer - Binding memo key, empty for activity
- * @param fields.callerIdentity - Delegated caller, empty when not delegated
- * @returns A storage record stamped with the current activity time
- */
-function activityRecord(fields: {
-  network: Network;
-  channelId: string;
-  payTo: string;
-  tokenProgram: string;
-  expiresAt: number;
-  receiverAuthorizer?: string;
-  callerIdentity?: string;
-}): PaymentChannelRecord {
-  return {
-    callerIdentity: fields.callerIdentity ?? "",
-    channelId: fields.channelId,
-    expiresAt: fields.expiresAt,
-    lastActivityAt: Date.now(),
-    network: fields.network,
-    payTo: fields.payTo,
-    receiverAuthorizer: fields.receiverAuthorizer ?? "",
-    tokenProgram: fields.tokenProgram,
-  };
-}
-
-/**
- * Whether an open broadcast failed definitively: the send was rejected, the
- * transaction landed with an error, or its blockhash expired unlanded.
- * Pending and a failed attempt to persist a pending signature are kept.
- *
- * @param result - Durable broadcast result
- * @returns `revert` only for a definitive open failure
- */
-function openDisposition(
-  result: { signature: string; channel: unknown } | SettleResponse,
-): OpenBroadcastDisposition {
-  if ("channel" in result) return "keep";
-  if (result.success !== false || result.errorReason !== "transaction_failed") return "keep";
-  if (result.errorMessage?.includes("failed to persist")) return "keep";
-  return "revert";
 }

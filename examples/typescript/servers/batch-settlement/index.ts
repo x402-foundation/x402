@@ -151,6 +151,7 @@ async function main() {
     resourceServer = resourceServer.register(SVM_NETWORK, batchedSvmScheme);
 
     svmChannelManager = batchedSvmScheme.createChannelManager(facilitatorClient, SVM_NETWORK, {
+      rpcUrl: process.env.SVM_RPC_URL?.trim() || undefined,
       onClaim: (r: { vouchers: number; transaction: string }) =>
         console.log(`[SVM] Claimed ${r.vouchers} vouchers (tx: ${r.transaction})`),
       onSettle: (r: { transaction: string }) =>

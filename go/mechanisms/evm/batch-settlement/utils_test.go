@@ -308,6 +308,9 @@ func TestIsOnchainStateFresh(t *testing.T) {
 	if !IsOnchainStateFresh(CachedChannelOnchain{OnchainSyncedAt: now - 1_000}, 5_000, now) {
 		t.Fatal("sync inside positive ttl should be fresh")
 	}
+	if IsOnchainStateFresh(CachedChannelOnchain{OnchainSyncedAt: now - 1_000, WithdrawRequestedAt: 77}, 5_000, now) {
+		t.Fatal("a pending withdrawal should never be fresh")
+	}
 }
 
 func TestValidateChannelConfig_MatchesRequirements(t *testing.T) {
@@ -508,6 +511,11 @@ func TestEvaluateVoucherAgainstCachedState(t *testing.T) {
 	}
 	if EvaluateVoucherAgainstCachedState(raw, reqs, fresh, 1_000_000, 0) != nil {
 		t.Fatal("ttl 0 should fall back")
+	}
+	pendingWithdrawal := *fresh
+	pendingWithdrawal.WithdrawRequestedAt = 77
+	if EvaluateVoucherAgainstCachedState(raw, reqs, &pendingWithdrawal, 1_000_000, 5_000) != nil {
+		t.Fatal("a pending withdrawal should fall back")
 	}
 
 	zeroAuth := *raw

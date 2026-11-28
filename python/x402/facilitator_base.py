@@ -419,33 +419,7 @@ class x402FacilitatorBase:
                     requirements,  # type: ignore[arg-type]
                 )
 
-            # Check if verification failed
-            if not verify_result.is_valid:
-                failure_context = VerifyFailureContext(
-                    payment_payload=payload,
-                    requirements=requirements,
-                    payload_bytes=payload_bytes,
-                    requirements_bytes=requirements_bytes,
-                    error=Exception(verify_result.invalid_reason or "Verification failed"),
-                )
-                for hook in self._on_verify_failure_hooks:
-                    result = yield ("failure", hook, failure_context)
-                    if isinstance(result, RecoveredVerifyResult):
-                        # Execute after hooks with recovered result
-                        result_context = VerifyResultContext(
-                            payment_payload=payload,
-                            requirements=requirements,
-                            payload_bytes=payload_bytes,
-                            requirements_bytes=requirements_bytes,
-                            result=result.result,
-                        )
-                        for after_hook in self._after_verify_hooks:
-                            yield ("after", after_hook, result_context)
-                        return result.result
-
-                return verify_result
-
-            # Execute after hooks for success
+            # Execute after hooks for the returned result, including is_valid=False
             result_context = VerifyResultContext(
                 payment_payload=payload,
                 requirements=requirements,

@@ -1,7 +1,6 @@
 import { COMPUTE_BUDGET_PROGRAM_ADDRESS } from "@solana-program/compute-budget";
-import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
-import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import { LIGHTHOUSE_PROGRAM_ADDRESS, MEMO_PROGRAM_ADDRESS } from "../../constants";
+import { TOKEN_PROGRAMS } from "../splits";
 import * as Errors from "./errors";
 import {
   assertFeePayerIsolatedFromInstructions,
@@ -18,9 +17,8 @@ type Role = "computeLimit" | "computePrice" | "transfer" | "memo" | "guard" | "u
 const PROTOCOL_ORDER = ["computeLimit", "computePrice", "transfer", "memo"] as const;
 
 /**
- * Identifies an instruction's role by program ID and discriminator, not position.
- * `guard` (currently only Lighthouse) may appear anywhere. Payload validity is
- * checked separately by the per-instruction verifiers.
+ * Identifies an instruction's role by program ID and discriminator.
+ * A Lighthouse guard may appear anywhere. Verifiers check the payload.
  *
  * @param ix - Decompiled instruction
  * @returns The instruction's role
@@ -31,10 +29,7 @@ function classify(ix: Ix): Role {
   if (program === COMPUTE_BUDGET_PROGRAM_ADDRESS.toString()) {
     if (discriminator === IX_SET_COMPUTE_UNIT_LIMIT) return "computeLimit";
     if (discriminator === IX_SET_COMPUTE_UNIT_PRICE) return "computePrice";
-  } else if (
-    program === TOKEN_PROGRAM_ADDRESS.toString() ||
-    program === TOKEN_2022_PROGRAM_ADDRESS.toString()
-  ) {
+  } else if (TOKEN_PROGRAMS.has(program)) {
     if (discriminator === IX_TOKEN_TRANSFER_CHECKED && (ix.data?.length ?? 0) >= 10) {
       return "transfer";
     }
@@ -58,47 +53,40 @@ function classify(ix: Ix): Role {
  */
 export type InstructionIdentity = { programAddress: string; discriminator: Uint8Array };
 
-/** An ordered block of instructions (guards aside) allowed before/after the protocol instructions. */
+/** Ordered instructions allowed before or after the protocol instructions. */
 export type InstructionTuple = InstructionIdentity[];
 
 /**
- * Matches `tuple` against the front (or back) of `instructions`, skipping guard
- * instructions while scanning.
+ * Matches `tuple` against the front or back of `instructions`.
  *
  * @param instructions - Instructions to match against
  * @param tuple - Identities to match, in order
  * @param fromEnd - Match against the back instead of the front
- * @returns The matched instructions (guards included) and the rest, or null
+ * @returns The matched instructions and the rest, or null
  */
 function matchTuple(
   instructions: readonly Ix[],
   tuple: InstructionTuple,
   fromEnd: boolean,
 ): { matched: Ix[]; rest: Ix[] } | null {
-  if (tuple.length === 0) return null;
-  let consumed = 0;
-  let matchedCount = 0;
-  while (matchedCount < tuple.length) {
-    const ix = instructions[fromEnd ? instructions.length - 1 - consumed : consumed];
-    if (!ix) return null;
-    if (classify(ix) !== "guard") {
-      const { programAddress, discriminator } =
-        tuple[fromEnd ? tuple.length - 1 - matchedCount : matchedCount];
-      const data = ix.data;
-      const matches =
-        discriminator.length > 0 &&
-        ix.programAddress.toString() === programAddress &&
-        !!data &&
-        discriminator.every((byte, i) => data[i] === byte);
-      if (!matches) return null;
-      matchedCount++;
-    }
-    consumed++;
+  if (tuple.length === 0 || instructions.length < tuple.length) return null;
+  const start = fromEnd ? instructions.length - tuple.length : 0;
+  const matched = instructions.slice(start, start + tuple.length);
+  for (let i = 0; i < tuple.length; i++) {
+    const ix = matched[i];
+    const { programAddress, discriminator } = tuple[i];
+    const data = ix.data;
+    const matches =
+      discriminator.length > 0 &&
+      ix.programAddress.toString() === programAddress &&
+      !!data &&
+      discriminator.every((byte, index) => data[index] === byte);
+    if (!matches) return null;
   }
-  const split = fromEnd ? instructions.length - consumed : consumed;
-  return fromEnd
-    ? { matched: instructions.slice(split), rest: instructions.slice(0, split) }
-    : { matched: instructions.slice(0, split), rest: instructions.slice(split) };
+  return {
+    matched,
+    rest: fromEnd ? instructions.slice(0, start) : instructions.slice(start + tuple.length),
+  };
 }
 
 /**
@@ -138,13 +126,8 @@ export type PartitionedInstructions = {
 };
 
 /**
- * Resolves the Path 1 layout: strips a matched allowlisted preflight block from
- * the front and postflight block from the back (each fee-payer-isolation-checked,
- * since it is operator-configured arbitrary code), then partitions the rest by
- * identity. Protocol instructions (ComputeLimit, ComputePrice, TransferChecked,
- * optional Memo(s)) must appear in that relative order; permitted Lighthouse
- * assertion variants may appear anywhere as guards. Anything else, a duplicate or
- * out-of-order protocol instruction, or a missing transfer is rejected.
+ * Strips Lighthouse guards, then at most one allowlisted preflight block and one postflight block.
+ * ComputeLimit, ComputePrice, TransferChecked, and Memo must then follow that order.
  *
  * @param instructions - Decompiled top-level instructions
  * @param options - Scheme options; only the allowlists are read (empty/unset never match)
@@ -186,8 +169,7 @@ export function resolveProtocolLayout(
       if (
         match.matched.some(
           ix =>
-            (ix.programAddress.toString() === TOKEN_PROGRAM_ADDRESS.toString() ||
-              ix.programAddress.toString() === TOKEN_2022_PROGRAM_ADDRESS.toString()) &&
+            TOKEN_PROGRAMS.has(ix.programAddress.toString()) &&
             ix.data?.[0] === IX_TOKEN_TRANSFER_CHECKED,
         )
       ) {
@@ -208,7 +190,6 @@ export function resolveProtocolLayout(
   let expectedIndex = version === 1 ? 2 : 0;
   for (const ix of rest) {
     const role = classify(ix);
-    if (role === "guard") continue;
     if (role === "unknown") return { errorReason: Errors.ErrUnknownInstruction };
     if (role === "memo" && found.memo) {
       memoCount++;

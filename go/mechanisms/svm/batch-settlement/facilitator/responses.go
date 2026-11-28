@@ -28,10 +28,8 @@ var transientPattern = regexp.MustCompile(`(?i)\b429\b|\b503\b|too many requests
 
 const extraPaidToReceiver = "paidToReceiver"
 
-// EnvelopeFailure checks the request envelope: paymentPayload.accepted MUST
-// equal paymentRequirements (spec 4.5), apart from the extra keys left out of
-// requirements matching (batchsettlement.DynamicExtraFields). It returns the
-// failure reason, or "" when the envelope matches.
+// EnvelopeFailure reports when accepted differs from requirements (spec 4.5),
+// ignoring batchsettlement.DynamicExtraFields. Empty means they match.
 func EnvelopeFailure(accepted, requirements types.PaymentRequirements) string {
 	if accepted.Scheme != batchsettlement.Scheme || requirements.Scheme != batchsettlement.Scheme {
 		return "unsupported_scheme"
@@ -110,6 +108,19 @@ func redemptionSnapshot(channelID string, channel *generated.Channel) batchsettl
 		state.WithdrawRequestedAt = channel.ClosureStartedAt
 	}
 	return state
+}
+
+// closedSnapshot reports a channel PDA that is absent onchain and permanently
+// terminal (closed and deallocated, or past open_slot + OPEN_SLOT_WINDOW so it
+// can never be opened). Watermarks are zeroed because no onchain account remains.
+func closedSnapshot(channelID string) batchsettlement.BatchRedemptionChannelState {
+	return batchsettlement.BatchRedemptionChannelState{
+		ChannelID:       channelID,
+		Status:          batchsettlement.ChannelStatusClosed,
+		Balance:         "0",
+		TotalClaimed:    "0",
+		PayoutWatermark: "0",
+	}
 }
 
 // distributedSnapshot is the state a confirmed distribute leaves behind: payout caught up to settled, and a sealed channel paid out.

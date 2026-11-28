@@ -79,63 +79,70 @@ export function readExtraUintString(
 }
 
 export type RefundSettlementSnapshot = {
-  balance: string;
-  totalClaimed: string;
-  withdrawRequestedAt: number;
-  refundNonce: number;
+  balance?: string;
+  totalClaimed?: string;
+  withdrawRequestedAt?: number;
+  refundNonce?: number;
 };
 
 /**
- * Parses the facilitator's post-refund channel snapshot.
+ * Parses a settle `channelState` object.
+ *
+ * An omitted object returns `undefined` so the caller keeps the stored channel. A present field
+ * that is not a canonical non-negative integer throws `ErrRefundPayload`.
  *
  * @param extra - Settlement response extra fields.
- * @returns Validated refund settlement snapshot.
+ * @returns Validated snapshot, or `undefined` when `channelState` is omitted.
  */
 export function parseRefundSettlementSnapshot(
   extra: Record<string, unknown> | undefined,
-): RefundSettlementSnapshot {
+): RefundSettlementSnapshot | undefined {
+  if (extra?.channelState === undefined) {
+    return undefined;
+  }
   const channelState = readChannelStateExtra(extra);
+  if (channelState === undefined || Array.isArray(extra.channelState)) {
+    throw new Error(ErrRefundPayload);
+  }
   return {
-    balance: parseUintStringExtra(channelState, "balance"),
-    totalClaimed: parseUintStringExtra(channelState, "totalClaimed"),
-    withdrawRequestedAt: parseUintNumberExtra(channelState, "withdrawRequestedAt"),
-    refundNonce: parseUintNumberExtra(channelState, "refundNonce"),
+    balance: requireCanonicalUint(channelState, "balance"),
+    totalClaimed: requireCanonicalUint(channelState, "totalClaimed"),
+    withdrawRequestedAt: requireCanonicalCount(channelState, "withdrawRequestedAt"),
+    refundNonce: requireCanonicalCount(channelState, "refundNonce"),
   };
 }
 
 /**
- * Parses a non-negative integer as a decimal string from refund snapshot `extra`.
+ * Reads a canonical uint string when the field is present.
  *
- * @param extra - Settlement response extra fields from the facilitator.
- * @param key - Field name: `balance` or `totalClaimed`.
- * @returns Decimal string representation of the uint (digits only).
+ * @param extra - Channel snapshot fields from the settle response.
+ * @param key - Field to read.
+ * @returns Decimal string, or `undefined` when the field is absent.
  */
-function parseUintStringExtra(
-  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
-  key: "balance" | "totalClaimed",
-): string {
-  const value = extra?.[key];
-  if (typeof value === "string" && /^\d+$/.test(value)) return value;
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return String(value);
-  throw new Error(ErrRefundPayload);
+function requireCanonicalUint(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
+  key: keyof BatchSettlementChannelStateExtra,
+): string | undefined {
+  if (extra[key] === undefined) return undefined;
+  const parsed = readExtraUintString(extra, key);
+  if (parsed === undefined) throw new Error(ErrRefundPayload);
+  return parsed;
 }
 
 /**
- * Parses a non-negative integer from refund snapshot `extra`.
+ * Reads a canonical uint as a safe integer when the field is present.
  *
- * @param extra - Settlement response extra fields from the facilitator.
+ * @param extra - Channel snapshot fields from the settle response.
  * @param key - Field name: `withdrawRequestedAt` or `refundNonce`.
- * @returns Parsed non-negative integer.
+ * @returns The integer, or `undefined` when the field is absent.
  */
-function parseUintNumberExtra(
-  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>> | undefined,
+function requireCanonicalCount(
+  extra: Partial<Record<keyof BatchSettlementChannelStateExtra, unknown>>,
   key: "withdrawRequestedAt" | "refundNonce",
-): number {
-  const value = extra?.[key];
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    const parsed = parseInt(value, 10);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  throw new Error(ErrRefundPayload);
+): number | undefined {
+  const parsed = requireCanonicalUint(extra, key);
+  if (parsed === undefined) return undefined;
+  const value = Number(parsed);
+  if (!Number.isSafeInteger(value) || String(value) !== parsed) throw new Error(ErrRefundPayload);
+  return value;
 }

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"maps"
 	"net/http"
 
 	x402 "github.com/x402-foundation/x402/go/v2"
@@ -29,4 +30,11 @@ func (s *x402HTTPResourceServer) ResolveCancelledSettlement(
 		paymentPayload,
 		existingCacheControl,
 	)
+}
+
+// RestoreHeaders resets responseHeaders in place to snapshot, dropping headers
+// a route handler set after the snapshot was taken.
+func RestoreHeaders(responseHeaders http.Header, snapshot http.Header) {
+	clear(responseHeaders)
+	maps.Copy(responseHeaders, snapshot)
 }

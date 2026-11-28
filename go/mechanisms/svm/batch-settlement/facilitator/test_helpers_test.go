@@ -103,12 +103,14 @@ type accountCall struct {
 type scriptedSigner struct {
 	mu sync.Mutex
 
-	keys       []solana.PrivateKey
-	sent       []*solana.Transaction
-	accounts   []accountCall
-	confirmErr error
-	sendErr    error
-	blockhash  solana.Hash
+	keys        []solana.PrivateKey
+	sent        []*solana.Transaction
+	accounts    []accountCall
+	confirmErr  error
+	sendErr     error
+	blockhash   solana.Hash
+	clusterSlot uint64
+	slotErr     error
 
 	// holdSend, when set, runs inside SendTransaction before it returns.
 	holdSend func()
@@ -202,8 +204,14 @@ func (s *scriptedSigner) GetLatestBlockhash(context.Context, string) (solana.Has
 }
 
 // GetSlot reports a cluster slot inside the open-slot window of the opens the
-// fixtures build (openSlot 77 and 123).
+// fixtures build (openSlot 77 and 123), unless clusterSlot or slotErr overrides it.
 func (s *scriptedSigner) GetSlot(context.Context, string, rpc.CommitmentType) (uint64, error) {
+	if s.slotErr != nil {
+		return 0, s.slotErr
+	}
+	if s.clusterSlot != 0 {
+		return s.clusterSlot, nil
+	}
 	return 200, nil
 }
 
@@ -259,6 +267,9 @@ func (s *confirmingSigner) ConfirmTransactionWithOptions(
 	s.mu.Lock()
 	s.calls = append(s.calls, confirmCall{signature: signature, opts: opts})
 	s.mu.Unlock()
+	if s.confirmErr != nil {
+		return nil, s.confirmErr
+	}
 	return &svm.FacilitatorConfirmationStatus{Slot: s.slot}, nil
 }
 

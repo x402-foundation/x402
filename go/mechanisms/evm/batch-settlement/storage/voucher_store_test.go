@@ -557,6 +557,46 @@ func TestCommitVoucherCharge_DoesNotLowerTotalClaimed(t *testing.T) {
 	}
 }
 
+func TestCommitVoucherCharge_KeepsHigherRefundNonceAndWithdrawRequestedAt(t *testing.T) {
+	cases := []struct {
+		name         string
+		snapNonce    int
+		snapWithdraw int
+		wantNonce    int
+		wantWithdraw int
+	}{
+		{name: "pre-read zeros keep the stored pair", snapNonce: 0, snapWithdraw: 0, wantNonce: 5, wantWithdraw: 77},
+		{name: "higher nonce and lower withdraw request", snapNonce: 9, snapWithdraw: 1, wantNonce: 9, wantWithdraw: 77},
+		{name: "lower nonce and higher withdraw request", snapNonce: 1, snapWithdraw: 90, wantNonce: 5, wantWithdraw: 90},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewInMemoryChannelStorage[*Channel]()
+			if _, err := store.UpdateChannel(context.Background(), voucherChannelId, func(*Channel) *Channel {
+				return voucherBaseChannel(&Channel{Balance: "1", RefundNonce: 5, WithdrawRequestedAt: 77})
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			result, err := CommitVoucherCharge(context.Background(), store, voucherChannelId, CommitVoucherChargeInput[*Channel]{
+				Increment: big.NewInt(100),
+				SignedCap: big.NewInt(5000),
+				Voucher:   batchsettlement.BatchSettlementVoucherFields{MaxClaimableAmount: "5000", Signature: "0xbbb"},
+				Snapshot:  voucherBaseChannel(&Channel{Balance: "10000", RefundNonce: tc.snapNonce, WithdrawRequestedAt: tc.snapWithdraw}),
+			})
+			if err != nil {
+				t.Fatalf("CommitVoucherCharge: %v", err)
+			}
+			if result.Status != CommitCommitted {
+				t.Fatalf("status = %q", result.Status)
+			}
+			got, _ := store.Get(context.Background(), voucherChannelId)
+			if got.RefundNonce != tc.wantNonce || got.WithdrawRequestedAt != tc.wantWithdraw || got.Balance != "10000" || got.ChargedCumulativeAmount != "2100" {
+				t.Fatalf("stored refundNonce=%d withdrawRequestedAt=%d balance=%q charged=%q", got.RefundNonce, got.WithdrawRequestedAt, got.Balance, got.ChargedCumulativeAmount)
+			}
+		})
+	}
+}
+
 func TestChannelStateExtra_OmitsChargedWhenMissing(t *testing.T) {
 	extra := ChannelStateExtra(voucherBaseChannel(nil), nil)
 	if extra.ChargedCumulativeAmount != "" {

@@ -231,11 +231,21 @@ describe("isOnchainStateFresh", () => {
   const now = 1_000_000;
 
   it("is false when ttlMs is 0 even if the row was just synced", () => {
-    expect(isOnchainStateFresh({ onchainSyncedAt: now }, 0, now)).toBe(false);
+    expect(isOnchainStateFresh({ onchainSyncedAt: now, withdrawRequestedAt: 0 }, 0, now)).toBe(
+      false,
+    );
   });
 
   it("is true when the sync is still inside a positive ttl", () => {
-    expect(isOnchainStateFresh({ onchainSyncedAt: now - 1_000 }, 5_000, now)).toBe(true);
+    expect(
+      isOnchainStateFresh({ onchainSyncedAt: now - 1_000, withdrawRequestedAt: 0 }, 5_000, now),
+    ).toBe(true);
+  });
+
+  it("is false while a withdrawal is pending even inside the ttl", () => {
+    expect(
+      isOnchainStateFresh({ onchainSyncedAt: now - 1_000, withdrawRequestedAt: 1234 }, 5_000, now),
+    ).toBe(false);
   });
 });
 
@@ -549,8 +559,18 @@ describe("server extra parsers", () => {
     });
   });
 
-  it("rejects a refund snapshot that omits required uint fields", () => {
-    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toThrow(
+  it("keeps omitted refund snapshot fields absent and rejects invalid ones", () => {
+    expect(parseRefundSettlementSnapshot({ channelState: { balance: "1" } })).toEqual({
+      balance: "1",
+      totalClaimed: undefined,
+      withdrawRequestedAt: undefined,
+      refundNonce: undefined,
+    });
+    expect(parseRefundSettlementSnapshot({})).toBeUndefined();
+    expect(parseRefundSettlementSnapshot(undefined)).toBeUndefined();
+    expect(() => parseRefundSettlementSnapshot({ channelState: "nope" })).toThrow(ErrRefundPayload);
+    expect(() => parseRefundSettlementSnapshot({ channelState: null })).toThrow(ErrRefundPayload);
+    expect(() => parseRefundSettlementSnapshot({ channelState: { balance: "01" } })).toThrow(
       ErrRefundPayload,
     );
     expect(() =>

@@ -1,9 +1,5 @@
 /**
- * Multi-payee splits for the exact scheme (scheme_exact_svm.md §5).
- *
- * Shared by the client (transaction construction), the server (requirements
- * checks against the facilitator's advertisement) and the facilitator (Path 1,
- * Path 2 and post-settlement verification).
+ * Exact-scheme split terms (scheme_exact_svm.md §5), shared by every role.
  */
 
 import { TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
@@ -14,6 +10,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
   MAX_SPLITS,
   MAX_SPLIT_MEMO_BYTES,
+  MEMO_PROGRAM_ADDRESS,
   SYSTEM_PROGRAM_ADDRESS,
 } from "../constants";
 import { validateSvmAddress } from "../utils";
@@ -23,7 +20,7 @@ const U64_MAX = (1n << 64n) - 1n;
 const CANONICAL_AMOUNT = /^[1-9][0-9]*$/;
 const IX_CREATE_IDEMPOTENT = 1;
 
-const TOKEN_PROGRAMS = new Set([
+export const TOKEN_PROGRAMS: ReadonlySet<string> = new Set([
   TOKEN_PROGRAM_ADDRESS.toString(),
   TOKEN_2022_PROGRAM_ADDRESS.toString(),
 ]);
@@ -258,6 +255,33 @@ export async function deriveAta(
     tokenProgram: tokenProgram as Address,
   });
   return ata.toString();
+}
+
+/**
+ * Checks that exactly one Memo instruction carries `extra.memo` when set.
+ *
+ * @param instructions - Instructions that may include a Memo
+ * @param requirements - Payment requirements
+ * @returns An error reason, or undefined when the memo is valid or unset
+ */
+export function verifyExpectedMemo(
+  instructions: ReadonlyArray<{
+    programAddress: { toString(): string };
+    data?: ArrayLike<number>;
+  }>,
+  requirements: PaymentRequirements,
+): string | undefined {
+  const expectedMemo = requirements.extra?.memo as string | undefined;
+  if (!expectedMemo) return undefined;
+  const memoInstructions = instructions.filter(
+    ix => ix.programAddress.toString() === MEMO_PROGRAM_ADDRESS,
+  );
+  if (memoInstructions.length !== 1) {
+    return Errors.ErrMemoCount;
+  }
+  const memoData = memoInstructions[0].data;
+  const actualMemo = memoData ? new TextDecoder().decode(new Uint8Array(memoData)) : "";
+  return actualMemo === expectedMemo ? undefined : Errors.ErrMemoMismatch;
 }
 
 /**

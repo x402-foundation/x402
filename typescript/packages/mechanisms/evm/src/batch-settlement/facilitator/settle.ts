@@ -107,6 +107,7 @@ export async function executeSettle(
 
     return await waitAndReturnSettleResponse(signer, tx, network, undefined, {
       failedStatusReason: Errors.ErrSettleTransactionFailed,
+      revertedReason: Errors.ErrTransactionReverted,
       onSuccess: receipt => {
         let amount = "";
         if (receipt.logs) {

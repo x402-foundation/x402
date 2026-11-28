@@ -261,10 +261,14 @@ func CommitVoucherCharge[T ChannelRecord[T]](ctx context.Context, store ChannelS
 		if !input.LocalVerify && !isZeroRecord(resolved) {
 			snap := resolved.Base()
 			ub.Balance = snap.Balance
-			// Deposit snapshots mirror escrow; the claimed watermark only moves forward.
+			// Deposit snapshots mirror escrow. Claimed, refund nonce, and withdraw request only move forward.
 			ub.TotalClaimed = MaxUint256String(ub.TotalClaimed, snap.TotalClaimed)
-			ub.WithdrawRequestedAt = snap.WithdrawRequestedAt
-			ub.RefundNonce = snap.RefundNonce
+			if snap.WithdrawRequestedAt > ub.WithdrawRequestedAt {
+				ub.WithdrawRequestedAt = snap.WithdrawRequestedAt
+			}
+			if snap.RefundNonce > ub.RefundNonce {
+				ub.RefundNonce = snap.RefundNonce
+			}
 			// The stamp is the read time of the escrow fields; zero is no observation.
 			if snap.OnchainSyncedAt > ub.OnchainSyncedAt {
 				ub.OnchainSyncedAt = snap.OnchainSyncedAt

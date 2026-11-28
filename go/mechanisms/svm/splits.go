@@ -12,11 +12,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
-// Multi-payee split reason codes (scheme_exact_svm.md §5). They live here,
-// rather than only in exact/facilitator, so the client and server can report
-// them without importing the facilitator. exact/facilitator/errors.go
-// re-exports them; the strings match the TypeScript SDK character for
-// character.
+// Split reason codes (scheme_exact_svm.md §5). Client and server report them
+// from here; exact/facilitator re-exports the same values.
 const (
 	ErrSplitsInvalid                 = "invalid_exact_svm_splits_invalid"
 	ErrSplitCountExceeded            = "split_count_exceeded"
@@ -118,9 +115,8 @@ func parseSplitAmount(value interface{}, field string) (uint64, error) {
 	return amount, nil
 }
 
-// ParsePaymentLegs validates extra.splits and extra.ataCreationRequired
-// (§5.1, §5.2) and returns the payment legs: the primary remainder first, then
-// one leg per split in order. Errors are *SplitsError.
+// ParsePaymentLegs returns the primary remainder, then one leg per extra.splits
+// entry (§5.1, §5.2). Errors are *SplitsError.
 func ParsePaymentLegs(requirements types.PaymentRequirements) ([]PaymentLeg, error) {
 	extra := requirements.Extra
 	if extra == nil {
@@ -236,9 +232,8 @@ type SplitCapabilities struct {
 	AtaCreationSponsored bool
 }
 
-// GetSplitCapabilities reads the split capabilities from a /supported kind's
-// extra. A non-integer or absent maxSplits reads as 0, and anything other than
-// a literal true ataCreationSponsored reads as false.
+// GetSplitCapabilities reads /supported extra. Absent or non-integer maxSplits
+// is 0, and ataCreationSponsored is true only for a literal true.
 func GetSplitCapabilities(extra map[string]interface{}) SplitCapabilities {
 	caps := SplitCapabilities{}
 	if extra == nil {
@@ -375,11 +370,8 @@ type AtaCreationContext struct {
 	TokenProgram *solana.PublicKey
 }
 
-// ValidateAtaCreation validates an ATA-program instruction against §5.4 and
-// §2.1.1: it must be a CreateIdempotent funded by the fee payer that creates
-// the ATA, for the asset, of a recipient marked ataCreationRequired, at most
-// once per owner. accounts are the instruction's resolved account keys.
-// Errors are *SplitsError with ErrSplitAtaCreationNotAuthorized.
+// ValidateAtaCreation accepts one fee-payer-funded CreateIdempotent per marked
+// recipient for this asset (§5.4, §2.1.1). Errors are *SplitsError.
 func ValidateAtaCreation(accounts []solana.PublicKey, data []byte, ctx *AtaCreationContext) (solana.PublicKey, solana.PublicKey, error) {
 	reject := func(format string, args ...interface{}) (solana.PublicKey, solana.PublicKey, error) {
 		return solana.PublicKey{}, solana.PublicKey{}, splitsErr(ErrSplitAtaCreationNotAuthorized, format, args...)

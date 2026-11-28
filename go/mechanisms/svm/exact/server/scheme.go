@@ -252,9 +252,8 @@ func (s *ExactSvmScheme) EnhancePaymentRequirements(
 		}
 	}
 
-	// A server MUST NOT issue splits the selected facilitator does not
-	// advertise (§5.5), so a misconfigured route fails here rather than as a
-	// verify rejection after the client has signed.
+	// Reject splits the selected facilitator does not advertise (§5.5)
+	// before the client signs.
 	if svm.UsesSplitTerms(requirements) {
 		legs, err := svm.ParsePaymentLegs(requirements)
 		if err != nil {

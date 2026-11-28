@@ -42,6 +42,7 @@ export { BatchSettlementEvmScheme } from "./batch-settlement";
 // Batch-settlement types
 export type {
   AuthorizerSigner,
+  BatchSettlementFacilitatorEvmSigner,
   ChannelConfig,
   ChannelState,
   BatchSettlementDepositPayload,

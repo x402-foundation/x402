@@ -31,6 +31,10 @@ import { encodeVoucherMessageBytes } from "./voucher";
 
 export { RECLAIM_DISCRIMINATOR, ChannelStatus };
 
+export function channelStatusName(status: number): string {
+  return ChannelStatus[status] ?? `Unknown(${status})`;
+}
+
 /**
  * Concrete instruction shape returned by every builder here: program address,
  * a concrete account list, and a `Uint8Array` data buffer. Avoids the

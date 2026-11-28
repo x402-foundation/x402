@@ -1,6 +1,7 @@
 /* eslint-disable jsdoc/require-jsdoc */
 /** Wire types for the SVM `batch-settlement` scheme. */
 
+import { channelStatusName } from "../payment-channels/onchain";
 import { BATCH_SETTLEMENT_SCHEME } from "./constants";
 import { BatchError } from "./errors";
 import { V1_MAX_CLAIM_CHANNELS, V1_MAX_SETTLE_CHANNELS } from "./facilitator/constants";
@@ -213,6 +214,22 @@ export type BatchChannelState = {
   totalClaimed: string;
   withdrawRequestedAt: number;
   chargedCumulativeAmount?: string | undefined;
+};
+
+export type BatchRedemptionStatus = "open" | "closing" | "sealed" | "distributed" | "closed";
+
+/**
+ * The onchain channel snapshot a facilitator attaches to a settle success or to
+ * a redemption rejected as already applied, as `extra.channelStates[]`, so the
+ * server resyncs without reading the chain.
+ */
+export type BatchRedemptionChannelState = {
+  channelId: string;
+  status: BatchRedemptionStatus;
+  balance: string;
+  totalClaimed: string;
+  payoutWatermark: string;
+  withdrawRequestedAt: number;
 };
 
 export function isBatchVoucher(value: unknown): value is BatchVoucher {
@@ -436,6 +453,45 @@ export function isBatchChannelState(value: unknown): value is BatchChannelState 
     isDecimal(value.totalClaimed) &&
     isSafeUint(value.withdrawRequestedAt) &&
     isOptional(value.chargedCumulativeAmount, isDecimal)
+  );
+}
+
+const ONCHAIN_REDEMPTION_STATUSES: readonly BatchRedemptionStatus[] = [
+  "open",
+  "closing",
+  "sealed",
+  "distributed",
+];
+
+/**
+ * The redemption status of an onchain channel status byte.
+ *
+ * @param status - Channel status byte
+ * @returns The `extra.channelStates` status, or undefined for an unknown byte
+ */
+export function redemptionStatusOf(status: number): BatchRedemptionStatus | undefined {
+  const name = channelStatusName(status).toLowerCase();
+  return ONCHAIN_REDEMPTION_STATUSES.find(known => known === name);
+}
+
+export function isBatchRedemptionChannelState(
+  value: unknown,
+): value is BatchRedemptionChannelState {
+  if (!isRecord(value) || !isString(value.channelId)) return false;
+  if (value.status === "closed") {
+    return (
+      value.balance === "0" &&
+      value.totalClaimed === "0" &&
+      value.payoutWatermark === "0" &&
+      value.withdrawRequestedAt === 0
+    );
+  }
+  return (
+    ONCHAIN_REDEMPTION_STATUSES.includes(value.status as BatchRedemptionStatus) &&
+    isDecimal(value.balance) &&
+    isDecimal(value.totalClaimed) &&
+    isDecimal(value.payoutWatermark) &&
+    isSafeUint(value.withdrawRequestedAt)
   );
 }
 

@@ -20,8 +20,6 @@ from ..constants import (
     DEFAULT_COMPUTE_UNIT_LIMIT,
     DEFAULT_MAX_COMPUTE_UNITS,
     MAX_MEMO_BYTES,
-    MAX_TRANSACTION_SIZE_V0,
-    MAX_TRANSACTION_SIZE_V1,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
     SPLIT_TRANSFER_COMPUTE_UNITS,
@@ -37,6 +35,7 @@ from ..utils import (
     derive_ata,
     encode_partially_signed_transaction,
     get_network_config,
+    max_transaction_size,
     normalize_client_transaction_versions,
     normalize_network,
     resolve_blockhash,
@@ -162,10 +161,8 @@ class ExactSvmScheme:
             )
 
         if split_terms:
-            # One TransferChecked per leg: the primary remainder to payTo, then
-            # each split in extra.splits order (§5.7). A recipient marked
-            # ataCreationRequired gets a fee-payer-funded CreateIdempotent
-            # unless its ATA is confirmed to exist (§5.4).
+            # Primary remainder, then each split. CreateIdempotent only when a
+            # marked recipient's ATA is not confirmed to exist.
             create_ixs: list[Instruction] = []
             transfer_ixs: list[Instruction] = []
             for leg in legs:
@@ -220,11 +217,8 @@ class ExactSvmScheme:
         # fee-payer slot (index 0) at settlement.
         tx_base64 = encode_partially_signed_transaction(message, self._signer.keypair)
 
-        # Each split adds a transfer and possibly an ATA creation (§5.2); fail
-        # here with the reason rather than send a transaction that cannot land.
-        size_limit = (
-            MAX_TRANSACTION_SIZE_V1 if transaction_version == 1 else MAX_TRANSACTION_SIZE_V0
-        )
+        # The network drops an oversized transaction after the sponsor co-signs it.
+        size_limit = max_transaction_size(transaction_version)
         if transaction_size_exceeded(tx_base64, transaction_version):
             raise ValueError(
                 f"Transaction is over the {size_limit}-byte limit; reduce extra.splits or "
@@ -238,11 +232,7 @@ class ExactSvmScheme:
 
     @staticmethod
     def _account_exists(client: SvmRpcClient, address: Pubkey) -> bool:
-        """Whether an account exists.
-
-        An RPC failure counts as "not confirmed", so the caller includes the
-        idempotent creation rather than risk a transfer to a missing ATA.
-        """
+        """Whether an account exists. An RPC failure counts as unconfirmed."""
         try:
             return client.get_account_info(address).value is not None
         except Exception:

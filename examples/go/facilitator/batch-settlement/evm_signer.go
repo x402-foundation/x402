@@ -185,6 +185,7 @@ func (s *facilitatorEvmSigner) WaitForTransactionReceipt(ctx context.Context, tx
 				Status:      uint64(receipt.Status),
 				BlockNumber: receipt.BlockNumber.Uint64(),
 				TxHash:      receipt.TxHash.Hex(),
+				Logs:        receipt.Logs,
 			}, nil
 		}
 		select {

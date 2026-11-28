@@ -4,7 +4,9 @@ import {
   BatchSettlementRefundPayload,
   BatchSettlementVoucherPayload,
   ChannelConfig,
+  ChannelState,
 } from "../types";
+import { CHANNEL_STATE_REREAD_DELAYS_MS } from "../constants";
 import { getEvmChainId } from "../../utils";
 import * as Errors from "../errors";
 import {
@@ -12,7 +14,33 @@ import {
   validateChannelConfig,
   verifyBatchSettlementVoucherTypedData,
   readChannelState,
+  toChannelStateExtra,
 } from "./utils";
+
+/**
+ * Re-reads channel state until the balance covers `minBalance`.
+ *
+ * @param signer - Facilitator signer for onchain reads.
+ * @param channelId - The `bytes32` channel id.
+ * @param minBalance - Balance the channel must cover.
+ * @returns The first covering read, or the last read.
+ */
+async function readChannelStateCovering(
+  signer: FacilitatorEvmSigner,
+  channelId: `0x${string}`,
+  minBalance: bigint,
+): Promise<ChannelState> {
+  const floor = minBalance > 0n ? minBalance : 1n;
+  let state = await readChannelState(signer, channelId);
+  for (const delayMs of CHANNEL_STATE_REREAD_DELAYS_MS) {
+    if (state.balance >= floor) {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+    state = await readChannelState(signer, channelId);
+  }
+  return state;
+}
 
 /**
  * Verifies a cumulative voucher payload against onchain channel state.
@@ -69,13 +97,12 @@ export async function verifyVoucher(
     };
   }
 
-  const state = await readChannelState(signer, channelId);
+  const maxClaimableAmount = BigInt(voucher.maxClaimableAmount);
+  const state = await readChannelStateCovering(signer, channelId, maxClaimableAmount);
 
   if (state.balance === 0n) {
     return { isValid: false, invalidReason: Errors.ErrChannelNotFound, payer: channelConfig.payer };
   }
-
-  const maxClaimableAmount = BigInt(voucher.maxClaimableAmount);
 
   if (maxClaimableAmount > state.balance) {
     return {
@@ -101,12 +128,6 @@ export async function verifyVoucher(
   return {
     isValid: true,
     payer: channelConfig.payer,
-    extra: {
-      channelId,
-      balance: state.balance.toString(),
-      totalClaimed: state.totalClaimed.toString(),
-      withdrawRequestedAt: state.withdrawRequestedAt,
-      refundNonce: state.refundNonce.toString(),
-    },
+    extra: toChannelStateExtra(channelId, state),
   };
 }

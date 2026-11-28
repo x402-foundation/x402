@@ -195,6 +195,9 @@ export function toClientEvmSigner(
   return result;
 }
 
+type FacilitatorEvmReceiptArgs = Parameters<FacilitatorEvmSigner["waitForTransactionReceipt"]>[0];
+type FacilitatorEvmReceipt = Awaited<ReturnType<FacilitatorEvmSigner["waitForTransactionReceipt"]>>;
+
 /** viem's own `waitForTransactionReceipt` default, so wrapping is behavior-preserving. */
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 180_000;
 
@@ -207,17 +210,25 @@ const DEFAULT_CONFIRMATION_TIMEOUT_MS = 180_000;
  * should set it below that deadline, so settlement reports `settlement_pending` with the
  * broadcast hash instead of the process being killed mid-wait.
  *
+ * The client's receipt type is preserved, so a viem client (whose receipts always carry `logs`)
+ * yields a signer that satisfies `BatchSettlementFacilitatorEvmSigner`.
+ *
  * @param client - The client to convert (must have 'address' property)
  * @param options - Optional signer behavior
  * @param options.confirmationTimeoutMs - Receipt-wait bound in milliseconds. Defaults to 180_000.
  * @returns FacilitatorEvmSigner with getAddresses() support
  */
-export function toFacilitatorEvmSigner(
-  client: Omit<FacilitatorEvmSigner, "getAddresses"> & { address: `0x${string}` },
+export function toFacilitatorEvmSigner<TReceipt extends FacilitatorEvmReceipt>(
+  client: Omit<FacilitatorEvmSigner, "getAddresses" | "waitForTransactionReceipt"> & {
+    address: `0x${string}`;
+    waitForTransactionReceipt(args: FacilitatorEvmReceiptArgs): Promise<TReceipt>;
+  },
   {
     confirmationTimeoutMs = DEFAULT_CONFIRMATION_TIMEOUT_MS,
   }: { confirmationTimeoutMs?: number } = {},
-): FacilitatorEvmSigner {
+): Omit<FacilitatorEvmSigner, "waitForTransactionReceipt"> & {
+  waitForTransactionReceipt(args: FacilitatorEvmReceiptArgs): Promise<TReceipt>;
+} {
   return {
     ...client,
     getAddresses: () => [client.address],

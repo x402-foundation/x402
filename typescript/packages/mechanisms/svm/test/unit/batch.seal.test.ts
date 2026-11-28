@@ -20,7 +20,10 @@ import { USDC_DEVNET_ADDRESS, USDC_MAINNET_ADDRESS } from "../../src/defaultAsse
 import type { Channel } from "../../src/payment-channels/generated/accounts/channel";
 import { getChannelDistributionHash } from "../../src/payment-channels/facilitator";
 import { ChannelStatus } from "../../src/payment-channels/onchain";
-import { buildOpenPaymentChannelTransaction } from "../../src/payment-channels/open";
+import {
+  buildOpenPaymentChannelTransaction,
+  OPEN_SLOT_WINDOW,
+} from "../../src/payment-channels/open";
 import { signVoucher } from "../../src/payment-channels/voucher";
 import type { FacilitatorConfirmedTransaction } from "../../src/signer";
 
@@ -440,6 +443,75 @@ describe("batch-settlement seal", () => {
     expect(open.api.submitRedemption).not.toHaveBeenCalled();
   });
 
+  it("answers a voucher below settled with the closing channel state and no broadcast", async () => {
+    const { api, scheme } = await facilitator();
+    const response = await settle(scheme, await sealPayload(999n));
+    expect(response).toMatchObject({
+      errorReason: BatchError.CLOSE_STATE,
+      payer: payer.address,
+      success: false,
+      transaction: "",
+    });
+    expect(response.extra).toEqual({
+      channelStates: [
+        {
+          balance: "10000",
+          channelId,
+          payoutWatermark: "500",
+          status: "closing",
+          totalClaimed: "1000",
+          withdrawRequestedAt: NOW - 60,
+        },
+      ],
+    });
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["open", ChannelStatus.Open],
+    ["sealed", ChannelStatus.Sealed],
+    ["distributed", ChannelStatus.Distributed],
+  ])("answers a seal of a channel that is %s with that state", async (expected, status) => {
+    const { api, scheme } = await facilitator({
+      live: channel({
+        closureStartedAt: 0n,
+        settlement: { payoutWatermark: 3_000n, settled: 3_000n },
+        status,
+      }),
+    });
+    const response = await settle(scheme, await sealPayload(3_000n));
+    expect(response).toMatchObject({
+      errorMessage: `seal applies only to a Closing channel; observed status ${ChannelStatus[status]}`,
+      errorReason: BatchError.CLOSE_STATE,
+      payer: payer.address,
+      success: false,
+      transaction: "",
+    });
+    expect(response.extra).toEqual({
+      channelStates: [
+        {
+          balance: "10000",
+          channelId,
+          payoutWatermark: "3000",
+          status: expected,
+          totalClaimed: "3000",
+          withdrawRequestedAt: 0,
+        },
+      ],
+    });
+    expect(api.submitRedemption).not.toHaveBeenCalled();
+  });
+
+  it("rejects a channel that does not match the configuration before revealing its state", async () => {
+    const { scheme } = await facilitator({
+      live: channel({ payer: address(authorizer.address), status: ChannelStatus.Sealed }),
+    });
+    const response = await settle(scheme, await sealPayload(3_000n));
+    expect(response).toMatchObject({ errorReason: BatchError.CHANNEL_STATE, success: false });
+    expect(response.errorReason).not.toBe(BatchError.CLOSE_STATE);
+    expect(response.extra).toBeUndefined();
+  });
+
   it("authenticates the server through the receiver authorizer bound at deposit", async () => {
     const payload = await sealPayload(3_000n);
     const missing = await facilitator();
@@ -556,16 +628,20 @@ describe("batch-settlement seal", () => {
     const closing = await facilitator();
     closing.api.readChannel = vi.fn().mockResolvedValue(undefined);
     closing.api.fetchChannel = vi.fn().mockResolvedValue(channel());
-    await expect(
-      closing.scheme.settle(
-        {
-          accepted: requirements(),
-          payload: { channelConfig, closeAuthorization, type: "refund", voucher },
-          x402Version: 2,
-        } as never,
-        requirements(),
-      ),
-    ).resolves.toMatchObject({ errorReason: BatchError.CLOSE_STATE, success: false });
+    const closingResponse = await closing.scheme.settle(
+      {
+        accepted: requirements(),
+        payload: { channelConfig, closeAuthorization, type: "refund", voucher },
+        x402Version: 2,
+      } as never,
+      requirements(),
+    );
+    expect(closingResponse).toMatchObject({
+      errorMessage: `${BatchError.CLOSE_STATE}: ${channelId} is already closing`,
+      errorReason: BatchError.CLOSE_STATE,
+      success: false,
+    });
+    expect(closingResponse.extra).toBeUndefined();
   });
 
   it("recovers refund recording with the receiver amount without rebroadcasting", async () => {
@@ -821,5 +897,92 @@ describe("batch-settlement seal", () => {
       requirements(),
     );
     expect(response).toMatchObject({ errorReason: BatchError.CHANNEL_CLOSING, success: false });
+  });
+
+  it("fresh seal reports closed channelState only past open_slot + OPEN_SLOT_WINDOW and keeps refund plain", async () => {
+    const setupAbsent = async (slot: bigint) => {
+      const transport = signer();
+      transport.getSlot.mockResolvedValue(slot);
+      const store = new InMemoryPaymentChannelStorage();
+      await store.recordOpen({
+        callerIdentity: "",
+        channelId,
+        expiresAt: 0,
+        lastActivityAt: Date.now(),
+        network: NETWORK,
+        payTo: RECEIVER,
+        receiverAuthorizer: authorizer.address,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+      const scheme = new BatchSvmScheme(transport as never, { channelStorage: store });
+      const api = scheme as unknown as Internals;
+      api.resolveTerms = vi.fn().mockResolvedValue({
+        feePayer: feePayer.address,
+        feePayerSigner: feePayer,
+        receiverAuthorizer: authorizer.address,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+        voucherSigner: "client",
+        withdrawDelay: 900,
+      });
+      api.deriveChannelId = vi.fn().mockResolvedValue(channelId);
+      api.readChannel = vi.fn().mockResolvedValue(undefined);
+      api.waitForChannelRead = vi.fn().mockResolvedValue(undefined);
+      api.submitRedemption = vi.fn();
+      const original = api.sealDependencies.bind(scheme);
+      api.sealDependencies = () => ({ ...original(), nowSeconds: () => NOW });
+      return { api, scheme };
+    };
+
+    const payload = await sealPayload(3_000n);
+    const pastSlot = BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW + 1n;
+    const past = await setupAbsent(pastSlot);
+    const pastResponse = await settle(past.scheme, payload);
+    expect(pastResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      extra: {
+        channelStates: [
+          {
+            balance: "0",
+            channelId,
+            payoutWatermark: "0",
+            status: "closed",
+            totalClaimed: "0",
+            withdrawRequestedAt: 0,
+          },
+        ],
+      },
+      payer: payer.address,
+      success: false,
+    });
+    expect(past.api.submitRedemption).not.toHaveBeenCalled();
+
+    const inside = await setupAbsent(BigInt(channelConfig.openSlot) + OPEN_SLOT_WINDOW);
+    const insideResponse = await settle(inside.scheme, payload);
+    expect(insideResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      success: false,
+    });
+    expect(insideResponse.extra).toBeUndefined();
+
+    // Client-initiated refund past the close gate remains a plain CHANNEL_STATE error.
+    const refundCase = await setupAbsent(pastSlot);
+    const refundResponse = await refundCase.scheme.settle(
+      {
+        accepted: requirements(),
+        payload: {
+          channelConfig,
+          closeAuthorization: payload.closeAuthorization,
+          type: "refund",
+          voucher: payload.voucher,
+        },
+        x402Version: 2,
+      } as never,
+      requirements(),
+    );
+    expect(refundResponse).toMatchObject({
+      errorReason: BatchError.CHANNEL_STATE,
+      success: false,
+    });
+    expect(refundResponse.extra).toBeUndefined();
   });
 });

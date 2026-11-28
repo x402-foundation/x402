@@ -597,14 +597,11 @@ func (s *x402ResourceServer) OnVerifiedPaymentCanceled(hook OnVerifiedPaymentCan
 	return s
 }
 
-// matchedSchemeHooks returns the per-(network, scheme) hook handles of the
-// registration that serves the current request, or nil when no scheme is
-// registered for that pair or that registration has no hooks. Caller must hold
-// s.mu (read).
+// matchedSchemeHooks returns the serving registration's hook handles, or nil.
+// Caller must hold s.mu (read).
 func (s *x402ResourceServer) matchedSchemeHooks(network Network, scheme string) *hookAdapterHandles {
-	// Resolve the registration in s.schemes: the hook map has no entry for a
-	// registration without hooks, so a lookup there could fall through to a
-	// wildcard registration's hooks
+	// Resolve the scheme registration. A registration without hooks has no hook
+	// entry, so a hook-map lookup would use a different network's hooks.
 	registeredNetwork, ok := findRegisteredNetwork(s.schemes, scheme, network)
 	if !ok {
 		return nil

@@ -6,12 +6,19 @@ import {
   getTransactionDecoder,
 } from "@solana/kit";
 import type { PendingSettlementStore } from "@x402/core/facilitator";
+import type { Network, PaymentRequirements, SettleResponse } from "@x402/core/types";
 
 import { findAssociatedTokenPda } from "@solana-program/token-2022";
 
-import { parseU64 } from "../../payment-channels/open";
+import { SLOT_COMMITMENT } from "../../payment-channels/commitments";
+import type { Channel } from "../../payment-channels/generated/accounts/channel";
+import type { ChannelStatus } from "../../payment-channels/onchain";
+import { OPEN_SLOT_WINDOW, parseU64 } from "../../payment-channels/open";
 import type { BatchFacilitatorSigner } from "../../payment-channels/signer";
 import type { FacilitatorConfirmedTransaction, FacilitatorTokenBalance } from "../../signer";
+import type { BatchChannelConfig } from "../types";
+import { ALL_CHANNEL_STATUSES, closedFailure } from "./responses";
+import type { BatchTerms } from "./types";
 
 /** Batch recovery records must outlive an unresolved transaction. */
 export interface BatchPendingSettlementStore extends PendingSettlementStore {
@@ -52,7 +59,7 @@ export class InMemoryBatchPendingSettlementStore implements BatchPendingSettleme
 
 const distributionPasses = new WeakMap<
   PendingSettlementStore,
-  Map<string, Promise<import("@x402/core/types").SettleResponse>>
+  Map<string, Promise<SettleResponse>>
 >();
 
 export function distributionsForStore(store: PendingSettlementStore) {
@@ -165,6 +172,138 @@ export async function discardWire(
   } catch {
     /* keep recorded outcome */
   }
+}
+
+/**
+ * Whether `network`'s current slot is past `openSlot + OPEN_SLOT_WINDOW`, when
+ * a channel PDA can have been deallocated (and can no longer be opened).
+ * `slotCache` avoids repeated `getSlot` calls across a batch.
+ *
+ * @param signer - Facilitator signer with `getSlot`
+ * @param network - CAIP-2 network
+ * @param openSlot - Channel's `openSlot` from `channelConfig`
+ * @param slotCache - Per-request slot cache shared across a batch
+ * @param slotCache.value - Cached cluster slot, populated lazily on the first absent channel
+ * @returns `true` only when `currentSlot > openSlot + OPEN_SLOT_WINDOW`
+ */
+export async function channelPastCloseGate(
+  signer: Pick<BatchFacilitatorSigner, "getSlot">,
+  network: string,
+  openSlot: number,
+  slotCache: { value?: bigint } = {},
+): Promise<boolean> {
+  if (!Number.isSafeInteger(openSlot) || openSlot <= 0) return false;
+  if (slotCache.value === undefined) {
+    try {
+      const current = await signer.getSlot(network, SLOT_COMMITMENT);
+      if (typeof current !== "bigint") return false;
+      slotCache.value = current;
+    } catch {
+      return false;
+    }
+  }
+  return slotCache.value > BigInt(openSlot) + OPEN_SLOT_WINDOW;
+}
+
+/**
+ * Read a claim or distribute batch, detecting any channel absent past
+ * `open_slot + OPEN_SLOT_WINDOW` and returning a closed-channel resync failure
+ * with live peer snapshots validated against the request's terms.
+ *
+ * @param args - Batch inputs and channel read/validation callbacks
+ * @param args.network - CAIP-2 network
+ * @param args.prepared - Prepared claim or distribute entries in request order
+ * @param args.configOf - Extracts each entry's channel config
+ * @param args.requirements - Request payment requirements
+ * @param args.fetchChannelOrClosed - Reads one channel or flags it closed past the close gate
+ * @param args.assertClaimChannel - Validates live channels against the request terms
+ * @returns All decoded live channels, or a closed-channel resync response
+ */
+export async function readBatchOrClosed<T extends { channelId: string; terms: BatchTerms }>(args: {
+  network: Network;
+  prepared: readonly T[];
+  configOf: (item: T) => BatchChannelConfig;
+  requirements: PaymentRequirements;
+  fetchChannelOrClosed: (
+    network: string,
+    channelId: string,
+    openSlot: number,
+    slotCache: { value?: bigint },
+  ) => Promise<{ channel: Channel; closed: false } | { channel: undefined; closed: true }>;
+  assertClaimChannel: (
+    channel: Channel,
+    config: BatchChannelConfig,
+    terms: BatchTerms,
+    requirements: PaymentRequirements,
+    allowedStatuses: readonly ChannelStatus[],
+  ) => void;
+}): Promise<{ channels: Channel[] } | { response: SettleResponse }> {
+  const channels: (Channel | undefined)[] = [];
+  const slotCache: { value?: bigint } = {};
+  let hasClosed = false;
+  for (const item of args.prepared) {
+    const observed = await args.fetchChannelOrClosed(
+      args.network,
+      item.channelId,
+      args.configOf(item).openSlot,
+      slotCache,
+    );
+    if (observed.closed) hasClosed = true;
+    channels.push(observed.channel);
+  }
+  if (hasClosed) {
+    for (let index = 0; index < args.prepared.length; index += 1) {
+      const live = channels[index];
+      if (!live) continue;
+      const item = args.prepared[index]!;
+      args.assertClaimChannel(
+        live,
+        args.configOf(item),
+        item.terms,
+        args.requirements,
+        ALL_CHANNEL_STATUSES,
+      );
+    }
+    return { response: closedFailure(args.network, args.prepared, channels) };
+  }
+  return { channels: channels as Channel[] };
+}
+
+/**
+ * Forward a facilitator signer and record the slot from each confirmation so
+ * subsequent account reads use it as `minContextSlot` without a second RPC.
+ *
+ * @param signer - Facilitator signer supplied to the scheme
+ * @param rememberSlot - Records the highest confirmed slot seen on a network
+ * @returns The same signer wrapped to record confirmation slots
+ */
+export function withConfirmationSlot(
+  signer: BatchFacilitatorSigner,
+  rememberSlot: (network: string, slot: bigint) => void,
+): BatchFacilitatorSigner {
+  return new Proxy(signer, {
+    get: (target, property) => {
+      if (property === "confirmTransaction") {
+        return (
+          signature: string,
+          network: string,
+          options?: { searchTransactionHistory?: boolean },
+        ) => {
+          const confirm = target.confirmTransaction.bind(target);
+          const confirmation =
+            options === undefined
+              ? confirm(signature, network)
+              : confirm(signature, network, options);
+          return confirmation.then(status => {
+            if (status?.slot !== undefined) rememberSlot(network, BigInt(status.slot));
+            return status;
+          });
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 /** A confirmed transaction whose pre and post token balances are visible. */

@@ -109,6 +109,7 @@ export async function executeClaimWithSignature(
 
     return await waitAndReturnSettleResponse(signer, tx, network, undefined, {
       failedStatusReason: Errors.ErrClaimTransactionFailed,
+      revertedReason: Errors.ErrTransactionReverted,
     });
   } catch (e) {
     return {

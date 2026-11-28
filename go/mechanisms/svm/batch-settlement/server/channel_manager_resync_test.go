@@ -15,6 +15,8 @@ import (
 	"github.com/x402-foundation/x402/go/v2/types"
 )
 
+const payoutUnknown = "distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"
+
 func channelStateEntry(id, status string, deposit, settled, payout uint64) map[string]any {
 	return map[string]any{
 		"channelId":           id,
@@ -72,12 +74,34 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
 		assert.Equal(t, server.RedemptionResult{Claimed: []string{"chan-a"}, Distributed: []string{}, Sealed: []string{}}, result)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3000), stored.Settled)
 		assert.Zero(t, stored.PayoutWatermark, "the payout stays payable until the facilitator or a reader reports it")
+	})
+
+	t.Run("reports a successful distribute with unusable channel states and no reader", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		state := newChannel("chan-a")
+		state.Settled = 3000
+		state.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(state))
+		var settles []server.SettleResult
+		options := managerOptions(store, receiverAuthorizer, func(context.Context, server.RedemptionRequest, types.PaymentRequirements) (*x402.SettleResponse, error) {
+			return withChannelStates(okResponse(), channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 3000)), nil
+		})
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
+		assert.Empty(t, result.Distributed)
+		assert.Empty(t, settles)
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Zero(t, stored.PayoutWatermark)
 	})
 
 	t.Run("keeps an unpaid balance payable when a recovered distribute answers without channel states", func(t *testing.T) {
@@ -161,7 +185,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		result, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown}, *errors, "one report for the two-channel batch")
 		assert.Equal(t, [][]string{{"chan-a", "chan-b"}, {"chan-b"}}, claimsOf(recorder))
 		assert.Equal(t, []string{"chan-b"}, result.Claimed, "a resynced channel is not a new claim")
 		assert.Equal(t, []server.ClaimResult{{Transaction: "sig", Vouchers: 1}}, claims)
@@ -241,7 +265,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, [][]string{{"chan-a", "chan-b"}, {"chan-b"}}, claimsOf(recorder))
-		assert.Len(t, *errors, 1)
+		assert.Equal(t, []string{"batch-settlement claim failed: " + batchsettlement.ErrCumulativeAmountMismatch, payoutUnknown}, *errors)
 	})
 
 	t.Run("ignores channel states that do not name exactly the submitted batch or carry impossible values", func(t *testing.T) {
@@ -252,16 +276,18 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 			return entry
 		}
 		cases := map[string][]map[string]any{
-			"another channel":           {channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
-			"an extra channel":          {valid, channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
-			"a duplicate":               {valid, valid},
-			"no entries":                {},
-			"payout above settled":      {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 3000, 3001)},
-			"settled above the deposit": {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 2000, 3000, 0)},
-			"an unknown status":         {with("status", "frozen")},
-			"a malformed amount":        {with("totalClaimed", "30x0")},
-			"a numeric amount":          {with("totalClaimed", float64(3000))},
-			"a missing amount":          {with("payoutWatermark", nil)},
+			"another channel":             {channelStateEntry("chan-z", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
+			"an extra channel":            {valid, channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 3000, 0)},
+			"a duplicate":                 {valid, valid},
+			"no entries":                  {},
+			"payout above settled":        {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 10000, 3000, 3001)},
+			"settled above the deposit":   {channelStateEntry("chan-a", batchsettlement.ChannelStatusOpen, 2000, 3000, 0)},
+			"an unknown status":           {with("status", "frozen")},
+			"closed with nonzero balance": {channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 10000, 0, 0)},
+			"closed with nonzero settled": {channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 1, 0)},
+			"a malformed amount":          {with("totalClaimed", "30x0")},
+			"a numeric amount":            {with("totalClaimed", float64(3000))},
+			"a missing amount":            {with("payoutWatermark", nil)},
 		}
 		for name, entries := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -317,7 +343,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Empty(t, *errors)
+		assert.Equal(t, []string{payoutUnknown}, *errors)
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3000), stored.Settled)
@@ -358,7 +384,7 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		errors := errorCollector(&options)
 		_, err := server.NewBatchChannelManager(options).Redeem(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, []string{"batch-settlement distribute failed: " + batchsettlement.ErrCumulativeAmountMismatch}, *errors)
+		assert.Equal(t, []string{"batch-settlement distribute failed: " + batchsettlement.ErrCumulativeAmountMismatch}, *errors, "a rejected distribute is not reported as confirmed")
 		stored, err := store.Get("chan-a")
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), stored.PayoutWatermark)
@@ -460,5 +486,260 @@ func TestBatchSettlementRedemptionResyncFromFacilitator(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), stored.Settled)
 		assert.Equal(t, server.ChannelStatusClosing, stored.Status)
+	})
+
+	t.Run("adopts closed status on a recovered distribute success and stops retrying", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		sealed := newChannel("chan-a")
+		sealed.Status = server.ChannelStatusSealed
+		sealed.Settled = 3000
+		sealed.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(sealed))
+		var settles []server.SettleResult
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			_, channels := redemptionFacts(payload)
+			response := withChannelStates(okResponse(),
+				channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 0, 0))
+			response.Extra["channels"] = channels
+			return response
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, *errors)
+		assert.Equal(t, []string{"chan-a"}, result.Distributed)
+		assert.Len(t, settles, 1)
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, stored.Status)
+		assert.Equal(t, uint64(3000), stored.Settled)
+		assert.Equal(t, uint64(3000), stored.PayoutWatermark)
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Len(t, recorder.submitted, 1, "closed channel is not distributed again")
+	})
+
+	t.Run("reports unclaimed voucher loss when a recovered distribute success adopts closed", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		sealed := newChannel("chan-a")
+		sealed.Status = server.ChannelStatusSealed
+		sealed.Settled = 1000
+		sealed.SignedMaxClaimable = 3000
+		require.NoError(t, store.Put(sealed))
+		var settles []server.SettleResult
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			_, channels := redemptionFacts(payload)
+			response := withChannelStates(okResponse(),
+				channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 0, 0))
+			response.Extra["channels"] = channels
+			return response
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"chan-a"}, result.Distributed)
+		assert.Len(t, settles, 1)
+		require.Len(t, *errors, 1)
+		assert.Contains(t, (*errors)[0], "closed onchain with unclaimed voucher value")
+		stored, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, stored.Status)
+		assert.Equal(t, uint64(1000), stored.Settled, "unclaimed voucher value is not fabricated as settled")
+		assert.Equal(t, uint64(1000), stored.PayoutWatermark)
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Len(t, recorder.submitted, 1, "closed channel is not distributed again")
+	})
+
+	t.Run("retires a closed channel on distribute ErrChannelState and distributes remaining live channels in the same pass", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		closedCh := newChannel("chan-a")
+		closedCh.Status = server.ChannelStatusSealed
+		closedCh.Settled = 3000
+		closedCh.HighestVoucherSignature = ""
+		liveCh := newChannel("chan-b")
+		liveCh.Settled = 2000
+		liveCh.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(closedCh))
+		require.NoError(t, store.Put(liveCh))
+		var settles []server.SettleResult
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			_, channels := redemptionFacts(payload)
+			if len(channels) == 2 {
+				return resyncFailure(batchsettlement.ErrChannelState,
+					channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 0, 0),
+					channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 2000, 0))
+			}
+			response := withChannelStates(okResponse(),
+				channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 2000, 2000))
+			response.Extra["channels"] = channels
+			return response
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, *errors)
+		assert.Equal(t, []string{"chan-b"}, result.Distributed)
+		assert.Len(t, settles, 1)
+		a, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, a.Status)
+		assert.Equal(t, uint64(3000), a.PayoutWatermark)
+		b, err := store.Get("chan-b")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2000), b.PayoutWatermark)
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Len(t, recorder.submitted, 2, "neither channel is retried on the next pass")
+	})
+
+	t.Run("reports unclaimed voucher loss when distribute ErrChannelState adopts closed and distributes live peers", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		closedCh := newChannel("chan-a")
+		closedCh.Status = server.ChannelStatusSealed
+		closedCh.Settled = 1000
+		closedCh.SignedMaxClaimable = 3000
+		liveCh := newChannel("chan-b")
+		liveCh.Settled = 2000
+		liveCh.HighestVoucherSignature = ""
+		require.NoError(t, store.Put(closedCh))
+		require.NoError(t, store.Put(liveCh))
+		var settles []server.SettleResult
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			_, channels := redemptionFacts(payload)
+			if len(channels) == 2 {
+				return resyncFailure(batchsettlement.ErrChannelState,
+					channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 0, 0),
+					channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 2000, 0))
+			}
+			response := withChannelStates(okResponse(),
+				channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 2000, 2000))
+			response.Extra["channels"] = channels
+			return response
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		options.OnSettle = func(result server.SettleResult) { settles = append(settles, result) }
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"chan-b"}, result.Distributed)
+		assert.Len(t, settles, 1)
+		require.Len(t, *errors, 1)
+		assert.Contains(t, (*errors)[0], "closed onchain with unclaimed voucher value")
+		a, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, a.Status)
+		assert.Equal(t, uint64(1000), a.Settled, "unclaimed voucher value is not fabricated as settled")
+		assert.Equal(t, uint64(1000), a.PayoutWatermark)
+		b, err := store.Get("chan-b")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2000), b.PayoutWatermark)
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Len(t, recorder.submitted, 2, "neither channel is retried on the next pass")
+	})
+
+	t.Run("retires a closed channel on claim ErrChannelState without inflating settled, reports unclaimed loss, and claims live peers", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		closedCh := newChannel("chan-a")
+		closedCh.Settled = 1000
+		closedCh.SignedMaxClaimable = 3000
+		liveCh := newChannel("chan-b")
+		liveCh.SignedMaxClaimable = 2000
+		require.NoError(t, store.Put(closedCh))
+		require.NoError(t, store.Put(liveCh))
+		recorder := recordingSettler(func(payload any) *x402.SettleResponse {
+			payloadType, channels := redemptionFacts(payload)
+			if payloadType == batchsettlement.PayloadTypeClaim && len(channels) == 2 {
+				return resyncFailure(batchsettlement.ErrChannelState,
+					channelStateEntry("chan-a", batchsettlement.ChannelStatusClosed, 0, 0, 0),
+					channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 0, 0))
+			}
+			if payloadType == batchsettlement.PayloadTypeSettle {
+				response := withChannelStates(okResponse(),
+					channelStateEntry("chan-b", batchsettlement.ChannelStatusOpen, 10000, 2000, 2000))
+				response.Extra["channels"] = channels
+				return response
+			}
+			return okResponse()
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"chan-b"}, result.Claimed)
+		assert.Equal(t, []string{"chan-b"}, result.Distributed)
+		require.Len(t, *errors, 1)
+		assert.Contains(t, (*errors)[0], "closed onchain with unclaimed voucher value")
+
+		a, err := store.Get("chan-a")
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, a.Status)
+		assert.Equal(t, uint64(1000), a.Settled, "unclaimed voucher value is not fabricated as settled")
+		assert.Equal(t, uint64(1000), a.PayoutWatermark)
+		b, err := store.Get("chan-b")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2000), b.Settled)
+		assert.Equal(t, uint64(2000), b.PayoutWatermark)
+
+		claimsBefore := len(claimsOf(recorder))
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, claimsBefore, len(claimsOf(recorder)), "closed channel is not claimed again")
+	})
+
+	t.Run("retires a closed channel on seal ErrChannelState without calling OnSeal and reports unclaimed loss", func(t *testing.T) {
+		store := server.NewMemoryChannelStore()
+		id := newTestSigner(t).Address().String()
+		closing := newChannel(id)
+		closing.Status = server.ChannelStatusClosing
+		closing.Settled = 1000
+		closing.SignedMaxClaimable = 3000
+		require.NoError(t, store.Put(closing))
+		var seals []server.SealResult
+		recorder := recordingSettler(func(any) *x402.SettleResponse {
+			return resyncFailure(batchsettlement.ErrChannelState,
+				channelStateEntry(id, batchsettlement.ChannelStatusClosed, 0, 0, 0))
+		})
+		options := managerOptions(store, receiverAuthorizer, recorder.settle)
+		options.OnSeal = func(result server.SealResult) { seals = append(seals, result) }
+		errors := errorCollector(&options)
+		manager := server.NewBatchChannelManager(options)
+
+		result, err := manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, result.Sealed)
+		assert.Empty(t, seals)
+		require.Len(t, *errors, 1)
+		assert.Contains(t, (*errors)[0], "closed onchain with unclaimed voucher value")
+		stored, err := store.Get(id)
+		require.NoError(t, err)
+		assert.Equal(t, server.ChannelStatusDistributed, stored.Status)
+		assert.Equal(t, uint64(1000), stored.Settled)
+		assert.Equal(t, uint64(1000), stored.PayoutWatermark)
+
+		_, err = manager.Redeem(context.Background())
+		require.NoError(t, err)
+		assert.Len(t, recorder.submitted, 1, "closed channel is not sealed again")
 	})
 }

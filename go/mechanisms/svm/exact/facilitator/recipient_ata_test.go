@@ -57,11 +57,11 @@ func recipientFixture(t *testing.T, program solana.PublicKey) exactFixture {
 	if program == solana.TokenProgramID {
 		return f
 	}
-	source, err := findATA(f.ownerKey.PublicKey(), f.mint, solana.TokenProgramID)
+	source, err := svm.DeriveATA(f.ownerKey.PublicKey(), f.mint, solana.TokenProgramID)
 	require.NoError(t, err)
-	newSource, err := findATA(f.ownerKey.PublicKey(), f.mint, program)
+	newSource, err := svm.DeriveATA(f.ownerKey.PublicKey(), f.mint, program)
 	require.NoError(t, err)
-	newDestination, err := findATA(f.payTo, f.mint, program)
+	newDestination, err := svm.DeriveATA(f.payTo, f.mint, program)
 	require.NoError(t, err)
 	for i, key := range f.tx.Message.AccountKeys {
 		switch key {

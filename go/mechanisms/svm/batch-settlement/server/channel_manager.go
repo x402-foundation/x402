@@ -276,7 +276,7 @@ func (m *BatchChannelManager) claimBatch(ctx context.Context, batch []ChannelSta
 			}
 			return nil
 		}
-		if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch {
+		if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch || response.ErrorReason == batchsettlement.ErrChannelState {
 			return m.resyncClaim(ctx, batch, requirements, response, result, resynced)
 		}
 		m.reportClaimFailure(response)
@@ -324,11 +324,24 @@ func (m *BatchChannelManager) reportClaimFailure(response *x402.SettleResponse) 
 	m.report(fmt.Errorf("%s claim failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
 }
 
+func (m *BatchChannelManager) reportDistributeFailure(response *x402.SettleResponse) {
+	m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
+}
+
 // resyncClaim's resynced channels are not new claims, so they do not reach OnClaim.
 func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, response *x402.SettleResponse, result *passOutcome, resynced bool) error {
 	states := m.adoptChannelStates(response, batch)
 	var behind []ChannelState
 	for _, channel := range batch {
+		if state, ok := states[channel.ChannelID]; ok {
+			switch state.status {
+			case batchsettlement.ChannelStatusClosed, batchsettlement.ChannelStatusDistributed, batchsettlement.ChannelStatusSealed:
+				if err := m.recordObserved(channel.ChannelID, state); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		settled, ok := m.observeSettled(ctx, channel.ChannelID, states)
 		if !ok || settled < channel.SignedMaxClaimable {
 			behind = append(behind, channel)
@@ -346,6 +359,15 @@ func (m *BatchChannelManager) resyncClaim(ctx context.Context, batch []ChannelSt
 		return m.claimBatch(ctx, behind, requirements, result, true)
 	}
 	return nil
+}
+
+func (m *BatchChannelManager) reportClosedUnclaimed(channel ChannelState) {
+	if channel.SignedMaxClaimable > channel.Settled {
+		m.report(fmt.Errorf(
+			"%s channel %s closed onchain with unclaimed voucher value (%d > settled %d)",
+			batchsettlement.Scheme, channel.ChannelID, channel.SignedMaxClaimable, channel.Settled,
+		))
+	}
 }
 
 func (m *BatchChannelManager) seal(ctx context.Context, channel ChannelState) (bool, error) {
@@ -401,7 +423,7 @@ func (m *BatchChannelManager) seal(ctx context.Context, channel ChannelState) (b
 		return false, err
 	}
 	if !response.Success || string(response.Network) != m.config.Network {
-		if !response.Success && response.ErrorReason == batchsettlement.ErrCloseState {
+		if !response.Success && (response.ErrorReason == batchsettlement.ErrCloseState || response.ErrorReason == batchsettlement.ErrChannelState) {
 			paidOut, err := m.resyncSeal(ctx, channel, response)
 			if err != nil || paidOut {
 				return false, err
@@ -438,7 +460,7 @@ func (m *BatchChannelManager) resyncSeal(ctx context.Context, channel ChannelSta
 		return false, nil
 	}
 	switch observed.status {
-	case batchsettlement.ChannelStatusDistributed:
+	case batchsettlement.ChannelStatusClosed, batchsettlement.ChannelStatusDistributed:
 		return true, m.recordObserved(channel.ChannelID, observed)
 	case batchsettlement.ChannelStatusSealed:
 		return false, m.recordObserved(channel.ChannelID, observed)
@@ -457,48 +479,103 @@ func (m *BatchChannelManager) distribute(ctx context.Context, channels []Channel
 	distributed := []string{}
 	for _, group := range m.groupByTerms(payable) {
 		for _, batch := range chunk(group.channels, m.settleBatchSize()) {
-			entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
-			for _, channel := range batch {
-				entries = append(entries, batchsettlement.BatchSettleChannel{
-					ChannelID:     channel.ChannelID,
-					ChannelConfig: channel.ChannelConfig,
-				})
-			}
-			response, err := m.submit(ctx, batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: entries}, group.requirements)
+			paidOut, err := m.distributeBatch(ctx, batch, group.requirements, false)
 			if err != nil {
 				return nil, err
 			}
-			if !response.Success {
-				if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, response)) > 0 {
-					continue
-				}
-				m.report(fmt.Errorf("%s distribute failed: %s", batchsettlement.Scheme, reasonOrUnknown(response.ErrorReason)))
-				continue
-			}
-			if string(response.Network) != m.config.Network {
-				m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
-				continue
-			}
-			if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
-				m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
-				continue
-			}
-			paidOut := m.recordPayouts(ctx, batch, response)
 			distributed = append(distributed, paidOut...)
-			if len(paidOut) > 0 && m.config.OnSettle != nil {
-				m.config.OnSettle(SettleResult{Transaction: response.Transaction})
-			}
 		}
 	}
 	return distributed, nil
+}
+
+// resynced is true once a closed-channel resync retry has run in this chain,
+// so a second rejection is reported rather than retried.
+func (m *BatchChannelManager) distributeBatch(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, resynced bool) ([]string, error) {
+	entries := make([]batchsettlement.BatchSettleChannel, 0, len(batch))
+	for _, channel := range batch {
+		entries = append(entries, batchsettlement.BatchSettleChannel{
+			ChannelID:     channel.ChannelID,
+			ChannelConfig: channel.ChannelConfig,
+		})
+	}
+	response, err := m.submit(ctx, batchsettlement.BatchSettlePayload{Type: batchsettlement.PayloadTypeSettle, Channels: entries}, requirements)
+	if err != nil {
+		return nil, err
+	}
+	if !response.Success {
+		if response.ErrorReason == batchsettlement.ErrCumulativeAmountMismatch && len(m.recordPayouts(ctx, batch, m.adoptChannelStates(response, batch))) > 0 {
+			return nil, nil
+		}
+		if response.ErrorReason == batchsettlement.ErrChannelState {
+			return m.resyncDistribute(ctx, batch, requirements, response, resynced)
+		}
+		m.reportDistributeFailure(response)
+		return nil, nil
+	}
+	if string(response.Network) != m.config.Network {
+		m.report(fmt.Errorf("%s distribute response bound to another network", batchsettlement.Scheme))
+		return nil, nil
+	}
+	if listed, present := extraField(response.Extra, "channels"); present && !distributeChannelsMatch(listed, batch) {
+		m.report(fmt.Errorf("%s distribute response channel mismatch", batchsettlement.Scheme))
+		return nil, nil
+	}
+	states := m.adoptChannelStates(response, batch)
+	if states == nil && !m.hasPayoutReader() {
+		m.report(errors.New("distribute confirmed but payout unknown: facilitator sent no channelStates and neither RPCURL nor ReadPayoutWatermark is set"))
+	}
+	paidOut := m.recordPayouts(ctx, batch, states)
+	if len(paidOut) > 0 && m.config.OnSettle != nil {
+		m.config.OnSettle(SettleResult{Transaction: response.Transaction})
+	}
+	return paidOut, nil
+}
+
+func (m *BatchChannelManager) resyncDistribute(ctx context.Context, batch []ChannelState, requirements types.PaymentRequirements, response *x402.SettleResponse, resynced bool) ([]string, error) {
+	states := m.adoptChannelStates(response, batch)
+	if states == nil {
+		m.reportDistributeFailure(response)
+		return nil, nil
+	}
+	var remaining []ChannelState
+	for _, channel := range batch {
+		observed := states[channel.ChannelID]
+		if err := m.recordObserved(channel.ChannelID, observed); err != nil {
+			m.report(err)
+			continue
+		}
+		if observed.status == batchsettlement.ChannelStatusClosed ||
+			observed.status == batchsettlement.ChannelStatusDistributed ||
+			observed.status == batchsettlement.ChannelStatusClosing {
+			continue
+		}
+		settled := max(channel.Settled, observed.settled)
+		payout := max(channel.PayoutWatermark, observed.payout)
+		if settled > payout {
+			channel.Settled = settled
+			channel.PayoutWatermark = payout
+			if observed.status == batchsettlement.ChannelStatusSealed {
+				channel.Status = ChannelStatusSealed
+			}
+			remaining = append(remaining, channel)
+		}
+	}
+	if len(remaining) == len(batch) || (len(remaining) > 0 && resynced) {
+		m.reportDistributeFailure(response)
+		return nil, nil
+	}
+	if len(remaining) > 0 {
+		return m.distributeBatch(ctx, remaining, requirements, true)
+	}
+	return nil, nil
 }
 
 // recordPayouts records the confirmed payout watermarks of batch and returns the
 // channels paid up to their settled value. A confirmed distribute may answer for
 // an earlier sweep that a later claim has passed, so it never stands in for the
 // payout watermark: a channel without one stays payable for the next pass.
-func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, response *x402.SettleResponse) []string {
-	states := m.adoptChannelStates(response, batch)
+func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []ChannelState, states map[string]observedChannel) []string {
 	var covered []string
 	for _, channel := range batch {
 		observed, ok := m.observePayout(ctx, channel, states)
@@ -509,36 +586,32 @@ func (m *BatchChannelManager) recordPayouts(ctx context.Context, batch []Channel
 			m.report(err)
 			continue
 		}
-		if observed.payout >= channel.Settled {
+		if observed.status == batchsettlement.ChannelStatusClosed || observed.payout >= channel.Settled {
 			covered = append(covered, channel.ChannelID)
 		}
 	}
 	return covered
 }
 
-// observePayout is a channel's confirmed payout watermark: the facilitator's
-// state, else a configured reader.
 func (m *BatchChannelManager) observePayout(ctx context.Context, channel ChannelState, states map[string]observedChannel) (observedChannel, bool) {
 	if state, ok := states[channel.ChannelID]; ok {
 		return state, true
 	}
-	if m.hasPayoutReader() {
-		paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
-		if err != nil {
-			m.report(err)
-			return observedChannel{}, false
-		}
-		if !ok || paid > channel.Deposit {
-			m.report(errors.New("confirmed payout watermark unavailable or invalid"))
-			return observedChannel{}, false
-		}
-		return observedChannel{payout: paid}, true
+	if !m.hasPayoutReader() {
+		return observedChannel{}, false
 	}
-	return observedChannel{}, false
+	paid, ok, err := m.readPayoutWatermark(ctx, channel.ChannelID)
+	if err != nil {
+		m.report(err)
+		return observedChannel{}, false
+	}
+	if !ok || paid > channel.Deposit {
+		m.report(errors.New("confirmed payout watermark unavailable or invalid"))
+		return observedChannel{}, false
+	}
+	return observedChannel{payout: paid}, true
 }
 
-// observeSettled is a channel's confirmed settled watermark from the
-// facilitator's state or a configured reader.
 func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID string, states map[string]observedChannel) (uint64, bool) {
 	if state, ok := states[channelID]; ok {
 		return state.settled, true
@@ -554,13 +627,18 @@ func (m *BatchChannelManager) observeSettled(ctx context.Context, channelID stri
 	return settled, ok
 }
 
-// recordObserved raises a channel's watermarks to the observed ones (a zero value
-// leaves its field alone) and marks it sealed or distributed once the chain says it is.
+// recordObserved reports unclaimed voucher value after a closed channel is persisted.
 func (m *BatchChannelManager) recordObserved(channelID string, observed observedChannel) error {
-	return m.record(channelID, func(state ChannelState) ChannelState {
+	var closed *ChannelState
+	if err := m.record(channelID, func(state ChannelState) ChannelState {
 		state.Settled = max(state.Settled, observed.settled)
 		state.PayoutWatermark = max(state.PayoutWatermark, observed.payout)
 		switch {
+		case observed.status == batchsettlement.ChannelStatusClosed:
+			state.Status = ChannelStatusDistributed
+			state.PayoutWatermark = max(state.PayoutWatermark, state.Settled)
+			copied := state
+			closed = &copied
 		case observed.status == batchsettlement.ChannelStatusDistributed:
 			state.Status = ChannelStatusDistributed
 		case observed.status == batchsettlement.ChannelStatusSealed && state.Status != ChannelStatusDistributed:
@@ -568,7 +646,13 @@ func (m *BatchChannelManager) recordObserved(channelID string, observed observed
 		}
 		state.OnchainSyncedAt = time.Now().UnixMilli()
 		return state
-	})
+	}); err != nil {
+		return err
+	}
+	if closed != nil {
+		m.reportClosedUnclaimed(*closed)
+	}
+	return nil
 }
 
 func (m *BatchChannelManager) hasSettledReader() bool {
@@ -630,6 +714,11 @@ func parseChannelStates(extra map[string]any, batch []ChannelState) map[string]o
 func parseChannelState(entry batchsettlement.BatchRedemptionChannelState) (observedChannel, bool) {
 	switch entry.Status {
 	case batchsettlement.ChannelStatusOpen, batchsettlement.ChannelStatusClosing, batchsettlement.ChannelStatusSealed, batchsettlement.ChannelStatusDistributed:
+	case batchsettlement.ChannelStatusClosed:
+		if entry.Balance != "0" || entry.TotalClaimed != "0" || entry.PayoutWatermark != "0" || entry.WithdrawRequestedAt != 0 {
+			return observedChannel{}, false
+		}
+		return observedChannel{status: entry.Status}, true
 	default:
 		return observedChannel{}, false
 	}

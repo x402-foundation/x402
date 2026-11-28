@@ -1,10 +1,4 @@
-"""Import checks for the shipped Python MCP server examples.
-
-#4412 reported that every example under ``examples/python/servers/mcp`` fails at
-import time because it names symbols ``x402.mcp`` no longer exports. These tests
-import each example module from the checkout so the regression cannot come back
-unnoticed.
-"""
+"""The MCP server examples import, and an unpaid tool call returns payment required."""
 
 import importlib.util
 import sys
@@ -51,14 +45,14 @@ def test_examples_import(monkeypatch: pytest.MonkeyPatch, name: str, entrypoint:
 
 
 def test_examples_do_not_import_the_removed_sync_bridge() -> None:
-    """``wrap_fastmcp_tool_sync`` was removed in #1149 and must not be re-exported."""
+    """``wrap_fastmcp_tool_sync`` is not an ``x402.mcp`` export."""
     import x402.mcp
 
     assert not hasattr(x402.mcp, "wrap_fastmcp_tool_sync")
 
 
 def test_async_server_has_no_broken_fastmcp_bridge() -> None:
-    """``server_async.wrap_fastmcp_tool`` raised ImportError on every call (#4412)."""
+    """``server_async`` does not export ``wrap_fastmcp_tool``."""
     from x402.mcp import server_async
 
     assert not hasattr(server_async, "wrap_fastmcp_tool")
@@ -67,11 +61,7 @@ def test_async_server_has_no_broken_fastmcp_bridge() -> None:
 def test_simple_example_answers_unpaid_call_with_payment_required(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The FastMCP adapter must surface the wrapper's 402 result without a payment.
-
-    Builds the example server offline (``FastMCP.run`` stubbed) and calls the
-    registered tool the way FastMCP would, with an empty ``_meta``.
-    """
+    """An unpaid ``get_weather`` call returns the wrapper's payment-required result."""
     from mcp.server.fastmcp import FastMCP
 
     built: dict[str, FastMCP] = {}

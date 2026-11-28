@@ -58,7 +58,7 @@ func classifyProtocolInstruction(tx *solana.Transaction, inst solana.CompiledIns
 				return kindComputePrice
 			}
 		}
-	case isTokenProgram(progID):
+	case svm.IsSplTokenProgram(progID):
 		if len(inst.Data) >= 10 && inst.Data[0] == ixTokenTransferChecked {
 			return kindTransfer
 		}
@@ -197,7 +197,7 @@ func (f *ExactSvmScheme) resolveProtocolLayout(tx *solana.Transaction, feePayer 
 			}
 			for _, inst := range matched {
 				progID, err := tx.Message.Program(inst.ProgramIDIndex)
-				if err == nil && isTokenProgram(progID) && len(inst.Data) > 0 && inst.Data[0] == ixTokenTransferChecked {
+				if err == nil && svm.IsSplTokenProgram(progID) && len(inst.Data) > 0 && inst.Data[0] == ixTokenTransferChecked {
 					return nil, errors.New(ErrPreflightPostflightTransferNotAllowed)
 				}
 			}

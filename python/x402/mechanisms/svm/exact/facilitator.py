@@ -57,8 +57,6 @@ from ..constants import (
     MAX_SPLITS,
     MEMO_PROGRAM_ADDRESS,
     SCHEME_EXACT,
-    TOKEN_2022_PROGRAM_ADDRESS,
-    TOKEN_PROGRAM_ADDRESS,
 )
 from ..errors import TransactionOnchainFailureError
 from ..settlement_cache import SettlementCache
@@ -86,6 +84,7 @@ from .instruction_layout import (
     strip_assertion_guards,
 )
 from .splits import (
+    TOKEN_PROGRAMS,
     InstructionView,
     PaymentLeg,
     SplitCapabilities,
@@ -98,7 +97,6 @@ from .splits import (
     uses_split_terms,
 )
 
-_TRANSFER_PROGRAMS = (TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS)
 _OPTIONAL_PROGRAMS = (LIGHTHOUSE_PROGRAM_ADDRESS, MEMO_PROGRAM_ADDRESS)
 
 
@@ -164,19 +162,13 @@ class ExactSvmScheme:
                 whose signer or RPC does not yet handle version 1. Defaults to
                 ``[0, 1]``.
             max_compute_units: Sponsor compute-unit ceiling, default 400,000, for both static paths.
-            max_splits: Maximum number of ``extra.splits`` entries accepted
-                (scheme_exact_svm.md §5), 0-8. Advertised as ``maxSplits`` in
-                ``/supported``; requirements with more splits are rejected with
-                ``split_count_exceeded``. Default 0: splits are not accepted.
-            ata_creation_sponsored: Whether the fee payer funds
-                ``CreateIdempotent`` for recipients marked
-                ``ataCreationRequired`` (about 0.002 SOL of rent each).
-                Advertised as ``ataCreationSponsored``. Rent is not bounded over
-                time: an owner can close its ATA, reclaim the rent, and repeat
-                on every charge. Operators must enforce out-of-band limits per
-                owner/mint or Resource Server before enabling this. Splits do
-                not automatically reimburse sponsored rent. Default False.
-
+            max_splits: Maximum ``extra.splits`` entries accepted (0-8), advertised
+                as ``maxSplits``. Default 0 rejects every split.
+            ata_creation_sponsored: Whether the fee payer funds ``CreateIdempotent``
+                for ``ataCreationRequired`` recipients. Advertised as
+                ``ataCreationSponsored``. An owner can close the ATA, reclaim the
+                rent, and repeat. Sponsored rent is not reimbursed, so enable this
+                only with an out-of-band limit. Default False.
 
             preflight_instruction_allowlist: Instruction tuples that may appear as a
                 contiguous block (guard instructions aside) immediately BEFORE the
@@ -564,15 +556,7 @@ class ExactSvmScheme:
         legs: list[PaymentLeg],
         fee_payer: str,
     ) -> VerifyResponse:
-        """Path 1 for split charges (scheme_exact_svm.md §5.7).
-
-        Layout: on legacy and version 0 a compute limit + compute price prefix
-        (version 1 carries its budget in the message config instead), ``K``
-        fee-payer-funded CreateIdempotent for marked recipients, one
-        TransferChecked for the primary remainder, one per split in
-        ``extra.splits`` order, then optional Memo instructions, with assertion guards anywhere. There is no simulation-based
-        fallback in this SDK, so any layout failure is a rejection.
-        """
+        """Static Path 1 for split charges. A layout failure is a rejection."""
         network = str(requirements.network)
 
         def fail(reason: str, payer: str = "", message: str | None = None) -> VerifyResponse:
@@ -633,7 +617,7 @@ class ExactSvmScheme:
             # accounts would let the transfer's authority be something other
             # than the account the payer signed with.
             if (
-                transfer_ix.program not in _TRANSFER_PROGRAMS
+                transfer_ix.program not in TOKEN_PROGRAMS
                 or len(transfer_ix.data) != 10
                 or transfer_ix.data[0] != 12  # TransferChecked discriminator
                 or len(transfer_ix.accounts) != 4

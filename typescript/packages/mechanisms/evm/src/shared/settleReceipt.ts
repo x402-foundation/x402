@@ -11,11 +11,15 @@ type SettleReceipt = Awaited<ReturnType<FacilitatorEvmSigner["waitForTransaction
  */
 export interface WaitForSettleReceiptOptions {
   /**
-   * Error reason for terminal failures: an invalid broadcast hash or reverted receipt.
+   * Error reason for an invalid broadcast hash.
    * Receipt-wait failures always report `ErrSettlementPending` regardless of this value.
    * Defaults to `ErrInvalidTransactionState`.
    */
   failedStatusReason?: string;
+  /**
+   * Error reason for a reverted receipt. Defaults to `failedStatusReason`.
+   */
+  revertedReason?: string;
   /**
    * Optional check after a successful receipt (e.g. Transfer event). Return a SettleResponse
    * to fail settlement; return undefined to accept success.
@@ -46,6 +50,7 @@ export async function waitAndReturnSettleResponse(
 ): Promise<SettleResponse> {
   const {
     failedStatusReason = ErrInvalidTransactionState,
+    revertedReason = failedStatusReason,
     validateReceipt,
     amount,
     onSuccess,
@@ -66,7 +71,7 @@ export async function waitAndReturnSettleResponse(
     if (receipt.status !== "success") {
       return {
         success: false,
-        errorReason: failedStatusReason,
+        errorReason: revertedReason,
         transaction: tx,
         network,
         payer,

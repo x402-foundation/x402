@@ -380,6 +380,45 @@ func TestBatchSettlementSeal(t *testing.T) {
 		assert.NotContains(t, response.Extra, batchsettlement.ExtraChannelStates)
 	})
 
+	t.Run("answers a seal whose channel is absent past open_slot + OpenSlotWindow with closed channel state", func(t *testing.T) {
+		fixture := facilitator(t, nil, true)
+		fixture.scheme.hooks.fetchChannel = nil
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		fixture.signer.clusterSlot = uint64(config.OpenSlot) + paymentchannels.OpenSlotWindow + 1
+
+		response := settle(t, fixture.scheme, sealPayload(t, 3_000))
+		assert.False(t, response.Success)
+		assert.Equal(t, batchsettlement.ErrChannelState, response.ErrorReason)
+		assert.Equal(t, payer.PublicKey().String(), response.Payer)
+		assert.Equal(t, map[string]any{batchsettlement.ExtraChannelStates: []batchsettlement.BatchRedemptionChannelState{{
+			ChannelID: channelID, Status: batchsettlement.ChannelStatusClosed, Balance: "0", TotalClaimed: "0", PayoutWatermark: "0",
+		}}}, response.Extra)
+		assert.Empty(t, fixture.submits)
+	})
+
+	t.Run("does not report closed state on seal within open_slot + OpenSlotWindow or on cooperative refund", func(t *testing.T) {
+		fixture := facilitator(t, nil, true)
+		fixture.scheme.hooks.fetchChannel = nil
+		fixture.scheme.hooks.readChannel = func(context.Context, string, string) (*generated.Channel, error) {
+			return nil, nil
+		}
+		fixture.signer.clusterSlot = uint64(config.OpenSlot) + paymentchannels.OpenSlotWindow
+
+		withinWindow := settle(t, fixture.scheme, sealPayload(t, 3_000))
+		assert.False(t, withinWindow.Success)
+		assert.Equal(t, batchsettlement.ErrChannelState, withinWindow.ErrorReason)
+		assert.NotContains(t, withinWindow.Extra, batchsettlement.ExtraChannelStates)
+
+		fixture.signer.clusterSlot = uint64(config.OpenSlot) + paymentchannels.OpenSlotWindow + 1
+		refund := settle(t, fixture.scheme, refundPayload(t, 3_000))
+		assert.False(t, refund.Success)
+		assert.Equal(t, batchsettlement.ErrChannelState, refund.ErrorReason)
+		assert.NotContains(t, refund.Extra, batchsettlement.ExtraChannelStates)
+		assert.Empty(t, fixture.submits)
+	})
+
 	t.Run("answers settlement_pending and keeps the payout record when deleting it fails", func(t *testing.T) {
 		store := &resultDeleteFailingStore{PendingSettlementStore: x402.NewInMemoryPendingSettlementStore()}
 		store.fail.Store(true)

@@ -301,11 +301,10 @@ def find_by_network_and_scheme(
     scheme: str,
     network: Network,
 ) -> T | None:
-    """Find one scheme registered for a network, falling back to network patterns.
+    """Resolve one scheme for a network. An exact registration of that scheme wins.
 
-    An exact-network registration wins for the same scheme. A scheme that is
-    registered only under a pattern (for example ``eip155:*``) still resolves
-    when a different scheme has an exact-network registration.
+    A scheme registered only under a pattern still resolves beside a different
+    scheme's exact registration.
 
     Args:
         schemes: Map of network -> (scheme -> implementation).

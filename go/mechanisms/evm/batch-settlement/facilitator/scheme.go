@@ -27,7 +27,7 @@ type BatchSettlementEvmSchemeConfig struct {
 	// Every field on VoucherStoreConfig is read only when this is set.
 	VoucherStore *VoucherStoreConfig
 	// ResolveCallerIdentity resolves a stable caller identity for a delegated settle.
-	// When set, /supported advertises extra.delegatedRefund: true. Self-managed: an unsigned
+	// With an authorizer signer, /supported advertises extra.delegatedRefund: true. Self-managed: an unsigned
 	// cooperative refund is accepted only from the caller that created the channel.
 	// Facilitator-managed: also authorizes refunds on channels whose 402 omits
 	// extra.refundAuthorizer.
@@ -78,6 +78,10 @@ func NewBatchSettlementEvmScheme(signer evm.FacilitatorEvmSigner, authorizerSign
 // NewBatchSettlementEvmSchemeWithConfig creates a batch settlement facilitator scheme with
 // optional configuration (e.g. the ERC-6492 factory allowlist for counterfactual deposits).
 // A nil config behaves identically to NewBatchSettlementEvmScheme.
+//
+// WaitForTransactionReceipt on signer (and on config.AuthorizerSubmitter) must return the
+// receipt's Logs: deposit and refund settle responses derive channelState from the Deposited,
+// Claimed and Refunded events, and a receipt with nil Logs fails with ErrReceiptLogsUnavailable.
 func NewBatchSettlementEvmSchemeWithConfig(
 	signer evm.FacilitatorEvmSigner,
 	authorizerSigner batchsettlement.AuthorizerSigner,
@@ -186,9 +190,7 @@ func (f *BatchSettlementEvmScheme) GetExtra(_ x402.Network) map[string]interface
 	}
 	extra := map[string]interface{}{
 		"receiverAuthorizer": f.authorizerSigner.Address(),
-		// true iff /settle callers are authenticated, so unsigned (caller-identity)
-		// refunds are honored for the service that created the channel.
-		"delegatedRefund": f.resolveCallerIdentity != nil,
+		"delegatedRefund":    f.resolveCallerIdentity != nil,
 	}
 	if f.voucherStore != nil {
 		extra["withdrawDelay"] = f.voucherStore.withdrawDelay
@@ -503,7 +505,28 @@ func (f *BatchSettlementEvmScheme) checkSelfManagedRefundCaller(
 		return ErrRefundAuthorizerSignature
 	}
 	deps := RefundConsentDeps{ResolveCallerIdentity: f.resolveCallerIdentity, DelegatedAuthStore: f.delegatedAuthStore}
-	return checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx)
+	if identErr := checkRefundCallerIdentity(ctx, deps, payload, raw, raw.Amount, requirements, fctx); identErr != "" {
+		return identErr
+	}
+	return channelConfigReason(raw, requirements)
+}
+
+func channelConfigReason(
+	raw *batchsettlement.BatchSettlementEnrichedRefundPayload,
+	requirements types.PaymentRequirements,
+) string {
+	channelId, err := batchsettlement.ComputeChannelId(raw.ChannelConfig, requirements.Network)
+	if err != nil {
+		return ErrInvalidRefundPayload
+	}
+	if err := ValidateChannelConfig(raw.ChannelConfig, channelId, requirements); err != nil {
+		var ve *x402.VerifyError
+		if errors.As(err, &ve) && ve.InvalidReason != "" {
+			return ve.InvalidReason
+		}
+		return ErrInvalidRefundPayload
+	}
+	return ""
 }
 
 // voucherStoreRefundError rejects a self-managed refund on a channel held in the voucher store.

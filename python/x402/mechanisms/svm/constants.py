@@ -43,9 +43,8 @@ MAX_SPLITS = 8
 MAX_SPLIT_MEMO_BYTES = 566
 ASSOCIATED_TOKEN_PROGRAM_ADDRESS = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 SYSTEM_PROGRAM_ADDRESS = "11111111111111111111111111111111"
-# Compute units added on top of DEFAULT_COMPUTE_UNIT_LIMIT per extra
-# TransferChecked and per CreateIdempotent. Sized for Token-2022, which costs
-# more than SPL Token on both.
+# Extra compute units per additional TransferChecked and per CreateIdempotent.
+# Sized for Token-2022, which costs more than SPL Token.
 SPLIT_TRANSFER_COMPUTE_UNITS = 15_000
 ATA_CREATION_COMPUTE_UNITS = 40_000
 
@@ -166,15 +165,14 @@ ERR_TRANSACTION_FAILED = "transaction_failed"
 ERR_DUPLICATE_SETTLEMENT = "duplicate_settlement"
 ERR_MEMO_MISMATCH = "invalid_exact_svm_payload_memo_mismatch"
 ERR_MEMO_COUNT = "invalid_exact_svm_payload_memo_count"
-# Used by the split path (single-payee keeps ERR_AMOUNT_INSUFFICIENT and the
-# positional unknown-instruction codes above).
+# Split-path amount and trailing-instruction mismatches.
 ERR_AMOUNT_MISMATCH = "invalid_exact_svm_payload_amount_mismatch"
 ERR_UNKNOWN_OPTIONAL_INSTRUCTION = "invalid_exact_svm_payload_unknown_optional_instruction"
 ERR_FEE_PAYER_NOT_ISOLATED = "invalid_exact_svm_smart_wallet_fee_payer_not_isolated"
 ERR_ALT_RESOLUTION_NOT_AVAILABLE = "invalid_exact_svm_smart_wallet_alt_resolution_not_available"
 
-# Multi-payee split errors (scheme_exact_svm.md §5). The bare `split_*` codes
-# are the names the spec defines.
+# Multi-payee split errors (scheme_exact_svm.md §5). The bare `split_*`
+# strings are the wire reason codes.
 ERR_SPLITS_INVALID = "invalid_exact_svm_splits_invalid"
 ERR_SPLIT_COUNT_EXCEEDED = "split_count_exceeded"
 ERR_SPLIT_ATA_CREATION_NOT_AUTHORIZED = "split_ata_creation_not_authorized"

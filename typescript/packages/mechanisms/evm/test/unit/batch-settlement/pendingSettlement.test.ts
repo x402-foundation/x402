@@ -22,7 +22,10 @@ import type {
 } from "../../../src/batch-settlement/types";
 import type { FacilitatorEvmSigner } from "../../../src/signer";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { batchSettlementABI } from "../../../src/batch-settlement/abi";
+import { BATCH_SETTLEMENT_ADDRESS } from "../../../src/batch-settlement/constants";
 
 const mockedMulticall = multicall as unknown as MockedFunction<typeof multicall>;
 
@@ -152,12 +155,30 @@ const VERIFY_MULTICALL_RESULT = [
   { status: "success", result: 0n },
 ];
 
-// readChannelState's post-broadcast/post-reconcile multicall: channels, pendingWithdrawals, refundNonce.
-const READ_CHANNEL_STATE_RESULT = [
-  { status: "success", result: [10_000n, 0n] },
-  { status: "success", result: [0n, 0n] },
-  { status: "success", result: 0n },
+const LAGGING_CHANNEL_STATE_READ = [
+  { status: "success", result: [0n, 300n] },
+  { status: "success", result: [0n, 42n] },
+  { status: "success", result: 5n },
 ];
+
+function depositedReceipt(channelId: `0x${string}`, newBalance = 10_000n) {
+  const log = {
+    address: BATCH_SETTLEMENT_ADDRESS,
+    topics: encodeEventTopics({
+      abi: batchSettlementABI,
+      eventName: "Deposited",
+      args: { channelId, sender: FACILITATOR_ADDRESS },
+    }),
+    data: encodeAbiParameters([{ type: "uint128" }, { type: "uint128" }], [10_000n, newBalance]),
+    blockHash: null,
+    blockNumber: null,
+    logIndex: null,
+    transactionHash: null,
+    transactionIndex: null,
+    removed: false,
+  } as Log;
+  return vi.fn().mockResolvedValue({ status: "success", logs: [log] });
+}
 
 describe("BatchSettlementEvmScheme deposit pending-settlement store integration", () => {
   const authorizer = buildAuthorizerSigner();
@@ -169,15 +190,13 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
   });
 
   it("cache-miss + broadcast success: leaves no pending entry", async () => {
-    mockedMulticall
-      .mockResolvedValueOnce(VERIFY_MULTICALL_RESULT)
-      .mockResolvedValue(READ_CHANNEL_STATE_RESULT);
-    const signer = buildSigner();
+    mockedMulticall.mockResolvedValueOnce(VERIFY_MULTICALL_RESULT);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId) });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       pendingSettlementStore: store,
     });
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const dp = buildDepositPayload(channelId, config, "0xfeedface1");
 
     const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
@@ -207,15 +226,14 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
     expect(await store.get("0xfeedface2")).toBe(MOCK_TX_HASH);
   });
 
-  it("cache-hit: skips verify/broadcast entirely and reconciles against the cached tx", async () => {
-    // Only the post-reconcile readChannelState multicall runs on the cache-hit path.
-    mockedMulticall.mockResolvedValue(READ_CHANNEL_STATE_RESULT);
-    const signer = buildSigner();
+  it("cache-hit: skips verify/broadcast and reconciles with the Deposited balance plus one read", async () => {
+    mockedMulticall.mockResolvedValue(LAGGING_CHANNEL_STATE_READ);
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId) });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       pendingSettlementStore: store,
     });
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const dp = buildDepositPayload(channelId, config, "0xfeedface3");
     await store.set("0xfeedface3", MOCK_TX_HASH);
 
@@ -223,26 +241,31 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
 
     expect(result.success).toBe(true);
     expect(result.transaction).toBe(MOCK_TX_HASH);
+    expect(result.extra).toEqual({
+      channelState: {
+        channelId,
+        balance: "10000",
+        totalClaimed: "300",
+        withdrawRequestedAt: 42,
+        refundNonce: "5",
+      },
+    });
     expect(signer.writeContract).not.toHaveBeenCalled();
     expect(signer.waitForTransactionReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ hash: MOCK_TX_HASH }),
     );
+    expect(mockedMulticall).toHaveBeenCalledTimes(1);
     expect(await store.get("0xfeedface3")).toBeUndefined();
   });
 
-  it("cache-hit: falls back to an optimistic channelState snapshot when the post-confirm read fails", async () => {
-    // First multicall (pre-confirm optimistic read) succeeds; the second (post-confirm
-    // read inside onSuccess) fails, so the response must fall back to the optimistic
-    // snapshot rather than omitting extra.channelState.
-    mockedMulticall
-      .mockResolvedValueOnce(READ_CHANNEL_STATE_RESULT)
-      .mockRejectedValueOnce(new Error("rpc read failed"));
-    const signer = buildSigner();
+  it("cache-hit: returns the Deposited balance when the post-confirm read fails", async () => {
+    mockedMulticall.mockRejectedValueOnce(new Error("rpc read failed"));
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId, 12_345n) });
     const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
       pendingSettlementStore: store,
     });
-    const config = buildChannelConfig();
-    const channelId = computeChannelId(config);
     const dp = buildDepositPayload(channelId, config, "0xfeedface7");
     await store.set("0xfeedface7", MOCK_TX_HASH);
 
@@ -250,16 +273,48 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
 
     expect(result.success).toBe(true);
     expect(result.transaction).toBe(MOCK_TX_HASH);
-    // READ_CHANNEL_STATE_RESULT reports balance 10_000n; optimistic = balance + deposit.amount (10_000).
     expect(result.extra).toEqual({
-      channelState: {
-        channelId,
-        balance: "20000",
-        totalClaimed: "0",
-        withdrawRequestedAt: 0,
-        refundNonce: "0",
-      },
+      channelState: { channelId, balance: "12345" },
     });
+    expect(await store.get("0xfeedface7")).toBeUndefined();
+  });
+
+  it("cache-hit: fails terminally without reading when the receipt has no Deposited event", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner({
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success", logs: [] }),
+    });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      pendingSettlementStore: store,
+    });
+    const dp = buildDepositPayload(channelId, config, "0xfeedface8");
+    await store.set("0xfeedface8", MOCK_TX_HASH);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrDepositTransactionFailed);
+    expect(result.transaction).toBe(MOCK_TX_HASH);
+    expect(mockedMulticall).not.toHaveBeenCalled();
+    expect(await store.get("0xfeedface8")).toBeUndefined();
+  });
+
+  it("cache-hit: fails with ErrReceiptLogsUnavailable when the signer drops the receipt logs", async () => {
+    const config = buildChannelConfig();
+    const channelId = computeChannelId(config);
+    const signer = buildSigner();
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer, {
+      pendingSettlementStore: store,
+    });
+    const dp = buildDepositPayload(channelId, config, "0xfeedface9");
+    await store.set("0xfeedface9", MOCK_TX_HASH);
+
+    const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
+
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe(Errors.ErrReceiptLogsUnavailable);
+    expect(mockedMulticall).not.toHaveBeenCalled();
   });
 
   it("cache-hit: still-unconfirmed receipt wait returns settlement_pending again and preserves the store entry", async () => {
@@ -362,13 +417,11 @@ describe("BatchSettlementEvmScheme deposit pending-settlement store integration"
   });
 
   it("defaults to a fresh in-memory store when none is provided", async () => {
-    mockedMulticall
-      .mockResolvedValueOnce(VERIFY_MULTICALL_RESULT)
-      .mockResolvedValue(READ_CHANNEL_STATE_RESULT);
-    const signer = buildSigner();
-    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
+    mockedMulticall.mockResolvedValueOnce(VERIFY_MULTICALL_RESULT);
     const config = buildChannelConfig();
     const channelId = computeChannelId(config);
+    const signer = buildSigner({ waitForTransactionReceipt: depositedReceipt(channelId) });
+    const scheme = new BatchSettlementEvmScheme(signer, authorizer);
     const dp = buildDepositPayload(channelId, config, "0xfeedface6");
 
     const result = await scheme.settle(envelopeDeposit(dp), makeRequirements());
