@@ -38,6 +38,10 @@ DEFAULT_MAX_CLAIMS_PER_BATCH = 100
 CHANNEL_STATE_POLL_S = 2.0
 CHANNEL_STATE_POLL_INTERVAL_S = 0.15
 
+# Voucher verify waits between reads while the balance cannot cover
+# maxClaimableAmount. The last read is treated as the real balance.
+CHANNEL_STATE_REREAD_DELAYS_S = (0.15, 0.4, 1.0)
+
 # Default server SDK multiplier for `extra.minDeposit` when no floor is configured.
 DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER = 10
 
@@ -155,6 +159,7 @@ __all__: list[Any] = [
     "DEFAULT_MAX_CLAIMS_PER_BATCH",
     "CHANNEL_STATE_POLL_S",
     "CHANNEL_STATE_POLL_INTERVAL_S",
+    "CHANNEL_STATE_REREAD_DELAYS_S",
     "DEFAULT_SERVER_MIN_DEPOSIT_MULTIPLIER",
     "DEFAULT_ONCHAIN_STATE_TTL_MS",
     "PAYLOAD_TYPE_DEPOSIT",

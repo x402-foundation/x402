@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .....schemas import PaymentRequirements, VerifyResponse
 from ...signer import FacilitatorEvmSigner
 from ...utils import get_evm_chain_id
+from ..constants import CHANNEL_STATE_REREAD_DELAYS_S
 from ..errors import (
     ERR_CHANNEL_NOT_FOUND,
     ERR_CUMULATIVE_AMOUNT_BELOW_CLAIMED,
@@ -14,13 +16,29 @@ from ..errors import (
     ERR_INVALID_VOUCHER_SIGNATURE,
     ERR_VOUCHER_PAYLOAD,
 )
-from ..types import ChannelConfig
+from ..types import ChannelConfig, ChannelState
 from .utils import (
     parse_requirements_amount,
     read_channel_state,
     validate_channel_config,
     verify_batch_settlement_voucher_typed_data,
 )
+
+
+def _read_channel_state_covering(
+    signer: FacilitatorEvmSigner,
+    channel_id: str,
+    min_balance: int,
+) -> ChannelState:
+    """Re-read until the balance covers min_balance, then return the last read."""
+    floor = min_balance if min_balance > 0 else 1
+    state = read_channel_state(signer, channel_id)
+    for delay_s in CHANNEL_STATE_REREAD_DELAYS_S:
+        if state.balance >= floor:
+            break
+        time.sleep(delay_s)
+        state = read_channel_state(signer, channel_id)
+    return state
 
 
 def verify_voucher(
@@ -66,8 +84,9 @@ def verify_voucher(
             payer=payer,
         )
 
+    max_claimable_amount = int(voucher["maxClaimableAmount"])
     try:
-        state = read_channel_state(signer, channel_id)
+        state = _read_channel_state_covering(signer, channel_id, max_claimable_amount)
     except Exception as e:
         return VerifyResponse(
             is_valid=False,
@@ -78,8 +97,6 @@ def verify_voucher(
 
     if state.balance == 0:
         return VerifyResponse(is_valid=False, invalid_reason=ERR_CHANNEL_NOT_FOUND, payer=payer)
-
-    max_claimable_amount = int(voucher["maxClaimableAmount"])
     if max_claimable_amount > state.balance:
         return VerifyResponse(
             is_valid=False,
