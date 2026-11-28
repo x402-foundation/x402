@@ -1571,6 +1571,7 @@ func (s *x402ResourceServer) SettlePaymentWithExtensions(
 		Phase:              phase,
 		PayloadBytes:       payloadBytes,
 		RequirementsBytes:  requirementsBytes,
+		TransportContext:   transportContextFrom(ctx),
 	}
 
 	s.mu.RLock()
