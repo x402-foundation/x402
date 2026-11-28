@@ -20,6 +20,7 @@ uv add x402[cardano]    # Cardano
 uv add x402[evm]        # EVM/Ethereum
 uv add x402[svm]        # Solana
 uv add x402[tvm]        # TON/TVM
+uv add x402[lightning]  # Bitcoin Lightning (BOLT11 upfront payments)
 
 # Multiple extras
 uv add x402[fastapi,httpx,evm]
@@ -29,6 +30,8 @@ uv add x402[all]
 ```
 
 ## Quick Start
+
+For Lightning, see the [adapter, request-binding and replay-storage guide](mechanisms/lnbtc/README.md).
 
 ### Client (Async)
 
