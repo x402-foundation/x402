@@ -1,5 +1,5 @@
 import { x402Version } from "..";
-import { DefaultAsset, SchemeNetworkClient } from "../types/mechanisms";
+import { DefaultAsset, PaymentCall, SchemeNetworkClient } from "../types/mechanisms";
 import { PaymentPayload, PaymentRequirements } from "../types/payments";
 import {
   Money,
@@ -17,6 +17,9 @@ import {
   parseMoney,
   toComparableArray,
 } from "../utils";
+import { CreatePaymentPayloadOptions, resolvePaymentCall } from "./paymentCall";
+
+export type { CreatePaymentPayloadOptions } from "./paymentCall";
 
 /**
  * Client Hook Context Interfaces
@@ -25,6 +28,8 @@ import {
 export interface PaymentCreationContext {
   paymentRequired: PaymentRequired;
   selectedRequirements: PaymentRequirements;
+  /** The call being paid for, when the transport supplied it. */
+  call?: PaymentCall;
 }
 
 export interface PaymentCreatedContext extends PaymentCreationContext {
@@ -531,11 +536,17 @@ export class x402Client {
    * response and constructs a complete PaymentPayload with the accepted requirements.
    *
    * @param paymentRequired - The PaymentRequired response from the server
+   * @param options - Optional per-call options
+   * @param options.call - The call being paid for. Forwarded to the payment creation
+   *   hooks and to the scheme, so request-binding schemes see the right call even when
+   *   one client creates several payments concurrently.
    * @returns Promise resolving to the complete payment payload
    */
   async createPaymentPayload(
     paymentRequired: PaymentRequired,
+    options?: CreatePaymentPayloadOptions,
   ): Promise<PaymentPayload> {
+    const call = resolvePaymentCall(options);
     const clientSchemesByNetwork = this.registeredClientSchemes.get(paymentRequired.x402Version);
     if (!clientSchemesByNetwork) {
       throw new Error(`No client registered for x402 version: ${paymentRequired.x402Version}`);
@@ -546,6 +557,7 @@ export class x402Client {
     const context: PaymentCreationContext = {
       paymentRequired,
       selectedRequirements: requirements,
+      ...(call ? { call } : {}),
     };
 
     for (const hook of this.getLabeledHooks(
@@ -576,6 +588,7 @@ export class x402Client {
             requirements,
             schemeNetworkClient.findDefaultAsset?.(requirements.asset, requirements.network),
           ),
+          ...(call ? { call } : {}),
         },
       );
 
