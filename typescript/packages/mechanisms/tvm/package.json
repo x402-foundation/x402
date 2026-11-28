@@ -5,6 +5,19 @@
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "exact/client": [
+        "./dist/cjs/exact/client/index.d.ts"
+      ],
+      "exact/server": [
+        "./dist/cjs/exact/server/index.d.ts"
+      ],
+      "exact/facilitator": [
+        "./dist/cjs/exact/facilitator/index.d.ts"
+      ]
+    }
+  },
   "license": "Apache-2.0",
   "author": "x402 Foundation",
   "repository": "https://github.com/x402-foundation/x402",

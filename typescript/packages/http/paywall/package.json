@@ -3,7 +3,20 @@
   "version": "2.32.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/cjs/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "evm": [
+        "./dist/cjs/evm/index.d.cts"
+      ],
+      "svm": [
+        "./dist/cjs/svm/index.d.cts"
+      ],
+      "avm": [
+        "./dist/cjs/avm/index.d.cts"
+      ]
+    }
+  },
   "type": "module",
   "scripts": {
     "start": "tsx --env-file=.env index.ts",
