@@ -158,6 +158,7 @@ describe("wrapFetchWithPayment()", () => {
         headers: { "PAYMENT-SIGNATURE": "already-present" },
       }),
     ).rejects.toThrow("Payment already attempted");
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
   });
 
   it("should not retry if already retried (X-PAYMENT header present)", async () => {
@@ -169,6 +170,7 @@ describe("wrapFetchWithPayment()", () => {
         headers: { "X-PAYMENT": "already-present" },
       }),
     ).rejects.toThrow("Payment already attempted");
+    expect(mockClient.createPaymentPayload).not.toHaveBeenCalled();
   });
 
   it("should allow optional fetch request config", async () => {
