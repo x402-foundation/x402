@@ -140,6 +140,7 @@ Bazaar is unique in that it spans both sides: the resource server extension enri
 | [Payment Identifier](./payment-identifier) | Server + Client | Attaches a unique identifier to each payment for tracking, reconciliation, and idempotency. | TypeScript, Go, Python |
 | [Sign-In-With-X](./sign-in-with-x) | Server + Client | CAIP-122 wallet authentication. Lets clients prove wallet ownership to access previously purchased content without repaying. | TypeScript, Go, Python |
 | [Signed Offers & Receipts](./offer-receipt) | Server + Client | Signs offers on 402 responses and receipts on 200 responses, producing cryptographic proof-of-interaction artifacts. | TypeScript |
+| [Durable Evidence](./durable-evidence) | Server + Client + Facilitator | Seals the delivered body to the parties' own keys, anchors it durably and has the facilitator sign a receipt — what was delivered, retrievable later, readable only by the parties. Buyer opt-in via `accepts`. | Rust, Python, TypeScript |
 
 ## Building a Custom Extension
 

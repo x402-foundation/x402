@@ -1,0 +1,81 @@
+---
+title: "Durable Evidence"
+description: "The durable-evidence extension seals the delivered response to the parties' own keys, anchors it durably and has the facilitator sign a receipt — so what was delivered can be retrieved and proven later, and read only by the parties."
+---
+
+x402 settles payment on-chain permanently, then delivers the resource once, in the body of a `200 OK`, and keeps nothing. If the buyer did not capture it at that instant, it is gone — and neither party can later prove *what* was delivered, only *that* payment happened.
+
+The durable-evidence extension closes that gap. The resource server encrypts a copy of the response body to the buyer's own public key — recovered from the payment signature, so no registration and no extra round trip — anchors the ciphertext in durable storage, and a facilitator notarises the anchor with an EIP-712 receipt that anyone can verify offline. The buyer opts in per purchase by paying the offer that includes evidence.
+
+## Use Cases
+
+- **Disputes**: "you sent me something else" becomes a check against `contentHash`, not an argument
+- **Recovery**: a buyer who lost the response retrieves and decrypts it later with the wallet it paid with
+- **Audit**: a seller (or a designated auditor) keeps a readable copy of exactly what it delivered
+- **Agents**: an agent that pays for data on behalf of a principal can hand over a verifiable, retrievable artifact instead of a transient response
+
+## How It Works
+
+1. The server lists the resource twice in `accepts` — plain, and with evidence at its own price — and declares `durable-evidence` once at the top level of the 402, naming the offer(s) that include evidence by index
+2. The client pays the offer with evidence (or the plain one, if it does not want it)
+3. After settlement, the server seals the body to the parties' keys, stores the ciphertext, and registers the anchor with the facilitator, signing the anchor as the payee
+4. The facilitator verifies the payment on-chain, checks the anchor came from the payee, signs a receipt, and indexes it
+5. The evidence object rides back under `extensions["durable-evidence"]` of the settlement response; the buyer can retrieve and decrypt the body at any time within the retention window
+
+Evidence can never fail a payment: every failure becomes a skip notice, and the delivered bytes are untouched.
+
+## Quickstart for Sellers (Resource Servers)
+
+<Tabs>
+<Tab title="Rust">
+
+```rust
+use x402_axum::{X402Middleware, durable::{DurableConfig, DurableEvidenceHook, HttpPutSink}};
+use x402_rs::dx402::{DurableEvidenceConfig, Retention};
+
+let hook = DurableEvidenceHook::new(
+    DurableConfig::from_env(),
+    Arc::new(HttpPutSink::new("https://evidence.example.com")),
+    "https://facilitator.example.com",
+)
+.with_anchor_signer(seller_key); // the payee signs its anchors; without this they stay provisional
+
+let layer = X402Middleware::try_from("https://facilitator.example.com")?
+    .with_price_tag(usdc.amount(0.010)?.pay_to(seller))                                  // plain
+    .with_durable_offer(usdc.amount(0.012)?.pay_to(seller),                              // + evidence
+        DurableEvidenceConfig { retention: Retention::Year1, ..Default::default() })
+    .with_durable_evidence(hook);
+```
+
+</Tab>
+</Tabs>
+
+## Quickstart for Buyers (Clients)
+
+<Tabs>
+<Tab title="Rust">
+
+```rust
+use x402_reqwest::X402Payments;
+
+// Off by default: a client that never asks keeps paying for the plain offer,
+// whatever order the seller listed them in.
+let payments = X402Payments::with_wallet(wallet).prefer_durable_evidence();
+```
+
+To read evidence later, fetch the pointer from the settlement response's `extensions["durable-evidence"]`, decrypt with the paying wallet's key, and compare `keccak256(plaintext)` with `contentHash`.
+
+</Tab>
+</Tabs>
+
+## Facilitator Support
+
+A facilitator that supports the extension lists `durable-evidence` in the `extensions` array of `/supported` — only when it can actually serve it. It verifies every anchor against the chain (payment exists, payer is the address the envelope was sealed to, payee signed, transaction is recent) and reports the outcome as `verified` / `signed` on the record, so a claim is never mistaken for evidence.
+
+## Security
+
+- **Anchoring is publishing.** Retention defaults to 90 days; `permanent` is irrevocable.
+- **The anchor is claimable by anyone who observes a settlement.** Authority is a ladder — provisional, signed, verified — and only a chain-verified anchor is final.
+- **Payments released from an escrow** carry the escrow authorization, which the facilitator re-hashes on the escrow contract; the rail is read from the transaction receipt, never from the request.
+
+See the [specification](/specs/extensions/durable-evidence.md) for the normative wire format, the encryption scheme and the full security considerations.
