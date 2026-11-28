@@ -3,7 +3,7 @@
 import re
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, BeforeValidator, Field
 
 from .base import BaseX402Model
 
@@ -15,6 +15,30 @@ def _validate_caip2_network(value: str) -> str:
 
 
 NetworkV2 = Annotated[str, AfterValidator(_validate_caip2_network)]
+
+
+def coerce_x402_version(value: Any) -> int:
+    """Normalise a wire x402Version to an int, rejecting non-number types.
+
+    JSON has no separate integer type, so a whole-number float such as ``2.0``
+    is the same value as ``2`` and is accepted (returned as ``int``). Booleans
+    (``true``/``false``), strings and fractional floats are rejected rather than
+    silently coerced to a protocol version.
+    """
+    # bool is a subclass of int, so it must be checked first.
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid x402Version: {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"Invalid x402Version: {value!r}")
+        return int(value)
+    raise ValueError(f"Invalid x402Version: {value!r}")
+
+
+# Accepts an int or an integral float (JSON numbers), rejects bool/str/etc.
+X402Version = Annotated[int, BeforeValidator(coerce_x402_version)]
 
 
 class ResourceInfo(BaseX402Model):
@@ -81,7 +105,7 @@ class PaymentRequired(BaseX402Model):
         extensions: Optional extension data.
     """
 
-    x402_version: int = 2
+    x402_version: X402Version = 2
     error: str | None = None
     resource: ResourceInfo | None = None
     accepts: list[PaymentRequirements]
@@ -99,7 +123,7 @@ class PaymentPayload(BaseX402Model):
         extensions: Optional extension data.
     """
 
-    x402_version: int = 2
+    x402_version: X402Version = 2
     payload: dict[str, Any]
     accepted: PaymentRequirements
     resource: ResourceInfo | None = None

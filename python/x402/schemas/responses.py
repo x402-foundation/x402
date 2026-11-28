@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from .base import BaseX402Model, Network
-from .payments import PaymentPayload, PaymentRequirements
+from .payments import PaymentPayload, PaymentRequirements, X402Version
 
 
 class VerifyRequest(BaseX402Model):
@@ -17,7 +17,7 @@ class VerifyRequest(BaseX402Model):
         payment_requirements: The requirements to verify against.
     """
 
-    x402_version: int
+    x402_version: X402Version
     payment_payload: PaymentPayload
     payment_requirements: PaymentRequirements
 
@@ -54,7 +54,7 @@ class SettleRequest(BaseX402Model):
         payment_requirements: The requirements for settlement.
     """
 
-    x402_version: int
+    x402_version: X402Version
     payment_payload: PaymentPayload
     payment_requirements: PaymentRequirements
 

@@ -6,7 +6,7 @@ import re
 from typing import Any, TypedDict, TypeVar
 
 from .base import Money, Network
-from .payments import PaymentPayload, PaymentRequired, PaymentRequirements
+from .payments import PaymentPayload, PaymentRequired, PaymentRequirements, coerce_x402_version
 from .v1 import PaymentPayloadV1, PaymentRequiredV1, PaymentRequirementsV1
 
 
@@ -33,6 +33,9 @@ def detect_version(data: bytes | dict[str, Any]) -> int:
     if version is None:
         raise ValueError("Missing x402Version field")
 
+    # Reject bool/str and fractional floats; a whole-number float (JSON has no
+    # int type, so 2.0 == 2) is accepted and returned as an int.
+    version = coerce_x402_version(version)
     if version not in (1, 2):
         raise ValueError(f"Invalid x402Version: {version}")
 

@@ -350,6 +350,18 @@ class TestDetectPaymentRequiredVersion:
         with pytest.raises(ValueError, match="Could not detect x402 version"):
             detect_payment_required_version(headers)
 
+    @pytest.mark.parametrize("version", [True, False, "2", 1.5])
+    def test_raises_on_non_integer_body_version(self, version):
+        body = json.dumps({"x402Version": version, "accepts": []}).encode("utf-8")
+        with pytest.raises(ValueError, match="Could not detect x402 version"):
+            detect_payment_required_version({}, body)
+
+    @pytest.mark.parametrize(("version", "expected"), [(1, 1), (2, 2), (1.0, 1), (2.0, 2)])
+    def test_detects_whole_number_float_body_version(self, version, expected):
+        # JSON has no integer type, so a whole-number float is the same value.
+        body = json.dumps({"x402Version": version, "accepts": []}).encode("utf-8")
+        assert detect_payment_required_version({}, body) == expected
+
     def test_raises_on_invalid_body(self):
         """Test that ValueError is raised with invalid body."""
         headers = {}

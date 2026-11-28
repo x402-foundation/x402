@@ -12,6 +12,7 @@ from ..schemas import (
     PaymentRequired,
     SettleResponse,
 )
+from ..schemas.payments import coerce_x402_version
 from ..schemas.v1 import PaymentPayloadV1, PaymentRequiredV1
 from .constants import PAYMENT_REQUIRED_HEADER, X_PAYMENT_HEADER
 
@@ -111,9 +112,12 @@ def detect_payment_required_version(
         try:
             data = json.loads(body.decode("utf-8"))
             version = data.get("x402Version") if isinstance(data, dict) else None
-            if version in [1, 2]:
-                return version
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            if version is not None:
+                # Accept an int or whole-number float, reject bool/str.
+                version = coerce_x402_version(version)
+                if version in (1, 2):
+                    return version
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             pass
 
     raise ValueError("Could not detect x402 version from response")

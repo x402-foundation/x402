@@ -48,3 +48,15 @@ def test_v2_helpers_reject_non_object_accepted(helper, json_value):
 
     with pytest.raises(ValueError, match="accepted must be a JSON object"):
         helper(payload)
+
+
+@pytest.mark.parametrize("version", ["true", "false", "1.5", '"1"', '"2"', "null", "[]"])
+def test_detect_version_rejects_non_integer_versions(version):
+    with pytest.raises(ValueError, match="Invalid x402Version|Missing x402Version"):
+        detect_version(f'{{"x402Version": {version}}}'.encode())
+
+
+@pytest.mark.parametrize(("version", "expected"), [("1", 1), ("2", 2), ("1.0", 1), ("2.0", 2)])
+def test_detect_version_accepts_whole_number_json_numbers(version, expected):
+    # JSON has no integer type, so a whole-number float is the same value.
+    assert detect_version(f'{{"x402Version": {version}}}'.encode()) == expected
