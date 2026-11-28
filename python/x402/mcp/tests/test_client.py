@@ -53,6 +53,26 @@ def test_x402_mcp_client_free_tool():
     mock_payment.create_payment_payload.assert_not_called()
 
 
+def test_x402_mcp_client_forwards_structured_content_from_free_tool():
+    mock_mcp = MockMCPClient()
+    mock_payment = MockPaymentClient()
+
+    class MockMCPResult:
+        def __init__(self):
+            self.content = [{"type": "text", "text": '{"tempC":21}'}]
+            self.isError = False
+            self._meta = {}
+            self.structuredContent = {"tempC": 21}
+
+    mock_mcp.call_tool = Mock(return_value=MockMCPResult())
+
+    client = x402MCPClientSync(mock_mcp, mock_payment, auto_payment=True)
+    result = client.call_tool("weather", {})
+
+    assert result.structured_content == {"tempC": 21}
+    mock_payment.create_payment_payload.assert_not_called()
+
+
 def test_x402_mcp_client_payment_required_auto_payment():
     """Test calling a paid tool with auto-payment enabled."""
     mock_mcp = MockMCPClient()
@@ -109,6 +129,62 @@ def test_x402_mcp_client_payment_required_auto_payment():
     assert result.payment_response is not None
     assert result.payment_response.success is True
     assert mock_payment.create_payment_payload.called
+
+
+def test_x402_mcp_client_forwards_structured_content_from_paid_tool():
+    mock_mcp = MockMCPClient()
+    mock_payment = MockPaymentClient()
+
+    class MockMCPResultPaymentRequired:
+        def __init__(self):
+            self.content = [
+                {
+                    "type": "text",
+                    "text": '{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"1000","asset":"USDC","payTo":"0xrecipient","maxTimeoutSeconds":300}]}',
+                }
+            ]
+            self.isError = True
+            self._meta = {}
+            self.structuredContent = None
+
+    class MockMCPResultSuccess:
+        def __init__(self):
+            self.content = [{"type": "text", "text": '{"tempC":21}'}]
+            self.isError = False
+            self._meta = {
+                "x402/payment-response": {
+                    "success": True,
+                    "transaction": "0xtx",
+                    "network": "eip155:84532",
+                }
+            }
+            self.structuredContent = {"tempC": 21}
+
+    mock_mcp.call_tool.side_effect = [
+        MockMCPResultPaymentRequired(),
+        MockMCPResultSuccess(),
+    ]
+
+    mock_payment.create_payment_payload.return_value = PaymentPayload(
+        x402_version=2,
+        accepted={
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "amount": "1000",
+            "asset": "USDC",
+            "pay_to": "0xrecipient",
+            "max_timeout_seconds": 300,
+        },
+        payload={"signature": "0x123"},
+    )
+
+    client = x402MCPClientSync(mock_mcp, mock_payment, auto_payment=True)
+    result = client.call_tool("paid_weather", {})
+
+    assert result.payment_response is not None
+    assert result.payment_response.success is True
+    assert result.payment_response.transaction == "0xtx"
+    assert result.structured_content == {"tempC": 21}
 
 
 def test_x402_mcp_client_payment_required_no_auto_payment():

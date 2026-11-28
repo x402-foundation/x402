@@ -407,12 +407,14 @@ async def test_async_recovery_reuses_original_server_extensions():
     advertised = json.loads(_payment_required_text())
     advertised["extensions"] = {"server": {"nonce": "original"}}
     payload = _payload().model_copy(update={"extensions": {"server": {"nonce": "client-enriched"}}})
+    recovered = _McpResult(is_error=False, text="recovered result")
+    recovered.structuredContent = {"recovered": True}
     transport = SimpleNamespace(
         call_tool=AsyncMock(
             side_effect=[
                 _McpResult(is_error=True, text=json.dumps(advertised)),
                 _McpResult(is_error=True, text=_payment_required_text()),
-                _McpResult(is_error=False, text="ok"),
+                recovered,
             ]
         )
     )
@@ -420,7 +422,10 @@ async def test_async_recovery_reuses_original_server_extensions():
         create_payment_payload=AsyncMock(return_value=payload),
         handle_payment_response=AsyncMock(return_value=RecoveredResponseResult()),
     )
-    assert not (await x402MCPClient(transport, payment).call_tool("paid_tool", {})).is_error
+    result = await x402MCPClient(transport, payment).call_tool("paid_tool", {})
+    assert not result.is_error
+    assert result.content[0]["text"] == "recovered result"
+    assert result.structured_content == {"recovered": True}
     original, retry = [call.args[0] for call in payment.create_payment_payload.call_args_list]
     assert retry is original
     assert retry.extensions == advertised["extensions"]
