@@ -134,6 +134,7 @@ The `ResourceInfo` object contains:
 | Field Name      | Type            | Required | Description                                                                                                          |
 | --------------- | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
 | `url`           | `string`        | Required | URL of the protected resource                                                                                        |
+| `method`        | `string`        | Optional | HTTP method on which this resource accepts payment. Uppercase method token ([RFC 9110 §9](https://www.rfc-editor.org/rfc/rfc9110.html#section-9)). See [HTTP transport](transports-v2/http.md#method-selection). |
 | `description`   | `string`        | Optional | Human-readable description of the resource                                                                           |
 | `mimeType`      | `string`        | Optional | MIME type of the expected response                                                                                   |
 | `serviceName`   | `string`        | Optional | Human-readable name of the service hosting the resource. Printable ASCII, max 32 characters.                         |
