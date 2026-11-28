@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from x402 import x402Client, x402ClientSync
@@ -43,6 +45,47 @@ class TestOnPaymentRequiredRegistration:
 
 
 class TestHandlePaymentRequired:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("hook_kind", ["coroutine", "future", "custom"])
+    @pytest.mark.parametrize("outcome", ["headers", "none", "error"])
+    async def test_awaits_hook_results(self, hook_kind, outcome):
+        http_client = x402HTTPClient(x402Client())
+        calls: list[str] = []
+        expected = PaymentRequiredHeadersResult(headers={"X-Hook": "awaited"})
+
+        async def resolve():
+            await asyncio.sleep(0)
+            calls.append("awaited")
+            if outcome == "error":
+                raise ValueError("hook failed")
+            return expected if outcome == "headers" else None
+
+        class CustomAwaitable:
+            def __await__(self):
+                return resolve().__await__()
+
+        def hook(ctx):
+            if hook_kind == "coroutine":
+                return resolve()
+            if hook_kind == "future":
+                return asyncio.create_task(resolve())
+            return CustomAwaitable()
+
+        http_client.on_payment_required(hook)
+        http_client.on_payment_required(lambda ctx: calls.append("fallback"))
+        if outcome == "error":
+            with pytest.raises(ValueError, match="hook failed"):
+                await http_client.handle_payment_required(
+                    make_payment_required(), "https://api.example.com/"
+                )
+            assert calls == ["awaited"]
+        else:
+            result = await http_client.handle_payment_required(
+                make_payment_required(), "https://api.example.com/"
+            )
+            assert result == (expected.headers if outcome == "headers" else None)
+            assert calls == (["awaited"] if outcome == "headers" else ["awaited", "fallback"])
+
     @pytest.mark.asyncio
     async def test_returns_none_without_hooks(self):
         http_client = x402HTTPClient(x402Client())
