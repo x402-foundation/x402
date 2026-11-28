@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/typescript"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-name: "viem"
+    ignore:
+      - dependency-name: "viem"
+        update-types:
+          - "version-update:semver-major"
+    groups:
+      viem:
+        patterns:
+          - "viem"
+        update-types:
+          - minor
+          - patch
