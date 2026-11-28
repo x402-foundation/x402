@@ -250,6 +250,33 @@ For static USD caps and asset allowlists, use [`spendControls`](/getting-started
       }
     });
     ```
+
+    For a deterministic policy check, evaluate the challenge in the same hook and return the rule that rejected it. The reason is surfaced as `Payment creation aborted: <reason>`:
+
+    ```typescript
+    import { x402Client } from "@x402/core/client";
+
+    const allowedPayees = new Set(["0x742d35cc6634c0532925a3b844bc454e4438f44e"]);
+    const maxAmount = 250_000n; // 0.25 USDC (6 decimals)
+
+    const client = new x402Client();
+
+    client.onBeforePaymentCreation(async ({ selectedRequirements: challenge }) => {
+      if (!allowedPayees.has(challenge.payTo.toLowerCase())) {
+        return {
+          abort: true,
+          reason: `payee_not_allowlisted: ${challenge.payTo}`,
+        };
+      }
+
+      if (BigInt(challenge.amount) > maxAmount) {
+        return {
+          abort: true,
+          reason: `amount_cap_exceeded: ${challenge.amount} > ${maxAmount}`,
+        };
+      }
+    });
+    ```
   </Tab>
   <Tab title="Python">
     ```python
