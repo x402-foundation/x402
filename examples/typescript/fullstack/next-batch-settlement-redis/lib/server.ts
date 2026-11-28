@@ -7,9 +7,15 @@ import { createLazyRedisChannelStorageClient } from "./redisChannelClient";
 
 export const NETWORK = "eip155:84532" as const;
 
-const facilitatorUrl = process.env.FACILITATOR_URL;
-const evmAddress = process.env.EVM_ADDRESS as `0x${string}`;
-const redisUrl = process.env.REDIS_URL;
+// next build imports this module with no .env. Stand-ins and the skipped sync exist only for that phase.
+const isProductionBuild = process.env.NEXT_PHASE === "phase-production-build";
+export const syncFacilitatorOnStart = !isProductionBuild;
+const facilitatorUrl =
+  process.env.FACILITATOR_URL || (isProductionBuild ? "http://build-only.invalid" : undefined);
+const evmAddress = (process.env.EVM_ADDRESS ||
+  (isProductionBuild ? "0x0000000000000000000000000000000000000000" : undefined)) as `0x${string}`;
+const redisUrl =
+  process.env.REDIS_URL || (isProductionBuild ? "redis://build-only.invalid" : undefined);
 
 const receiverAuthorizerPrivateKey = process.env.EVM_RECEIVER_AUTHORIZER_PRIVATE_KEY as
   | `0x${string}`

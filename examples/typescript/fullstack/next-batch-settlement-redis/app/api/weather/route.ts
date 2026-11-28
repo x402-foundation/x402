@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withX402, setSettlementOverrides } from "@x402/next";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-import { evmAddress, NETWORK, server } from "../../../lib/server";
+import { evmAddress, NETWORK, server, syncFacilitatorOnStart } from "../../../lib/server";
 
 // Authorize up to this amount per request; handler bills a random fraction via setSettlementOverrides.
 const maxPrice = "$0.01";
@@ -65,4 +65,7 @@ export const GET = withX402(
     },
   },
   server,
+  undefined, // paywallConfig
+  undefined, // paywall
+  syncFacilitatorOnStart,
 );
