@@ -46,7 +46,7 @@ The server agent indicates payment is required using A2A's task state `input-req
                 "scheme": "exact",
                 "network": "eip155:8453",
                 "amount": "48240000",
-                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913",
+                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
                 "payTo": "0xServerWalletAddressHere",
                 "maxTimeoutSeconds": 600,
                 "extra": {
@@ -97,7 +97,7 @@ Clients send payment data using the A2A message metadata with task correlation.
           "scheme": "exact",
             "network": "eip155:8453",
             "amount": "48240000",
-            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
             "payTo": "0xServerWalletAddressHere",
             "maxTimeoutSeconds": 600,
             "extra": {
@@ -198,7 +198,8 @@ Servers communicate payment settlement results using task status updates with se
           "x402.payment.receipts": [
             {
               "success": false,
-              "errorReason": "Payment authorization was submitted after its 'validBefore' timestamp.",
+              "errorReason": "invalid_exact_evm_payload_authorization_valid_before",
+              "errorMessage": "Payment authorization was submitted after its 'validBefore' timestamp.",
               "network": "eip155:8453",
               "transaction": ""
             }
@@ -261,7 +262,8 @@ Task state transitions to `failed` with detailed error information in metadata:
         "x402.payment.receipts": [
           {
             "success": false,
-            "errorReason": "The client's wallet has insufficient funds to cover the payment.",
+            "errorReason": "insufficient_funds",
+            "errorMessage": "The client's wallet has insufficient funds to cover the payment.",
             "network": "eip155:8453",
             "transaction": ""
           }
