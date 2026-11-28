@@ -1,0 +1,162 @@
+---
+title: "Debugging `/verify` failures"
+description: "A practical checklist for decoding vague or misleading facilitator `/verify` errors when a payment is rejected."
+---
+
+When a facilitator rejects a payment, the HTTP status and `invalidReason` you see are not always the real cause. This guide covers failure modes documented in public issues and visible in the reference source.
+
+<Callout type="info">
+Facilitator behavior differs across CDP, the public `x402.org` facilitator, and self-hosted examples. Match on `invalidReason` / `errorReason`, not free-text `invalidMessage`.
+</Callout>
+
+## How `/verify` works
+
+Typical flow (see [Facilitator](/core-concepts/facilitator)):
+
+1. Client hits a paid resource → server returns **HTTP 402** with payment requirements.
+2. Client selects one `accepts[]` entry, signs a payment, and retries with a payment header (`PAYMENT-SIGNATURE` / legacy `X-PAYMENT`).
+3. Resource server asks a facilitator to **verify** (and later **settle**) that payment.
+4. Facilitator returns a `VerifyResponse`: `{ isValid, invalidReason?, invalidMessage?, payer? }`.
+
+### What the resource server sends
+
+The TypeScript HTTP client posts JSON shaped like:
+
+```json
+{
+  "x402Version": 2,
+  "paymentPayload": { /* PaymentPayload */ },
+  "paymentRequirements": { /* PaymentRequirements */ }
+}
+```
+
+Source: [`httpFacilitatorClient.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/http/httpFacilitatorClient.ts#L410-L419).
+
+**v2 `paymentPayload`** (scheme/network live under `accepted`, not at the top level):
+
+| Field | Role |
+| --- | --- |
+| `x402Version` | `2` |
+| `accepted` | Chosen `PaymentRequirements` (`scheme`, `network`, `amount`, `asset`, `payTo`, `maxTimeoutSeconds`, `extra`) |
+| `payload` | Scheme-specific signed data (for example EIP-3009 `authorization` + `signature`) |
+| `resource` | Optional `ResourceInfo` (`url`, `description`, …) echoed from the 402 |
+| `extensions` | Optional |
+
+Schemas: [`PaymentPayloadV2Schema`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/schemas/index.ts#L186-L192), [`PaymentRequirementsV2Schema`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/schemas/index.ts#L155-L163).
+
+**v1** still uses top-level `scheme` / `network` and `maxAmountRequired` instead of `amount` ([`PaymentPayloadV1Schema`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/schemas/index.ts#L139-L144)). Mixing v1 field names with `x402Version: 2` is a common footgun.
+
+### What `/verify` checks (reference path)
+
+**Hosted `x402.org` facilitator route** ([`typescript/site/app/facilitator/verify/route.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/site/app/facilitator/verify/route.ts)):
+
+1. Parse JSON → on failure: `400` / `invalid_json`.
+2. Require `paymentPayload` and `paymentRequirements` → else `400` / `missing_parameters`.
+3. **Cast** the body to TypeScript types **without** Zod / `parsePaymentPayload`.
+4. Call `facilitator.verify(...)`; any thrown error becomes **`500` / `unexpected_error`**.
+
+**Core dispatcher** ([`x402Facilitator.verify`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/facilitator/x402Facilitator.ts#L283-L355)):
+
+1. `beforeVerify` hooks (can abort with a reason).
+2. Look up registered facilitators for `paymentPayload.x402Version`.
+3. Match `paymentRequirements.scheme` + `network`.
+4. Delegate to the scheme/network mechanism’s `verify`.
+
+**Exact EVM / EIP-3009** ([`verifyEIP3009`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/eip3009.ts#L77-L314)), in order:
+
+| Check | Typical `invalidReason` |
+| --- | --- |
+| Scheme is `exact` | `invalid_exact_evm_scheme` |
+| `extra.name` / `extra.version` present | `invalid_exact_evm_missing_eip712_domain` |
+| `accepted.network` matches requirements | `invalid_exact_evm_network_mismatch` |
+| Payer `eth_getCode` / signature RPC | `invalid_exact_evm_failed_to_verify_signature` |
+| Signature validity | `invalid_exact_evm_signature` (or non-canonical / factory allowlist variants) |
+| `authorization.to` == `payTo` | `invalid_exact_evm_recipient_mismatch` |
+| `validBefore` still in the future (+6s buffer) | `invalid_exact_evm_payload_authorization_valid_before` |
+| `validAfter` not in the future | `invalid_exact_evm_payload_authorization_valid_after` |
+| `authorization.value` == `amount` | `invalid_exact_evm_payload_authorization_value_mismatch` |
+| Asset is a deployed contract | `asset_not_deployed_contract` (and related) |
+| Optional `eth_call` simulation | e.g. `invalid_exact_evm_insufficient_balance`, `invalid_exact_evm_nonce_already_used` |
+
+Named constants: [`errors.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/errors.ts).
+
+Protocol-level codes: [x402 v2 spec §9](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md#9-error-handling).
+
+The **CDP hosted facilitator** (`https://api.cdp.coinbase.com/platform/v2/x402/verify`) additionally validates against Coinbase’s OpenAPI / union schemas before scheme logic. That gate is where several misleading errors originate.
+
+## Symptom → cause
+
+Only rows backed by public issues or source.
+
+| Error you receive | Actual cause | How to confirm | Fix / workaround |
+| --- | --- | --- | --- |
+| CDP **400** `invalid_request`: `'paymentPayload' is invalid… schema requires 'scheme'` (wording varies) | **`paymentPayload.resource.description` longer than 500 characters** (character count, not UTF-8 bytes). Union schema fails; CDP surfaces the v1 branch’s missing top-level `scheme` instead of the length violation. | Count `resource.description.length`. Bisect: `'a'.repeat(500)` passes CDP `/verify`, `'a'.repeat(501)` fails ([#2832](https://github.com/x402-foundation/x402/issues/2832); originally [#2284](https://github.com/x402-foundation/x402/issues/2284)). | Keep descriptions **≤ 500 chars**. Do not chase a missing `scheme` if `accepted.scheme` is already present. |
+| `x402.org` `/verify` **500** with `invalidReason: "unexpected_error"` and `invalidMessage` like `Cannot read properties of undefined (reading 'scheme')` | Malformed **v2** body—e.g. missing `accepted` (easy if a client bumps `x402Version` to 2 but keeps a v1-shaped payload). Route casts without schema validation; handler throws on `payload.accepted.scheme`. | Inspect POST body for `accepted`. Repro in [#3015](https://github.com/x402-foundation/x402/issues/3015). | Send a real v2 shape (`accepted` + `amount`, CAIP-2 `network`). Prefer local `parsePaymentPayload` / `parsePaymentRequirements` before calling the facilitator. Fix PR: [#3016](https://github.com/x402-foundation/x402/pull/3016) (open—do not assume production is fixed). |
+| `x402.org` **500** / `unexpected_error`: `Cannot convert undefined to a BigInt` | v2 requirements/accepted still using v1 field **`maxAmountRequired`** instead of **`amount`**. | Grep the body for `maxAmountRequired` when `x402Version === 2`. [#3015](https://github.com/x402-foundation/x402/issues/3015). | Rename to `amount` (string atomic units). |
+| Example / self-hosted facilitator **500** `{"error":"..."}` for a bad signature, expired auth, etc. | Handler maps **every** `Verify` error to HTTP 500 instead of `200` + `{ isValid: false, invalidReason }` (especially Go examples historically). | Check whether the body is a proper `VerifyResponse`. [#3937](https://github.com/x402-foundation/x402/issues/3937) (closed with fix PRs). Related: [#3929](https://github.com/x402-foundation/x402/issues/3929). | Prefer facilitators that return structured `isValid: false`. When building on examples, map verification failures to 200 / `isValid:false`, not 500. |
+| `invalid_exact_evm_signature` on a payload that later verifies | Transient **RPC** failure during payer `eth_getCode` / signature check was historically reported as an invalid signature in TS (Go/Python used `invalid_exact_evm_failed_to_verify_signature`). | Retry; check facilitator RPC health. [#3685](https://github.com/x402-foundation/x402/issues/3685) (closed; current TS path separates the codes—see [`eip3009.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/eip3009.ts#L162-L174)). | Treat signature failures as permanent only after RPC is healthy; prefer `failed_to_verify_signature` when present. |
+| Empty-looking **402** on a “self-test” buy from the seller wallet | Facilitator rejects **self-send** (`payTo` == payer) as `self_send_not_allowed` (observed via CDP); reason often only in decoded payment-required header, not the HTML/empty body. | Decode the payment-required / error header; confirm payer ≠ `payTo`. [#2911](https://github.com/x402-foundation/x402/issues/2911). | Use a second funded payer address for end-to-end tests. |
+| TS mechanism **throws** / server **500** on empty or partial `authorization` | Missing fields → `BigInt(undefined)` inside EIP-3009 verify instead of `isValid: false`. | Minimal payload with `"authorization": {}`. [#3956](https://github.com/x402-foundation/x402/issues/3956) (closed with follow-up fixes). | Upgrade SDK; validate payload shape client-side before `/verify`. |
+
+<Callout type="warning">
+Open-source `ResourceInfoSchema` does **not** enforce a 500-character max on `description` ([schemas](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/schemas/index.ts#L68-L95)). CDP’s API schema does (`maxLength: 500`). A payload that validates locally can still fail CDP `/verify`.
+</Callout>
+
+## Debugging checklist
+
+1. **Identify which facilitator** you called — CDP (`api.cdp.coinbase.com/.../x402`), public `x402.org/facilitator`, or self-hosted. Error envelopes differ (CDP `errorType`/`errorMessage` vs x402 `invalidReason`/`invalidMessage`).
+2. **Capture the raw `/verify` request and response** — status, body, and any `correlationId` (CDP). Do not rely on a bare client 402 alone; decode payment-required / payment-response headers ([#2911](https://github.com/x402-foundation/x402/issues/2911)).
+3. **Confirm protocol version and field names**
+   - v2: `accepted`, `amount`, CAIP-2 network (`eip155:8453`).
+   - v1: top-level `scheme`/`network`, `maxAmountRequired`.
+   - Never mix (`x402Version: 2` + `maxAmountRequired` / no `accepted`) — that is the [#3015](https://github.com/x402-foundation/x402/issues/3015) 500 path on `x402.org`.
+4. **If CDP says the schema needs `scheme`** — first measure `paymentPayload.resource?.description?.length`. If `> 500`, truncate and retry before redesigning the envelope ([#2284](https://github.com/x402-foundation/x402/issues/2284), [#2832](https://github.com/x402-foundation/x402/issues/2832)).
+5. **Validate locally** with `parsePaymentPayload` / `parsePaymentRequirements` from `@x402/core/schemas` (or Python/Go equivalents) on the exact JSON you POST.
+6. **Walk scheme checks** against the signed payload. For exact EVM: scheme → EIP-712 domain → network → signature → `payTo` → time window → amount → asset contract → simulation. Map `invalidReason` to the table above / [`errors.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/errors.ts).
+7. **Separate “invalid payment” from “facilitator/RPC broken”**
+   - Structured `200` + `isValid: false` → fix the payment.
+   - `5xx` / `unexpected_error` / transport errors → check body shape first, then facilitator health/RPC.
+   - `invalid_exact_evm_failed_to_verify_signature` → retry; don’t resign immediately.
+8. **Don’t treat a green unpaid health check as proof of revenue** — challenge-only monitors never exercise verify/settle ([#2911](https://github.com/x402-foundation/x402/issues/2911)). Probe with a distinct funded payer.
+
+## Workarounds
+
+- Truncate resource descriptions to ≤ 500 characters when using CDP (and any facilitator that publishes the same OpenAPI cap).
+- Validate payloads with `parsePaymentPayload` / `parsePaymentRequirements` before calling `/verify` (suggested in [#3015](https://github.com/x402-foundation/x402/issues/3015); used by [#3016](https://github.com/x402-foundation/x402/pull/3016)).
+- Keep v1 and v2 shapes separate in any custom client: bumping only `x402Version` is insufficient.
+- Self-test with a second wallet; never use `payTo` as the payer against facilitators that enforce `self_send_not_allowed`.
+- Prefer structured verify failures when choosing or implementing a facilitator.
+- Optional: compare against another facilitator’s `/verify` if CDP schema errors persist after the description trim. Production options: [Facilitators](/dev-tools/facilitators).
+
+## Spec error codes (baseline)
+
+From [x402 v2 spec §9](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md#9-error-handling) (not exhaustive of every SDK-specific string):
+
+`insufficient_funds`, `invalid_exact_evm_payload_authorization_valid_after`, `invalid_exact_evm_payload_authorization_valid_before`, `invalid_exact_evm_payload_authorization_value_mismatch`, `invalid_exact_evm_payload_signature`, `invalid_exact_evm_payload_recipient_mismatch`, `invalid_network`, `invalid_payload`, `invalid_payment_requirements`, `invalid_scheme`, `unsupported_scheme`, `invalid_x402_version`, `invalid_transaction_state`, `unexpected_verify_error`, `unexpected_settle_error`, `settlement_pending`.
+
+Mechanism packages add more granular codes (see [`errors.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/errors.ts)).
+
+## Sources
+
+### Issues
+
+- [#2284](https://github.com/x402-foundation/x402/issues/2284) — CDP `/verify` misleading `schema requires 'scheme'` when description is too long (**open**).
+- [#2832](https://github.com/x402-foundation/x402/issues/2832) — Same CDP failure; bisected to **exactly 500 characters** (**closed**).
+- [#3015](https://github.com/x402-foundation/x402/issues/3015) — `x402.org` facilitator returns **500** for malformed v2 instead of **400** (**open**); fix attempt [#3016](https://github.com/x402-foundation/x402/pull/3016) (**open**).
+- [#2911](https://github.com/x402-foundation/x402/issues/2911) — `self_send_not_allowed` / empty 402 on self-test (**open**).
+- [#3937](https://github.com/x402-foundation/x402/issues/3937), [#3929](https://github.com/x402-foundation/x402/issues/3929) — Example facilitators map verify failures to HTTP 500 (**closed**).
+- [#3956](https://github.com/x402-foundation/x402/issues/3956) — Malformed EVM payload throws instead of `invalid_payload` (**closed**).
+- [#3685](https://github.com/x402-foundation/x402/issues/3685) — RPC failure reported as invalid signature in TS (**closed**).
+- [#213](https://github.com/x402-foundation/x402/issues/213) — Request for human-readable `invalidMessage` alongside codes (**closed**).
+
+### Source and docs
+
+- Verify route: [`typescript/site/app/facilitator/verify/route.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/site/app/facilitator/verify/route.ts)
+- Core verify dispatch: [`x402Facilitator.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/facilitator/x402Facilitator.ts#L283-L355)
+- Schemas: [`schemas/index.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/core/src/schemas/index.ts)
+- EIP-3009 verify: [`eip3009.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/evm/src/exact/facilitator/eip3009.ts)
+- [Facilitator concept](/core-concepts/facilitator) · [Facilitator catalog](/dev-tools/facilitators) · [v1 → v2 migration](/guides/migration-v1-to-v2)
+
+<Callout type="info">
+Facilitator production behavior can change without a repo tag. Re-check linked issues and live `/verify` before treating any row as permanently fixed.
+</Callout>
