@@ -228,3 +228,33 @@ func TestDecodeTransactionRejectsUnknownMessageVersions(t *testing.T) {
 	_, err = DecodeTransaction(base64.StdEncoding.EncodeToString(raw))
 	require.ErrorContains(t, err, "unsupported message version: 2")
 }
+
+func TestParseAmountRejectsUint64Overflow(t *testing.T) {
+	amount, err := ParseAmount("18446744073709.551615", 6)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(18446744073709551615), amount)
+
+	for _, input := range []string{"18446744073710", "18446744073709.551616"} {
+		_, err := ParseAmount(input, 6)
+		require.ErrorContains(t, err, "overflows uint64", input)
+	}
+
+	// 10^20 does not fit uint64; the float64 scale used to wrap it silently.
+	_, err = ParseAmount("1", 20)
+	require.ErrorContains(t, err, "overflows uint64")
+
+	// Representable amounts with more than 19 decimals still parse.
+	amount, err = ParseAmount("0.00000000000000000001", 20)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), amount)
+
+	_, err = ParseAmount("0.99999999999999999999", 20)
+	require.ErrorContains(t, err, "overflows uint64")
+
+	amount, err = ParseAmount("0.1", 20)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10_000_000_000_000_000_000), amount)
+
+	_, err = ParseAmount("1", -1)
+	require.ErrorContains(t, err, "invalid decimals")
+}
