@@ -266,6 +266,33 @@ describe("x402 Schemas", () => {
         expect(result.success).toBe(false);
       });
 
+      it("should accept an empty accepts array", () => {
+        const empty = { ...validPaymentRequiredV2, accepts: [] };
+        expect(PaymentRequiredV2Schema.safeParse(empty).success).toBe(true);
+      });
+
+      it("should accept empty accepts for a sign-in-only (sign-in-with-x) route", () => {
+        const signInOnly = {
+          ...validPaymentRequiredV2,
+          accepts: [],
+          extensions: {
+            "sign-in-with-x": {
+              info: {
+                domain: "api.example.com",
+                uri: "https://api.example.com/premium-data",
+                version: "1",
+                nonce: "abc12345",
+                issuedAt: "2026-11-10T00:00:00.000Z",
+              },
+              supportedChains: [{ chainId: "eip155:8453", type: "eip191" }],
+            },
+          },
+        };
+        expect(PaymentRequiredV2Schema.safeParse(signInOnly).success).toBe(true);
+        expect(parsePaymentRequired(signInOnly).success).toBe(true);
+        expect(isPaymentRequired(signInOnly)).toBe(true);
+      });
+
       it("should accept 1024 payment options", () => {
         const valid = {
           ...validPaymentRequiredV2,
