@@ -9,6 +9,8 @@ except ImportError:
 
     pytest.skip("EVM client requires eth_account", allow_module_level=True)
 
+import pytest
+
 from x402.mechanisms.evm.exact import ExactEvmClientScheme
 from x402.mechanisms.evm.signer import _reset_sponsoring_warnings
 from x402.mechanisms.evm.signers import EthAccountSigner
@@ -210,6 +212,50 @@ class TestLocalAccountAutoWrap:
         assert auth["validAfter"] == "0"
         assert int(auth["validBefore"]) >= now + 600 - 2
         assert int(auth["validBefore"]) <= now + 600 + 2
+
+
+class _DomainRecordingSigner(EthAccountSigner):
+    def __init__(self, account):
+        super().__init__(account)
+        self.domains = []
+
+    def sign_typed_data(self, domain, types, primary_type, message):
+        self.domains.append(domain)
+        return super().sign_typed_data(domain, types, primary_type, message)
+
+
+class TestEip3009DomainFallback:
+    def _requirements(self, asset, extra):
+        return PaymentRequirements(
+            scheme="exact",
+            network="eip155:8453",
+            asset=asset,
+            amount="500000",
+            pay_to="0x0987654321098765432109876543210987654321",
+            max_timeout_seconds=600,
+            extra=extra,
+        )
+
+    def test_missing_version_uses_default_asset_version(self):
+        signer = _DomainRecordingSigner(Account.create())
+        client = ExactEvmClientScheme(signer)
+        requirements = self._requirements(
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", {"name": "USD Coin"}
+        )
+
+        client.create_payment_payload(requirements)
+
+        assert signer.domains[0].version == "2"
+        assert requirements.extra == {"name": "USD Coin"}
+
+    def test_missing_version_for_unregistered_asset_raises(self):
+        client = ExactEvmClientScheme(Account.create())
+        requirements = self._requirements(
+            "0x1111111111111111111111111111111111111111", {"name": "Custom Token"}
+        )
+
+        with pytest.raises(ValueError, match="name, version"):
+            client.create_payment_payload(requirements)
 
 
 class _CustomBaseAccountSigner(BaseAccount):

@@ -265,19 +265,18 @@ class ExactEvmScheme:
         chain_id = get_evm_chain_id(str(requirements.network))
 
         extra = requirements.extra or {}
-        if "name" not in extra:
-            # Try to get from asset info
+        name = extra.get("name")
+        version = extra.get("version")
+        if not name or not version:
+            # Fill missing domain fields from the default asset table
             try:
                 asset_info = get_asset_info(str(requirements.network), requirements.asset)
-                extra["name"] = asset_info["name"]
-                extra["version"] = asset_info.get("version", "1")
             except ValueError:
                 raise ValueError(
                     "EIP-712 domain parameters (name, version) required in extra"
                 ) from None
-
-        name = extra["name"]
-        version = extra.get("version", "1")
+            name = name or asset_info["name"]
+            version = version or asset_info["version"]
 
         domain, types, primary_type, message = build_typed_data_for_signing(
             authorization,
