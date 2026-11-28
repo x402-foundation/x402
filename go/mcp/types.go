@@ -96,10 +96,11 @@ type MCPContentItem struct {
 
 // MCPToolCallResult represents the result of a tool call with payment metadata
 type MCPToolCallResult struct {
-	Content         []MCPContentItem
-	IsError         bool
-	PaymentResponse *x402.SettleResponse
-	PaymentMade     bool
+	Content           []MCPContentItem
+	IsError           bool
+	StructuredContent map[string]interface{}
+	PaymentResponse   *x402.SettleResponse
+	PaymentMade       bool
 }
 
 // PaymentWrapperConfig configures payment wrapper behavior
