@@ -77,6 +77,9 @@ The `payload` field must contain:
 1.  **Verify** the signature is valid and recovers to the `authorization.from` address.
 2.  **Verify** the `client` has sufficient balance of the `asset`.
 3.  **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`.
+    - `validAfter` MUST NOT be later than the current time.
+    - `validBefore` MUST be at least a minimum remaining validity margin after the current time, not merely later than it. The margin covers broadcast and block-inclusion latency so the settlement transaction does not land after `validBefore`. The reference SDKs use 6 seconds. Facilitators MAY use a larger margin, and clients SHOULD NOT choose a `validBefore` closer than 6 seconds to the time they sign. In practice, clients derive it from `maxTimeoutSeconds`, so servers SHOULD advertise a `maxTimeoutSeconds` comfortably above the margin.
+    - An authorization that fails the `validBefore` check, whether already expired or inside the margin, is rejected with `invalid_exact_evm_payload_authorization_valid_before`.
 4.  **Verify** the Token and Network match the requirement.
 5.  **Simulate** `token.transferWithAuthorization(...)` to ensure success.
 
@@ -188,7 +191,7 @@ The verifier must execute these checks in order:
 
 4.  **Verify** the `permit2Authorization.amount` covers the payment.
 
-5.  **Verify** the `deadline` (not expired) and `witness.validAfter` (active).
+5.  **Verify** the `deadline` (not expired, and at least the same minimum remaining validity margin described in Phase 2 after the current time) and `witness.validAfter` (active).
 
 6.  **Verify** the Token and Network match the requirement.
 
