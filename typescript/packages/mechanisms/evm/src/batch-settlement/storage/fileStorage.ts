@@ -316,7 +316,8 @@ export async function acquireExclusiveFile(
  * A marker with a readable owner is stale only when its PID is provably gone.
  * Legacy or unreadable markers (empty file from an older SDK, partial write
  * after a crash) fall back to mtime age so crash debris cannot pin the channel
- * forever.
+ * forever. A marker that disappears mid-check was released, not stale:
+ * unlinking the path then could remove a lock another contender just created.
  *
  * @param lockPath - Absolute path for the lock file.
  * @param staleMs - Age after which a legacy marker is treated as crash debris.
@@ -327,14 +328,14 @@ async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> 
   try {
     mtimeMs = (await stat(lockPath)).mtimeMs;
   } catch (err: unknown) {
-    if (isNodeEnoent(err)) return true;
+    if (isNodeEnoent(err)) return false;
     throw err;
   }
   let raw = "";
   try {
     raw = await readFile(lockPath, "utf8");
   } catch (err: unknown) {
-    if (isNodeEnoent(err)) return true;
+    if (isNodeEnoent(err)) return false;
     throw err;
   }
   if (!raw.trim()) {

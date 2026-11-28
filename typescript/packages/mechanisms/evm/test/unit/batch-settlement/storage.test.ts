@@ -819,6 +819,32 @@ describe("FileChannelStorage", () => {
     }
   });
 
+  it("never lets two contenders hold a lock released mid-check", async () => {
+    const serverDir = join(root, "server");
+    await mkdir(serverDir, { recursive: true });
+    const lockPath = join(serverDir, "busy.lock");
+    let holders = 0;
+    let maxHolders = 0;
+
+    await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        for (let i = 0; i < 25; i++) {
+          const handle = await acquireExclusiveFile(lockPath, {
+            maxAttempts: 1_000,
+            retryIntervalMs: 1,
+          });
+          maxHolders = Math.max(maxHolders, ++holders);
+          await new Promise(resolve => setTimeout(resolve, 1));
+          holders--;
+          await handle.close();
+          await unlink(lockPath).catch(() => {});
+        }
+      }),
+    );
+
+    expect(maxHolders).toBe(1);
+  });
+
   it("steals a lock marker whose owner is provably gone", async () => {
     const serverDir = join(root, "server");
     await mkdir(serverDir, { recursive: true });
