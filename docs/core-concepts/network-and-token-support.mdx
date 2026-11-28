@@ -83,6 +83,8 @@ When configuring payment requirements, you have two options:
 1. **Price String** (e.g., `"$0.01"`) — The system uses the chain's [default stablecoin](#default-assets-for-dollar-string-pricing). Only works on chains with a configured default.
 2. **TokenAmount** — Specify exact `amountInAtomicUnits` + asset address. Works on **any chain** with no configuration needed.
 
+When a TokenAmount uses one of the [default assets](#default-assets-for-dollar-string-pricing), the server fills the EIP-712 `name` and `version` from that table when the token needs them and they are missing. Other tokens need them set explicitly, as described below.
+
 ### Using Custom ERC-20 Tokens
 
 To use a custom ERC-20 token, you need three key pieces of information:

@@ -24,6 +24,30 @@ function requireUint256Amount(amount: string): void {
 }
 
 /**
+ * `extra` fields a client needs to pay with a known default asset.
+ *
+ * EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
+ * Permit2 tokens only need them if the token supports EIP-2612 (for gasless permit signing).
+ * Omitting name/version for permit2 tokens signals the client to skip EIP-2612 and use
+ * ERC-20 approval gas sponsoring instead.
+ *
+ * @param assetInfo - Default asset entry
+ * @returns EIP-712 domain and transfer method fields for `extra`
+ */
+function defaultAssetExtra(assetInfo: ExactDefaultAssetInfo): Record<string, unknown> {
+  const includeEip712Domain = !assetInfo.assetTransferMethod || assetInfo.supportsEip2612;
+  return {
+    ...(includeEip712Domain && {
+      name: assetInfo.name,
+      version: assetInfo.version,
+    }),
+    ...(assetInfo.assetTransferMethod && {
+      assetTransferMethod: assetInfo.assetTransferMethod,
+    }),
+  };
+}
+
+/**
  * EVM server implementation for the Exact payment scheme.
  */
 export class ExactEvmScheme implements SchemeNetworkServer {
@@ -117,7 +141,10 @@ export class ExactEvmScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Build payment requirements for this scheme/network combination
+   * Build payment requirements for this scheme/network combination.
+   * For a known default asset, converts a dotted amount to atomic units and fills
+   * missing `extra.name`, `extra.version` and `extra.assetTransferMethod`; values already
+   * in `extra` are kept.
    *
    * @param paymentRequirements - The base payment requirements
    * @param supportedKind - The supported kind from facilitator (unused)
@@ -140,20 +167,25 @@ export class ExactEvmScheme implements SchemeNetworkServer {
   ): Promise<PaymentRequirements> {
     void supportedKind;
     void extensionKeys;
-    const rawAmount = paymentRequirements.amount;
-    if (!rawAmount.includes(".")) {
-      requireUint256Amount(rawAmount);
+    const asset = findDefaultAsset(paymentRequirements.asset, paymentRequirements.network);
+    let amount = paymentRequirements.amount;
+    if (amount.includes(".")) {
+      if (!asset) {
+        throw new Error(
+          `Token ${paymentRequirements.asset} is not a registered asset for network ${paymentRequirements.network}; provide amount in atomic units`,
+        );
+      }
+      amount = convertToTokenAmount(amount, asset.decimals);
+    }
+    requireUint256Amount(amount);
+    if (!asset) {
       return paymentRequirements;
     }
-    const asset = findDefaultAsset(paymentRequirements.asset, paymentRequirements.network);
-    if (!asset) {
-      throw new Error(
-        `Token ${paymentRequirements.asset} is not a registered asset for network ${paymentRequirements.network}; provide amount in atomic units`,
-      );
-    }
-    const amount = convertToTokenAmount(rawAmount, asset.decimals);
-    requireUint256Amount(amount);
-    return { ...paymentRequirements, amount };
+    return {
+      ...paymentRequirements,
+      amount,
+      extra: { ...defaultAssetExtra(asset), ...paymentRequirements.extra },
+    };
   }
 
   /**
@@ -168,24 +200,10 @@ export class ExactEvmScheme implements SchemeNetworkServer {
     const assetInfo: ExactDefaultAssetInfo = getDefaultAsset(network, symbol);
     const tokenAmount = convertToTokenAmount(amount, assetInfo.decimals);
 
-    // EIP-3009 tokens always need name/version for their transferWithAuthorization domain.
-    // Permit2 tokens only need them if the token supports EIP-2612 (for gasless permit signing).
-    // Omitting name/version for permit2 tokens signals the client to skip EIP-2612 and use
-    // ERC-20 approval gas sponsoring instead.
-    const includeEip712Domain = !assetInfo.assetTransferMethod || assetInfo.supportsEip2612;
-
     return {
       amount: tokenAmount,
       asset: assetInfo.asset,
-      extra: {
-        ...(includeEip712Domain && {
-          name: assetInfo.name,
-          version: assetInfo.version,
-        }),
-        ...(assetInfo.assetTransferMethod && {
-          assetTransferMethod: assetInfo.assetTransferMethod,
-        }),
-      },
+      extra: defaultAssetExtra(assetInfo),
     };
   }
 }
