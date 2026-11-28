@@ -94,6 +94,7 @@
       {
         "group": "Guides",
         "pages": [
+          "guides/testing-your-x402-resource",
           "guides/mcp-server-with-x402",
           "guides/migration-v1-to-v2"
         ]

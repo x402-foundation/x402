@@ -1,0 +1,108 @@
+---
+title: "Testing Your x402 Resource"
+description: "A practical checklist for verifying that an x402 resource server refuses invalid payments, accepts valid payments exactly once, and reports settlement failures the way the spec requires — including a manual smoke test and a CI-scale option."
+---
+
+### What can go wrong
+
+Most real-money bugs in x402 resource servers fall into two classes, and neither shows up in a happy-path demo:
+
+* **Refusal leaks.** The resource is served despite an invalid or missing payment: malformed `PAYMENT-SIGNATURE` payload, wrong asset, wrong amount, wrong recipient, replayed authorization. The paid flow works; only the refusal paths are broken.
+* **Acceptance errors.** Valid payments are misreported or charged twice: settlement failures treated as terminal, transaction hashes dropped, retries double-serving or double-charging, free-form error text used as a matching key.
+
+This guide collects the minimum set of checks, derived from the spec (`specs/x402-specification-v2.md`, section 9 Error Handling, and the HTTP transport mapping in `specs/transports-v2/http.md`).
+
+***
+
+### The refusal checklist (seller side)
+
+Every row must end in `402` — not `200`, and not a `5xx`:
+
+| #  | Request                                                                        | Expected |
+|----|--------------------------------------------------------------------------------|----------|
+| 1  | Request without any payment header                                             | `402` + `PAYMENT-REQUIRED`; the requirements match your intended price, `payTo`, network and asset |
+| 2  | `PAYMENT-SIGNATURE` header that is not valid base64 or not a valid payload     | `402` (facilitator `verify` rejects as `invalid_payload`) |
+| 3  | Correctly signed payment with the wrong asset or wrong amount                  | `402` (`invalid_exact_evm_payload_authorization_value_mismatch` or equivalent) |
+| 4  | Correctly signed payment with the correct amount, but replayed                 | `402` — the resource is served at most once per payment |
+| 5  | Valid payment whose requirements name a different recipient                    | `402` (`invalid_exact_evm_payload_recipient_mismatch`) |
+
+Row 5 matters whenever `payTo` comes from configuration or client input instead of being pinned by the server code.
+
+***
+
+### The acceptance checklist
+
+| #  | Scenario                                                       | Expected |
+|----|-----------------------------------------------------------------|----------|
+| 6  | Valid payment, first attempt                                    | `200` + `PAYMENT-RESPONSE` with `success: true` and a non-empty `transaction` hash |
+| 7  | Buyer retries after a timeout with the same payment             | The buyer is charged once and served once |
+| 8  | `verify` succeeds but `settle` fails                            | Resource is not served; the response carries an `errorReason` code, and the transaction hash if one was broadcast |
+| 9  | Price changes between the `402` and the paid retry              | Rejected — settlement never runs at a stale price |
+
+Row 7 is the double-payment window: retries are normal (clients time out), so payment scoping — nonce, payment identifier, or request binding — decides whether the retry replays or charges again.
+
+***
+
+### Settlement is not terminal, and codes are not messages
+
+Two rules from the spec trip implementations that pass the happy path:
+
+* **Match on codes, never on text.** `invalidMessage` and `errorMessage` are free-form diagnostics and may change across facilitators or releases. Matching must use `invalidReason` / `errorReason` codes (spec section 9: "MUST use the corresponding code and MUST NOT rely on message text").
+* **`settlement_pending` is not a failure.** The transaction was broadcast but its receipt could not be established; it may still confirm on chain. A `SettleResponse` with this code MUST carry a non-empty `transaction` hash so the seller can reconcile on chain before deciding to retry. Sellers that treat `success: false` as "no payment happened" keep failed orders and lose customers who actually paid.
+
+***
+
+### Manual smoke test with curl
+
+```bash
+# 1) Unpaid request: expect 402 + PAYMENT-REQUIRED
+curl -si https://api.example.com/premium-data | head -n 5
+# decode the base64 PAYMENT-REQUIRED value and check scheme, network,
+# asset, amount and payTo against what you intended to charge
+
+# 2) Paid retry: expect 200 + PAYMENT-RESPONSE
+curl -si -H "PAYMENT-SIGNATURE: <base64 payment payload>" \
+  https://api.example.com/premium-data | head -n 5
+# decode the base64 PAYMENT-RESPONSE value and check success and transaction
+```
+
+Rows 2–5 of the refusal checklist can be exercised the same way by mutating the payload before re-encoding: flip the asset, change the amount, resend the identical header a second time.
+
+***
+
+### CI-scale testing
+
+A curl smoke test covers the first few rows of each table; the full matrix (replays, stale prices, verify/settle splits, per-scheme flow variants) is a job for automation. The community tooling in this space runs such batteries in CI as check runs — for example, [Argus battery](https://github.com/marketplace/actions/argus-battery) (open source, scenario families for bad-client and bad-seller roles). Whichever tool you use, keep the artifacts: JSONL ledgers and settled responses are the evidence you will want when a dispute or an integration question comes back months later.
+A minimal wiring looks like this. Declare how to start your resource in `argus.sut.json`:
+
+```json
+{
+  "schema": "argus.sut.v0",
+  "start": "npm run start",
+  "ready": { "url": "http://127.0.0.1:5071/health", "timeout_ms": 30000 },
+  "env": { "PORT": "5071", "FACILITATOR_URL": "http://127.0.0.1:5070" },
+  "battery": "x402-core"
+}
+```
+
+Then add the action to your workflow (the negative scenarios in the refusal checklist cost nothing onchain, so the battery can run on every push):
+
+```yaml
+name: x402 protocol tests
+on: [push]
+permissions:
+  contents: read
+jobs:
+  x402:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: igor-vii/argus-action@v1
+        with:
+          console-url: https://console.argus-lab.tech
+          console-api-key: ${{ secrets.ARGUS_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The engine raises a local facilitator, drives your service over `127.0.0.1`, and posts a session table with per-session evidence to the step summary and the check run. Pin a previous `argus-result.json` as `baseline-fixture` and any verdict that changed between runs is annotated on the PR — that is the drift signal for the checklist rows above.
+
