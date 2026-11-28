@@ -516,6 +516,9 @@ Register hooks on the MCP client for payment lifecycle events specific to tool c
     receipt details remain in `raw_result` and reach `on_payment_response` hooks
     for recovery.
 
+    `structured_content` on a tool result contains the tool's structured output
+    when the MCP server returns it, for both free and paid calls.
+
     `call_tool` and `call_tool_with_payment` raise `PaymentResponseError` when
     core receipt processing fails. Its `result` retains the paid tool output and
     its `__cause__` retains the processing error. Resolve an uncertain payment
