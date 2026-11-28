@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { paymentMiddleware } from "./index";
 import {
@@ -99,11 +99,11 @@ function createMockReply(): FastifyReply & {
     }),
   };
 
-  return reply as unknown as typeof reply;
+  return reply as unknown as FastifyReply & typeof reply;
 }
 
 describe("paymentMiddleware malformed path bypass", () => {
-  let processSpy: ReturnType<typeof vi.spyOn>;
+  let processSpy: MockInstance<x402HTTPResourceServer["processHTTPRequest"]>;
 
   beforeEach(() => {
     processSpy = vi
@@ -137,7 +137,7 @@ describe("paymentMiddleware malformed path bypass", () => {
             network: "eip155:8453",
           },
         },
-      };
+      } as const;
 
       const server = new x402ResourceServer();
 
@@ -147,7 +147,7 @@ describe("paymentMiddleware malformed path bypass", () => {
       const request = createMockRequest({ url: path });
       const reply = createMockReply();
 
-      await hooks.onRequest[0](request, reply);
+      await hooks.onRequest[1](request, reply);
 
       expect(processSpy).toHaveBeenCalled();
       expect(processSpy.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ path }));

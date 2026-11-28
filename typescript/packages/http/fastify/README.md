@@ -84,7 +84,8 @@ paymentMiddleware(
   server: x402ResourceServer,
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
-  syncFacilitatorOnStart?: boolean
+  syncFacilitatorOnStart?: boolean,
+  options?: PaymentMiddlewareOptions
 )
 ```
 
@@ -96,6 +97,7 @@ paymentMiddleware(
 4. **`paywallConfig`** (optional): Configuration for the built-in paywall UI
 5. **`paywall`** (optional): Custom paywall provider
 6. **`syncFacilitatorOnStart`** (optional): Whether to sync with facilitator on startup (defaults to true)
+7. **`options`** (optional): Set `paymentHook` to `"preValidation"` to read parsed bodies during payment processing. Defaults to `"onRequest"`.
 
 ## API Reference
 
@@ -124,10 +126,11 @@ function paymentMiddleware(
   paywallConfig?: PaywallConfig,
   paywall?: PaywallProvider,
   syncFacilitatorOnStart?: boolean,
+  options?: PaymentMiddlewareOptions,
 ): void;
 ```
 
-Registers Fastify hooks (`onRequest` and `onSend`) that:
+Registers Fastify hooks (`onRequest`, optionally `preValidation`, `onSend`, and `onError`) that:
 
 1. Use the provided x402ResourceServer for payment processing
 2. Check if the incoming request matches a protected route
@@ -135,6 +138,34 @@ Registers Fastify hooks (`onRequest` and `onSend`) that:
 4. Return payment instructions (402 status) if payment is missing or invalid
 5. Process the request if payment is valid
 6. Handle settlement after successful response
+
+Payment processing defaults to `onRequest`, before body parsing. Existing calls keep
+this earlier payment gate. To read parsed bodies in protected-request hooks or
+dynamic pricing callbacks, opt into `preValidation`:
+
+```typescript
+paymentMiddleware(app, routes, resourceServer, undefined, undefined, true, {
+  paymentHook: "preValidation",
+});
+```
+
+The same final options argument is available on `paymentMiddlewareFromHTTPServer`
+and `paymentMiddlewareFromConfig`. The exported `PaymentMiddlewareOptions` type
+accepts `paymentHook?: "onRequest" | "preValidation"`.
+
+In the opt-in mode, `context.adapter.getBody()` reads the parsed body without
+consuming the route handler's body. Custom content-type parsers have run, but
+schema validation and coercion have not. Validate body fields used for payment
+decisions. Malformed JSON and body-limit errors return Fastify's normal errors
+before payment processing, rather than a payment challenge. Unpaid requests may
+therefore be parsed up to the configured `bodyLimit`.
+
+Register the middleware before other hooks in its payment phase that serve paid
+content. In `preValidation` mode, responses sent from `onRequest`, `preParsing`,
+or earlier-registered `preValidation` hooks do not reach the payment gate; do not
+serve paid content from those hooks. Both modes check payment before schema
+validation can remove payment headers. Non-origin-form request targets are
+rejected in `onRequest` in both modes, before body parsing.
 
 ### Route Configuration
 
