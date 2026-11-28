@@ -3,6 +3,9 @@
 > **Deprecated (v1)**  
 > The code in `python/legacy` implements x402 **v1**. It is **deprecated** and will only receive **security patches**. Please migrate to **v2** on PyPI: use the `x402` package at version **> 2.0.0** (imports and APIs change). See the [Migration guide: v1 to v2](https://docs.x402.org/guides/migration-v1-to-v2).
 > Legacy examples are available at git tag `archive/legacy-v1-examples`.
+>
+> **Settlement-gating note:** the v1 Flask and FastAPI middlewares settle payments only for 2xx responses — a paid route that returns a 3xx is delivered to the client **without settlement** (see #3465). In v2, the Flask middleware had the same 2xx-only gating until release **2.11.0** (PR #2388), which settles for any status `< 400`; the v2 FastAPI middleware settled `< 400` from 2.0.0 onward. If any handler on a paid path in your service can return a 3xx response, upgrade to `x402 >= 2.11.0`. Affected releases: all v1 (`x402 == 1.0.0` on PyPI, both adapters) and the v2 **Flask** middleware `>= 2.0.0, < 2.11.0`.
+> Correction (4 Oct 2026): the v2 Flask settlement gate widened from 2xx-only to <400 at release 2.11.0 (PR #2388, merged 20 May 2026), not at 2.15.0 as previously stated; PR #2826 (2.15.0) fixed a main-branch regression of the same guard that did not reach a shipped release. Affected range for the 2xx-only Flask gate: >= 2.0.0, < 2.11.0. Verified wheel-by-wheel; see Ledger rows 2.11.0-2.15.0.
 
 Python package for the x402 payments protocol.
 
