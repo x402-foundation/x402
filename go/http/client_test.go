@@ -1646,3 +1646,21 @@ func TestWrapHTTPClientWithPayment_DoesNotMutateInput(t *testing.T) {
 		t.Fatalf("wrapped client should preserve Timeout %v, got %v", custom.Timeout, wrapped2.Timeout)
 	}
 }
+
+func TestPaymentHeadersRejectNonObjectJSON(t *testing.T) {
+	client := Newx402HTTPClient(x402.Newx402Client().DisableSpendControls())
+
+	for _, raw := range []string{"null", " null ", "[]", `"s"`, "1", "true"} {
+		encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+
+		_, err := client.GetPaymentRequiredResponse(map[string]string{"PAYMENT-REQUIRED": encoded}, nil)
+		if err == nil || !strings.Contains(err.Error(), "must decode to a JSON object") {
+			t.Errorf("PAYMENT-REQUIRED %q: err = %v", raw, err)
+		}
+
+		_, err = client.GetPaymentSettleResponse(map[string]string{"PAYMENT-RESPONSE": encoded})
+		if err == nil || !strings.Contains(err.Error(), "must decode to a JSON object") {
+			t.Errorf("PAYMENT-RESPONSE %q: err = %v", raw, err)
+		}
+	}
+}

@@ -351,3 +351,13 @@ func cloneExtra(extra map[string]any) map[string]any {
 	}
 	return cloned
 }
+
+func TestDecodeHeaders_RejectNonObject(t *testing.T) {
+	for _, body := range []string{"null", "[]", "42", `"x"`, ""} {
+		encoded := base64.StdEncoding.EncodeToString([]byte(body))
+		_, err := decodePaymentRequiredHeader(encoded)
+		require.Error(t, err, "PAYMENT-REQUIRED %q", body)
+		_, err = decodePaymentResponseHeader(encoded)
+		require.Error(t, err, "PAYMENT-RESPONSE %q", body)
+	}
+}

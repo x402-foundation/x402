@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -304,8 +305,22 @@ func encodePaymentSignatureHeader(payload types.PaymentPayload, accepted types.P
 	return base64.StdEncoding.EncodeToString(encoded), nil
 }
 
-func decodePaymentRequiredHeader(header string) (x402.PaymentRequired, error) {
+// decodeJSONObjectHeader base64-decodes a header and requires a JSON object:
+// json.Unmarshal decodes `null` into a struct without an error.
+func decodeJSONObjectHeader(header, name string) ([]byte, error) {
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header))
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(decoded)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, fmt.Errorf("%s header must decode to a JSON object", name)
+	}
+	return decoded, nil
+}
+
+func decodePaymentRequiredHeader(header string) (x402.PaymentRequired, error) {
+	decoded, err := decodeJSONObjectHeader(header, "PAYMENT-REQUIRED")
 	if err != nil {
 		return x402.PaymentRequired{}, err
 	}
@@ -317,7 +332,7 @@ func decodePaymentRequiredHeader(header string) (x402.PaymentRequired, error) {
 }
 
 func decodePaymentResponseHeader(header string) (*x402.SettleResponse, error) {
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header))
+	decoded, err := decodeJSONObjectHeader(header, "PAYMENT-RESPONSE")
 	if err != nil {
 		return nil, err
 	}
