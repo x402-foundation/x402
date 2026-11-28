@@ -1,0 +1,1 @@
+Added `x402SyncTransport`, an `httpx.BaseTransport` that pays 402 responses for a sync `httpx.Client` with `x402ClientSync`. It follows `x402AsyncTransport`: it buffers the request body for the retry, runs `on_payment_required` hooks and the recovery retry, and bounds the 402 bodies it reads.

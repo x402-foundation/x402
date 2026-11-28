@@ -60,6 +60,23 @@ async with x402HttpxClient(client) as http:
     response = await http.get("https://api.example.com/paid")
 ```
 
+## httpx (Sync)
+
+`x402SyncTransport` is the `httpx.Client` counterpart of the async transport. Use it with `x402ClientSync`, including for SDKs that accept a custom sync `http_client`.
+
+```python
+from x402 import x402ClientSync
+from x402.http.clients import x402SyncTransport
+from x402.mechanisms.evm.exact import ExactEvmScheme
+import httpx
+
+client = x402ClientSync()
+client.register("eip155:*", ExactEvmScheme(signer=signer))
+
+with httpx.Client(transport=x402SyncTransport(client)) as http:
+    response = http.get("https://api.example.com/paid")
+```
+
 ## requests (Sync)
 
 ```bash
@@ -117,6 +134,7 @@ session = wrapRequestsWithPaymentFromConfig(requests.Session(), config)
 | HTTP Client | x402 Client |
 |-------------|-------------|
 | httpx (async) | `x402Client` (async) |
+| httpx (sync) | `x402ClientSync` (sync) |
 | requests (sync) | `x402ClientSync` (sync) |
 
 Using mismatched variants raises `TypeError`.
@@ -128,6 +146,7 @@ Using mismatched variants raises `TypeError`.
 | Export | Description |
 |--------|-------------|
 | `x402_httpx_transport()` | Create async transport |
+| `x402SyncTransport` | Sync transport for `httpx.Client` |
 | `wrapHttpxWithPayment()` | Wrap existing client |
 | `wrapHttpxWithPaymentFromConfig()` | Create from config |
 | `x402HttpxClient` | Convenience client class |
