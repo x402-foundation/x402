@@ -2,6 +2,7 @@ import {
   AccountAddress,
   Deserializer,
   PublicKey,
+  createUserDerivedObjectAddress,
   generateSigningMessageForTransaction,
 } from "@aptos-labs/ts-sdk";
 import type {
@@ -272,10 +273,22 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
       }
 
       const [faAddressArg, recipientAddressArg, amountArg] = args;
+      const assetAddress = AccountAddress.from(requirements.asset);
+      const payToAddress = AccountAddress.from(requirements.payTo);
+
+      // primary_fungible_store::transfer takes (metadata, recipient, amount).
+      // fungible_asset::transfer takes (from_store, to_store, amount): require the
+      // sender's and payTo's primary stores for the asset.
+      const expectedFirstArg = isFungibleAsset
+        ? createUserDerivedObjectAddress(transaction.rawTransaction.sender, assetAddress)
+        : assetAddress;
+      const expectedSecondArg = isFungibleAsset
+        ? createUserDerivedObjectAddress(payToAddress, assetAddress)
+        : payToAddress;
 
       // Step 7: Verify the transfer is for the correct asset
       const faAddress = AccountAddress.from(faAddressArg.bcsToBytes());
-      if (!faAddress.equals(AccountAddress.from(requirements.asset))) {
+      if (!faAddress.equals(expectedFirstArg)) {
         return {
           isValid: false,
           invalidReason: "invalid_exact_aptos_payload_asset_mismatch",
@@ -295,7 +308,7 @@ export class ExactAptosScheme implements SchemeNetworkFacilitator {
 
       // Step 9: Verify the transfer recipient matches
       const recipientAddress = AccountAddress.from(recipientAddressArg.bcsToBytes());
-      if (!recipientAddress.equals(AccountAddress.from(requirements.payTo))) {
+      if (!recipientAddress.equals(expectedSecondArg)) {
         return {
           isValid: false,
           invalidReason: "invalid_exact_aptos_payload_recipient_mismatch",
