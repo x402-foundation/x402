@@ -1,0 +1,1 @@
+Fixed the `requests` adapter sending an empty body on the paid retry when the request body was a file or generator. One-shot bodies are now buffered before the first send, matching the httpx transport.
