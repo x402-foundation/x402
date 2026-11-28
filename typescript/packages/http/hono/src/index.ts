@@ -328,14 +328,15 @@ export function paymentMiddlewareFromHTTPServer(
             res.headers.delete(SETTLEMENT_OVERRIDES_HEADER);
           }
         } catch (error) {
+          // Build the error response directly: `c.json` would re-apply the
+          // headers the route handler set (e.g. Set-Cookie) to it.
           if (error instanceof FacilitatorResponseError) {
-            res = facilitatorErrorResponse(c, error);
-            c.res = res;
+            c.res = Response.json({ error: error.message }, { status: 502 });
             return;
           }
           console.error(error);
           // If settlement fails, return an error response
-          res = c.json({}, 402);
+          res = Response.json({}, { status: 402 });
         }
 
         // Restore the response (potentially modified with settlement headers)

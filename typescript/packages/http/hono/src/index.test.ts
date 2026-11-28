@@ -796,7 +796,8 @@ describe("paymentMiddleware", () => {
 
     await middleware(context, next);
 
-    expect(context.json).toHaveBeenCalledWith({}, 402);
+    expect(context.res?.status).toBe(402);
+    await expect(context.res?.json()).resolves.toEqual({});
   });
 
   it("retries initialization after a facilitator init failure", async () => {
@@ -975,10 +976,10 @@ describe("paymentMiddleware", () => {
 
     await middleware(context, next);
 
-    expect(context.json).toHaveBeenCalledWith(
-      { error: 'Facilitator settle returned invalid data: {"success":true}' },
-      502,
-    );
+    expect(context.res?.status).toBe(502);
+    await expect(context.res?.json()).resolves.toEqual({
+      error: 'Facilitator settle returned invalid data: {"success":true}',
+    });
   });
 
   it("rethrows when the handler throws and nothing settled before the handler", async () => {
