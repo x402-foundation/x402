@@ -408,25 +408,35 @@ func (c *HTTPFacilitatorClient) GetSupported(ctx context.Context) (x402.Supporte
 // Internal HTTP Methods (shared by V1 and V2)
 // ============================================================================
 
-func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
-	// Build request body
-	var payloadMap, requirementsMap map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
+// Raw map values keep integers above 2^53. Non-objects fail. Null encodes as null.
+func facilitatorPaymentRequest(version int, payloadBytes, requirementsBytes []byte) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
-	if err := json.Unmarshal(requirementsBytes, &requirementsMap); err != nil {
+	var requirements map[string]json.RawMessage
+	if err := json.Unmarshal(requirementsBytes, &requirements); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal requirements: %w", err)
 	}
-
-	requestBody := map[string]interface{}{
-		"x402Version":         version,
-		"paymentPayload":      payloadMap,
-		"paymentRequirements": requirementsMap,
-	}
-
-	body, err := json.Marshal(requestBody)
+	body, err := json.Marshal(struct {
+		X402Version         int                        `json:"x402Version"`
+		PaymentPayload      map[string]json.RawMessage `json:"paymentPayload"`
+		PaymentRequirements map[string]json.RawMessage `json:"paymentRequirements"`
+	}{
+		X402Version:         version,
+		PaymentPayload:      payload,
+		PaymentRequirements: requirements,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal verify request: %w", err)
+		return nil, fmt.Errorf("failed to marshal facilitator request: %w", err)
+	}
+	return body, nil
+}
+
+func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.VerifyResponse, error) {
+	body, err := facilitatorPaymentRequest(version, payloadBytes, requirementsBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create request
@@ -483,24 +493,9 @@ func (c *HTTPFacilitatorClient) verifyHTTP(ctx context.Context, version int, pay
 }
 
 func (c *HTTPFacilitatorClient) settleHTTP(ctx context.Context, version int, payloadBytes, requirementsBytes []byte) (*x402.SettleResponse, error) {
-	// Build request body
-	var payloadMap, requirementsMap map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
-	}
-	if err := json.Unmarshal(requirementsBytes, &requirementsMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal requirements: %w", err)
-	}
-
-	requestBody := map[string]interface{}{
-		"x402Version":         version,
-		"paymentPayload":      payloadMap,
-		"paymentRequirements": requirementsMap,
-	}
-
-	body, err := json.Marshal(requestBody)
+	body, err := facilitatorPaymentRequest(version, payloadBytes, requirementsBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal settle request: %w", err)
+		return nil, err
 	}
 
 	// Create request
