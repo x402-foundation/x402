@@ -182,7 +182,10 @@ def strip_assertion_guards(
             continue
         if _classify(static_accounts, ix) is not InstructionRole.GUARD:
             raise LayoutError(ERR_INVALID_LIGHTHOUSE_INSTRUCTION)
-        if not _is_fee_payer_isolated(static_accounts, [ix], fee_payer):
+        # A guard may list the fee payer as an account: account privileges are
+        # message-level (the fee payer is always a writable signer) and assertions
+        # only read. It must never be the invoked program.
+        if static_accounts[ix.program_id_index] == fee_payer:
             raise LayoutError(ERR_FEE_PAYER_TRANSFERRING)
     return [
         ix for ix in instructions if _classify(static_accounts, ix) is not InstructionRole.GUARD

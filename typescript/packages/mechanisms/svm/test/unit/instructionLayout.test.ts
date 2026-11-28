@@ -62,7 +62,7 @@ describe("resolveProtocolLayout", () => {
     },
   );
 
-  it("isolates v1 guards and rejects ComputeBudget even in an allowlisted block", () => {
+  it("accepts v1 guards naming the fee payer and rejects ComputeBudget even in an allowlisted block", () => {
     expect(
       reason(
         resolveProtocolLayout(
@@ -72,7 +72,7 @@ describe("resolveProtocolLayout", () => {
           1,
         ),
       ),
-    ).toBe(Errors.ErrFeePayerTransferringFunds);
+    ).toBeUndefined();
     expect(
       reason(
         resolveProtocolLayout(
@@ -112,10 +112,49 @@ describe("resolveProtocolLayout", () => {
     },
   );
 
-  it("isolates guards outside allowlisted blocks", () => {
-    expect(reason(layout([...protocol, ix(LIGHTHOUSE_PROGRAM_ADDRESS, [2], [FEE_PAYER])]))).toBe(
-      Errors.ErrFeePayerTransferringFunds,
+  describe("guards naming the fee payer", () => {
+    const guardNamingFeePayer = (discriminator: number) =>
+      ix(LIGHTHOUSE_PROGRAM_ADDRESS, [discriminator], [FEE_PAYER, SETUP]);
+
+    it("accepts a Phantom-shaped transaction with assertions around the protocol sequence", () => {
+      const instructions = [
+        guard,
+        limit,
+        price,
+        guardNamingFeePayer(5),
+        transfer,
+        memo,
+        guardNamingFeePayer(2),
+      ];
+      expect(layout(instructions)).toMatchObject({ transferIx: transfer, memoCount: 1 });
+    });
+
+    it("rejects a guard whose program is the fee payer", () => {
+      expect(
+        reason(resolveProtocolLayout([guard, ...protocol], {}, LIGHTHOUSE_PROGRAM_ADDRESS)),
+      ).toBe(Errors.ErrFeePayerTransferringFunds);
+    });
+
+    it.each([[0], [1], [18], [255]])(
+      "still rejects non-assertion Lighthouse discriminator %s naming the fee payer",
+      discriminator => {
+        expect(reason(layout([...protocol, guardNamingFeePayer(discriminator)]))).toBe(
+          Errors.ErrInvalidLighthouseInstruction,
+        );
+      },
     );
+
+    it("still rejects a non-guard instruction naming the fee payer", () => {
+      expect(
+        reason(
+          layout([ix(SETUP, [0xaa, 1], [FEE_PAYER]), ...protocol], {
+            preflightInstructionAllowlist: [
+              [{ programAddress: SETUP, discriminator: new Uint8Array([0xaa]) }],
+            ],
+          }),
+        ),
+      ).toBe(Errors.ErrPreflightPostflightFeePayerNotIsolated);
+    });
   });
 
   it("finds protocol instructions regardless of guard placement", () => {
@@ -210,16 +249,24 @@ describe("resolveProtocolLayout", () => {
         { postflightInstructionAllowlist: [finishTuple] },
       ],
       [
-        "interspersed guard",
-        [ix(LIGHTHOUSE_PROGRAM_ADDRESS, [2], [FEE_PAYER]), setup(), ...protocol],
+        "guard-interspersed",
+        [ix(LIGHTHOUSE_PROGRAM_ADDRESS, [2], [FEE_PAYER]), setup(FEE_PAYER), ...protocol],
         { preflightInstructionAllowlist: [setupTuple] },
       ],
     ])("rejects a matched %s block that references the fee payer", (_name, instructions, lists) => {
       expect(reason(layout(instructions, lists))).toBe(
-        _name === "interspersed guard"
-          ? Errors.ErrFeePayerTransferringFunds
-          : Errors.ErrPreflightPostflightFeePayerNotIsolated,
+        Errors.ErrPreflightPostflightFeePayerNotIsolated,
       );
+    });
+
+    it("accepts a fee payer guard next to a clean allowlisted block", () => {
+      expect(
+        reason(
+          layout([ix(LIGHTHOUSE_PROGRAM_ADDRESS, [2], [FEE_PAYER]), setup(), ...protocol], {
+            preflightInstructionAllowlist: [setupTuple],
+          }),
+        ),
+      ).toBeUndefined();
     });
 
     it.each([

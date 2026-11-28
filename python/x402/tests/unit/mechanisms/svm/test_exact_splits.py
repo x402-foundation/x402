@@ -943,17 +943,23 @@ def test_facilitator_compute_ceiling_cannot_be_disabled_by_invalid_configuration
         facilitator(p, max_compute_units=limit)
 
 
-def test_split_lighthouse_guard_must_isolate_fee_payer(p):
+@pytest.mark.parametrize(
+    ("program", "data", "valid"),
+    [
+        (LIGHTHOUSE_PROGRAM_ADDRESS, bytes([2]), True),
+        (MEMO_PROGRAM_ADDRESS, b"memo", False),
+    ],
+)
+def test_split_fee_payer_in_optional_instruction_accounts(p, program, data, valid):
     req = requirements(p)
-    guard = Instruction(
-        Pubkey.from_string(LIGHTHOUSE_PROGRAM_ADDRESS),
-        bytes([2]),
-        [AccountMeta(p.fee_payer.pubkey(), False, False)],
+    optional = Instruction(
+        Pubkey.from_string(program), data, [AccountMeta(p.fee_payer.pubkey(), False, False)]
     )
-    tx = build_transaction(p, [*standard_legs(p), guard])
+    tx = build_transaction(p, [*standard_legs(p), optional])
     result = facilitator(p, max_splits=8).verify(payment(req, tx), req)
-    assert not result.is_valid
-    assert result.invalid_reason == ERR_FEE_PAYER_TRANSFERRING
+    assert result.is_valid is valid
+    if not valid:
+        assert result.invalid_reason == ERR_FEE_PAYER_NOT_ISOLATED
 
 
 def test_core_recipient_policy_rejects_split_before_construction_or_signing(p):
