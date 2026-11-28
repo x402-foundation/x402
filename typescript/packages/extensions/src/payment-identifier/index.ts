@@ -63,15 +63,19 @@
  * fingerprint (see "Request Binding" in specs/extensions/payment_identifier.md).
  *
  * ```typescript
- * import { extractPaymentIdentifier } from '@x402/extensions/payment-identifier';
+ * import {
+ *   extractPaymentIdentifier,
+ *   computeRequestFingerprint,
+ *   isRequestBindingConflict,
+ * } from '@x402/extensions/payment-identifier';
  *
  * // In your settle handler
  * const id = extractPaymentIdentifier(paymentPayload);
  * if (id) {
- *   const fingerprint = fingerprintOf(paymentPayload); // your normalized request fingerprint
+ *   const fingerprint = computeRequestFingerprint(paymentPayload, { method: req.method });
  *   const seen = await idempotencyStore.get(id);
  *   if (seen) {
- *     if (seen.fingerprint !== fingerprint) {
+ *     if (isRequestBindingConflict(seen.fingerprint, fingerprint)) {
  *       return conflict(); // same id, different request: 409 Conflict
  *     }
  *     return seen.response; // same id, same request: return the cached response
@@ -120,3 +124,10 @@ export {
   validatePaymentIdentifierRequirement,
   type PaymentIdentifierValidationResult,
 } from "./validation";
+
+// Export request binding functions
+export {
+  computeRequestFingerprint,
+  isRequestBindingConflict,
+  type RequestBindingContext,
+} from "./requestBinding";
