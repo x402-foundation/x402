@@ -14,6 +14,7 @@ export const EVM_CHAIN_IDS = {
 export const SOLANA_NETWORK_REFS = {
   MAINNET: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
   DEVNET: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  TESTNET: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z",
 } as const;
 
 // Algorand Network References (canonical CAIP-2 references)
@@ -155,7 +156,13 @@ export function getNetworkDisplayName(network: string): string {
 
   if (network.startsWith("solana:")) {
     const ref = network.split(":")[1];
-    return ref === SOLANA_NETWORK_REFS.DEVNET ? "Solana Devnet" : "Solana Mainnet";
+    if (ref === SOLANA_NETWORK_REFS.DEVNET) {
+      return "Solana Devnet";
+    }
+    if (ref === SOLANA_NETWORK_REFS.TESTNET) {
+      return "Solana Testnet";
+    }
+    return "Solana Mainnet";
   }
 
   if (isAvmNetwork(network)) {
@@ -182,7 +189,7 @@ export function isTestnetNetwork(network: string): boolean {
 
   if (network.startsWith("solana:")) {
     const ref = network.split(":")[1];
-    return ref === SOLANA_NETWORK_REFS.DEVNET;
+    return ref === SOLANA_NETWORK_REFS.DEVNET || ref === SOLANA_NETWORK_REFS.TESTNET;
   }
 
   if (isAvmNetwork(network)) {
