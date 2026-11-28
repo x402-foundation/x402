@@ -59,6 +59,8 @@ const (
 	ErrPermit2InvalidSignature  = evm.ErrPermit2InvalidSignature
 	ErrPermit2AllowanceRequired = evm.ErrPermit2AllowanceRequired
 
+	ErrPermit2FailedToVerifySignature = evm.ErrPermit2FailedToVerifySignature
+
 	// Permit2 settle errors (from contract reverts)
 	ErrPermit2InvalidAmount      = evm.ErrPermit2InvalidAmount
 	ErrPermit2InvalidDestination = evm.ErrPermit2InvalidDestination

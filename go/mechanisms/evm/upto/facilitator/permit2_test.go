@@ -27,6 +27,7 @@ type mockFacilitatorSigner struct {
 	getCodeResult      []byte
 	getCodeByAddress   map[string][]byte // per-address override; falls back to getCodeResult
 	getCodeError       error
+	getCodeErrorFor    map[string]error // per-address GetCode failure, checked before getCodeError
 	verifyResult       bool
 	verifyError        error
 	receiptResult      *evm.TransactionReceipt
@@ -90,6 +91,9 @@ func (m *mockFacilitatorSigner) GetChainID(ctx context.Context) (*big.Int, error
 }
 
 func (m *mockFacilitatorSigner) GetCode(ctx context.Context, address string) ([]byte, error) {
+	if err, ok := m.getCodeErrorFor[strings.ToLower(address)]; ok {
+		return nil, err
+	}
 	if m.getCodeError != nil {
 		return nil, m.getCodeError
 	}
@@ -339,6 +343,29 @@ func TestVerifyUptoPermit2_InvalidSig_PayerIsEOA(t *testing.T) {
 	p := buildValidUptoPayload(testFacilitatorAddr)
 	_, err := VerifyUptoPermit2(context.Background(), signer, buildValidPayload(testFacilitatorAddr), buildValidRequirements(), p, nil, false)
 	assertVerifyError(t, err, ErrPermit2InvalidSignature)
+}
+
+func TestVerifyUptoPermit2_PayerCodeLookupFailure_IsFailedToVerify(t *testing.T) {
+	// A payer code lookup that fails decided nothing about the signature: it is an RPC failure,
+	// not invalid_permit2_signature. The token lookup answers, so the asset check passes.
+	evm.ResetAssetContractCache()
+
+	signer := newMockSigner()
+	signer.getCodeByAddress = map[string][]byte{
+		strings.ToLower(testTokenAddr): {0x60, 0x60},
+	}
+	signer.getCodeErrorFor = map[string]error{
+		strings.ToLower(testPayerAddr): errors.New("HTTP request failed. Status: 503"),
+	}
+
+	p := buildValidUptoPayload(testFacilitatorAddr)
+	_, err := VerifyUptoPermit2(context.Background(), signer, buildValidPayload(testFacilitatorAddr), buildValidRequirements(), p, nil, false)
+	assertVerifyError(t, err, ErrPermit2FailedToVerifySignature)
+
+	ve := &x402.VerifyError{}
+	if errors.As(err, &ve) && !strings.Contains(ve.InvalidMessage, "503") {
+		t.Errorf("expected the RPC error in InvalidMessage, got %q", ve.InvalidMessage)
+	}
 }
 
 func TestVerifyUptoPermit2_SimulationDisabled_ReturnsValid(t *testing.T) {
