@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { x402Client } from "../../../src/client/x402Client";
+import { x402Client, type PaymentResponseContext } from "../../../src/client/x402Client";
 import {
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -198,6 +198,49 @@ describe("x402HTTPClient", () => {
         requirements,
         settleResponse,
       });
+    });
+
+    it("passes the paid response to v2 payment response hooks", async () => {
+      const client = new x402Client();
+      const httpClient = new x402HTTPClient(client);
+      const settleResponse = buildSettleResponse({ success: true, transaction: "0xok" });
+      const headers = { "PAYMENT-RESPONSE": encodePaymentResponseHeader(settleResponse) };
+      const getHeader = (name: string) => headers[name as keyof typeof headers] ?? null;
+      const bytes = new TextEncoder().encode('{"error":"handler failed"}');
+
+      let receivedContext: PaymentResponseContext | undefined;
+      client.onPaymentResponse(async ctx => {
+        receivedContext = ctx;
+      });
+
+      await httpClient.processPaymentResult(
+        buildPaymentPayload(),
+        getHeader,
+        500,
+        async () => bytes,
+      );
+
+      expect(receivedContext?.settleResponse).toEqual(settleResponse);
+      expect(receivedContext?.response?.status).toBe(500);
+      expect(receivedContext?.response?.getHeader("PAYMENT-RESPONSE")).toBe(
+        headers["PAYMENT-RESPONSE"],
+      );
+      expect(await receivedContext?.response?.body?.()).toEqual(bytes);
+    });
+
+    it("leaves body off the paid response when the transport cannot read it", async () => {
+      const client = new x402Client();
+      const httpClient = new x402HTTPClient(client);
+
+      let receivedContext: PaymentResponseContext | undefined;
+      client.onPaymentResponse(async ctx => {
+        receivedContext = ctx;
+      });
+
+      await httpClient.processPaymentResult(buildPaymentPayload(), () => null, 200);
+
+      expect(receivedContext?.response?.status).toBe(200);
+      expect(receivedContext?.response).not.toHaveProperty("body");
     });
 
     it("does not decode payment-required on v2 when a settle header is present", async () => {
