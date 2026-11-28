@@ -1,4 +1,4 @@
-"""The MCP server examples import, and an unpaid tool call returns payment required."""
+"""The MCP examples import, and an unpaid tool call returns payment required."""
 
 import importlib.util
 import sys
@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[4] / "examples" / "python" / "servers" / "mcp"
+CLIENT_EXAMPLES_DIR = EXAMPLES_DIR.parents[1] / "clients" / "mcp"
 
 pytestmark = pytest.mark.skipif(
     not EXAMPLES_DIR.is_dir(),
@@ -16,12 +17,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _load_example(monkeypatch: pytest.MonkeyPatch, name: str) -> types.ModuleType:
+def _load_example(
+    monkeypatch: pytest.MonkeyPatch, name: str, directory: Path = EXAMPLES_DIR
+) -> types.ModuleType:
     """Import one example module from the checkout without starting a server."""
     # The examples read .env through python-dotenv; loading a missing file is a no-op.
     monkeypatch.setenv("EVM_ADDRESS", "0x0000000000000000000000000000000000000001")
+    monkeypatch.setenv("EVM_PRIVATE_KEY", "0x" + "11" * 32)
 
-    path = EXAMPLES_DIR / f"{name}.py"
+    path = directory / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"_example_{name}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -41,6 +45,21 @@ def _load_example(monkeypatch: pytest.MonkeyPatch, name: str) -> types.ModuleTyp
 def test_examples_import(monkeypatch: pytest.MonkeyPatch, name: str, entrypoint: str) -> None:
     """Each example imports and exposes its entry point."""
     module = _load_example(monkeypatch, name)
+    assert callable(getattr(module, entrypoint))
+
+
+@pytest.mark.parametrize(
+    ("name", "entrypoint"),
+    [
+        ("simple", "run_simple"),
+        ("advanced", "run_advanced"),
+    ],
+)
+def test_client_examples_import(
+    monkeypatch: pytest.MonkeyPatch, name: str, entrypoint: str
+) -> None:
+    """Each client example imports and exposes its entry point."""
+    module = _load_example(monkeypatch, name, CLIENT_EXAMPLES_DIR)
     assert callable(getattr(module, entrypoint))
 
 
