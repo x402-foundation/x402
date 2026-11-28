@@ -1,6 +1,7 @@
 """Tests for SVM signer implementations."""
 
 import base64
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,31 @@ from solders.transaction import VersionedTransaction
 from x402.mechanisms.svm import MEMO_PROGRAM_ADDRESS, SOLANA_DEVNET_CAIP2
 from x402.mechanisms.svm.rpc import CONFIRMED
 from x402.mechanisms.svm.signers import FacilitatorKeypairSigner, KeypairSigner
+
+
+def _v0_message(payer: Pubkey, instructions: list[Instruction]) -> MessageV0:
+    return MessageV0.try_compile(payer, instructions, [], Hash.default())
+
+
+def _legacy_message(payer: Pubkey, instructions: list[Instruction]) -> Message:
+    return Message.new_with_blockhash(instructions, payer, Hash.default())
+
+
+def _v1_message(payer: Pubkey, instructions: list[Instruction]) -> MessageV1:
+    config = TransactionConfig(compute_unit_limit=1_000, loaded_accounts_data_size_limit=1)
+    return MessageV1.try_compile(payer, instructions, Hash.default(), config)
+
+
+def _unsigned_tx(
+    compile_message: Callable[[Pubkey, list[Instruction]], Message | MessageV0 | MessageV1],
+    fee_payer: Pubkey,
+    accounts: list[AccountMeta],
+) -> VersionedTransaction:
+    """Build a transaction with placeholder signatures for every required signer."""
+    ix = Instruction(Pubkey.from_string(MEMO_PROGRAM_ADDRESS), b"x402", accounts)
+    message = compile_message(fee_payer, [ix])
+    signatures = [Signature.default()] * message.header.num_required_signatures
+    return VersionedTransaction.populate(message, signatures)
 
 
 class TestKeypairSigner:
@@ -61,6 +87,45 @@ class TestKeypairSigner:
 
         # Addresses should match
         assert signer.address == str(keypair.pubkey())
+
+    @pytest.mark.parametrize("compile_message", [_v0_message, _v1_message, _legacy_message])
+    def test_sign_transaction_should_sign_only_its_own_slot(self, compile_message):
+        """sign_transaction should keep the fee payer's signature and add its own."""
+        fee_payer = Keypair()
+        client = Keypair()
+        unsigned = _unsigned_tx(
+            compile_message, fee_payer.pubkey(), [AccountMeta(client.pubkey(), True, False)]
+        )
+        fee_payer_signature = fee_payer.sign_message(to_bytes_versioned(unsigned.message))
+        tx = VersionedTransaction.populate(
+            unsigned.message, [fee_payer_signature, Signature.default()]
+        )
+
+        signed = KeypairSigner(client).sign_transaction(tx)
+
+        assert signed.message == tx.message
+        assert signed.signatures[0] == fee_payer_signature
+        assert signed.verify_with_results() == [True, True]
+        assert tx.signatures[1] == Signature.default()
+
+    def test_sign_transaction_should_sign_as_sole_signer(self):
+        """sign_transaction should fully sign a transaction the keypair pays for."""
+        client = Keypair()
+        tx = _unsigned_tx(_v0_message, client.pubkey(), [])
+
+        signed = KeypairSigner(client).sign_transaction(tx)
+
+        assert signed.verify_with_results() == [True]
+
+    def test_sign_transaction_should_raise_when_not_a_required_signer(self):
+        """sign_transaction should reject a transaction the keypair does not sign."""
+        client = Keypair()
+        tx = _unsigned_tx(
+            _v0_message, Keypair().pubkey(), [AccountMeta(client.pubkey(), False, False)]
+        )
+
+        with pytest.raises(ValueError, match="not a required signer"):
+            KeypairSigner(client).sign_transaction(tx)
 
 
 class TestFacilitatorKeypairSigner:
