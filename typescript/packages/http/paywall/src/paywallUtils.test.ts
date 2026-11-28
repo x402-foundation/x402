@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentRequirements } from "@x402/core/types";
+import { SOLANA_TESTNET_CAIP2 } from "@x402/svm";
 import {
   ALGORAND_GENESIS_HASHES,
   ALGORAND_NETWORK_REFS,
@@ -105,6 +106,10 @@ describe("paywallUtils", () => {
       expect(getNetworkDisplayName("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")).toBe(
         "Solana Devnet",
       );
+    });
+
+    it("does not label Solana testnet as mainnet", () => {
+      expect(getNetworkDisplayName(SOLANA_TESTNET_CAIP2)).toBe("Solana Testnet");
     });
 
     it("returns fallback for unknown chain IDs", () => {
@@ -215,6 +220,7 @@ describe("paywallUtils", () => {
 
     it("identifies Solana testnets", () => {
       expect(isTestnetNetwork("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1")).toBe(true);
+      expect(isTestnetNetwork(SOLANA_TESTNET_CAIP2)).toBe(true);
     });
 
     it("rejects mainnets", () => {
