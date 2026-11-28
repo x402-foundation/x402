@@ -8,6 +8,8 @@ import {
   AccountInfo,
   Token,
   TokenId,
+  isRpcError,
+  type BlockItemStatus,
 } from "@concordium/web-sdk";
 import type { Network } from "@x402/core/types";
 import { Transaction } from "@concordium/web-sdk/transactions";
@@ -147,6 +149,8 @@ export function toConcordiumFacilitatorSigner(
   return createFacilitatorSigner(sponsorAddress, sponsorSigner, grpcConfig);
 }
 
+const BLOCK_ITEM_STATUS_POLL_MS = 200;
+
 /**
  * Shared internal helper — builds the FacilitatorConcordiumSigner object
  * from a resolved AccountSigner. Both public overloads delegate here.
@@ -204,14 +208,7 @@ function createFacilitatorSigner(
 
     async waitForFinalization(txHash: string, timeoutMs = 60_000): Promise<TransactionInfo> {
       const hash = TransactionHash.fromHexString(txHash);
-
-      await grpcClient.waitForTransactionFinalization(hash, timeoutMs);
-
-      const blockStatus = await grpcClient.getBlockItemStatus(hash);
-
-      if (!blockStatus) {
-        throw new Error(`Transaction ${txHash} not found after finalization`);
-      }
+      const blockStatus = await readBlockItemStatus(grpcClient, hash, timeoutMs);
 
       const status = blockStatus.status === "finalized" ? "finalized" : "committed";
       const summary = (blockStatus as unknown as Record<string, unknown>).outcome as
@@ -242,6 +239,53 @@ function createFacilitatorSigner(
       return token.info.state.decimals;
     },
   };
+}
+
+/**
+ * Polls block item status until the transaction is finalized or the deadline passes.
+ * RPC NOT_FOUND means the node has not indexed the transaction yet.
+ *
+ * @param grpcClient - Node gRPC client
+ * @param hash - Transaction hash
+ * @param timeoutMs - Maximum wait in milliseconds
+ * @returns The finalized status, or the latest non-final status at the deadline
+ */
+async function readBlockItemStatus(
+  grpcClient: ConcordiumGRPCNodeClient,
+  hash: TransactionHash.Type,
+  timeoutMs: number,
+): Promise<BlockItemStatus> {
+  const txHash = hash.toString();
+  const deadline = Date.now() + timeoutMs;
+  let latest: BlockItemStatus | undefined;
+
+  for (;;) {
+    try {
+      const status = await grpcClient.getBlockItemStatus(hash);
+      if (!status) {
+        throw new Error(`Transaction ${txHash} not found after finalization`);
+      }
+      if (status.status === "finalized") {
+        return status;
+      }
+      latest = status;
+    } catch (error) {
+      if (!isRpcError(error) || error.code !== "NOT_FOUND") {
+        throw error;
+      }
+    }
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      if (latest) {
+        return latest;
+      }
+      throw new Error(`Transaction ${txHash} finalization timed out`);
+    }
+    await new Promise(resolve => {
+      setTimeout(resolve, Math.min(BLOCK_ITEM_STATUS_POLL_MS, remaining));
+    });
+  }
 }
 
 /**
