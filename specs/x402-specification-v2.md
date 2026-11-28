@@ -8,7 +8,7 @@ This specification defines the core x402 protocol for internet-native payments. 
 
 - **Protocol fundamentals**: Payment requirements format, payment payload structure, and core message schemas
 - **Facilitator interface**: Standard APIs for payment verification and settlement
-- **Payment schemes**: Extensible payment methods (including `exact`, `upto`, and `batch-settlement`; see `specs/schemes/`)
+- **Payment schemes**: Extensible payment methods (including `exact`, `upto`, `batch-settlement`, and `work`; see `specs/schemes/`)
 - **Security considerations**: Replay attack prevention and trust minimization
 
 **Out of Scope**: This specification does not include:
@@ -24,7 +24,7 @@ This specification defines the core x402 protocol for internet-native payments. 
 x402 is made up of three core components:
 
 1. **Types**: Core data structures (e.g., `PaymentRequirements`, `PaymentPayload`, `SettlementResponse`) that are independent of both transport mechanism and payment scheme
-2. **Logic**: Payment formation and verification logic that depends on the payment scheme (e.g., exact, upto, batch-settlement) and network (e.g., evm, solana, etc.)
+2. **Logic**: Payment formation and verification logic that depends on the payment scheme (e.g., exact, upto, batch-settlement, work) and network (e.g., evm, solana, etc.)
 3. **Representation**: How payment data is transmitted and signaled, which depends on the transport mechanism (e.g., HTTP, MCP, A2A)
 
 ## 1. Overview

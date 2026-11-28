@@ -31,4 +31,5 @@ This folder contains Typescript packages to help developers implement the x402 p
 | **Casper** - [`@x402/casper`](./packages/mechanisms/casper) | Casper implementation of x402 using CEP-18 / CEP-3009 exact transfers with EIP-712 authorization. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fcasper.svg)](https://www.npmjs.com/package/@x402/casper) |
 | **Stellar** - [`@x402/stellar`](./packages/mechanisms/stellar) | Stellar implementation of x402 using Soroban token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fstellar.svg)](https://www.npmjs.com/package/@x402/stellar) |
 | **Solana** - [`@x402/svm`](./packages/mechanisms/svm) | SVM implementation of x402 using SPL token transfers. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fsvm.svg)](https://www.npmjs.com/package/@x402/svm) |
+| **Proof of work** - [`@x402/work`](./packages/mechanisms/work) | Profile-defined proof-of-work implementation of x402 using the `work` scheme. | [![npm version](https://img.shields.io/npm/v/%40x402%2Fwork.svg)](https://www.npmjs.com/package/@x402/work) |
 
