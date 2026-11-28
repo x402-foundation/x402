@@ -1,0 +1,1 @@
+The exact EVM EIP-3009 facilitators (V1 and V2) and the SVM V1 facilitator now return the verification message in `error_message` when re-verification fails during `settle`, as SVM V2, TypeScript and Go already do. Previously `settle` returned only `error_reason`, so details such as the simulation revert were lost.
