@@ -159,7 +159,7 @@ func customPaymentMiddleware(server *x402http.HTTPServer, timeout time.Duration)
 		case x402http.ResultPaymentVerified:
 			// Payment verified, continue with settlement handling
 			fmt.Printf("✅ Payment verified, proceeding to handler\n")
-			handlePaymentVerified(c, server, ctx, result)
+			handlePaymentVerified(c, server, ctx, reqCtx, result)
 		}
 	}
 }
@@ -188,7 +188,7 @@ func handlePaymentError(c *gin.Context, response *x402http.HTTPResponseInstructi
 }
 
 // handlePaymentVerified handles verified payments with settlement
-func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, result x402http.HTTPProcessResult) {
+func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx context.Context, reqCtx x402http.HTTPRequestContext, result x402http.HTTPProcessResult) {
 	// Capture the response so we can inspect it before settlement
 	capture := &ResponseCapture{
 		ResponseWriter: c.Writer,
@@ -219,34 +219,42 @@ func handlePaymentVerified(c *gin.Context, server *x402http.HTTPServer, ctx cont
 	fmt.Printf("💰 Settling payment...\n")
 
 	// Process settlement through x402
-	settlementHeaders, err := server.ProcessSettlement(
+	settleResult := server.ProcessSettlement(
 		ctx,
 		*result.PaymentPayload,
 		*result.PaymentRequirements,
-		capture.statusCode,
+		nil,
+		&x402http.HTTPTransportContext{
+			Request:         &reqCtx,
+			ResponseBody:    capture.body.Bytes(),
+			ResponseHeaders: capture.Header(),
+		},
+		result.DeclaredExtensions,
+		result.BeforeHandlerSettlement,
+		"",
 	)
 
-	if err != nil {
-		fmt.Printf("❌ Settlement failed: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Settlement failed",
-			"details": err.Error(),
-		})
+	if !settleResult.Success {
+		fmt.Printf("❌ Settlement failed: %s\n", settleResult.ErrorReason)
+		for key, value := range settleResult.Headers {
+			c.Header(key, value)
+		}
+		if settleResult.Response != nil {
+			handlePaymentError(c, settleResult.Response)
+			return
+		}
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": x402.ErrCodeSettlementFailed})
 		return
 	}
 
 	fmt.Printf("✅ Settlement successful\n")
 
 	// Add settlement headers to response
-	if settlementHeaders != nil {
-		for key, value := range settlementHeaders {
-			c.Header(key, value)
-		}
-
-		// Log settlement details
-		if settlementHeaders["PAYMENT-RESPONSE"] != "" {
-			logSettlementDetails(settlementHeaders)
-		}
+	for key, value := range settleResult.Headers {
+		c.Header(key, value)
+	}
+	if settleResult.Headers["PAYMENT-RESPONSE"] != "" {
+		logSettlementDetails(settleResult.Headers)
 	}
 
 	// Write the captured response to the client
