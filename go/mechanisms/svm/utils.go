@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math"
-	"math/bits"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -186,6 +186,10 @@ func ValidateSolanaAddress(address string) bool {
 
 // ParseAmount converts a decimal string amount to token smallest units
 func ParseAmount(amount string, decimals int) (uint64, error) {
+	if decimals < 0 {
+		return 0, fmt.Errorf("invalid decimals: %d", decimals)
+	}
+
 	// Remove any whitespace
 	amount = strings.TrimSpace(amount)
 
@@ -201,8 +205,8 @@ func ParseAmount(amount string, decimals int) (uint64, error) {
 		return 0, fmt.Errorf("invalid integer part: %s", parts[0])
 	}
 
-	// Handle decimal part
-	decPart := uint64(0)
+	// Handle decimal part (digits past the token decimals are truncated)
+	decPart := new(big.Int)
 	if len(parts) == 2 && parts[1] != "" {
 		// Pad or truncate decimal part to match token decimals
 		decStr := parts[1]
@@ -212,24 +216,24 @@ func ParseAmount(amount string, decimals int) (uint64, error) {
 			decStr += strings.Repeat("0", decimals-len(decStr))
 		}
 
-		decPart, err = strconv.ParseUint(decStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid decimal part: %s", parts[1])
+		if decStr != "" {
+			if strings.Trim(decStr, "0123456789") != "" {
+				return 0, fmt.Errorf("invalid decimal part: %s", parts[1])
+			}
+			decPart.SetString(decStr, 10)
 		}
 	}
 
-	// Calculate total in smallest unit
-	multiplier := uint64(math.Pow10(decimals))
-	hi, scaled := bits.Mul64(intPart, multiplier)
-	if hi != 0 {
-		return 0, fmt.Errorf("amount overflows uint64: %s", amount)
-	}
-	result, carry := bits.Add64(scaled, decPart, 0)
-	if carry != 0 {
+	// Calculate total in smallest unit with exact integer arithmetic; a
+	// float64 scale such as math.Pow10(20) is already out of uint64 range.
+	multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	result := new(big.Int).Mul(new(big.Int).SetUint64(intPart), multiplier)
+	result.Add(result, decPart)
+	if !result.IsUint64() {
 		return 0, fmt.Errorf("amount overflows uint64: %s", amount)
 	}
 
-	return result, nil
+	return result.Uint64(), nil
 }
 
 // FormatAmount converts an amount in smallest units to a decimal string

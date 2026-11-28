@@ -1,3 +1,3 @@
 kind: fixed
-body: svm.ParseAmount returns an error when the amount does not fit in uint64 instead of wrapping to a smaller value.
+body: svm.ParseAmount returns an error when the amount does not fit in uint64 instead of wrapping to a smaller value (including decimals above 19), and rejects negative decimals.
 time: 2026-11-27T00:00:00Z
