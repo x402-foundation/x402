@@ -29,6 +29,7 @@ export type {
   MoneyParser,
   PaymentPayloadResult,
   PaymentPayloadContext,
+  PaymentReconcileResult,
   FacilitatorContext,
   SchemePaymentRequiredContext,
   SchemeEnrichPaymentRequiredResponseHook,
