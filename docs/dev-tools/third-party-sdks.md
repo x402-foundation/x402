@@ -5,6 +5,7 @@ description: "Community-maintained x402 SDKs."
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [Meterdoor](https://meterdoor.com) | Express middleware: one endpoint, EUR via Stripe Checkout for humans, USDC via x402 (v1 and v2, `exact`) for agents; prototype on Base Sepolia | JavaScript | [GitHub](https://github.com/WestLabsAI/meterdoor) |
 | [Mogami](https://mogami.gitbook.io/mogami) | Java x402 stack | Java | [GitHub](https://github.com/mogami-tech/) |
 | [PipRail](https://piprail.com) | Multi-chain x402 SDK + MCP server; backendless self-custody (verify against your own RPC) | TypeScript | [GitHub](https://github.com/piprail/piprail) |
 | [raxol_payments](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | x402 client for Elixir/OTP agents, with ledger-enforced spend limits | Elixir | [GitHub](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) · [Hex](https://hex.pm/packages/raxol_payments) |
