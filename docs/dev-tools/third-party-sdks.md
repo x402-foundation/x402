@@ -5,6 +5,7 @@ description: "Community-maintained x402 SDKs."
 
 | Name | Description | Languages | Links |
 | ---- | ----------- | --------- | ----- |
+| [bb84-x402 / bb84-mppx](https://github.com/mysteryxteo/bb84-agent-pay) | bb84 (USDC and EURC on `eip155:42069000`) as a payment method for x402 resource servers built with the official SDK (scheme `bb84-prepaid`) and for MPP servers built with mppx; the paying side is the bb84 wallet connector (remote MCP server `https://bb84.com/api/connect/mcp`, tool `pay_and_call`) | TypeScript | [GitHub](https://github.com/mysteryxteo/bb84-agent-pay) · [npm](https://www.npmjs.com/package/bb84-x402) · [npm](https://www.npmjs.com/package/bb84-mppx) |
 | [Mogami](https://mogami.gitbook.io/mogami) | Java x402 stack | Java | [GitHub](https://github.com/mogami-tech/) |
 | [PipRail](https://piprail.com) | Multi-chain x402 SDK + MCP server; backendless self-custody (verify against your own RPC) | TypeScript | [GitHub](https://github.com/piprail/piprail) |
 | [raxol_payments](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) | x402 client for Elixir/OTP agents, with ledger-enforced spend limits | Elixir | [GitHub](https://github.com/DROOdotFOO/raxol/tree/master/packages/raxol_payments) · [Hex](https://hex.pm/packages/raxol_payments) |
