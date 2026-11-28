@@ -71,6 +71,8 @@ export {
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "../http/backgroundInit";
 export { prepareHttpServer } from "../http/prepareHttpServer";
 export type { PreparedHttpServer } from "../http/prepareHttpServer";
+export { registerBazaar } from "../http/registerBazaar";
+export type { BazaarStartupModule } from "../http/registerBazaar";
 
 export {
   x402HTTPResourceServer,

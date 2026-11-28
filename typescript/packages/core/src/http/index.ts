@@ -140,6 +140,8 @@ export {
 export { attachBackgroundInitHandler, isFatalStartupInitError } from "./backgroundInit";
 export { prepareHttpServer } from "./prepareHttpServer";
 export type { PreparedHttpServer } from "./prepareHttpServer";
+export { registerBazaar } from "./registerBazaar";
+export type { BazaarStartupModule } from "./registerBazaar";
 export {
   MAX_CONTROL_PLANE_RESPONSE_BYTES,
   ResponseBodyTooLargeError,
