@@ -33,6 +33,9 @@ export * from "./exact/server/masumiIssuer";
 // Script method (generic contract locking with arbitrary datums)
 export { buildScriptDatumInline } from "./exact/script/datum";
 
+// Request commitment extension (cardano-request-commitment)
+export * from "./exact/requestCommitment";
+
 // Types
 export * from "./types";
 
